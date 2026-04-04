@@ -79,6 +79,12 @@ pub struct StageExecution {
     pub raw_result: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ComposePlan {
+    pub pipeline: PipelineDefinition,
+    pub notes: Vec<String>,
+}
+
 impl PipelineDefinition {
     pub fn from_json_str(input: &str) -> Result<Self> {
         let pipeline: Self = serde_json::from_str(input)?;
@@ -253,6 +259,87 @@ impl PipelineDefinition {
             stages,
         })
     }
+
+    pub fn write_pretty(&self, path: impl AsRef<Path>) -> Result<()> {
+        fs::write(path, serde_json::to_string_pretty(self)? + "\n")?;
+        Ok(())
+    }
+}
+
+pub fn compose_pipeline(
+    pipeline_id: impl Into<String>,
+    artifact_paths: &[PathBuf],
+    base_dir: impl AsRef<Path>,
+) -> Result<ComposePlan> {
+    if artifact_paths.is_empty() {
+        return Err(LogicPearlError::message(
+            "compose requires at least one pearl artifact path",
+        ));
+    }
+
+    let pipeline_id = pipeline_id.into();
+    let base_dir = base_dir.as_ref();
+    let mut stages = Vec::with_capacity(artifact_paths.len());
+    let mut notes = Vec::new();
+
+    for (index, artifact_path) in artifact_paths.iter().enumerate() {
+        let gate = LogicPearlGateIr::from_path(artifact_path)?;
+        let stage_id = sanitize_stage_id(&gate.gate_id, index);
+        let artifact = relative_or_absolute_path(base_dir, artifact_path);
+
+        let mut input = HashMap::new();
+        for feature in &gate.input_schema.features {
+            input.insert(
+                feature.id.clone(),
+                Value::String(format!("$.TODO_{}", feature.id)),
+            );
+        }
+
+        let mut export = HashMap::new();
+        export.insert("bitmask".to_string(), Value::String("$.bitmask".to_string()));
+        export.insert("allow".to_string(), Value::String("$.allow".to_string()));
+
+        notes.push(format!(
+            "stage `{}` maps {} input feature(s) from placeholder root paths; replace `$.TODO_*` with real paths or `@stage.export` references",
+            stage_id,
+            gate.input_schema.features.len()
+        ));
+
+        stages.push(PipelineStage {
+            id: stage_id,
+            kind: PipelineStageKind::Pearl,
+            artifact: Some(artifact),
+            plugin_manifest: None,
+            input,
+            export,
+            when: None,
+            foreach: None,
+        });
+    }
+
+    let mut output = HashMap::new();
+    let final_stage = stages
+        .last()
+        .ok_or_else(|| LogicPearlError::message("compose produced no stages"))?;
+    output.insert(
+        "bitmask".to_string(),
+        Value::String(format!("@{}.bitmask", final_stage.id)),
+    );
+    output.insert(
+        "allow".to_string(),
+        Value::String(format!("@{}.allow", final_stage.id)),
+    );
+
+    Ok(ComposePlan {
+        pipeline: PipelineDefinition {
+            pipeline_version: "1.0".to_string(),
+            pipeline_id,
+            entrypoint: "input".to_string(),
+            stages,
+            output,
+        },
+        notes,
+    })
 }
 
 impl PipelineStage {
@@ -666,9 +753,34 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
+fn sanitize_stage_id(value: &str, index: usize) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    let out = out.trim_matches('_').to_string();
+    if out.is_empty() {
+        format!("stage_{}", index + 1)
+    } else {
+        out
+    }
+}
+
+fn relative_or_absolute_path(base_dir: &Path, path: &Path) -> String {
+    if let Ok(relative) = path.strip_prefix(base_dir) {
+        relative.display().to_string()
+    } else {
+        path.display().to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PipelineDefinition, PipelineStageKind};
+    use super::{compose_pipeline, PipelineDefinition, PipelineStageKind};
     use serde_json::json;
     use std::path::Path;
 
@@ -911,5 +1023,25 @@ mod tests {
         assert_eq!(execution.output.get("allow"), Some(&json!(true)));
         assert_eq!(execution.output.get("audit_status"), Some(&json!("clean_pass")));
         assert_eq!(execution.output.get("consistent"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn composes_starter_pipeline_from_artifacts() {
+        let artifact_paths = vec![
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/ir/valid/auth-demo-v1.json"),
+        ];
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/generated");
+        let plan = compose_pipeline("starter", &artifact_paths, &base_dir).expect("compose works");
+        assert_eq!(plan.pipeline.pipeline_id, "starter");
+        assert_eq!(plan.pipeline.stages.len(), 1);
+        assert_eq!(plan.pipeline.stages[0].id, "auth_demo_v1");
+        assert!(plan.pipeline.stages[0]
+            .input
+            .contains_key("action"));
+        assert_eq!(
+            plan.pipeline.output.get("allow"),
+            Some(&json!("@auth_demo_v1.allow"))
+        );
     }
 }

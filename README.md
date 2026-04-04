@@ -151,6 +151,17 @@ The same stage model is available to plugins:
 - `enricher` plugins transform records before artifact emission
 - `verify` plugins annotate proof or audit status
 
+You can also scaffold a starter string-of-pearls artifact from existing pearls:
+
+```bash
+logicpearl compose \
+  --pipeline-id starter_authz \
+  --output examples/pipelines/generated/starter_authz.pipeline.json \
+  fixtures/ir/valid/auth-demo-v1.json
+```
+
+That emits a `pipeline.json` with explicit placeholder root mappings like `$.TODO_action` so the composition stays inspectable instead of hiding inference magic.
+
 ### 5. Validate and run a string-of-pearls pipeline artifact
 
 Public product language: a string of pearls.

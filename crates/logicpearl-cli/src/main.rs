@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{build_pearl_from_rows, BuildOptions, DecisionTraceRow};
 use logicpearl_ir::LogicPearlGateIr;
-use logicpearl_pipeline::PipelineDefinition;
+use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
 use logicpearl_observer::status as observer_status;
 use logicpearl_render::TextInspector;
@@ -28,6 +28,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Build(BuildArgs),
+    Compose(ComposeArgs),
     Compile(CompileArgs),
     Run(RunArgs),
     Inspect(InspectArgs),
@@ -73,6 +74,18 @@ struct BuildArgs {
 struct RunArgs {
     pearl_ir: PathBuf,
     input_json: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ComposeArgs {
+    /// Stable pipeline identifier for the emitted starter artifact.
+    #[arg(long)]
+    pipeline_id: String,
+    /// Output path for the generated pipeline.json.
+    #[arg(long)]
+    output: PathBuf,
+    /// Pearl artifacts to compose into a starter pipeline.
+    artifacts: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -184,6 +197,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build(args) => run_build(args),
+        Commands::Compose(args) => run_compose(args),
         Commands::Compile(args) => run_compile(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
@@ -207,6 +221,36 @@ fn main() -> Result<()> {
             command: ObserverCommand::Run(args),
         } => run_observer_run(args),
     }
+}
+
+fn run_compose(args: ComposeArgs) -> Result<()> {
+    if args.artifacts.is_empty() {
+        return Err(miette::miette!(
+            "compose requires at least one pearl artifact path"
+        ));
+    }
+    let base_dir = args
+        .output
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let plan = compose_pipeline(args.pipeline_id, &args.artifacts, base_dir)
+        .into_diagnostic()
+        .wrap_err("failed to compose starter pipeline")?;
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create compose output directory")?;
+    }
+    plan.pipeline
+        .write_pretty(&args.output)
+        .into_diagnostic()
+        .wrap_err("failed to write composed pipeline artifact")?;
+
+    println!("{} {}", "Composed".bold().bright_green(), args.output.display());
+    for note in &plan.notes {
+        println!("  {} {}", "Note".bright_black(), note);
+    }
+    Ok(())
 }
 
 fn run_compile(args: CompileArgs) -> Result<()> {

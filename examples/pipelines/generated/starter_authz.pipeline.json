@@ -1,0 +1,29 @@
+{
+  "pipeline_version": "1.0",
+  "pipeline_id": "starter_authz",
+  "entrypoint": "input",
+  "stages": [
+    {
+      "id": "auth_demo_v1",
+      "kind": "pearl",
+      "artifact": "/Users/missingno/Documents/LogicPearl/logicpearl/fixtures/ir/valid/auth-demo-v1.json",
+      "plugin_manifest": null,
+      "input": {
+        "user_role": "$.TODO_user_role",
+        "action": "$.TODO_action",
+        "failed_attempts": "$.TODO_failed_attempts",
+        "resource_archived": "$.TODO_resource_archived"
+      },
+      "export": {
+        "allow": "$.allow",
+        "bitmask": "$.bitmask"
+      },
+      "when": null,
+      "foreach": null
+    }
+  ],
+  "output": {
+    "bitmask": "@auth_demo_v1.bitmask",
+    "allow": "@auth_demo_v1.allow"
+  }
+}
