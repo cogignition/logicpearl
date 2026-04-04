@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{build_pearl_from_rows, BuildOptions, DecisionTraceRow};
 use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_pipeline::PipelineDefinition;
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
 use logicpearl_observer::status as observer_status;
 use logicpearl_render::TextInspector;
@@ -31,6 +32,10 @@ enum Commands {
     Run(RunArgs),
     Inspect(InspectArgs),
     Verify(VerifyArgs),
+    Pipeline {
+        #[command(subcommand)]
+        command: PipelineCommand,
+    },
     Observer {
         #[command(subcommand)]
         command: ObserverCommand,
@@ -107,6 +112,19 @@ struct VerifyArgs {
 }
 
 #[derive(Debug, Subcommand)]
+enum PipelineCommand {
+    Validate(PipelineValidateArgs),
+}
+
+#[derive(Debug, Args)]
+struct PipelineValidateArgs {
+    pipeline_json: PathBuf,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Subcommand)]
 enum ObserverCommand {
     Validate(ObserverValidateArgs),
     Run(ObserverRunArgs),
@@ -141,6 +159,9 @@ fn main() -> Result<()> {
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),
+        Commands::Pipeline {
+            command: PipelineCommand::Validate(args),
+        } => run_pipeline_validate(args),
         Commands::Observer {
             command: ObserverCommand::Validate(args),
         } => run_observer_validate(args),
@@ -512,6 +533,47 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&response.extra).into_diagnostic()?
         );
+    }
+    Ok(())
+}
+
+fn run_pipeline_validate(args: PipelineValidateArgs) -> Result<()> {
+    let pipeline = PipelineDefinition::from_path(&args.pipeline_json)
+        .into_diagnostic()
+        .wrap_err("failed to load pipeline artifact")?;
+    let base_dir = args
+        .pipeline_json
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let validated = pipeline
+        .validate(base_dir)
+        .into_diagnostic()
+        .wrap_err("pipeline validation failed")?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&validated).into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Pipeline".bold().bright_cyan(),
+            format!("manifest is valid ({})", validated.pipeline_id).bright_black()
+        );
+        println!("  {} {}", "Stages".bright_black(), validated.stage_count);
+        println!(
+            "  {} {}",
+            "Exports".bright_black(),
+            validated.exports.join(", ")
+        );
+        for stage in &validated.stages {
+            println!(
+                "  {} {} {}",
+                "-".bright_black(),
+                stage.id.bold(),
+                format!("{:?}", stage.kind).bright_black()
+            );
+        }
     }
     Ok(())
 }

@@ -7,6 +7,7 @@ members = [
   "crates/logicpearl-discovery",
   "crates/logicpearl-observer",
   "crates/logicpearl-plugin",
+  "crates/logicpearl-pipeline",
   "crates/logicpearl-verify",
   "crates/logicpearl-render",
   "crates/logicpearl-conformance",

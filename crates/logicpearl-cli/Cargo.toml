@@ -11,6 +11,7 @@ logicpearl-discovery = { path = "../logicpearl-discovery" }
 logicpearl-ir = { path = "../logicpearl-ir" }
 logicpearl-observer = { path = "../logicpearl-observer" }
 logicpearl-plugin = { path = "../logicpearl-plugin" }
+logicpearl-pipeline = { path = "../logicpearl-pipeline" }
 logicpearl-render = { path = "../logicpearl-render" }
 logicpearl-runtime = { path = "../logicpearl-runtime" }
 miette.workspace = true

@@ -1,11 +1,6 @@
 {
   "packs": [
     {
-      "label": "Healthcare Evidence",
-      "manifest": "../healthcare_policy/demo_manifest.json",
-      "description": "Deterministic evidence-checklist workflow for an MHK-style healthcare conversation."
-    },
-    {
       "label": "OPA / Rego Parity",
       "manifest": "../opa_rego/demo_manifest.json",
       "description": "Parity/import benchmark showing portable policy artifacts and runtime outputs."

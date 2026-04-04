@@ -19,12 +19,6 @@ python3 -m http.server 8000
 Then open:
 
 ```text
-http://localhost:8000/logicpearl/demos/demo_shell/?manifest=../healthcare_policy/demo_manifest.json
-```
-
-Or use the OPA pack:
-
-```text
 http://localhost:8000/logicpearl/demos/demo_shell/?manifest=../opa_rego/demo_manifest.json
 ```
 
@@ -50,10 +44,7 @@ Manifest validation helpers live in the private workspace tooling, not in the pu
 
 Current manifest-backed demos:
 
-- `../healthcare_policy/demo_manifest.json`
 - `../opa_rego/demo_manifest.json`
-
-The healthcare pack shows a deterministic evidence-checklist workflow for an MHK-style conversation.
 
 The OPA pack proves the shell can also carry a parity/import story without assuming healthcare-specific concepts.
 

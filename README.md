@@ -151,6 +151,23 @@ The same stage model is available to plugins:
 - `enricher` plugins transform records before artifact emission
 - `verify` plugins annotate proof or audit status
 
+### 5. Validate a string-of-pearls pipeline artifact
+
+Public product language: a string of pearls.
+
+Executable artifact language: a `pipeline.json`.
+
+Validate the checked-in example:
+
+```bash
+logicpearl pipeline validate examples/pipelines/authz/pipeline.json
+```
+
+What you should see:
+- the pipeline manifest is valid
+- referenced pearl and plugin artifacts resolve correctly
+- stage exports and `@stage.export` references are internally consistent
+
 ### 2. Run a pearl in under a minute
 
 ```bash

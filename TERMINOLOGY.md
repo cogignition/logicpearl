@@ -76,6 +76,7 @@ The tables below break that model into concrete terms.
 |---|---|
 | **Pearl** | A compiled deployable policy artifact. A pearl is the runtime-ready form of discovered and/or layered policy logic. Internally this may still be represented as Gate IR plus compiled runtime targets. |
 | **String Of Pearls** | An ordered composition of multiple pearls evaluated together. Use this when policy is layered or staged across multiple deterministic artifacts. |
+| **Pipeline** | The executable artifact that wires a string of pearls together. In public product surfaces, the composition artifact should be a `pipeline.json` that maps stage inputs, outputs, and conditions explicitly. |
 | **Bitmask** | An integer where each bit position represents one invariant rule. Bit=0 means the rule passed, bit=1 means it failed. `bitmask == 0` means all rules passed (ALLOWED). Any set bit means DENIED. |
 | **Invariant / Rule** | A conjunction of conditions: `feature1 > threshold1 AND feature2 <= threshold2`. Discovered from data, not hand-written. Each rule occupies one bit in the bitmask. |
 | **Condition** | A single threshold check: `feature_name operator threshold`. Operators: `>`, `>=`, `<`, `<=`, `==`, `!=`, `in`, or `not_in`, depending on the IR/runtime layer. |

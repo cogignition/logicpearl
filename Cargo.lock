@@ -313,6 +313,7 @@ dependencies = [
  "logicpearl-discovery",
  "logicpearl-ir",
  "logicpearl-observer",
+ "logicpearl-pipeline",
  "logicpearl-plugin",
  "logicpearl-render",
  "logicpearl-runtime",
@@ -365,6 +366,17 @@ name = "logicpearl-observer"
 version = "0.1.0"
 dependencies = [
  "logicpearl-core",
+]
+
+[[package]]
+name = "logicpearl-pipeline"
+version = "0.1.0"
+dependencies = [
+ "logicpearl-core",
+ "logicpearl-ir",
+ "logicpearl-plugin",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
