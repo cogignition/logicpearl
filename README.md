@@ -118,6 +118,21 @@ Run it on a new input:
 logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json
 ```
 
+Compile it into a standalone native executable:
+
+```bash
+logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo
+./examples/getting_started/output/authz-demo.pearl examples/getting_started/new_input.json
+```
+
+You can also target specific platforms by Rust target triple:
+
+```bash
+logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-unknown-linux-gnu
+logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-pc-windows-msvc
+logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target aarch64-apple-darwin
+```
+
 That is the simplest LogicPearl loop:
 - observed behavior goes in
 - a pearl comes out

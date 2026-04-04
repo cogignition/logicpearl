@@ -27,6 +27,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Build(BuildArgs),
+    Compile(CompileArgs),
     Run(RunArgs),
     Inspect(InspectArgs),
     Verify(VerifyArgs),
@@ -67,6 +68,20 @@ struct BuildArgs {
 struct RunArgs {
     pearl_ir: PathBuf,
     input_json: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct CompileArgs {
+    pearl_ir: PathBuf,
+    /// Rust target triple, for example x86_64-unknown-linux-gnu or x86_64-pc-windows-msvc.
+    #[arg(long)]
+    target: Option<String>,
+    /// Pearl artifact name. Defaults to the gate id.
+    #[arg(long)]
+    name: Option<String>,
+    /// Output executable path. Defaults to <name>.pearl or <name>.pearl.exe for Windows targets.
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -122,6 +137,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build(args) => run_build(args),
+        Commands::Compile(args) => run_compile(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),
@@ -132,6 +148,20 @@ fn main() -> Result<()> {
             command: ObserverCommand::Run(args),
         } => run_observer_run(args),
     }
+}
+
+fn run_compile(args: CompileArgs) -> Result<()> {
+    let gate = LogicPearlGateIr::from_path(&args.pearl_ir)
+        .into_diagnostic()
+        .wrap_err("failed to load pearl IR for compilation")?;
+
+    compile_native_runner(
+        &args.pearl_ir,
+        &gate.gate_id,
+        args.name,
+        args.target,
+        args.output,
+    )
 }
 
 fn run_build(args: BuildArgs) -> Result<()> {
@@ -311,6 +341,100 @@ fn run_eval(args: RunArgs) -> Result<()> {
     Ok(())
 }
 
+fn compile_native_runner(
+    pearl_ir: &PathBuf,
+    gate_id: &str,
+    name: Option<String>,
+    target_triple: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    let pearl_name = name.unwrap_or_else(|| gate_id.to_string());
+    let output_path = output.unwrap_or_else(|| default_compiled_output_path(pearl_ir, &pearl_name, target_triple.as_deref()));
+    let workspace_root = workspace_root();
+    let crate_name = format!("logicpearl_compiled_{}", sanitize_identifier(&pearl_name));
+    let build_dir = workspace_root
+        .join("target")
+        .join("generated")
+        .join(&crate_name);
+    let src_dir = build_dir.join("src");
+    fs::create_dir_all(&src_dir)
+        .into_diagnostic()
+        .wrap_err("failed to create generated compile directory")?;
+
+    let cargo_toml = format!(
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nlogicpearl-ir = {{ path = \"{}\" }}\nlogicpearl-runtime = {{ path = \"{}\" }}\nserde_json = \"1\"\n",
+        workspace_root.join("crates/logicpearl-ir").display(),
+        workspace_root.join("crates/logicpearl-runtime").display(),
+    );
+    fs::write(build_dir.join("Cargo.toml"), cargo_toml)
+        .into_diagnostic()
+        .wrap_err("failed to write generated Cargo.toml")?;
+
+    let escaped_pearl_path = pearl_ir.display().to_string().replace('\\', "\\\\").replace('\"', "\\\"");
+    let main_rs = format!(
+        "use logicpearl_ir::LogicPearlGateIr;\nuse logicpearl_runtime::{{evaluate_gate, parse_input_payload}};\nuse serde_json::Value;\nuse std::fs;\nuse std::process::ExitCode;\n\nconst PEARL_JSON: &str = include_str!(\"{escaped_pearl_path}\");\n\nfn main() -> ExitCode {{\n    match run() {{\n        Ok(()) => ExitCode::SUCCESS,\n        Err(err) => {{\n            eprintln!(\"{{}}\", err);\n            ExitCode::FAILURE\n        }}\n    }}\n}}\n\nfn run() -> Result<(), Box<dyn std::error::Error>> {{\n    let args: Vec<String> = std::env::args().collect();\n    if args.len() != 2 {{\n        return Err(\"usage: compiled-pearl <input.json>\".into());\n    }}\n    let gate = LogicPearlGateIr::from_json_str(PEARL_JSON)?;\n    let payload: Value = serde_json::from_str(&fs::read_to_string(&args[1])?)?;\n    let parsed = parse_input_payload(payload)?;\n    let mut outputs = Vec::with_capacity(parsed.len());\n    for input in parsed {{\n        outputs.push(evaluate_gate(&gate, &input)?);\n    }}\n    if outputs.len() == 1 {{\n        println!(\"{{}}\", outputs[0]);\n    }} else {{\n        println!(\"{{}}\", serde_json::to_string_pretty(&outputs)?);\n    }}\n    Ok(())\n}}\n"
+    );
+    fs::write(src_dir.join("main.rs"), main_rs)
+        .into_diagnostic()
+        .wrap_err("failed to write generated runner source")?;
+
+    let mut command = std::process::Command::new("cargo");
+    command
+        .arg("build")
+        .arg("--offline")
+        .arg("--release")
+        .arg("--manifest-path")
+        .arg(build_dir.join("Cargo.toml"));
+    if let Some(target_triple) = &target_triple {
+        command.arg("--target").arg(target_triple);
+    }
+    let status = command
+        .status()
+        .into_diagnostic()
+        .wrap_err("failed to invoke cargo for native pearl compilation")?;
+    if !status.success() {
+        return Err(miette::miette!(
+            "native pearl compilation failed with status {status}. If this is a cross-compile target, make sure the Rust target and linker/toolchain are installed."
+        ));
+    }
+
+    let built_binary = build_dir
+        .join("target")
+        .join(target_triple.as_deref().unwrap_or(""))
+        .join("release")
+        .join(binary_file_name(&crate_name, target_triple.as_deref()));
+    fs::create_dir_all(
+        output_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    )
+    .into_diagnostic()
+    .wrap_err("failed to create output directory")?;
+    fs::copy(&built_binary, &output_path)
+        .into_diagnostic()
+        .wrap_err("failed to copy compiled pearl binary")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&output_path)
+            .into_diagnostic()
+            .wrap_err("failed to read compiled pearl permissions")?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&output_path, perms)
+            .into_diagnostic()
+            .wrap_err("failed to mark compiled pearl executable")?;
+    }
+
+    println!(
+        "{} {}",
+        "Compiled".bold().bright_green(),
+        output_path.display()
+    );
+    Ok(())
+}
+
 fn run_inspect(args: InspectArgs) -> Result<()> {
     let gate = LogicPearlGateIr::from_path(&args.pearl_ir)
         .into_diagnostic()
@@ -390,6 +514,55 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .map(PathBuf::from)
+        .expect("logicpearl-cli crate should live under workspace/crates/logicpearl-cli")
+}
+
+fn sanitize_identifier(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "pearl".to_string()
+    } else {
+        out
+    }
+}
+
+fn default_compiled_output_path(
+    pearl_ir: &PathBuf,
+    pearl_name: &str,
+    target_triple: Option<&str>,
+) -> PathBuf {
+    pearl_ir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(binary_file_name(&format!("{pearl_name}.pearl"), target_triple))
+}
+
+fn binary_file_name(base: &str, target_triple: Option<&str>) -> String {
+    if target_is_windows(target_triple) {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    }
+}
+
+fn target_is_windows(target_triple: Option<&str>) -> bool {
+    target_triple
+        .map(|target| target.contains("windows"))
+        .unwrap_or(cfg!(target_os = "windows"))
 }
 
 fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
