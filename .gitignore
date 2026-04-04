@@ -17,6 +17,7 @@ fixtures/ir/eval/.generated-inputs/
 # Demo / benchmark generated artifacts
 demos/**/data/
 benchmarks/**/output/
+examples/getting_started/output-*/
 
 # Local downloaded / processed corpora
 corpora/

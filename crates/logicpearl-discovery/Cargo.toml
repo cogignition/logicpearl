@@ -1,0 +1,16 @@
+[package]
+name = "logicpearl-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+csv.workspace = true
+logicpearl-core = { path = "../logicpearl-core" }
+logicpearl-ir = { path = "../logicpearl-ir" }
+logicpearl-runtime = { path = "../logicpearl-runtime" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

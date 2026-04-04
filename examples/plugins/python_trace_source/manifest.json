@@ -1,0 +1,13 @@
+{
+  "name": "python-trace-source-demo",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "trace_source",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "decision_traces_output"
+  ]
+}

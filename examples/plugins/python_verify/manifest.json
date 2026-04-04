@@ -1,0 +1,13 @@
+{
+  "name": "python-verify-demo",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "verify",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "verification_summary"
+  ]
+}

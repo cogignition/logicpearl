@@ -1,0 +1,10 @@
+[package]
+name = "logicpearl-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+logicpearl-core = { path = "../logicpearl-core" }
+logicpearl-ir = { path = "../logicpearl-ir" }
+serde_json.workspace = true

@@ -1,0 +1,13 @@
+{
+  "name": "python-enricher-demo",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "enricher",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "record_enrichment"
+  ]
+}

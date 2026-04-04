@@ -18,8 +18,8 @@ Software should run as artifact, not fog.
 
 <p align="center">
   <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a.svg?style=flat-square"></a>
-  <a href="./runtime/Cargo.toml"><img alt="Runtime" src="https://img.shields.io/badge/runtime-Rust-173053.svg?style=flat-square"></a>
-  <a href="./discovery/pyproject.toml"><img alt="Discovery" src="https://img.shields.io/badge/discovery-Python-173053.svg?style=flat-square"></a>
+  <a href="./Cargo.toml"><img alt="Workspace" src="https://img.shields.io/badge/workspace-Rust-173053.svg?style=flat-square"></a>
+  <a href="./crates/logicpearl-cli/Cargo.toml"><img alt="CLI" src="https://img.shields.io/badge/cli-logicpearl-173053.svg?style=flat-square"></a>
   <a href="./benchmarks/opa_rego/README.md"><img alt="Demo" src="https://img.shields.io/badge/demo-OPA%20parity-173053.svg?style=flat-square"></a>
   <a href="./schema"><img alt="Schema" src="https://img.shields.io/badge/artifact-Pearl%20IR-173053.svg?style=flat-square"></a>
 </p>
@@ -31,7 +31,8 @@ New here? Read [Terminology](./TERMINOLOGY.md) first.
 Quick proof path:
 
 ```bash
-cargo run --manifest-path runtime/Cargo.toml --bin logicpearl -- build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
+cargo install --path crates/logicpearl-cli
+logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
 ```
 
 If that output makes you think “wait, that became a pearl from examples alone,” you are looking at the point of the project.
@@ -70,9 +71,20 @@ This repo is the public proof layer for that model:
 If you only do one thing, run the public proof.
 
 Prerequisites:
-- `uv` for the Python tooling
-- Rust if you want to run the Rust runtime directly
+- Rust
 - a willingness to treat logic as a build artifact instead of application glue
+
+Install the public CLI once:
+
+```bash
+cargo install --path crates/logicpearl-cli
+```
+
+For local development inside the repo, the equivalent form is:
+
+```bash
+cargo run --manifest-path Cargo.toml -p logicpearl-cli -- <command>
+```
 
 ### 1. Build a pearl from decision traces
 
@@ -87,7 +99,7 @@ Each row is an observed decision:
 Now emit a pearl with no hand-written rules:
 
 ```bash
-cargo run --manifest-path runtime/Cargo.toml --bin logicpearl -- build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
+logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
 ```
 
 What you should see:
@@ -97,13 +109,13 @@ What you should see:
 Inspect the artifact:
 
 ```bash
-cargo run --manifest-path runtime/Cargo.toml --bin logicpearl -- inspect examples/getting_started/output/pearl.ir.json
+logicpearl inspect examples/getting_started/output/pearl.ir.json
 ```
 
 Run it on a new input:
 
 ```bash
-cargo run --manifest-path runtime/Cargo.toml --bin logicpearl -- run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json
+logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json
 ```
 
 That is the simplest LogicPearl loop:
@@ -112,17 +124,29 @@ That is the simplest LogicPearl loop:
 - the artifact is inspectable
 - the runtime is deterministic
 
+If you want to drive LogicPearl from Python or another language, prefer the stable artifact and CLI boundary rather than reaching into Rust internals directly:
+
+```bash
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --json
+```
+
+The same stage model is available to plugins:
+- `observer` plugins map messy input into normalized features
+- `trace_source` plugins emit decision traces for discovery
+- `enricher` plugins transform records before artifact emission
+- `verify` plugins annotate proof or audit status
+
 ### 2. Run a pearl in under a minute
 
 ```bash
-cd discovery
-uv run logicpearl-discovery ../fixtures/ir/valid/auth-demo-v1.json ../fixtures/ir/eval/auth-demo-v1-deny-multiple-rules-input.json
+logicpearl inspect fixtures/ir/valid/auth-demo-v1.json
+logicpearl run fixtures/ir/valid/auth-demo-v1.json fixtures/ir/eval/auth-demo-v1-deny-multiple-rules-input.json
 ```
 
 What you should see:
 - a deterministic evaluation result
-- the fired rule bits
-- human-readable labels explaining why the input was denied
+- a compact artifact summary
+- behavior that is explicit instead of buried in service code
 
 That small output shows the core shape:
 - small artifact
@@ -130,12 +154,63 @@ That small output shows the core shape:
 - explicit reasons
 - behavior that does not disappear into service code
 
-### 3. See the bitmask visually
+### 3. Use a Python observer plugin at the edge
 
 ```bash
-cd discovery
-uv run logicpearl-render-bitmask --gate ../fixtures/ir/valid/auth-demo-v1.json --input ../fixtures/ir/eval/auth-demo-v1-deny-multiple-rules-input.json --output /tmp/auth-bitmask.svg
+logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
+logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json
 ```
+
+What you should see:
+- raw input mapped into normalized features
+- a clean process boundary for Python or any other language
+- a plugin contract that does not require embedding Python into the Rust core
+
+That is the other half of the model:
+- raw input comes in
+- the observer emits normalized features
+- the pearl consumes deterministic features
+
+In the full LogicPearl workflow, observers are an artifact boundary too:
+- models or adapters can live at the edge
+- the normalized contract stays explicit
+- the pearl stays deterministic in the middle
+
+### 4. Build through Python plugin stages
+
+Use a Python trace-source plugin:
+
+```bash
+logicpearl build \
+  --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
+  --trace-plugin-input examples/getting_started/decision_traces.csv \
+  --output-dir examples/getting_started/output-plugin
+```
+
+Add a Python enricher plugin in the same build:
+
+```bash
+logicpearl build \
+  --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
+  --trace-plugin-input examples/getting_started/decision_traces.csv \
+  --enricher-plugin-manifest examples/plugins/python_enricher/manifest.json \
+  --output-dir examples/getting_started/output-plugin-enriched
+```
+
+Verify an emitted pearl through a Python verify plugin:
+
+```bash
+logicpearl verify examples/getting_started/output/pearl.ir.json \
+  --plugin-manifest examples/plugins/python_verify/manifest.json \
+  --json
+```
+
+That is the intended plugin shape:
+- Rust owns the core CLI and artifact model
+- Python can plug into explicit stages
+- the contracts stay JSON-based and inspectable
+
+### 5. See the bitmask visually
 
 See example outputs:
 - [Auth Bitmask SVG](./docs/examples/auth-bitmask.svg)
@@ -145,27 +220,6 @@ See example outputs:
   <img src="./docs/examples/auth-bitmask.svg" alt="Auth demo bitmask" width="46%" />
   <img src="./docs/examples/auth-heatmap.svg" alt="Auth demo heatmap" width="46%" />
 </p>
-
-### 4. Run the observer on raw input
-
-```bash
-cd discovery
-uv run logicpearl-observe ../fixtures/observer/valid/auth-observer-v1.json ../fixtures/observer/eval/auth-observer-v1-sample-input.json
-```
-
-What you should see:
-- raw fields mapped into normalized features
-- a clean boundary between observation and deterministic evaluation
-
-That is the other half of the model:
-- raw input comes in
-- the observer emits normalized features
-- the pearl consumes deterministic features
-
-In the full LogicPearl workflow, observers are an artifact boundary too. The fixtures are there to make that boundary inspectable and testable, not to imply that production observers are primarily hand-authored:
-- derived from the domain adapter or generation flow
-- validated against raw-input fixtures
-- kept inspectable and deterministic at runtime
 
 ## Why This Is Interesting
 
@@ -211,8 +265,7 @@ And the full promise is broader than “write rules in JSON”:
 ### Run tests
 
 ```bash
-cd discovery
-uv run pytest
+cargo test --manifest-path Cargo.toml --workspace
 ```
 
 ### Run the OPA parity demo
@@ -226,8 +279,7 @@ uv run python ../benchmarks/opa_rego/run_benchmark.py
 ### Run the Rust runtime directly
 
 ```bash
-cd runtime
-cargo run -- ../benchmarks/opa_rego/output/pearl.ir.json ../benchmarks/opa_rego/output/runtime_inputs.json
+logicpearl run benchmarks/opa_rego/output/pearl.ir.json benchmarks/opa_rego/output/runtime_inputs.json
 ```
 
 Expected OPA outputs:
@@ -273,8 +325,7 @@ The observer fixtures are there to make the boundary inspectable and testable, n
 Run:
 
 ```bash
-cd discovery
-uv run logicpearl-validate-observer ../fixtures/observer/eval/auth-observer-v1-cases.json
+logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
 ```
 
 That shows the intended observer loop:
