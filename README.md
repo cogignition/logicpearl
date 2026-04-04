@@ -179,6 +179,17 @@ logicpearl pipeline run examples/pipelines/observer_membership/pipeline.json exa
 
 That runs a Python observer plugin at the edge, exports normalized features, then feeds them into a deterministic pearl.
 
+And you can keep going into a verification/audit stage:
+
+```bash
+logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
+```
+
+That gives you a full public chain:
+- observer plugin
+- deterministic pearl
+- verify plugin
+
 ### 2. Run a pearl in under a minute
 
 ```bash

@@ -1,0 +1,53 @@
+{
+  "pipeline_version": "1.0",
+  "pipeline_id": "observer_membership_verify_pipeline",
+  "entrypoint": "input",
+  "stages": [
+    {
+      "id": "observer",
+      "kind": "observer_plugin",
+      "plugin_manifest": "../../plugins/python_observer/manifest.json",
+      "input": {
+        "age": "$.age",
+        "member": "$.member",
+        "country": "$.country"
+      },
+      "export": {
+        "age": "$.features.age",
+        "is_member": "$.features.is_member"
+      }
+    },
+    {
+      "id": "gate",
+      "kind": "pearl",
+      "artifact": "../../getting_started/output/pearl.ir.json",
+      "input": {
+        "age": "@observer.age",
+        "is_member": "@observer.is_member"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "audit",
+      "kind": "verify_plugin",
+      "plugin_manifest": "../../plugins/python_pipeline_verify/manifest.json",
+      "input": {
+        "bitmask": "@gate.bitmask",
+        "allow": "@gate.allow"
+      },
+      "export": {
+        "audit_status": "$.audit_status",
+        "consistent": "$.summary.consistent"
+      }
+    }
+  ],
+  "output": {
+    "bitmask": "@gate.bitmask",
+    "allow": "@gate.allow",
+    "audit_status": "@audit.audit_status",
+    "consistent": "@audit.consistent"
+  }
+}

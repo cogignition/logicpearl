@@ -840,4 +840,76 @@ mod tests {
         assert_eq!(execution.output.get("bitmask"), Some(&json!(0)));
         assert_eq!(execution.output.get("allow"), Some(&json!(true)));
     }
+
+    #[test]
+    fn runs_observer_pearl_verify_pipeline() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "observer_verify_demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "observer",
+                  "kind": "observer_plugin",
+                  "plugin_manifest": "../../plugins/python_observer/manifest.json",
+                  "input": {
+                    "age": "$.age",
+                    "member": "$.member",
+                    "country": "$.country"
+                  },
+                  "export": {
+                    "age": "$.features.age",
+                    "is_member": "$.features.is_member"
+                  }
+                },
+                {
+                  "id": "gate",
+                  "kind": "pearl",
+                  "artifact": "../../getting_started/output/pearl.ir.json",
+                  "input": {
+                    "age": "@observer.age",
+                    "is_member": "@observer.is_member"
+                  },
+                  "export": {
+                    "bitmask": "$.bitmask",
+                    "allow": "$.allow"
+                  }
+                },
+                {
+                  "id": "audit",
+                  "kind": "verify_plugin",
+                  "plugin_manifest": "../../plugins/python_pipeline_verify/manifest.json",
+                  "input": {
+                    "bitmask": "@gate.bitmask",
+                    "allow": "@gate.allow"
+                  },
+                  "export": {
+                    "audit_status": "$.audit_status",
+                    "consistent": "$.summary.consistent"
+                  }
+                }
+              ],
+              "output": {
+                "bitmask": "@gate.bitmask",
+                "allow": "@gate.allow",
+                "audit_status": "@audit.audit_status",
+                "consistent": "@audit.consistent"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/pipelines/observer_membership_verify");
+        let input = json!({
+            "age": 34,
+            "member": true,
+            "country": "US"
+        });
+        let execution = pipeline.run(base_dir, &input).expect("pipeline runs");
+        assert_eq!(execution.output.get("bitmask"), Some(&json!(0)));
+        assert_eq!(execution.output.get("allow"), Some(&json!(true)));
+        assert_eq!(execution.output.get("audit_status"), Some(&json!("clean_pass")));
+        assert_eq!(execution.output.get("consistent"), Some(&json!(true)));
+    }
 }

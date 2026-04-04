@@ -1,0 +1,13 @@
+{
+  "name": "python-pipeline-verify-demo",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "verify",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "pipeline_audit_summary"
+  ]
+}
