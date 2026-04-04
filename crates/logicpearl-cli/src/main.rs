@@ -116,6 +116,7 @@ enum PipelineCommand {
     Validate(PipelineValidateArgs),
     Inspect(PipelineInspectArgs),
     Run(PipelineRunArgs),
+    Trace(PipelineTraceArgs),
 }
 
 #[derive(Debug, Args)]
@@ -136,6 +137,15 @@ struct PipelineInspectArgs {
 
 #[derive(Debug, Args)]
 struct PipelineRunArgs {
+    pipeline_json: PathBuf,
+    input_json: PathBuf,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PipelineTraceArgs {
     pipeline_json: PathBuf,
     input_json: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
@@ -187,6 +197,9 @@ fn main() -> Result<()> {
         Commands::Pipeline {
             command: PipelineCommand::Run(args),
         } => run_pipeline_run(args),
+        Commands::Pipeline {
+            command: PipelineCommand::Trace(args),
+        } => run_pipeline_trace(args),
         Commands::Observer {
             command: ObserverCommand::Validate(args),
         } => run_observer_validate(args),
@@ -684,6 +697,64 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&execution.output).into_diagnostic()?
         );
+    }
+    Ok(())
+}
+
+fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
+    let pipeline = PipelineDefinition::from_path(&args.pipeline_json)
+        .into_diagnostic()
+        .wrap_err("failed to load pipeline artifact")?;
+    let base_dir = args
+        .pipeline_json
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let input: Value = serde_json::from_str(
+        &fs::read_to_string(&args.input_json)
+            .into_diagnostic()
+            .wrap_err("failed to read pipeline input JSON")?,
+    )
+    .into_diagnostic()
+    .wrap_err("failed to parse pipeline input JSON")?;
+    let execution = pipeline
+        .run(base_dir, &input)
+        .into_diagnostic()
+        .wrap_err("pipeline trace execution failed")?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&execution).into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Pipeline Trace".bold().bright_yellow(),
+            execution.pipeline_id.bold()
+        );
+        println!(
+            "  {} {}",
+            "Final output".bright_black(),
+            serde_json::to_string(&execution.output).into_diagnostic()?
+        );
+        for stage in &execution.stages {
+            println!(
+                "  {} {} {}",
+                "-".bright_black(),
+                stage.id.bold(),
+                format!("{:?}", stage.kind).bright_black()
+            );
+            println!("    {} {}", "Skipped".bright_black(), stage.skipped);
+            println!(
+                "    {} {}",
+                "Exports".bright_black(),
+                serde_json::to_string(&stage.exports).into_diagnostic()?
+            );
+            println!(
+                "    {} {}",
+                "Raw".bright_black(),
+                serde_json::to_string(&stage.raw_result).into_diagnostic()?
+            );
+        }
     }
     Ok(())
 }

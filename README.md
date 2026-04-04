@@ -163,12 +163,14 @@ Validate the checked-in example:
 logicpearl pipeline validate examples/pipelines/authz/pipeline.json
 logicpearl pipeline inspect examples/pipelines/authz/pipeline.json
 logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
+logicpearl pipeline trace examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json
 ```
 
 What you should see:
 - the pipeline manifest is valid
 - the pipeline structure is inspectable
 - the pearl stage executes and produces final pipeline output
+- the trace command emits the full stage-by-stage execution record
 - stage exports and `@stage.export` references are internally consistent
 
 Plugin-backed stages can run too. For example, observer -> pearl:
