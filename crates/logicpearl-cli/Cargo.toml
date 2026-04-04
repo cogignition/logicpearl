@@ -16,7 +16,9 @@ logicpearl-render = { path = "../logicpearl-render" }
 logicpearl-runtime = { path = "../logicpearl-runtime" }
 miette.workspace = true
 owo-colors.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 
 [[bin]]
 name = "logicpearl"

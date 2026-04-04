@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "schema_id": "logicpearl_pint_case_v1",
+  "description": "Normalized benchmark case shape emitted by the PINT adapter before LogicPearl pipeline execution.",
+  "fields": {
+    "id": {
+      "type": "string",
+      "required": true,
+      "description": "Stable benchmark case identifier."
+    },
+    "source_benchmark": {
+      "type": "string",
+      "required": true,
+      "allowed_values": [
+        "pint"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "required": false,
+      "description": "Optional benchmark category or attack family."
+    },
+    "input": {
+      "type": "object",
+      "required": true,
+      "description": "LogicPearl pipeline input object."
+    },
+    "input.prompt": {
+      "type": "string",
+      "required": true,
+      "description": "Raw prompt text from the benchmark case."
+    },
+    "input.requested_tool": {
+      "type": "string",
+      "required": true,
+      "description": "Tool context used for the guardrail pipeline. Default to `none` when not present."
+    },
+    "input.requested_action": {
+      "type": "string",
+      "required": true,
+      "description": "Action context used for the guardrail pipeline. Default to `chat_response` when not present."
+    },
+    "input.scope": {
+      "type": "string",
+      "required": true,
+      "description": "Scope context used for the guardrail pipeline. Default to `allowed` unless the adapter has stronger evidence."
+    },
+    "input.document_instructions_present": {
+      "type": "boolean",
+      "required": true,
+      "description": "Whether untrusted document/web instructions are present in the benchmark case."
+    },
+    "expected_route": {
+      "type": "string",
+      "required": true,
+      "allowed_values": [
+        "deny"
+      ],
+      "description": "Benchmark-facing expected route before score collapsing."
+    }
+  }
+}

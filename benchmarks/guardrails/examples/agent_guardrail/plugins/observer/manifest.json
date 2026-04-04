@@ -1,0 +1,15 @@
+{
+  "name": "agent-guardrail-observer",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "observer",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "raw_json_input",
+    "feature_output",
+    "security_feature_extraction"
+  ]
+}

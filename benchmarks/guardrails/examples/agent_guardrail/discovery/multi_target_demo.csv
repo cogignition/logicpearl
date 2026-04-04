@@ -1,0 +1,8 @@
+requests_instruction_override,requests_secret_exfiltration,requests_tool_misuse,target_instruction_boundary,target_exfiltration,target_tool_use
+0,0,0,allowed,allowed,allowed
+1,0,0,denied,allowed,allowed
+0,1,0,allowed,denied,allowed
+0,0,1,allowed,allowed,denied
+1,1,0,denied,denied,allowed
+1,0,1,denied,allowed,denied
+0,1,1,allowed,denied,denied

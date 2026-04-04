@@ -26,7 +26,7 @@ Software should run as artifact, not fog.
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Guardrail Benchmarks](#guardrail-benchmarks) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
 Quick proof path:
 
@@ -37,7 +37,7 @@ logicpearl build examples/getting_started/decision_traces.csv --output-dir examp
 
 If that output makes you think “wait, that became a pearl from examples alone,” you are looking at the point of the project.
 
-This repo gives you the public proof layer. If you want the bigger story, the harder migrations, or help attacking a real legacy decision system, go to [logicpearl.com](https://logicpearl.com) or [reach out directly](mailto:ken@devopslibrary.com?subject=LogicPearl%20Consulting).
+This repo gives you the public proof layer. If you want the bigger story, the harder migrations, or help attacking a real legacy decision system, go to [logicpearl.com](https://logicpearl.com) or [reach out directly](mailto:ken@logicpearl.com?subject=LogicPearl%20Consulting).
 
 We are looking for the world's hardest decision-logic problems: the systems with ten years of conditionals, brittle policy layers, hidden behavior, and real consequences. That is the kind of work this model is for, and it is the kind of work we are used to solving.
 
@@ -422,8 +422,56 @@ But the interesting claim is that LogicPearl can come up with the middle artifac
 - compile small pearls to WASM
 - reproduce the auth demo
 - reproduce the OPA / Rego parity demo
+- structure guardrail benchmarks with clean `train / dev / proof` separation
 - see how observer specs and feature contracts connect raw inputs to pearls
 - inspect the generated artifact chain instead of treating the pearl as a black box
+
+## Guardrail Benchmarks
+
+If you want a defensible guardrail benchmark story, keep development corpora separate from proof corpora.
+
+Public benchmark layout:
+- [benchmarks/guardrails/README.md](./benchmarks/guardrails/README.md)
+- [benchmarks/guardrails/guardrail_benchmark.manifest.json](./benchmarks/guardrails/guardrail_benchmark.manifest.json)
+
+The recommended public split is:
+- `train`: Salad-Data, ChatGPT-Jailbreak-Prompts, Vigil, ALERT Adverserial, NOETI ToxicQAFinal, SQuAD 2.0
+- `dev`: held-out slices for threshold and false-positive tuning
+- `proof`: `PINT` only
+
+That keeps the headline result honest:
+- build on broad public corpora
+- tune on held-out development traffic
+- prove on an untouched benchmark
+
+The first public artifact set for this is:
+- [benchmarks/guardrails/examples/agent_guardrail/README.md](./benchmarks/guardrails/examples/agent_guardrail/README.md)
+- [benchmarks/guardrails/examples/agent_guardrail/discovery/README.md](./benchmarks/guardrails/examples/agent_guardrail/discovery/README.md)
+- [docs/advanced-guardrail-guide.md](./docs/advanced-guardrail-guide.md)
+
+And the public CLI can score a dataset slice directly:
+
+```bash
+logicpearl benchmark run \
+  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
+  benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl
+```
+
+The next LogicPearl step is learning the pearls from normalized traces, not hand-writing them:
+
+```bash
+logicpearl build \
+  benchmarks/guardrails/examples/agent_guardrail/discovery/instruction_boundary_traces.csv \
+  --output-dir /tmp/instruction_boundary
+```
+
+And for generalized multi-target discovery:
+
+```bash
+logicpearl discover \
+  benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv \
+  --targets target_instruction_boundary,target_exfiltration,target_tool_use
+```
 
 ## Next Demos
 

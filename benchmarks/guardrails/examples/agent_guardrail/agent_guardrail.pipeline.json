@@ -1,0 +1,115 @@
+{
+  "pipeline_version": "1.0",
+  "pipeline_id": "agent_guardrail_v1",
+  "entrypoint": "input",
+  "stages": [
+    {
+      "id": "observer",
+      "kind": "observer_plugin",
+      "plugin_manifest": "./plugins/observer/manifest.json",
+      "input": {
+        "prompt": "$.prompt",
+        "requested_tool": "$.requested_tool",
+        "requested_action": "$.requested_action",
+        "scope": "$.scope",
+        "document_instructions_present": "$.document_instructions_present"
+      },
+      "export": {
+        "requests_instruction_override": "$.features.requests_instruction_override",
+        "targets_system_prompt": "$.features.targets_system_prompt",
+        "requests_secret_exfiltration": "$.features.requests_secret_exfiltration",
+        "requests_tool_misuse": "$.features.requests_tool_misuse",
+        "requests_data_access_outside_scope": "$.features.requests_data_access_outside_scope",
+        "contains_indirect_document_authority": "$.features.contains_indirect_document_authority",
+        "is_likely_benign_question": "$.features.is_likely_benign_question",
+        "attack_confidence": "$.features.attack_confidence"
+      }
+    },
+    {
+      "id": "tool_authorization",
+      "kind": "pearl",
+      "artifact": "./tool_authorization.pearl.ir.json",
+      "input": {
+        "requests_tool_misuse": "@observer.requests_tool_misuse",
+        "requests_data_access_outside_scope": "@observer.requests_data_access_outside_scope"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "instruction_boundary",
+      "kind": "pearl",
+      "artifact": "./instruction_boundary.pearl.ir.json",
+      "input": {
+        "requests_instruction_override": "@observer.requests_instruction_override",
+        "targets_system_prompt": "@observer.targets_system_prompt",
+        "contains_indirect_document_authority": "@observer.contains_indirect_document_authority"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "data_exfiltration",
+      "kind": "pearl",
+      "artifact": "./data_exfiltration.pearl.ir.json",
+      "input": {
+        "requests_secret_exfiltration": "@observer.requests_secret_exfiltration",
+        "requests_data_access_outside_scope": "@observer.requests_data_access_outside_scope"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "route_status",
+      "kind": "pearl",
+      "artifact": "./route_status.pearl.ir.json",
+      "input": {
+        "tool_authorization_bitmask": "@tool_authorization.bitmask",
+        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "attack_confidence": "@observer.attack_confidence",
+        "is_likely_benign_question": "@observer.is_likely_benign_question"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "audit",
+      "kind": "verify_plugin",
+      "plugin_manifest": "./plugins/route_audit/manifest.json",
+      "input": {
+        "allow": "@route_status.allow",
+        "bitmask": "@route_status.bitmask",
+        "tool_authorization_bitmask": "@tool_authorization.bitmask",
+        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "attack_confidence": "@observer.attack_confidence",
+        "is_likely_benign_question": "@observer.is_likely_benign_question"
+      },
+      "export": {
+        "route_status": "$.route_status",
+        "decision_basis": "$.decision_basis",
+        "consistent": "$.summary.consistent"
+      }
+    }
+  ],
+  "output": {
+    "allow": "@route_status.allow",
+    "bitmask": "@route_status.bitmask",
+    "attack_confidence": "@observer.attack_confidence",
+    "tool_authorization_bitmask": "@tool_authorization.bitmask",
+    "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+    "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+    "route_status": "@audit.route_status",
+    "decision_basis": "@audit.decision_basis",
+    "consistent": "@audit.consistent"
+  }
+}

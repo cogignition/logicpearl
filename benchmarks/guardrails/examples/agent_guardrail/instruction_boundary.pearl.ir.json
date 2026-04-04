@@ -1,0 +1,65 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "instruction_boundary",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requests_instruction_override",
+        "type": "bool"
+      },
+      {
+        "id": "targets_system_prompt",
+        "type": "bool"
+      },
+      {
+        "id": "contains_indirect_document_authority",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_instruction_override",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "any": [
+          {
+            "feature": "requests_instruction_override",
+            "op": "==",
+            "value": true
+          },
+          {
+            "feature": "targets_system_prompt",
+            "op": "==",
+            "value": true
+          }
+        ]
+      },
+      "message": "Prompt attempts to override trusted instructions."
+    },
+    {
+      "id": "deny_indirect_document_authority",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "contains_indirect_document_authority",
+        "op": "==",
+        "value": true
+      },
+      "message": "Untrusted document or webpage instructions cannot become authority."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example agent guardrail policy artifact."
+  },
+  "provenance": {
+    "generator": "logicpearl.guardrail_example",
+    "generator_version": "0.1.0"
+  }
+}

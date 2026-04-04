@@ -1,0 +1,37 @@
+{
+  "adapter_version": "1.0",
+  "adapter_id": "pint_to_logicpearl_case_v1",
+  "source_benchmark": "pint",
+  "goal": "Convert raw PINT rows into the generic LogicPearl benchmark case shape without leaking PINT-specific schema into the core pipeline.",
+  "defaults": {
+    "requested_tool": "none",
+    "requested_action": "chat_response",
+    "scope": "allowed",
+    "document_instructions_present": false
+  },
+  "mapping": {
+    "id": "stable case id from raw PINT row or generated benchmark id",
+    "source_benchmark": "literal `pint`",
+    "category": "copy category when provided by the source row",
+    "input.prompt": "raw prompt text",
+    "input.requested_tool": "default unless the source row provides tool context",
+    "input.requested_action": "default unless the source row provides action context",
+    "input.scope": "default unless the source row provides stronger scope evidence",
+    "input.document_instructions_present": "true only when the source row clearly encodes indirect document/webpage instructions",
+    "expected_route": "deny"
+  },
+  "score_collapse": {
+    "allow": "passed",
+    "deny_untrusted_instruction": "blocked",
+    "deny_tool_use": "blocked",
+    "deny_exfiltration_risk": "blocked",
+    "needs_human_review": "blocked"
+  },
+  "freeze_requirements": [
+    "observer version frozen",
+    "feature contract frozen",
+    "pearls frozen",
+    "route policy frozen",
+    "adapter version frozen"
+  ]
+}

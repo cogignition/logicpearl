@@ -1,0 +1,124 @@
+{
+  "benchmark_version": "1.0",
+  "benchmark_id": "logicpearl_guardrails_v1",
+  "description": "Public LogicPearl benchmark manifest for guardrail development and proof.",
+  "task": "prompt_injection_and_guardrail_routing",
+  "recommended_pipeline": {
+    "observer_stage": "extract normalized security and routing features from raw requests, tool plans, documents, or web content",
+    "policy_stages": [
+      "tool_authorization",
+      "injection_boundary",
+      "data_exfiltration",
+      "route_status"
+    ],
+    "final_routes": [
+      "allow",
+      "deny",
+      "needs_human_review"
+    ]
+  },
+  "splits": {
+    "train": {
+      "purpose": "Build and calibrate observers, pearls, and routing policy.",
+      "groups": [
+        {
+          "id": "prompt_injection",
+          "datasets": [
+            {
+              "name": "Salad-Data",
+              "type": "prompt_injection",
+              "prompts": 21318,
+              "role": "broad training corpus"
+            },
+            {
+              "name": "ChatGPT-Jailbreak-Prompts",
+              "type": "prompt_injection",
+              "prompts": 79,
+              "role": "small jailbreak set"
+            },
+            {
+              "name": "Vigil: LLM Jailbreak embeddings",
+              "type": "prompt_injection",
+              "prompts": 104,
+              "role": "scanner-oriented jailbreak examples"
+            },
+            {
+              "name": "ALERT Adverserial",
+              "type": "prompt_injection",
+              "prompts": 45731,
+              "role": "large harmful-instruction pressure set"
+            }
+          ]
+        },
+        {
+          "id": "moderation",
+          "datasets": [
+            {
+              "name": "NOETI ToxicQAFinal",
+              "type": "content_moderation",
+              "prompts": 6866,
+              "role": "harmful-content routing pressure"
+            }
+          ]
+        },
+        {
+          "id": "benign_negative",
+          "datasets": [
+            {
+              "name": "SQuAD 2.0",
+              "type": "negative",
+              "prompts": 142192,
+              "role": "false-positive control set"
+            }
+          ]
+        }
+      ]
+    },
+    "dev": {
+      "purpose": "Held-out tuning split for thresholds, overblocking, and route quality.",
+      "groups": [
+        {
+          "id": "prompt_injection",
+          "source": "held-out slices from the six public corpora plus internal synthetic hard negatives"
+        },
+        {
+          "id": "moderation",
+          "source": "held-out moderation slice"
+        },
+        {
+          "id": "benign_negative",
+          "source": "held-out benign slice, ideally including agent/tool-use tasks"
+        }
+      ]
+    },
+    "proof": {
+      "purpose": "Final untouched proof set used only for external headline evaluation.",
+      "groups": [
+        {
+          "id": "pint",
+          "datasets": [
+            {
+              "name": "PINT",
+              "type": "prompt_injection",
+              "role": "proof_only"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "metrics": [
+    "attack_catch_rate",
+    "false_positive_rate",
+    "benign_pass_rate",
+    "review_rate",
+    "observer_extraction_success_rate",
+    "deterministic_route_coverage"
+  ],
+  "rules": [
+    "Do not tune on proof data.",
+    "Do not report a single score without false-positive context.",
+    "Prefer category-level reporting over one aggregate number.",
+    "Keep public benchmark results separate from internal customer evaluations."
+  ]
+}

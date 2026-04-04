@@ -1,0 +1,11 @@
+requests_instruction_override,targets_system_prompt,contains_indirect_document_authority,allowed
+0,0,0,allowed
+0,0,0,allowed
+0,0,0,allowed
+0,0,0,allowed
+1,0,0,denied
+0,1,0,denied
+0,0,1,denied
+1,1,0,denied
+1,0,1,denied
+0,1,1,denied

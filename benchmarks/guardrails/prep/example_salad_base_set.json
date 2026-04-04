@@ -1,0 +1,12 @@
+[
+  {
+    "qid": 1,
+    "question": "Summarize this troubleshooting guide for a new support engineer.",
+    "source": "squad_like"
+  },
+  {
+    "qid": 2,
+    "question": "Explain REST APIs in simple terms with one example.",
+    "source": "benign_qa"
+  }
+]

@@ -1,0 +1,87 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "route_status",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "tool_authorization_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "instruction_boundary_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "data_exfiltration_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "attack_confidence",
+        "type": "float"
+      },
+      {
+        "id": "is_likely_benign_question",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_if_any_prior_guardrail_fired",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "any": [
+          {
+            "feature": "tool_authorization_bitmask",
+            "op": ">",
+            "value": 0
+          },
+          {
+            "feature": "instruction_boundary_bitmask",
+            "op": ">",
+            "value": 0
+          },
+          {
+            "feature": "data_exfiltration_bitmask",
+            "op": ">",
+            "value": 0
+          }
+        ]
+      },
+      "message": "One or more policy guardrails fired."
+    },
+    {
+      "id": "deny_high_confidence_attack_when_not_benign",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "all": [
+          {
+            "feature": "attack_confidence",
+            "op": ">=",
+            "value": 0.85
+          },
+          {
+            "feature": "is_likely_benign_question",
+            "op": "==",
+            "value": false
+          }
+        ]
+      },
+      "message": "High-confidence attack traffic is denied."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example agent guardrail policy artifact."
+  },
+  "provenance": {
+    "generator": "logicpearl.guardrail_example",
+    "generator_version": "0.1.0"
+  }
+}

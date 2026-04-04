@@ -1,0 +1,64 @@
+{
+  "contract_version": "1.0",
+  "contract_id": "guardrail_security_features_v1",
+  "description": "Normalized security feature contract for LogicPearl prompt-injection and agent-guardrail discovery.",
+  "features": [
+    {
+      "id": "requests_instruction_override",
+      "type": "bool",
+      "description": "Prompt attempts to ignore, override, or replace trusted instructions."
+    },
+    {
+      "id": "targets_system_prompt",
+      "type": "bool",
+      "description": "Prompt asks for the system prompt or hidden instructions."
+    },
+    {
+      "id": "requests_secret_exfiltration",
+      "type": "bool",
+      "description": "Prompt requests credentials, secrets, tokens, or hidden data."
+    },
+    {
+      "id": "requests_tool_misuse",
+      "type": "bool",
+      "description": "Prompt requests unauthorized or dangerous tool use."
+    },
+    {
+      "id": "requests_data_access_outside_scope",
+      "type": "bool",
+      "description": "Prompt requests data or actions outside the allowed scope."
+    },
+    {
+      "id": "contains_indirect_document_authority",
+      "type": "bool",
+      "description": "Prompt or context tries to make webpage or document instructions authoritative."
+    },
+    {
+      "id": "is_likely_benign_question",
+      "type": "bool",
+      "description": "Prompt looks like harmless summarization, translation, or explanation."
+    },
+    {
+      "id": "attack_confidence",
+      "type": "float",
+      "description": "Observer-side attack likelihood score used as an additional signal, not as final policy."
+    }
+  ],
+  "derived_features": [
+    {
+      "id": "tool_authorization_bitmask",
+      "type": "int",
+      "description": "Bitmask output from the tool-authorization pearl."
+    },
+    {
+      "id": "instruction_boundary_bitmask",
+      "type": "int",
+      "description": "Bitmask output from the instruction-boundary pearl."
+    },
+    {
+      "id": "data_exfiltration_bitmask",
+      "type": "int",
+      "description": "Bitmask output from the data-exfiltration pearl."
+    }
+  ]
+}

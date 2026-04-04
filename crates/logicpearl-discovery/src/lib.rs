@@ -36,6 +36,44 @@ pub struct BuildResult {
     pub output_files: OutputFiles,
 }
 
+#[derive(Debug, Clone)]
+pub struct DiscoverOptions {
+    pub output_dir: PathBuf,
+    pub artifact_set_id: String,
+    pub target_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArtifactDescriptor {
+    pub name: String,
+    pub artifact: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArtifactSet {
+    pub artifact_set_version: String,
+    pub artifact_set_id: String,
+    pub features: Vec<String>,
+    pub binary_targets: Vec<ArtifactDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoverResult {
+    pub source_csv: String,
+    pub artifact_set_id: String,
+    pub rows: usize,
+    pub features: Vec<String>,
+    pub targets: Vec<String>,
+    pub artifacts: Vec<BuildResult>,
+    pub output_files: DiscoverOutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoverOutputFiles {
+    pub artifact_set: String,
+    pub discover_report: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OutputFiles {
     pub pearl_ir: String,
@@ -53,6 +91,156 @@ struct CandidateRule {
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
     let rows = load_decision_traces(csv_path, &options.label_column)?;
     build_pearl_from_rows(&rows, csv_path.display().to_string(), options)
+}
+
+pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<DiscoverResult> {
+    if options.target_columns.is_empty() {
+        return Err(LogicPearlError::message(
+            "discover requires at least one target column",
+        ));
+    }
+
+    let mut reader = csv::Reader::from_path(csv_path)?;
+    let headers = reader.headers()?.clone();
+    for target in &options.target_columns {
+        if !headers.iter().any(|header| header == target) {
+            return Err(LogicPearlError::message(format!(
+                "dataset is missing target column: {target:?}"
+            )));
+        }
+    }
+
+    let feature_columns: Vec<String> = headers
+        .iter()
+        .filter(|header| !options.target_columns.iter().any(|target| target == *header))
+        .map(ToOwned::to_owned)
+        .collect();
+    if feature_columns.is_empty() {
+        return Err(LogicPearlError::message(
+            "discover needs at least one feature column after removing targets",
+        ));
+    }
+
+    options.output_dir.mkdir_all()?;
+    let artifacts_dir = options.output_dir.join("artifacts");
+    artifacts_dir.mkdir_all()?;
+
+    let mut per_target_rows: HashMap<String, Vec<DecisionTraceRow>> = options
+        .target_columns
+        .iter()
+        .map(|target| (target.clone(), Vec::new()))
+        .collect();
+
+    for (index, record) in reader.records().enumerate() {
+        let record = record?;
+        let mut features = HashMap::new();
+        let mut target_values = HashMap::new();
+
+        for (header, value) in headers.iter().zip(record.iter()) {
+            if options.target_columns.iter().any(|target| target == header) {
+                target_values.insert(
+                    header.to_string(),
+                    parse_allowed_label(value, index + 2, header)?,
+                );
+                continue;
+            }
+            if value.trim().is_empty() {
+                return Err(LogicPearlError::message(format!(
+                    "row {} has an empty value for feature {header:?}",
+                    index + 2
+                )));
+            }
+            features.insert(header.to_string(), parse_scalar(value)?);
+        }
+
+        for target in &options.target_columns {
+            let allowed = *target_values.get(target).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "row {} is missing target column {target:?}",
+                    index + 2
+                ))
+            })?;
+            per_target_rows
+                .get_mut(target)
+                .expect("target initialized")
+                .push(DecisionTraceRow {
+                    features: features.clone(),
+                    allowed,
+                });
+        }
+    }
+
+    let mut artifacts = Vec::with_capacity(options.target_columns.len());
+    let mut descriptors = Vec::with_capacity(options.target_columns.len());
+    let row_count = per_target_rows
+        .values()
+        .next()
+        .map(std::vec::Vec::len)
+        .unwrap_or_default();
+
+    for target in &options.target_columns {
+        let target_rows = per_target_rows
+            .remove(target)
+            .ok_or_else(|| LogicPearlError::message(format!("missing rows for target {target:?}")))?;
+        let target_dir = artifacts_dir.join(target);
+        let build = build_pearl_from_rows(
+            &target_rows,
+            csv_path.display().to_string(),
+            &BuildOptions {
+                output_dir: target_dir.clone(),
+                gate_id: target.clone(),
+                label_column: target.clone(),
+            },
+        )?;
+        let relative_artifact = PathBuf::from("artifacts")
+            .join(target)
+            .join("pearl.ir.json")
+            .display()
+            .to_string();
+        descriptors.push(ArtifactDescriptor {
+            name: target.clone(),
+            artifact: relative_artifact,
+        });
+        artifacts.push(build);
+    }
+
+    let artifact_set = ArtifactSet {
+        artifact_set_version: "1.0".to_string(),
+        artifact_set_id: options.artifact_set_id.clone(),
+        features: feature_columns.clone(),
+        binary_targets: descriptors,
+    };
+
+    let artifact_set_path = options.output_dir.join("artifact_set.json");
+    std::fs::write(
+        &artifact_set_path,
+        serde_json::to_string_pretty(&artifact_set)? + "\n",
+    )?;
+
+    let discover = DiscoverResult {
+        source_csv: csv_path.display().to_string(),
+        artifact_set_id: options.artifact_set_id.clone(),
+        rows: row_count,
+        features: feature_columns,
+        targets: options.target_columns.clone(),
+        artifacts,
+        output_files: DiscoverOutputFiles {
+            artifact_set: artifact_set_path.display().to_string(),
+            discover_report: options
+                .output_dir
+                .join("discover_report.json")
+                .display()
+                .to_string(),
+        },
+    };
+
+    let discover_report_path = options.output_dir.join("discover_report.json");
+    std::fs::write(
+        &discover_report_path,
+        serde_json::to_string_pretty(&discover)? + "\n",
+    )?;
+
+    Ok(discover)
 }
 
 pub fn build_pearl_from_rows(
@@ -446,7 +634,7 @@ impl CreateDirAllExt for PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_pearl_from_csv, load_decision_traces, BuildOptions};
+    use super::{build_pearl_from_csv, discover_from_csv, load_decision_traces, BuildOptions, DiscoverOptions};
     use std::path::PathBuf;
 
     #[test]
@@ -493,5 +681,34 @@ mod tests {
         assert_eq!(result.training_parity, 1.0);
         assert!(output_dir.join("pearl.ir.json").exists());
         assert!(output_dir.join("build_report.json").exists());
+    }
+
+    #[test]
+    fn discover_from_csv_emits_artifact_set_and_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("multi_target.csv");
+        std::fs::write(
+            &csv_path,
+            "signal_a,signal_b,target_a,target_b\n0,0,allowed,allowed\n1,0,denied,allowed\n0,1,allowed,denied\n1,1,denied,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("discovered");
+
+        let result = discover_from_csv(
+            &csv_path,
+            &DiscoverOptions {
+                output_dir: output_dir.clone(),
+                artifact_set_id: "multi_target_demo".to_string(),
+                target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.targets.len(), 2);
+        assert_eq!(result.artifacts.len(), 2);
+        assert!(output_dir.join("artifact_set.json").exists());
+        assert!(output_dir.join("discover_report.json").exists());
+        assert!(output_dir.join("artifacts/target_a/pearl.ir.json").exists());
+        assert!(output_dir.join("artifacts/target_b/pearl.ir.json").exists());
     }
 }

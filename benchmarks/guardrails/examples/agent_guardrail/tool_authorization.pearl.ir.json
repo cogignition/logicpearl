@@ -1,0 +1,52 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "tool_authorization",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requests_tool_misuse",
+        "type": "bool"
+      },
+      {
+        "id": "requests_data_access_outside_scope",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_unauthorized_tool_action",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requests_tool_misuse",
+        "op": "==",
+        "value": true
+      },
+      "message": "Requested tool action is outside allowed policy."
+    },
+    {
+      "id": "deny_scope_expansion",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "requests_data_access_outside_scope",
+        "op": "==",
+        "value": true
+      },
+      "message": "Requested scope exceeds allowed data boundary."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example agent guardrail policy artifact."
+  },
+  "provenance": {
+    "generator": "logicpearl.guardrail_example",
+    "generator_version": "0.1.0"
+  }
+}

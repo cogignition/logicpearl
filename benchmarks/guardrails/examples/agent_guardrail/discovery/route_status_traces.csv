@@ -1,0 +1,9 @@
+tool_authorization_bitmask,instruction_boundary_bitmask,data_exfiltration_bitmask,attack_confidence,is_likely_benign_question,allowed
+0,0,0,0.02,1,allowed
+0,0,0,0.05,1,allowed
+0,0,0,0.10,0,allowed
+1,0,0,0.48,0,denied
+0,1,0,0.92,0,denied
+0,0,1,0.20,0,denied
+1,1,0,1.00,0,denied
+0,0,0,0.90,0,denied

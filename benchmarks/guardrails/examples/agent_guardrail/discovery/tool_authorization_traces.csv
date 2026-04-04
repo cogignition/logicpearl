@@ -1,0 +1,10 @@
+requests_tool_misuse,requests_data_access_outside_scope,allowed
+0,0,allowed
+0,0,allowed
+0,0,allowed
+0,0,allowed
+1,0,denied
+0,1,denied
+1,1,denied
+1,0,denied
+0,1,denied
