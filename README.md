@@ -151,7 +151,7 @@ The same stage model is available to plugins:
 - `enricher` plugins transform records before artifact emission
 - `verify` plugins annotate proof or audit status
 
-### 5. Validate a string-of-pearls pipeline artifact
+### 5. Validate and run a string-of-pearls pipeline artifact
 
 Public product language: a string of pearls.
 
@@ -161,12 +161,23 @@ Validate the checked-in example:
 
 ```bash
 logicpearl pipeline validate examples/pipelines/authz/pipeline.json
+logicpearl pipeline inspect examples/pipelines/authz/pipeline.json
+logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
 ```
 
 What you should see:
 - the pipeline manifest is valid
-- referenced pearl and plugin artifacts resolve correctly
+- the pipeline structure is inspectable
+- the pearl stage executes and produces final pipeline output
 - stage exports and `@stage.export` references are internally consistent
+
+Plugin-backed stages can run too. For example, observer -> pearl:
+
+```bash
+logicpearl pipeline run examples/pipelines/observer_membership/pipeline.json examples/pipelines/observer_membership/input.json --json
+```
+
+That runs a Python observer plugin at the edge, exports normalized features, then feeds them into a deterministic pearl.
 
 ### 2. Run a pearl in under a minute
 

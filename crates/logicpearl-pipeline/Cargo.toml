@@ -8,5 +8,6 @@ license.workspace = true
 logicpearl-core = { path = "../logicpearl-core" }
 logicpearl-ir = { path = "../logicpearl-ir" }
 logicpearl-plugin = { path = "../logicpearl-plugin" }
+logicpearl-runtime = { path = "../logicpearl-runtime" }
 serde.workspace = true
 serde_json.workspace = true

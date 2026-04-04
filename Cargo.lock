@@ -375,6 +375,7 @@ dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
  "logicpearl-plugin",
+ "logicpearl-runtime",
  "serde",
  "serde_json",
 ]

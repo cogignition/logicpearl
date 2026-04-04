@@ -8,29 +8,19 @@
       "kind": "pearl",
       "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
       "input": {
-        "member_age": "$.member.age",
-        "requested_amount": "$.request.amount"
+        "action": "$.request.action",
+        "resource_archived": "$.request.resource_archived",
+        "user_role": "$.user.role",
+        "failed_attempts": "$.user.failed_attempts"
       },
       "export": {
         "bitmask": "$.bitmask",
         "allow": "$.allow"
       }
-    },
-    {
-      "id": "audit",
-      "kind": "verify_plugin",
-      "plugin_manifest": "../../plugins/python_verify/manifest.json",
-      "input": {
-        "bitmask": "@authz.bitmask"
-      },
-      "export": {
-        "verification_status": "$.verification_status"
-      }
     }
   ],
   "output": {
     "bitmask": "@authz.bitmask",
-    "allow": "@authz.allow",
-    "verification_status": "@audit.verification_status"
+    "allow": "@authz.allow"
   }
 }

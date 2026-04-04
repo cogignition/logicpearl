@@ -1,7 +1,8 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
-use logicpearl_plugin::PluginManifest;
+use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginResponse, PluginStage};
 use serde::{Deserialize, Serialize};
+use serde_json::Map;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -58,6 +59,24 @@ pub struct ValidatedStage {
     pub artifact: Option<String>,
     pub plugin_manifest: Option<String>,
     pub exports: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PipelineExecution {
+    pub pipeline_id: String,
+    pub ok: bool,
+    pub output: HashMap<String, Value>,
+    pub stages: Vec<StageExecution>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StageExecution {
+    pub id: String,
+    pub kind: PipelineStageKind,
+    pub ok: bool,
+    pub skipped: bool,
+    pub exports: HashMap<String, Value>,
+    pub raw_result: Value,
 }
 
 impl PipelineDefinition {
@@ -151,6 +170,89 @@ impl PipelineDefinition {
             exports,
         })
     }
+
+    pub fn inspect(&self, base_dir: impl AsRef<Path>) -> Result<ValidatedPipeline> {
+        self.validate(base_dir)
+    }
+
+    pub fn run(&self, base_dir: impl AsRef<Path>, root_input: &Value) -> Result<PipelineExecution> {
+        self.validate(&base_dir)?;
+
+        let base_dir = base_dir.as_ref();
+        let mut stage_exports: HashMap<String, HashMap<String, Value>> = HashMap::new();
+        let mut stages = Vec::with_capacity(self.stages.len());
+
+        for stage in &self.stages {
+            let should_run = match &stage.when {
+                Some(condition) => truthy(&resolve_stage_input_value(condition, root_input, &stage_exports)?),
+                None => true,
+            };
+
+            if !should_run {
+                stages.push(StageExecution {
+                    id: stage.id.clone(),
+                    kind: stage.kind.clone(),
+                    ok: true,
+                    skipped: true,
+                    exports: HashMap::new(),
+                    raw_result: Value::Null,
+                });
+                stage_exports.insert(stage.id.clone(), HashMap::new());
+                continue;
+            }
+
+            let raw_result = match stage.kind {
+                PipelineStageKind::Pearl => {
+                    let artifact_path = resolve_relative_path(
+                        base_dir,
+                        stage.artifact.as_ref().expect("validated pearl artifact"),
+                    );
+                    let gate = LogicPearlGateIr::from_path(&artifact_path)?;
+                    let features = build_stage_input_object(&stage.input, root_input, &stage_exports)?;
+                    let bitmask = logicpearl_runtime::evaluate_gate(&gate, &features)?;
+                    Value::Object(
+                        Map::from_iter([
+                            ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
+                            ("bitmask".to_string(), Value::Number(bitmask.into())),
+                            (
+                                "allow".to_string(),
+                                Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
+                            ),
+                        ]),
+                    )
+                }
+                PipelineStageKind::ObserverPlugin => {
+                    run_observer_plugin_stage(stage, base_dir, root_input, &stage_exports)?
+                }
+                PipelineStageKind::EnricherPlugin | PipelineStageKind::VerifyPlugin => {
+                    run_generic_plugin_stage(stage, base_dir, root_input, &stage_exports)?
+                }
+            };
+
+            let exports = build_stage_exports(&stage.export, &raw_result)?;
+            stage_exports.insert(stage.id.clone(), exports.clone());
+            stages.push(StageExecution {
+                id: stage.id.clone(),
+                kind: stage.kind.clone(),
+                ok: true,
+                skipped: false,
+                exports,
+                raw_result,
+            });
+        }
+
+        let mut output = HashMap::new();
+        for (key, value) in &self.output {
+            output.insert(key.clone(), resolve_pipeline_output_value(value, root_input, &stage_exports)?);
+        }
+
+        Ok(PipelineExecution {
+            pipeline_id: self.pipeline_id.clone(),
+            ok: true,
+            output,
+            stages,
+        })
+    }
 }
 
 impl PipelineStage {
@@ -206,7 +308,19 @@ impl PipelineStage {
                         manifest_path.display()
                     )));
                 }
-                PluginManifest::from_path(&manifest_path)?;
+                let manifest = PluginManifest::from_path(&manifest_path)?;
+                let expected_stage = plugin_stage_for_kind(&self.kind).ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "stage {} does not map to a plugin stage",
+                        self.id
+                    ))
+                })?;
+                if manifest.stage != expected_stage {
+                    return Err(LogicPearlError::message(format!(
+                        "stage {} expects plugin stage {:?}, found {:?}",
+                        self.id, expected_stage, manifest.stage
+                    )));
+                }
             }
         }
 
@@ -260,6 +374,104 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+fn plugin_stage_for_kind(kind: &PipelineStageKind) -> Option<PluginStage> {
+    match kind {
+        PipelineStageKind::ObserverPlugin => Some(PluginStage::Observer),
+        PipelineStageKind::EnricherPlugin => Some(PluginStage::Enricher),
+        PipelineStageKind::VerifyPlugin => Some(PluginStage::Verify),
+        PipelineStageKind::Pearl => None,
+    }
+}
+
+fn run_observer_plugin_stage(
+    stage: &PipelineStage,
+    base_dir: &Path,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    let manifest_path = resolve_relative_path(
+        base_dir,
+        stage
+            .plugin_manifest
+            .as_ref()
+            .expect("validated observer plugin manifest"),
+    );
+    let manifest = PluginManifest::from_path(&manifest_path)?;
+    let raw_input = Value::Object(
+        build_stage_input_object(&stage.input, root_input, stage_exports)?
+            .into_iter()
+            .collect(),
+    );
+    let response = run_plugin(
+        &manifest,
+        &PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            payload: serde_json::json!({
+                "raw_input": raw_input,
+            }),
+        },
+    )?;
+    plugin_response_to_value(response)
+}
+
+fn run_generic_plugin_stage(
+    stage: &PipelineStage,
+    base_dir: &Path,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    let manifest_path = resolve_relative_path(
+        base_dir,
+        stage
+            .plugin_manifest
+            .as_ref()
+            .expect("validated plugin manifest"),
+    );
+    let manifest = PluginManifest::from_path(&manifest_path)?;
+    let plugin_stage = plugin_stage_for_kind(&stage.kind).ok_or_else(|| {
+        LogicPearlError::message(format!(
+            "stage {} does not map to a plugin stage",
+            stage.id
+        ))
+    })?;
+    let payload = Value::Object(
+        build_stage_input_object(&stage.input, root_input, stage_exports)?
+            .into_iter()
+            .collect(),
+    );
+    let response = run_plugin(
+        &manifest,
+        &PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: plugin_stage,
+            payload,
+        },
+    )?;
+    plugin_response_to_value(response)
+}
+
+fn plugin_response_to_value(response: PluginResponse) -> Result<Value> {
+    let mut map = Map::new();
+    map.insert("ok".to_string(), Value::Bool(response.ok));
+    if !response.warnings.is_empty() {
+        map.insert(
+            "warnings".to_string(),
+            Value::Array(response.warnings.into_iter().map(Value::String).collect()),
+        );
+    }
+    if let Some(error) = response.error {
+        map.insert(
+            "error".to_string(),
+            serde_json::to_value(error).map_err(LogicPearlError::from)?,
+        );
+    }
+    for (key, value) in response.extra {
+        map.insert(key, value);
+    }
+    Ok(Value::Object(map))
 }
 
 fn validate_value_reference(
@@ -324,9 +536,140 @@ fn validate_reference(
     Ok(())
 }
 
+fn build_stage_input_object(
+    input_map: &HashMap<String, Value>,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<HashMap<String, Value>> {
+    let mut resolved = HashMap::new();
+    for (key, value) in input_map {
+        resolved.insert(
+            key.clone(),
+            resolve_stage_input_value(value, root_input, stage_exports)?,
+        );
+    }
+    Ok(resolved)
+}
+
+fn build_stage_exports(
+    export_map: &HashMap<String, Value>,
+    raw_result: &Value,
+) -> Result<HashMap<String, Value>> {
+    let mut resolved = HashMap::new();
+    for (key, value) in export_map {
+        resolved.insert(key.clone(), resolve_stage_output_value(value, raw_result)?);
+    }
+    Ok(resolved)
+}
+
+fn resolve_stage_input_value(
+    value: &Value,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    resolve_value(value, root_input, None, stage_exports)
+}
+
+fn resolve_stage_output_value(value: &Value, stage_result: &Value) -> Result<Value> {
+    resolve_value(value, stage_result, Some(stage_result), &HashMap::new())
+}
+
+fn resolve_pipeline_output_value(
+    value: &Value,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    resolve_value(value, root_input, None, stage_exports)
+}
+
+fn resolve_value(
+    value: &Value,
+    dollar_scope: &Value,
+    local_scope: Option<&Value>,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    match value {
+        Value::String(reference) if reference.starts_with("$.") => {
+            lookup_json_path(local_scope.unwrap_or(dollar_scope), reference)
+        }
+        Value::String(reference) if reference.starts_with('@') => {
+            let mut parts = reference[1..].split('.');
+            let stage_id = parts.next().ok_or_else(|| {
+                LogicPearlError::message(format!("invalid stage reference: {reference}"))
+            })?;
+            let export_name = parts.next().ok_or_else(|| {
+                LogicPearlError::message(format!("invalid stage reference: {reference}"))
+            })?;
+            if parts.next().is_some() {
+                return Err(LogicPearlError::message(format!(
+                    "invalid stage reference: {reference}"
+                )));
+            }
+            let exports = stage_exports.get(stage_id).ok_or_else(|| {
+                LogicPearlError::message(format!("unknown stage reference: {reference}"))
+            })?;
+            exports.get(export_name).cloned().ok_or_else(|| {
+                LogicPearlError::message(format!("unknown export reference: {reference}"))
+            })
+        }
+        Value::Array(items) => {
+            let mut resolved = Vec::with_capacity(items.len());
+            for item in items {
+                resolved.push(resolve_value(item, dollar_scope, local_scope, stage_exports)?);
+            }
+            Ok(Value::Array(resolved))
+        }
+        Value::Object(map) => {
+            let mut resolved = Map::new();
+            for (key, item) in map {
+                resolved.insert(
+                    key.clone(),
+                    resolve_value(item, dollar_scope, local_scope, stage_exports)?,
+                );
+            }
+            Ok(Value::Object(resolved))
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
+fn lookup_json_path(scope: &Value, reference: &str) -> Result<Value> {
+    let mut current = scope;
+    for segment in reference.trim_start_matches("$.").split('.') {
+        if segment.is_empty() {
+            continue;
+        }
+        current = current
+            .as_object()
+            .and_then(|object| object.get(segment))
+            .ok_or_else(|| LogicPearlError::message(format!("path not found: {reference}")))?;
+    }
+    Ok(current.clone())
+}
+
+fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => {
+            if let Some(int) = number.as_i64() {
+                int != 0
+            } else if let Some(float) = number.as_f64() {
+                float != 0.0
+            } else {
+                false
+            }
+        }
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PipelineDefinition, PipelineStageKind};
+    use serde_json::json;
     use std::path::Path;
 
     #[test]
@@ -393,5 +736,108 @@ mod tests {
             .join("../../examples/pipelines/authz");
         let err = pipeline.validate(base_dir).expect_err("validation should fail");
         assert!(err.to_string().contains("unknown or future stage"));
+    }
+
+    #[test]
+    fn runs_basic_pearl_pipeline() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "authz",
+                  "kind": "pearl",
+                  "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+                  "input": {
+                    "action": "$.request.action",
+                    "resource_archived": "$.request.resource_archived",
+                    "user_role": "$.user.role",
+                    "failed_attempts": "$.user.failed_attempts"
+                  },
+                  "export": {
+                    "bitmask": "$.bitmask",
+                    "allow": "$.allow"
+                  }
+                }
+              ],
+              "output": {
+                "bitmask": "@authz.bitmask",
+                "allow": "@authz.allow"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/pipelines/authz");
+        let input = json!({
+            "request": {
+                "action": "delete",
+                "resource_archived": true
+            },
+            "user": {
+                "role": "viewer",
+                "failed_attempts": 99
+            }
+        });
+        let execution = pipeline.run(base_dir, &input).expect("pipeline runs");
+        assert_eq!(execution.output.get("bitmask"), Some(&json!(7)));
+        assert_eq!(execution.output.get("allow"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn runs_observer_then_pearl_pipeline() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "observer_demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "observer",
+                  "kind": "observer_plugin",
+                  "plugin_manifest": "../../plugins/python_observer/manifest.json",
+                  "input": {
+                    "age": "$.age",
+                    "member": "$.member",
+                    "country": "$.country"
+                  },
+                  "export": {
+                    "age": "$.features.age",
+                    "is_member": "$.features.is_member"
+                  }
+                },
+                {
+                  "id": "gate",
+                  "kind": "pearl",
+                  "artifact": "../../getting_started/output/pearl.ir.json",
+                  "input": {
+                    "age": "@observer.age",
+                    "is_member": "@observer.is_member"
+                  },
+                  "export": {
+                    "bitmask": "$.bitmask",
+                    "allow": "$.allow"
+                  }
+                }
+              ],
+              "output": {
+                "bitmask": "@gate.bitmask",
+                "allow": "@gate.allow"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/pipelines/observer_membership");
+        let input = json!({
+            "age": 34,
+            "member": true,
+            "country": "US"
+        });
+        let execution = pipeline.run(base_dir, &input).expect("pipeline runs");
+        assert_eq!(execution.output.get("bitmask"), Some(&json!(0)));
+        assert_eq!(execution.output.get("allow"), Some(&json!(true)));
     }
 }

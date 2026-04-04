@@ -1,0 +1,10 @@
+{
+  "request": {
+    "action": "delete",
+    "resource_archived": true
+  },
+  "user": {
+    "role": "viewer",
+    "failed_attempts": 99
+  }
+}
