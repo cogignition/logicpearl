@@ -1,0 +1,32 @@
+{
+  "observer_version": "1.0",
+  "observer_id": "broken_observer_v1",
+  "raw_schema": {
+    "fields": [
+      {
+        "id": "role",
+        "type": "enum",
+        "values": ["viewer", "editor", "admin"]
+      }
+    ]
+  },
+  "feature_contract": {
+    "contract_version": "1.0",
+    "contract_id": "broken_contract_v1",
+    "observer_id": "broken_observer_v1",
+    "features": [
+      {
+        "id": "user_role",
+        "type": "enum",
+        "values": ["viewer", "editor", "admin"]
+      }
+    ]
+  },
+  "mappings": [
+    {
+      "feature_id": "user_role",
+      "kind": "field_copy",
+      "raw_field": "missing_role"
+    }
+  ]
+}

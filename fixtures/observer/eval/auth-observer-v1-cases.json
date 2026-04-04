@@ -1,0 +1,72 @@
+{
+  "observer_fixture": "observer/valid/auth-observer-v1.json",
+  "gate_fixture": "ir/valid/auth-demo-v1.json",
+  "cases": [
+    {
+      "id": "viewer_write_denied",
+      "raw_input": {
+        "action_code": "write",
+        "archived": false,
+        "role": "viewer",
+        "login_failures": 1
+      },
+      "expected_features": {
+        "action": "write",
+        "resource_archived": false,
+        "user_role": "viewer",
+        "failed_attempts": 1,
+        "is_write_like": true,
+        "is_viewer": true,
+        "viewer_write_like": true,
+        "is_editor": false,
+        "is_admin": false,
+        "is_elevated_role": false
+      },
+      "expected_bitmask": 4
+    },
+    {
+      "id": "archived_read_allowed",
+      "raw_input": {
+        "action_code": "read",
+        "archived": true,
+        "role": "editor",
+        "login_failures": 0
+      },
+      "expected_features": {
+        "action": "read",
+        "resource_archived": true,
+        "user_role": "editor",
+        "failed_attempts": 0,
+        "is_write_like": false,
+        "is_viewer": false,
+        "viewer_write_like": false,
+        "is_editor": true,
+        "is_admin": false,
+        "is_elevated_role": true
+      },
+      "expected_bitmask": 0
+    },
+    {
+      "id": "archived_delete_and_lockout",
+      "raw_input": {
+        "action_code": "delete",
+        "archived": true,
+        "role": "admin",
+        "login_failures": 12
+      },
+      "expected_features": {
+        "action": "delete",
+        "resource_archived": true,
+        "user_role": "admin",
+        "failed_attempts": 12,
+        "is_write_like": true,
+        "is_viewer": false,
+        "viewer_write_like": false,
+        "is_editor": false,
+        "is_admin": true,
+        "is_elevated_role": true
+      },
+      "expected_bitmask": 3
+    }
+  ]
+}

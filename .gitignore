@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+uv.lock
+
+# Rust
+target/
+
+# OS / editor
+.DS_Store
+
+# Generated conformance inputs
+fixtures/ir/eval/.generated-inputs/
+
+# Demo / benchmark generated artifacts
+demos/**/data/
+benchmarks/**/output/
+
+# Local downloaded / processed corpora
+corpora/
+
+# Legacy workspace material stays out of the public repo source
+legacy/

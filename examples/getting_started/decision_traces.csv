@@ -1,0 +1,13 @@
+age,is_member,allowed
+34,1,allowed
+29,1,allowed
+42,0,allowed
+25,0,allowed
+31,1,allowed
+19,1,allowed
+17,1,denied
+16,0,denied
+15,1,denied
+14,0,denied
+13,1,denied
+12,0,denied

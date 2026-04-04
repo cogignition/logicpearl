@@ -1,0 +1,488 @@
+{
+  "$defs": {
+    "CaseSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "submission_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Submission Id"
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "review_type": {
+          "title": "Review Type",
+          "type": "string"
+        },
+        "payer": {
+          "title": "Payer",
+          "type": "string"
+        },
+        "requested_service": {
+          "title": "Requested Service",
+          "type": "string"
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product"
+        },
+        "line_of_business": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Of Business"
+        },
+        "structured_event_count": {
+          "title": "Structured Event Count",
+          "type": "integer"
+        },
+        "clinical_document_count": {
+          "title": "Clinical Document Count",
+          "type": "integer"
+        },
+        "accepted_assertion_count": {
+          "title": "Accepted Assertion Count",
+          "type": "integer"
+        },
+        "ambiguous_assertion_count": {
+          "title": "Ambiguous Assertion Count",
+          "type": "integer"
+        },
+        "organized_case_summary": {
+          "title": "Organized Case Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "channel",
+        "review_type",
+        "payer",
+        "requested_service",
+        "structured_event_count",
+        "clinical_document_count",
+        "accepted_assertion_count",
+        "ambiguous_assertion_count",
+        "organized_case_summary"
+      ],
+      "title": "CaseSummary",
+      "type": "object"
+    },
+    "DocumentationStatus": {
+      "enum": [
+        "present",
+        "missing_required_documentation",
+        "ambiguous"
+      ],
+      "title": "DocumentationStatus",
+      "type": "string"
+    },
+    "EvaluationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "ready_for_review": {
+          "title": "Ready For Review",
+          "type": "boolean"
+        },
+        "route_status": {
+          "$ref": "#/$defs/RoutingStatus"
+        },
+        "documentation_complete": {
+          "title": "Documentation Complete",
+          "type": "boolean"
+        },
+        "needs_human_review": {
+          "title": "Needs Human Review",
+          "type": "boolean"
+        },
+        "missing_question_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Question Ids",
+          "type": "array"
+        },
+        "ambiguous_question_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ambiguous Question Ids",
+          "type": "array"
+        },
+        "missing_documentation": {
+          "items": {
+            "$ref": "#/$defs/MissingDocumentationItem"
+          },
+          "title": "Missing Documentation",
+          "type": "array"
+        },
+        "bitmask": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bitmask"
+        }
+      },
+      "required": [
+        "ready_for_review",
+        "route_status",
+        "documentation_complete",
+        "needs_human_review"
+      ],
+      "title": "EvaluationSummary",
+      "type": "object"
+    },
+    "MatchedEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "snippet": {
+          "title": "Snippet",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "kind",
+        "source",
+        "snippet"
+      ],
+      "title": "MatchedEvidence",
+      "type": "object"
+    },
+    "MissingDocumentationItem": {
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "requirement_id": {
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "cluster_id": {
+          "title": "Cluster Id",
+          "type": "string"
+        },
+        "required_document_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Document Kinds",
+          "type": "array"
+        },
+        "note": {
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "requirement_id",
+        "cluster_id",
+        "note"
+      ],
+      "title": "MissingDocumentationItem",
+      "type": "object"
+    },
+    "OrganizedDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "matched_question_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Question Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "document_id",
+        "kind",
+        "source"
+      ],
+      "title": "OrganizedDocument",
+      "type": "object"
+    },
+    "QuestionEvaluationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "question_text": {
+          "title": "Question Text",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/QuestionStatus"
+        },
+        "documentation_status": {
+          "$ref": "#/$defs/DocumentationStatus"
+        },
+        "requirement_id": {
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "cluster_id": {
+          "title": "Cluster Id",
+          "type": "string"
+        },
+        "guided_question_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guided Question Id"
+        },
+        "required_document_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Document Kinds",
+          "type": "array"
+        },
+        "missing_document_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Document Kinds",
+          "type": "array"
+        },
+        "matched_document_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Document Ids",
+          "type": "array"
+        },
+        "matched_evidence": {
+          "items": {
+            "$ref": "#/$defs/MatchedEvidence"
+          },
+          "title": "Matched Evidence",
+          "type": "array"
+        },
+        "policy_source_id": {
+          "title": "Policy Source Id",
+          "type": "string"
+        },
+        "policy_excerpt": {
+          "title": "Policy Excerpt",
+          "type": "string"
+        },
+        "policy_citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Citation"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "question_text",
+        "status",
+        "documentation_status",
+        "requirement_id",
+        "cluster_id",
+        "policy_source_id",
+        "policy_excerpt",
+        "reason"
+      ],
+      "title": "QuestionEvaluationResult",
+      "type": "object"
+    },
+    "QuestionStatus": {
+      "enum": [
+        "found",
+        "not_found",
+        "ambiguous"
+      ],
+      "title": "QuestionStatus",
+      "type": "string"
+    },
+    "ReviewPacket": {
+      "additionalProperties": false,
+      "properties": {
+        "route_status": {
+          "$ref": "#/$defs/RoutingStatus"
+        },
+        "review_summary": {
+          "title": "Review Summary",
+          "type": "string"
+        },
+        "organized_documents": {
+          "items": {
+            "$ref": "#/$defs/OrganizedDocument"
+          },
+          "title": "Organized Documents",
+          "type": "array"
+        },
+        "missing_documentation": {
+          "items": {
+            "$ref": "#/$defs/MissingDocumentationItem"
+          },
+          "title": "Missing Documentation",
+          "type": "array"
+        },
+        "audit_notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Audit Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "route_status",
+        "review_summary"
+      ],
+      "title": "ReviewPacket",
+      "type": "object"
+    },
+    "RoutingStatus": {
+      "enum": [
+        "ready_for_clinical_review",
+        "missing_required_documentation",
+        "needs_human_review"
+      ],
+      "title": "RoutingStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "policy_id": {
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "submission_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Submission Id"
+    },
+    "case_summary": {
+      "$ref": "#/$defs/CaseSummary"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/QuestionEvaluationResult"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "review_packet": {
+      "$ref": "#/$defs/ReviewPacket"
+    },
+    "summary": {
+      "$ref": "#/$defs/EvaluationSummary"
+    }
+  },
+  "required": [
+    "request_id",
+    "policy_id",
+    "case_summary",
+    "questions",
+    "review_packet",
+    "summary"
+  ],
+  "title": "LogicPearl Healthcare Response v1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,82 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "auth_demo_v1",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "action",
+        "type": "enum",
+        "values": ["read", "write", "delete"]
+      },
+      {
+        "id": "resource_archived",
+        "type": "bool"
+      },
+      {
+        "id": "user_role",
+        "type": "enum",
+        "values": ["viewer", "editor", "admin", "contractor"]
+      },
+      {
+        "id": "failed_attempts",
+        "type": "int",
+        "min": 0,
+        "max": 1000
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "archive_read_only",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "all": [
+          { "feature": "resource_archived", "op": "==", "value": true },
+          { "feature": "action", "op": "!=", "value": "read" }
+        ]
+      },
+      "message": "Archived resources are read-only."
+    },
+    {
+      "id": "too_many_failed_attempts",
+      "kind": "threshold",
+      "bit": 1,
+      "deny_when": {
+        "feature": "failed_attempts",
+        "op": ">",
+        "value": 10
+      },
+      "message": "Too many failed attempts."
+    },
+    {
+      "id": "viewer_cannot_write",
+      "kind": "predicate",
+      "bit": 2,
+      "deny_when": {
+        "all": [
+          { "feature": "user_role", "op": "==", "value": "viewer" },
+          { "feature": "action", "op": "in", "value": ["write", "delete"] }
+        ]
+      },
+      "message": "Viewer role is read-only."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": [
+      { "feature": "failed_attempts", "op": ">=", "value": 0 }
+    ],
+    "correctness_scope": "Consistent with encoded feature constraints and training-derived denial rules."
+  },
+  "provenance": {
+    "generator": "legacy_logicpearl.v2",
+    "generator_version": "0.1.0",
+    "source_commit": "example",
+    "created_at": "2026-03-31T00:00:00Z"
+  }
+}

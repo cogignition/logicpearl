@@ -1,0 +1,22 @@
+<svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="320" height="320" rx="48" fill="#0B1220"/>
+  <circle cx="160" cy="160" r="118" fill="url(#bg)"/>
+  <path d="M88 150C88 116.863 114.863 90 148 90H172C205.137 90 232 116.863 232 150V157C232 164.18 226.18 170 219 170H101C93.8203 170 88 164.18 88 157V150Z" fill="#17223B" stroke="#9FC5FF" stroke-width="8"/>
+  <path d="M113 172H207C218.046 172 227 180.954 227 192C227 225.137 200.137 252 167 252H153C119.863 252 93 225.137 93 192C93 180.954 101.954 172 113 172Z" fill="#111A2D" stroke="#9FC5FF" stroke-width="8"/>
+  <path d="M124 130L143 150" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M160 118V148" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M196 130L177 150" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="160" cy="196" r="34" fill="url(#pearl)"/>
+  <circle cx="148" cy="184" r="8" fill="#FDFEFF" fill-opacity="0.95"/>
+  <defs>
+    <linearGradient id="bg" x1="51" y1="54" x2="265" y2="271" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#11233F"/>
+      <stop offset="1" stop-color="#0A1428"/>
+    </linearGradient>
+    <radialGradient id="pearl" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(148 180) rotate(47.8) scale(52.6)">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.58" stop-color="#DCEBFF"/>
+      <stop offset="1" stop-color="#90AEDD"/>
+    </radialGradient>
+  </defs>
+</svg>

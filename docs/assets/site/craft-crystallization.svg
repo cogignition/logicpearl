@@ -1,0 +1,29 @@
+<svg width="360" height="250" viewBox="0 0 360 250" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="44" y1="18" x2="323" y2="223" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#174959"/>
+      <stop offset="1" stop-color="#0A3341"/>
+    </linearGradient>
+    <linearGradient id="cube" x1="180" y1="62" x2="180" y2="186" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BFFAF2"/>
+      <stop offset="1" stop-color="#86D9D1"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="250" rx="26" fill="url(#bg)"/>
+  <circle cx="103" cy="61" r="28" fill="#FFC8B1" fill-opacity="0.18"/>
+  <circle cx="269" cy="57" r="22" fill="#FFF0C9" fill-opacity="0.2"/>
+  <path d="M180 62L246 100V176L180 214L114 176V100L180 62Z" stroke="url(#cube)" stroke-width="4"/>
+  <path d="M180 62V214" stroke="url(#cube)" stroke-width="4"/>
+  <path d="M114 100L180 138L246 100" stroke="url(#cube)" stroke-width="4"/>
+  <path d="M114 176L180 138L246 176" stroke="url(#cube)" stroke-width="4"/>
+  <path d="M147 81L213 119V195" stroke="#9AF3E8" stroke-width="2.5" stroke-dasharray="4 10"/>
+  <path d="M213 81L147 119V195" stroke="#9AF3E8" stroke-width="2.5" stroke-dasharray="4 10"/>
+  <circle cx="180" cy="62" r="10" fill="#FFC6AF"/>
+  <circle cx="246" cy="100" r="10" fill="#FFC6AF"/>
+  <circle cx="246" cy="176" r="10" fill="#FFC6AF"/>
+  <circle cx="180" cy="214" r="10" fill="#FFC6AF"/>
+  <circle cx="114" cy="176" r="10" fill="#FFC6AF"/>
+  <circle cx="114" cy="100" r="10" fill="#FFC6AF"/>
+  <circle cx="180" cy="138" r="12" fill="#FFF2D6"/>
+  <path d="M67 203C115 176 159 165 201 171C238 177 285 175 321 161" stroke="#D5FFF8" stroke-width="4" stroke-linecap="round"/>
+</svg>

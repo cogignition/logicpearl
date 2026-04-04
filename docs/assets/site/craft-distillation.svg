@@ -1,0 +1,24 @@
+<svg width="360" height="250" viewBox="0 0 360 250" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="32" y1="24" x2="326" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1C7C88"/>
+      <stop offset="1" stop-color="#0B4654"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#E2FFF8"/>
+      <stop offset="1" stop-color="#8CEBDB"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="250" rx="26" fill="url(#bg)"/>
+  <circle cx="257" cy="78" r="46" fill="#FFE8B8" fill-opacity="0.22"/>
+  <path d="M40 190C93 165 147 159 198 172C245 185 292 187 340 170V250H40V190Z" fill="#0A3742"/>
+  <rect x="58" y="104" width="74" height="91" rx="14" fill="#173C48" stroke="#C8FFF5" stroke-width="4"/>
+  <path d="M83 77H107V116H83V77Z" fill="#173C48" stroke="#C8FFF5" stroke-width="4"/>
+  <path d="M80 151C80 138 89 126 101 122C117 117 128 125 132 138V182H80V151Z" fill="url(#glass)"/>
+  <path d="M95 90C123 96 152 95 181 86C205 79 228 78 253 87" stroke="#D4FFF8" stroke-width="6" stroke-linecap="round" stroke-dasharray="1 14"/>
+  <path d="M224 123L246 81L268 123V156C268 170 258 181 246 190C232 181 224 170 224 156V123Z" fill="#FFB89F" stroke="#FFE3D6" stroke-width="4"/>
+  <path d="M246 94L252 109L268 111L255 123L259 140L246 132L233 140L237 123L224 111L240 109L246 94Z" fill="#FFF0DB"/>
+  <path d="M151 166C173 152 195 149 218 157" stroke="#FFF5DD" stroke-width="5" stroke-linecap="round"/>
+  <rect x="184" y="40" width="98" height="38" rx="19" fill="#D9FFF6" fill-opacity="0.9"/>
+  <text x="233" y="64" fill="#143038" font-family="Avenir Next, Segoe UI, sans-serif" font-size="20" font-weight="700" text-anchor="middle">DATA</text>
+</svg>

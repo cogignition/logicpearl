@@ -1,0 +1,141 @@
+{
+  "observer_version": "1.0",
+  "observer_id": "auth_observer_v1",
+  "raw_schema": {
+    "fields": [
+      {
+        "id": "action_code",
+        "type": "enum",
+        "values": ["read", "write", "delete"]
+      },
+      {
+        "id": "archived",
+        "type": "bool"
+      },
+      {
+        "id": "role",
+        "type": "enum",
+        "values": ["viewer", "editor", "admin", "contractor"]
+      },
+      {
+        "id": "login_failures",
+        "type": "int",
+        "min": 0,
+        "max": 1000
+      }
+    ]
+  },
+  "feature_contract": {
+    "contract_version": "1.0",
+    "contract_id": "auth_feature_contract_v1",
+    "observer_id": "auth_observer_v1",
+    "features": [
+      {
+        "id": "action",
+        "type": "enum",
+        "values": ["read", "write", "delete"]
+      },
+      {
+        "id": "resource_archived",
+        "type": "bool"
+      },
+      {
+        "id": "user_role",
+        "type": "enum",
+        "values": ["viewer", "editor", "admin", "contractor"]
+      },
+      {
+        "id": "failed_attempts",
+        "type": "int",
+        "min": 0,
+        "max": 1000
+      },
+      {
+        "id": "is_write_like",
+        "type": "bool"
+      },
+      {
+        "id": "is_viewer",
+        "type": "bool"
+      },
+      {
+        "id": "viewer_write_like",
+        "type": "bool"
+      },
+      {
+        "id": "is_editor",
+        "type": "bool"
+      },
+      {
+        "id": "is_admin",
+        "type": "bool"
+      },
+      {
+        "id": "is_elevated_role",
+        "type": "bool"
+      }
+    ]
+  },
+  "mappings": [
+    {
+      "feature_id": "action",
+      "kind": "field_copy",
+      "raw_field": "action_code"
+    },
+    {
+      "feature_id": "resource_archived",
+      "kind": "field_copy",
+      "raw_field": "archived"
+    },
+    {
+      "feature_id": "user_role",
+      "kind": "field_copy",
+      "raw_field": "role"
+    },
+    {
+      "feature_id": "failed_attempts",
+      "kind": "field_copy",
+      "raw_field": "login_failures"
+    },
+    {
+      "feature_id": "is_write_like",
+      "kind": "field_in_set",
+      "raw_field": "action_code",
+      "values": ["write", "delete"]
+    },
+    {
+      "feature_id": "is_viewer",
+      "kind": "field_equals",
+      "raw_field": "role",
+      "value": "viewer"
+    },
+    {
+      "feature_id": "viewer_write_like",
+      "kind": "feature_all_true",
+      "source_features": ["is_viewer", "is_write_like"]
+    },
+    {
+      "feature_id": "is_editor",
+      "kind": "field_equals",
+      "raw_field": "role",
+      "value": "editor"
+    },
+    {
+      "feature_id": "is_admin",
+      "kind": "field_equals",
+      "raw_field": "role",
+      "value": "admin"
+    },
+    {
+      "feature_id": "is_elevated_role",
+      "kind": "feature_any_true",
+      "source_features": ["is_editor", "is_admin"]
+    }
+  ],
+  "provenance": {
+    "generator": "manual_fixture",
+    "generator_version": "0.1.0",
+    "source_commit": "example",
+    "created_at": "2026-04-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,732 @@
+{
+  "$defs": {
+    "CandidateAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion_id": {
+          "title": "Assertion Id",
+          "type": "string"
+        },
+        "cluster_id": {
+          "title": "Cluster Id",
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ],
+          "title": "Value",
+          "type": "string"
+        },
+        "confidence": {
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source_document_id": {
+          "title": "Source Document Id",
+          "type": "string"
+        },
+        "source_snippet": {
+          "title": "Source Snippet",
+          "type": "string"
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        },
+        "extractor": {
+          "title": "Extractor",
+          "type": "string"
+        },
+        "matched_terms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Terms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "assertion_id",
+        "cluster_id",
+        "value",
+        "confidence",
+        "source_document_id",
+        "source_snippet",
+        "extractor"
+      ],
+      "title": "CandidateAssertion",
+      "type": "object"
+    },
+    "ClinicalEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "$ref": "#/$defs/ClinicalEventType"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "code",
+        "label",
+        "source"
+      ],
+      "title": "ClinicalEvent",
+      "type": "object"
+    },
+    "ClinicalEventType": {
+      "enum": [
+        "diagnosis",
+        "procedure",
+        "medication",
+        "note_assertion"
+      ],
+      "title": "ClinicalEventType",
+      "type": "string"
+    },
+    "EvidenceDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mime Type"
+        },
+        "received_via": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SubmissionChannel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "document_id",
+        "kind",
+        "text",
+        "source"
+      ],
+      "title": "EvidenceDocument",
+      "type": "object"
+    },
+    "GuidedQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "question_text": {
+          "title": "Question Text",
+          "type": "string"
+        },
+        "requirement_id": {
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "cluster_id": {
+          "title": "Cluster Id",
+          "type": "string"
+        },
+        "required_document_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Document Kinds",
+          "type": "array"
+        },
+        "documentation_hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Documentation Hint"
+        },
+        "template": {
+          "const": "dtr_guided_question",
+          "default": "dtr_guided_question",
+          "title": "Template",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "question_text",
+        "requirement_id",
+        "cluster_id"
+      ],
+      "title": "GuidedQuestion",
+      "type": "object"
+    },
+    "MemberEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "structured_events": {
+          "items": {
+            "$ref": "#/$defs/ClinicalEvent"
+          },
+          "title": "Structured Events",
+          "type": "array"
+        },
+        "unstructured_documents": {
+          "items": {
+            "$ref": "#/$defs/EvidenceDocument"
+          },
+          "title": "Unstructured Documents",
+          "type": "array"
+        },
+        "candidate_assertions": {
+          "items": {
+            "$ref": "#/$defs/CandidateAssertion"
+          },
+          "title": "Candidate Assertions",
+          "type": "array"
+        },
+        "reviewed_assertions": {
+          "items": {
+            "$ref": "#/$defs/ReviewedAssertion"
+          },
+          "title": "Reviewed Assertions",
+          "type": "array"
+        }
+      },
+      "title": "MemberEvidence",
+      "type": "object"
+    },
+    "PolicyContext": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_id": {
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "policy_sources": {
+          "items": {
+            "$ref": "#/$defs/PolicySourceRef"
+          },
+          "title": "Policy Sources",
+          "type": "array"
+        },
+        "guideline_sources": {
+          "items": {
+            "$ref": "#/$defs/PolicySourceRef"
+          },
+          "title": "Guideline Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "policy_id",
+        "policy_sources"
+      ],
+      "title": "PolicyContext",
+      "type": "object"
+    },
+    "PolicySourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "excerpt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Excerpt"
+        }
+      },
+      "required": [
+        "source_id",
+        "title",
+        "url"
+      ],
+      "title": "PolicySourceRef",
+      "type": "object"
+    },
+    "ProviderReference": {
+      "additionalProperties": false,
+      "properties": {
+        "provider_name": {
+          "title": "Provider Name",
+          "type": "string"
+        },
+        "npi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Npi"
+        },
+        "specialty": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Specialty"
+        }
+      },
+      "required": [
+        "provider_name"
+      ],
+      "title": "ProviderReference",
+      "type": "object"
+    },
+    "RequestContext": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "payer": {
+          "title": "Payer",
+          "type": "string"
+        },
+        "member_id": {
+          "title": "Member Id",
+          "type": "string"
+        },
+        "requested_service": {
+          "$ref": "#/$defs/RequestedService"
+        },
+        "product": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product"
+        },
+        "line_of_business": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Of Business"
+        },
+        "urgency": {
+          "$ref": "#/$defs/RequestUrgency",
+          "default": "standard"
+        },
+        "requesting_provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "servicing_provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "request_id",
+        "payer",
+        "member_id",
+        "requested_service"
+      ],
+      "title": "RequestContext",
+      "type": "object"
+    },
+    "RequestUrgency": {
+      "enum": [
+        "standard",
+        "expedited",
+        "urgent"
+      ],
+      "title": "RequestUrgency",
+      "type": "string"
+    },
+    "RequestedService": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "drug",
+            "procedure",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "code",
+        "label"
+      ],
+      "title": "RequestedService",
+      "type": "object"
+    },
+    "ReviewType": {
+      "enum": [
+        "prior_authorization",
+        "concurrent_review",
+        "post_service_review",
+        "medical_necessity_review"
+      ],
+      "title": "ReviewType",
+      "type": "string"
+    },
+    "ReviewedAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion_id": {
+          "title": "Assertion Id",
+          "type": "string"
+        },
+        "cluster_id": {
+          "title": "Cluster Id",
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ],
+          "title": "Value",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewedAssertionStatus"
+        },
+        "trust_score": {
+          "title": "Trust Score",
+          "type": "number"
+        },
+        "trust_signals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trust Signals",
+          "type": "array"
+        },
+        "source_document_id": {
+          "title": "Source Document Id",
+          "type": "string"
+        },
+        "source_snippet": {
+          "title": "Source Snippet",
+          "type": "string"
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        },
+        "derived_from": {
+          "title": "Derived From",
+          "type": "string"
+        },
+        "review_method": {
+          "title": "Review Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "assertion_id",
+        "cluster_id",
+        "value",
+        "status",
+        "trust_score",
+        "source_document_id",
+        "source_snippet",
+        "derived_from",
+        "review_method"
+      ],
+      "title": "ReviewedAssertion",
+      "type": "object"
+    },
+    "ReviewedAssertionStatus": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "ambiguous",
+        "needs_human_review"
+      ],
+      "title": "ReviewedAssertionStatus",
+      "type": "string"
+    },
+    "StructuredHistory": {
+      "additionalProperties": false,
+      "properties": {
+        "diagnoses": {
+          "items": {
+            "$ref": "#/$defs/ClinicalEvent"
+          },
+          "title": "Diagnoses",
+          "type": "array"
+        },
+        "procedures": {
+          "items": {
+            "$ref": "#/$defs/ClinicalEvent"
+          },
+          "title": "Procedures",
+          "type": "array"
+        },
+        "medications": {
+          "items": {
+            "$ref": "#/$defs/ClinicalEvent"
+          },
+          "title": "Medications",
+          "type": "array"
+        },
+        "note_assertions": {
+          "items": {
+            "$ref": "#/$defs/ClinicalEvent"
+          },
+          "title": "Note Assertions",
+          "type": "array"
+        }
+      },
+      "title": "StructuredHistory",
+      "type": "object"
+    },
+    "SubmissionChannel": {
+      "enum": [
+        "provider_portal",
+        "fax_attachment",
+        "fhir_epa"
+      ],
+      "title": "SubmissionChannel",
+      "type": "string"
+    },
+    "SubmissionMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "submission_id": {
+          "title": "Submission Id",
+          "type": "string"
+        },
+        "channel": {
+          "$ref": "#/$defs/SubmissionChannel"
+        },
+        "review_type": {
+          "$ref": "#/$defs/ReviewType"
+        },
+        "submitted_at": {
+          "title": "Submitted At",
+          "type": "string"
+        },
+        "source_system": {
+          "title": "Source System",
+          "type": "string"
+        },
+        "attachment_count": {
+          "default": 0,
+          "title": "Attachment Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "submission_id",
+        "channel",
+        "review_type",
+        "submitted_at",
+        "source_system"
+      ],
+      "title": "SubmissionMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request": {
+      "$ref": "#/$defs/RequestContext"
+    },
+    "submission": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SubmissionMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "policy_context": {
+      "$ref": "#/$defs/PolicyContext"
+    },
+    "guided_questions": {
+      "items": {
+        "$ref": "#/$defs/GuidedQuestion"
+      },
+      "title": "Guided Questions",
+      "type": "array"
+    },
+    "structured_history": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StructuredHistory"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "clinical_documents": {
+      "items": {
+        "$ref": "#/$defs/EvidenceDocument"
+      },
+      "title": "Clinical Documents",
+      "type": "array"
+    },
+    "member_evidence": {
+      "$ref": "#/$defs/MemberEvidence"
+    }
+  },
+  "required": [
+    "request",
+    "policy_context"
+  ],
+  "title": "LogicPearl Healthcare Request Bundle v1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

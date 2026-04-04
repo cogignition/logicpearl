@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-observer-spec-v1.schema.json",
+  "title": "LogicPearl Observer Spec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observer_version",
+    "observer_id",
+    "raw_schema",
+    "feature_contract",
+    "mappings"
+  ],
+  "properties": {
+    "observer_version": {
+      "const": "1.0"
+    },
+    "observer_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "raw_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/rawField" }
+        }
+      }
+    },
+    "feature_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "contract_id", "observer_id", "features"],
+      "properties": {
+        "contract_version": { "const": "1.0" },
+        "contract_id": { "type": "string", "minLength": 1 },
+        "observer_id": { "type": "string", "minLength": 1 },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/feature" }
+        }
+      }
+    },
+    "mappings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/mapping" }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generator": { "type": "string" },
+        "generator_version": { "type": "string" },
+        "source_commit": { "type": "string" },
+        "created_at": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "featureType": {
+      "type": "string",
+      "enum": ["bool", "int", "float", "string", "enum"]
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/featureType" },
+        "description": { "type": "string" },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": ["string", "number", "boolean"]
+          }
+        },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "editable": { "type": "boolean" }
+      }
+    },
+    "rawField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/featureType" },
+        "description": { "type": "string" },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": ["string", "number", "boolean"]
+          }
+        },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature_id", "kind"],
+      "properties": {
+        "feature_id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "field_copy",
+            "field_equals",
+            "field_in_set",
+            "feature_all_true",
+            "feature_any_true"
+          ]
+        },
+        "raw_field": { "type": "string", "minLength": 1 },
+        "source_features": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "value": {
+          "type": ["string", "number", "boolean"]
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": ["string", "number", "boolean"]
+          }
+        },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "source_csv": "/Users/missingno/Documents/LogicPearl/logicpearl/examples/getting_started/decision_traces.csv",
+  "gate_id": "decision_traces",
+  "rows": 12,
+  "label_column": "allowed",
+  "rules_discovered": 1,
+  "selected_features": [
+    "age",
+    "is_member"
+  ],
+  "training_parity": 1.0,
+  "output_files": {
+    "pearl_ir": "/Users/missingno/Documents/LogicPearl/logicpearl/examples/getting_started/output/pearl.ir.json"
+  }
+}

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LogicPearl Demo Shell</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">LP</div>
+          <div>
+            <div class="brand-name">LogicPearl</div>
+            <div class="brand-subtitle">Demo Shell</div>
+          </div>
+        </div>
+        <nav id="section-nav" class="section-nav"></nav>
+      </aside>
+
+      <main class="main-content">
+        <section id="gallery" class="content-card">
+          <div class="section-header">
+            <h2>Demo Packs</h2>
+            <p>One shell, multiple customer or domain stories.</p>
+          </div>
+          <div id="gallery-grid" class="card-grid"></div>
+        </section>
+
+        <section class="hero-card">
+          <div class="hero-copy">
+            <p id="eyebrow" class="eyebrow">Manifest-driven demo</p>
+            <h1 id="demo-title">Loading demo...</h1>
+            <p id="demo-subtitle" class="subtitle"></p>
+            <p id="demo-tagline" class="tagline"></p>
+          </div>
+          <div id="stats-grid" class="stats-grid"></div>
+        </section>
+
+        <section id="patient-focus" class="focus-card">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">What Matters Now</p>
+              <h2 id="focus-title">Loading case...</h2>
+            </div>
+            <div id="focus-status" class="case-result"></div>
+          </div>
+          <p id="focus-summary" class="focus-summary"></p>
+          <div id="focus-actions" class="focus-actions"></div>
+          <div id="focus-grid" class="focus-grid"></div>
+        </section>
+
+        <section id="evidence-detail" class="content-card">
+          <div class="section-header">
+            <div>
+              <h2>Selected Evidence</h2>
+              <p>Click a trial, paper, dataset, or concept below to open a readable explanation here.</p>
+            </div>
+          </div>
+          <div id="evidence-detail-content" class="evidence-detail-panel">
+            Select something below to see why it matters and how it connects.
+          </div>
+        </section>
+
+        <section id="cases" class="content-card">
+          <div class="section-header">
+            <h2>Case Walkthroughs</h2>
+            <p>Start here. Pick a case, read the plain-language summary, then drill into evidence only if needed.</p>
+          </div>
+          <div class="cases-layout">
+            <div id="case-list" class="case-list"></div>
+            <div id="case-detail" class="case-detail"></div>
+          </div>
+        </section>
+
+        <details id="story" class="content-card collapsible-section">
+          <summary class="collapsible-summary">
+            <span>Why This Demo Exists</span>
+            <span class="meta-note">Background and scope</span>
+          </summary>
+          <div class="story-grid">
+            <article>
+              <h3>Problem</h3>
+              <p id="problem-text"></p>
+            </article>
+            <article>
+              <h3>Why LogicPearl</h3>
+              <p id="why-text"></p>
+            </article>
+            <article>
+              <h3>Scope</h3>
+              <ul id="scope-list"></ul>
+            </article>
+            <article>
+              <h3>Non-goals</h3>
+              <ul id="non-goals-list"></ul>
+            </article>
+          </div>
+        </details>
+
+        <details id="sources" class="content-card collapsible-section">
+          <summary class="collapsible-summary">
+            <span>Source Grounding</span>
+            <span class="meta-note">Where the evidence comes from</span>
+          </summary>
+          <div id="sources-grid" class="card-grid"></div>
+        </details>
+
+        <details id="artifacts" class="content-card collapsible-section">
+          <summary class="collapsible-summary">
+            <span>Artifacts</span>
+            <span class="meta-note">Structured files and runtime outputs</span>
+          </summary>
+          <div id="artifacts-grid" class="card-grid"></div>
+          <div class="artifact-preview-layout">
+            <div id="artifact-preview-list" class="artifact-preview-list"></div>
+            <div class="artifact-preview-panel artifact-card">
+              <div class="section-header artifact-preview-header">
+                <div>
+                  <div class="meta-label">Preview</div>
+                  <h3 id="artifact-preview-title">Select an artifact</h3>
+                </div>
+                <a id="artifact-preview-link" href="#" hidden>Open raw artifact</a>
+              </div>
+              <p id="artifact-preview-description" class="meta-note"></p>
+              <div id="artifact-preview-content" class="artifact-preview-content">Artifact previews will appear here.</div>
+            </div>
+          </div>
+        </details>
+
+        <details id="sharing" class="content-card collapsible-section">
+          <summary class="collapsible-summary">
+            <span>Sharing</span>
+            <span class="meta-note">How to open or publish this as a static site</span>
+          </summary>
+          <div class="story-grid">
+            <article>
+              <h3>Local Preview</h3>
+              <p>Run a static file server from the repo root, then open the GBM site path in a browser.</p>
+              <pre class="artifact-preview-content">python3 -m http.server 8000</pre>
+            </article>
+            <article>
+              <h3>Static Hosting</h3>
+              <p>These files can be dropped onto GitHub Pages, Netlify, Cloudflare Pages, Vercel static hosting, or any basic CDN-backed bucket.</p>
+            </article>
+            <article>
+              <h3>Private Demo Packs</h3>
+              <p>Additional domain-heavy packs can be hosted from the private workspace without changing this public shell.</p>
+            </article>
+          </div>
+        </details>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,55 @@
+{
+  "gate_fixture": "ir/valid/auth-demo-v1.json",
+  "cases": [
+    {
+      "id": "allow_read_active_editor",
+      "input": {
+        "action": "read",
+        "resource_archived": false,
+        "user_role": "editor",
+        "failed_attempts": 0
+      },
+      "expected_bitmask": 0
+    },
+    {
+      "id": "deny_archived_write",
+      "input": {
+        "action": "write",
+        "resource_archived": true,
+        "user_role": "editor",
+        "failed_attempts": 0
+      },
+      "expected_bitmask": 1
+    },
+    {
+      "id": "deny_failed_attempts_only",
+      "input": {
+        "action": "read",
+        "resource_archived": false,
+        "user_role": "admin",
+        "failed_attempts": 11
+      },
+      "expected_bitmask": 2
+    },
+    {
+      "id": "deny_viewer_delete_only",
+      "input": {
+        "action": "delete",
+        "resource_archived": false,
+        "user_role": "viewer",
+        "failed_attempts": 0
+      },
+      "expected_bitmask": 4
+    },
+    {
+      "id": "deny_multiple_rules",
+      "input": {
+        "action": "delete",
+        "resource_archived": true,
+        "user_role": "viewer",
+        "failed_attempts": 99
+      },
+      "expected_bitmask": 7
+    }
+  ]
+}

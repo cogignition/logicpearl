@@ -1,0 +1,32 @@
+<svg width="1200" height="420" viewBox="0 0 1200 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="420" rx="28" fill="#08101D"/>
+  <rect x="24" y="24" width="1152" height="372" rx="22" fill="url(#panel)" stroke="#20304C"/>
+  <circle cx="184" cy="210" r="114" fill="#0F1E35"/>
+  <path d="M116 201C116 169.52 141.52 144 173 144H195C226.48 144 252 169.52 252 201V208C252 214.627 246.627 220 240 220H128C121.373 220 116 214.627 116 208V201Z" fill="#17223B" stroke="#9FC5FF" stroke-width="8"/>
+  <path d="M139 222H229C239.493 222 248 230.507 248 241C248 272.48 222.48 298 191 298H177C145.52 298 120 272.48 120 241C120 230.507 128.507 222 139 222Z" fill="#111A2D" stroke="#9FC5FF" stroke-width="8"/>
+  <path d="M150 182L167 199" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M184 170V197" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M218 182L201 199" stroke="#D7E8FF" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="184" cy="244" r="32" fill="url(#pearl)"/>
+  <circle cx="173" cy="233" r="7" fill="#FDFEFF" fill-opacity="0.96"/>
+  <text x="338" y="158" fill="#F7FAFF" font-family="Georgia, 'Times New Roman', serif" font-size="70" font-weight="700" letter-spacing="1">LogicPearl</text>
+  <text x="338" y="212" fill="#B8CAE8" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="28">Your logic, distilled into pearls.</text>
+  <text x="338" y="270" fill="#DCE7F9" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="22">Deterministic artifacts, runtime, observers, and reproducible policy parity demos.</text>
+  <rect x="338" y="302" width="184" height="44" rx="22" fill="#173053" stroke="#9FC5FF"/>
+  <text x="370" y="331" fill="#F7FAFF" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="600">pearl-runtime</text>
+  <rect x="536" y="302" width="148" height="44" rx="22" fill="#0D182B" stroke="#39557D"/>
+  <text x="569" y="331" fill="#D9E7FB" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="600">Pearl IR</text>
+  <rect x="698" y="302" width="198" height="44" rx="22" fill="#0D182B" stroke="#39557D"/>
+  <text x="731" y="331" fill="#D9E7FB" font-family="'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="600">OPA parity demo</text>
+  <defs>
+    <linearGradient id="panel" x1="24" y1="24" x2="1176" y2="396" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1A2F"/>
+      <stop offset="1" stop-color="#0A1323"/>
+    </linearGradient>
+    <radialGradient id="pearl" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(173 232) rotate(48.5) scale(49.9)">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#DCEBFF"/>
+      <stop offset="1" stop-color="#8BA8D4"/>
+    </radialGradient>
+  </defs>
+</svg>

@@ -1,0 +1,40 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "invalid_duplicate_bit",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "action",
+        "type": "enum",
+        "values": ["read", "write"]
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_a",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "action",
+        "op": "==",
+        "value": "write"
+      }
+    },
+    {
+      "id": "rule_b",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "action",
+        "op": "==",
+        "value": "read"
+      }
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  }
+}
