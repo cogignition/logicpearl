@@ -923,7 +923,7 @@ mod tests {
                 {
                   "id": "gate",
                   "kind": "pearl",
-                  "artifact": "../../getting_started/output/pearl.ir.json",
+                  "artifact": "../../../fixtures/ir/valid/membership-demo-v1.json",
                   "input": {
                     "age": "@observer.age",
                     "is_member": "@observer.is_member"
@@ -978,7 +978,7 @@ mod tests {
                 {
                   "id": "gate",
                   "kind": "pearl",
-                  "artifact": "../../getting_started/output/pearl.ir.json",
+                  "artifact": "../../../fixtures/ir/valid/membership-demo-v1.json",
                   "input": {
                     "age": "@observer.age",
                     "is_member": "@observer.is_member"
