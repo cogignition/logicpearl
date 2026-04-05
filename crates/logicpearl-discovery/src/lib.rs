@@ -65,7 +65,14 @@ pub struct DiscoverResult {
     pub features: Vec<String>,
     pub targets: Vec<String>,
     pub artifacts: Vec<BuildResult>,
+    pub skipped_targets: Vec<SkippedTarget>,
     pub output_files: DiscoverOutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedTarget {
+    pub name: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,6 +179,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
     let mut artifacts = Vec::with_capacity(options.target_columns.len());
     let mut descriptors = Vec::with_capacity(options.target_columns.len());
+    let mut skipped_targets = Vec::new();
     let row_count = per_target_rows
         .values()
         .next()
@@ -182,8 +190,24 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         let target_rows = per_target_rows
             .remove(target)
             .ok_or_else(|| LogicPearlError::message(format!("missing rows for target {target:?}")))?;
+        let denied_count = target_rows.iter().filter(|row| !row.allowed).count();
+        let allowed_count = target_rows.iter().filter(|row| row.allowed).count();
+        if denied_count == 0 {
+            skipped_targets.push(SkippedTarget {
+                name: target.clone(),
+                reason: "no denied examples present".to_string(),
+            });
+            continue;
+        }
+        if allowed_count == 0 {
+            skipped_targets.push(SkippedTarget {
+                name: target.clone(),
+                reason: "no allowed examples present".to_string(),
+            });
+            continue;
+        }
         let target_dir = artifacts_dir.join(target);
-        let build = build_pearl_from_rows(
+        let build = match build_pearl_from_rows(
             &target_rows,
             csv_path.display().to_string(),
             &BuildOptions {
@@ -191,7 +215,16 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 gate_id: target.clone(),
                 label_column: target.clone(),
             },
-        )?;
+        ) {
+            Ok(build) => build,
+            Err(err) => {
+                skipped_targets.push(SkippedTarget {
+                    name: target.clone(),
+                    reason: err.to_string(),
+                });
+                continue;
+            }
+        };
         let relative_artifact = PathBuf::from("artifacts")
             .join(target)
             .join("pearl.ir.json")
@@ -224,6 +257,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         features: feature_columns,
         targets: options.target_columns.clone(),
         artifacts,
+        skipped_targets,
         output_files: DiscoverOutputFiles {
             artifact_set: artifact_set_path.display().to_string(),
             discover_report: options
@@ -557,6 +591,12 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
         None => return false,
     };
     match (&candidate.op, value, &candidate.value) {
+        (ComparisonOperator::Eq, Value::Number(left), Value::Number(right)) => {
+            match (left.as_f64(), right.as_f64()) {
+                (Some(left), Some(right)) => (left - right).abs() < 1e-9,
+                _ => false,
+            }
+        }
         (ComparisonOperator::Eq, left, right) => left == right,
         (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => {
             left.as_f64().unwrap_or_default() <= right.as_f64().unwrap_or_default()
@@ -710,5 +750,6 @@ mod tests {
         assert!(output_dir.join("discover_report.json").exists());
         assert!(output_dir.join("artifacts/target_a/pearl.ir.json").exists());
         assert!(output_dir.join("artifacts/target_b/pearl.ir.json").exists());
+        assert!(result.skipped_targets.is_empty());
     }
 }

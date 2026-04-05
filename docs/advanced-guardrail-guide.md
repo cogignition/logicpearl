@@ -42,7 +42,7 @@ This is the boundary between:
 
 ## Phase 1: Adapt Non-PINT Data
 
-The first public non-`PINT` adapter is `Salad-Data`.
+The first public non-`PINT` adapters are `Salad-Data` and `ALERT`.
 
 Benign `base_set`:
 
@@ -62,6 +62,23 @@ logicpearl benchmark adapt-salad \
   --output /tmp/salad_attack.jsonl
 ```
 
+Attack `ALERT`:
+
+```bash
+logicpearl benchmark adapt-alert \
+  benchmarks/guardrails/prep/example_alert_attack.json \
+  --output /tmp/alert_attack.jsonl
+```
+
+Merge those slices into one development corpus:
+
+```bash
+logicpearl benchmark merge-cases \
+  /tmp/salad_base.jsonl \
+  /tmp/salad_attack.jsonl \
+  --output /tmp/salad_dev.jsonl
+```
+
 The adapted JSONL shape is a stable LogicPearl benchmark case:
 - `id`
 - `input`
@@ -74,9 +91,9 @@ Run the guardrail observer over the adapted cases:
 
 ```bash
 logicpearl benchmark observe \
-  /tmp/salad_attack.jsonl \
+  /tmp/salad_dev.jsonl \
   --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
-  --output /tmp/salad_attack_observed.jsonl
+  --output /tmp/salad_dev_observed.jsonl
 ```
 
 This emits rows that keep:
@@ -90,16 +107,16 @@ Project observed rows into discovery-ready CSVs:
 
 ```bash
 logicpearl benchmark emit-traces \
-  /tmp/salad_attack_observed.jsonl \
+  /tmp/salad_dev_observed.jsonl \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_traces
 ```
 
 This emits:
 - `multi_target.csv`
-- `instruction_boundary_traces.csv`
-- `data_exfiltration_traces.csv`
-- `tool_authorization_traces.csv`
-- `route_status_traces.csv`
+- `target_instruction_boundary_traces.csv`
+- `target_exfiltration_traces.csv`
+- `target_tool_use_traces.csv`
 
 This step is development-oriented. It projects target labels from:
 - final expected route
@@ -110,8 +127,24 @@ That is acceptable for a public development workflow, but it is not the same thi
 This command is generic on purpose:
 - `observe` gives you normalized feature rows
 - `emit-traces` turns those rows into discovery-ready tables
+- the projection logic lives in a config file, not in the CLI itself
 
-The target projection logic can evolve by profile or config later, but the CLI verb itself should stay general.
+If you want the middle of the workflow as one command, use:
+
+```bash
+logicpearl benchmark prepare \
+  /tmp/salad_dev.jsonl \
+  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
+  --output-dir /tmp/guardrail_prep \
+  --json
+```
+
+That emits:
+- `observed.jsonl`
+- `traces/*.csv`
+- `discovered/artifact_set.json`
+- `discovered/discover_report.json`
 
 ## Phase 4: Learn Pearls
 
@@ -119,7 +152,7 @@ Single-target example:
 
 ```bash
 logicpearl build \
-  /tmp/guardrail_traces/instruction_boundary_traces.csv \
+  /tmp/guardrail_traces/target_instruction_boundary_traces.csv \
   --output-dir /tmp/instruction_boundary
 ```
 
@@ -191,6 +224,7 @@ That collapses rich internal routes into benchmark-facing:
 
 Public pieces already available:
 - `logicpearl benchmark adapt-salad`
+- `logicpearl benchmark merge-cases`
 - `logicpearl benchmark adapt-pint`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`

@@ -50,6 +50,7 @@ Today, the public pieces already in place are:
 - `logicpearl discover`
 - `logicpearl benchmark run`
 - `logicpearl benchmark adapt-salad`
+- `logicpearl benchmark adapt-alert`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
 - `logicpearl benchmark adapt-pint`
@@ -75,21 +76,50 @@ logicpearl benchmark adapt-salad \
   --output /tmp/salad_attack.jsonl
 ```
 
+Attack `ALERT`:
+
+```bash
+logicpearl benchmark adapt-alert \
+  benchmarks/guardrails/prep/example_alert_attack.json \
+  --output /tmp/alert_attack.jsonl
+```
+
+Merge benign and attack slices into one development set:
+
+```bash
+logicpearl benchmark merge-cases \
+  /tmp/salad_base.jsonl \
+  /tmp/salad_attack.jsonl \
+  --output /tmp/salad_dev.jsonl
+```
+
 Observe those adapted rows:
 
 ```bash
 logicpearl benchmark observe \
-  /tmp/salad_attack.jsonl \
+  /tmp/salad_dev.jsonl \
   --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
-  --output /tmp/salad_attack_observed.jsonl
+  --output /tmp/salad_dev_observed.jsonl
 ```
 
 Then project them into discovery-ready traces:
 
 ```bash
 logicpearl benchmark emit-traces \
-  /tmp/salad_attack_observed.jsonl \
+  /tmp/salad_dev_observed.jsonl \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_traces
+```
+
+Or run the generic middle stage in one shot:
+
+```bash
+logicpearl benchmark prepare \
+  /tmp/salad_dev.jsonl \
+  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
+  --output-dir /tmp/guardrail_prep \
+  --json
 ```
 
 The internal workflow design is documented in:

@@ -1,0 +1,53 @@
+{
+  "feature_columns": [
+    "requests_instruction_override",
+    "targets_system_prompt",
+    "requests_secret_exfiltration",
+    "requests_tool_misuse",
+    "requests_data_access_outside_scope",
+    "contains_indirect_document_authority",
+    "is_likely_benign_question",
+    "attack_confidence"
+  ],
+  "emit_multi_target": true,
+  "binary_targets": [
+    {
+      "name": "target_instruction_boundary",
+      "trace_features": [
+        "requests_instruction_override",
+        "targets_system_prompt",
+        "contains_indirect_document_authority"
+      ],
+      "positive_when": {
+        "expected_routes": ["deny"],
+        "any_features": [
+          "requests_instruction_override",
+          "targets_system_prompt",
+          "contains_indirect_document_authority"
+        ]
+      }
+    },
+    {
+      "name": "target_exfiltration",
+      "trace_features": [
+        "requests_secret_exfiltration",
+        "requests_data_access_outside_scope"
+      ],
+      "positive_when": {
+        "expected_routes": ["deny"],
+        "any_features": ["requests_secret_exfiltration"]
+      }
+    },
+    {
+      "name": "target_tool_use",
+      "trace_features": [
+        "requests_tool_misuse",
+        "requests_data_access_outside_scope"
+      ],
+      "positive_when": {
+        "expected_routes": ["deny"],
+        "any_features": ["requests_tool_misuse"]
+      }
+    }
+  ]
+}

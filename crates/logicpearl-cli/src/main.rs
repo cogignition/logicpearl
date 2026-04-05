@@ -117,6 +117,12 @@ enum Commands {
 enum BenchmarkCommand {
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
     AdaptSalad(BenchmarkAdaptSaladArgs),
+    /// Convert a raw ALERT JSON file into LogicPearl benchmark-case JSONL.
+    AdaptAlert(BenchmarkAdaptAlertArgs),
+    /// Observe benchmark cases, emit traces, and discover artifacts in one run.
+    Prepare(BenchmarkPrepareArgs),
+    /// Merge multiple benchmark-case JSONL files into one dataset.
+    MergeCases(BenchmarkMergeCasesArgs),
     /// Run an observer plugin over benchmark cases and emit observed feature rows.
     Observe(BenchmarkObserveArgs),
     /// Project observed benchmark rows into discovery-ready trace CSVs.
@@ -258,6 +264,57 @@ struct BenchmarkAdaptSaladArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl benchmark adapt-alert raw_alert.json --output /tmp/alert_attack.jsonl")]
+struct BenchmarkAdaptAlertArgs {
+    raw_alert_json: PathBuf,
+    /// Output JSONL path in LogicPearl benchmark-case format.
+    #[arg(long)]
+    output: PathBuf,
+    /// Default requested tool when the source row does not provide one.
+    #[arg(long, default_value = "none")]
+    requested_tool: String,
+    /// Default requested action when the source row does not provide one.
+    #[arg(long, default_value = "chat_response")]
+    requested_action: String,
+    /// Default scope when the source row does not provide one.
+    #[arg(long, default_value = "allowed")]
+    scope: String,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl benchmark merge-cases /tmp/salad_base.jsonl /tmp/salad_attack.jsonl --output /tmp/salad_dev.jsonl")]
+struct BenchmarkMergeCasesArgs {
+    inputs: Vec<PathBuf>,
+    /// Output JSONL path containing the concatenated benchmark cases.
+    #[arg(long)]
+    output: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json")]
+struct BenchmarkPrepareArgs {
+    dataset_jsonl: PathBuf,
+    /// Observer plugin manifest used to normalize each benchmark case input.
+    #[arg(long)]
+    plugin_manifest: PathBuf,
+    /// Projection config that maps observed rows into discovery-ready trace tables.
+    #[arg(long)]
+    config: PathBuf,
+    /// Directory to write observed rows, traces, and discovered artifacts into.
+    #[arg(long)]
+    output_dir: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 #[command(after_help = "Example:\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json --output /tmp/salad_attack_observed.jsonl")]
 struct BenchmarkObserveArgs {
     dataset_jsonl: PathBuf,
@@ -273,9 +330,12 @@ struct BenchmarkObserveArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl benchmark emit-traces /tmp/salad_attack_observed.jsonl --output-dir /tmp/trace_exports")]
+#[command(after_help = "Example:\n  logicpearl benchmark emit-traces /tmp/salad_attack_observed.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/trace_exports")]
 struct BenchmarkEmitTracesArgs {
     observed_jsonl: PathBuf,
+    /// Projection config that maps observed rows into discovery-ready trace tables.
+    #[arg(long)]
+    config: PathBuf,
     /// Directory to write discovery-ready trace CSVs into.
     #[arg(long)]
     output_dir: PathBuf,
@@ -454,6 +514,34 @@ struct ObservedBenchmarkCase {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct TraceProjectionConfig {
+    #[serde(default)]
+    feature_columns: Vec<String>,
+    #[serde(default = "default_true")]
+    emit_multi_target: bool,
+    binary_targets: Vec<BinaryTargetProjection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BinaryTargetProjection {
+    name: String,
+    #[serde(default)]
+    trace_features: Vec<String>,
+    #[serde(default)]
+    positive_when: ProjectionPredicate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ProjectionPredicate {
+    #[serde(default)]
+    expected_routes: Vec<String>,
+    #[serde(default)]
+    any_features: Vec<String>,
+    #[serde(default)]
+    all_features: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SaladBaseCase {
     qid: serde_json::Value,
     question: String,
@@ -509,12 +597,29 @@ struct BenchmarkResult {
     cases: Vec<BenchmarkCaseResult>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TraceEmitSummary {
+    rows: usize,
+    output_dir: String,
+    config: String,
+    files: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Benchmark {
             command: BenchmarkCommand::AdaptSalad(args),
         } => run_benchmark_adapt_salad(args),
+        Commands::Benchmark {
+            command: BenchmarkCommand::AdaptAlert(args),
+        } => run_benchmark_adapt_alert(args),
+        Commands::Benchmark {
+            command: BenchmarkCommand::Prepare(args),
+        } => run_benchmark_prepare(args),
+        Commands::Benchmark {
+            command: BenchmarkCommand::MergeCases(args),
+        } => run_benchmark_merge_cases(args),
         Commands::Benchmark {
             command: BenchmarkCommand::Observe(args),
         } => run_benchmark_observe(args),
@@ -556,6 +661,142 @@ fn main() -> Result<()> {
     }
 }
 
+fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
+    if args.inputs.is_empty() {
+        return Err(guidance(
+            "merge-cases needs at least one input file",
+            "Pass one or more benchmark-case JSONL files followed by --output <merged.jsonl>.",
+        ));
+    }
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create merged benchmark output directory")?;
+    }
+
+    let mut merged = String::new();
+    let mut total_rows = 0_usize;
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for input in &args.inputs {
+        let cases = load_benchmark_cases(input)?;
+        for case in cases {
+            if !seen_ids.insert(case.id.clone()) {
+                return Err(guidance(
+                    format!("duplicate benchmark case id detected: {}", case.id),
+                    "Make sure merged benchmark-case files have unique ids before combining them.",
+                ));
+            }
+            merged.push_str(&serde_json::to_string(&case).into_diagnostic()?);
+            merged.push('\n');
+            total_rows += 1;
+        }
+    }
+
+    fs::write(&args.output, merged)
+        .into_diagnostic()
+        .wrap_err("failed to write merged benchmark JSONL")?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "rows": total_rows,
+                "inputs": args.inputs.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
+                "output": args.output.display().to_string()
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Merged".bold().bright_green(), "benchmark cases".bold());
+        println!("  {} {}", "Inputs".bright_black(), args.inputs.len());
+        println!("  {} {}", "Rows".bright_black(), total_rows);
+        println!("  {} {}", "Output".bright_black(), args.output.display());
+    }
+    Ok(())
+}
+
+fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
+    fs::create_dir_all(&args.output_dir)
+        .into_diagnostic()
+        .wrap_err("failed to create benchmark prepare output directory")?;
+
+    let observed_path = args.output_dir.join("observed.jsonl");
+    let traces_dir = args.output_dir.join("traces");
+    let discovered_dir = args.output_dir.join("discovered");
+
+    let manifest = PluginManifest::from_path(&args.plugin_manifest)
+        .into_diagnostic()
+        .wrap_err("failed to load observer plugin manifest")?;
+    if manifest.stage != PluginStage::Observer {
+        return Err(guidance(
+            format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+            "Use an observer-stage manifest with `logicpearl benchmark prepare`.",
+        ));
+    }
+
+    let observed_rows =
+        observe_benchmark_cases(&args.dataset_jsonl, &manifest, &observed_path)?;
+    let trace_summary = emit_trace_tables(&observed_path, &args.config, &traces_dir)?;
+    let config = load_trace_projection_config(&args.config)?;
+
+    let discover_result = if config.emit_multi_target {
+        let targets = config
+            .binary_targets
+            .iter()
+            .map(|target| target.name.clone())
+            .collect::<Vec<_>>();
+        Some(
+            discover_from_csv(
+                &traces_dir.join("multi_target.csv"),
+                &DiscoverOptions {
+                    output_dir: discovered_dir,
+                    artifact_set_id: format!(
+                        "{}_artifact_set",
+                        args.dataset_jsonl
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "benchmark".to_string())
+                    ),
+                    target_columns: targets,
+                },
+            )
+            .into_diagnostic()
+            .wrap_err("could not discover artifacts from emitted benchmark traces")?,
+        )
+    } else {
+        None
+    };
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dataset": args.dataset_jsonl.display().to_string(),
+                "observer_plugin": manifest.name,
+                "observed_rows": observed_rows,
+                "observed_output": observed_path.display().to_string(),
+                "trace_summary": trace_summary,
+                "discover_result": discover_result,
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Prepared".bold().bright_green(), "benchmark dataset".bold());
+        println!("  {} {}", "Observed".bright_black(), observed_rows);
+        println!("  {} {}", "Observed output".bright_black(), observed_path.display());
+        println!("  {} {}", "Trace output".bright_black(), traces_dir.display());
+        if let Some(discover_result) = discover_result {
+            println!("  {} {}", "Artifacts".bright_black(), discover_result.artifacts.len());
+            println!(
+                "  {} {}",
+                "Artifact set".bright_black(),
+                discover_result.output_files.artifact_set
+            );
+        }
+    }
+    Ok(())
+}
+
 fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
     let manifest = PluginManifest::from_path(&args.plugin_manifest)
         .into_diagnostic()
@@ -567,75 +808,12 @@ fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
         ));
     }
 
-    let file = fs::File::open(&args.dataset_jsonl)
-        .into_diagnostic()
-        .wrap_err("could not open benchmark dataset JSONL")?;
-    let reader = BufReader::new(file);
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent)
             .into_diagnostic()
             .wrap_err("failed to create observed benchmark output directory")?;
     }
-
-    let mut rows = 0_usize;
-    let mut out = String::new();
-    for (line_no, line) in reader.lines().enumerate() {
-        let line = line
-            .into_diagnostic()
-            .wrap_err("failed to read benchmark dataset line")?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let case: BenchmarkCase = serde_json::from_str(trimmed)
-            .into_diagnostic()
-            .wrap_err(format!(
-                "invalid benchmark case JSON on line {}. Each line must contain id, input, and expected_route",
-                line_no + 1
-            ))?;
-        let request = PluginRequest {
-            protocol_version: "1".to_string(),
-            stage: PluginStage::Observer,
-            payload: serde_json::json!({
-                "raw_input": case.input,
-            }),
-        };
-        let response = run_plugin(&manifest, &request)
-            .into_diagnostic()
-            .wrap_err(format!("observer plugin execution failed for case {}", case.id))?;
-        let features = response
-            .extra
-            .get("features")
-            .and_then(Value::as_object)
-            .cloned()
-            .ok_or_else(|| {
-                guidance(
-                    "observer plugin response is missing `features`",
-                    "An observer plugin used for benchmark observation must return a top-level features object.",
-                )
-            })?;
-        let observed = ObservedBenchmarkCase {
-            id: case.id,
-            input: case.input,
-            expected_route: case.expected_route,
-            category: case.category,
-            features,
-        };
-        out.push_str(&serde_json::to_string(&observed).into_diagnostic()?);
-        out.push('\n');
-        rows += 1;
-    }
-
-    if rows == 0 {
-        return Err(guidance(
-            "benchmark dataset is empty",
-            "Add one benchmark case JSON object per line before running benchmark observe.",
-        ));
-    }
-
-    fs::write(&args.output, out)
-        .into_diagnostic()
-        .wrap_err("failed to write observed benchmark JSONL")?;
+    let rows = observe_benchmark_cases(&args.dataset_jsonl, &manifest, &args.output)?;
 
     if args.json {
         println!(
@@ -657,155 +835,18 @@ fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
 }
 
 fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
-    let file = fs::File::open(&args.observed_jsonl)
-        .into_diagnostic()
-        .wrap_err("could not open observed benchmark JSONL")?;
-    let reader = BufReader::new(file);
-    fs::create_dir_all(&args.output_dir)
-        .into_diagnostic()
-        .wrap_err("failed to create trace output directory")?;
-
-    let mut multi_target = String::from(
-        "requests_instruction_override,targets_system_prompt,requests_secret_exfiltration,requests_tool_misuse,requests_data_access_outside_scope,contains_indirect_document_authority,is_likely_benign_question,attack_confidence,target_instruction_boundary,target_exfiltration,target_tool_use\n",
-    );
-    let mut instruction_boundary = String::from(
-        "requests_instruction_override,targets_system_prompt,contains_indirect_document_authority,allowed\n",
-    );
-    let mut data_exfiltration =
-        String::from("requests_secret_exfiltration,requests_data_access_outside_scope,allowed\n");
-    let mut tool_authorization =
-        String::from("requests_tool_misuse,requests_data_access_outside_scope,allowed\n");
-    let mut route_status = String::from(
-        "tool_authorization_bitmask,instruction_boundary_bitmask,data_exfiltration_bitmask,attack_confidence,is_likely_benign_question,allowed\n",
-    );
-
-    let mut rows = 0_usize;
-    for (line_no, line) in reader.lines().enumerate() {
-        let line = line
-            .into_diagnostic()
-            .wrap_err("failed to read observed benchmark line")?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let case: ObservedBenchmarkCase = serde_json::from_str(trimmed)
-            .into_diagnostic()
-            .wrap_err(format!(
-                "invalid observed benchmark JSON on line {}",
-                line_no + 1
-            ))?;
-
-        let fio = boolish(case.features.get("requests_instruction_override"));
-        let tsp = boolish(case.features.get("targets_system_prompt"));
-        let rse = boolish(case.features.get("requests_secret_exfiltration"));
-        let rtm = boolish(case.features.get("requests_tool_misuse"));
-        let rdas = boolish(case.features.get("requests_data_access_outside_scope"));
-        let cida = boolish(case.features.get("contains_indirect_document_authority"));
-        let ilbq = boolish(case.features.get("is_likely_benign_question"));
-        let attack_confidence = numericish(case.features.get("attack_confidence"));
-
-        let target_instruction_boundary = case.expected_route != "allow" && (fio || tsp || cida);
-        let target_exfiltration = case.expected_route != "allow" && rse;
-        let target_tool_use = case.expected_route != "allow" && rtm;
-
-        multi_target.push_str(&format!(
-            "{},{},{},{},{},{},{},{:.2},{},{},{}\n",
-            bit(fio),
-            bit(tsp),
-            bit(rse),
-            bit(rtm),
-            bit(rdas),
-            bit(cida),
-            bit(ilbq),
-            attack_confidence,
-            allow_word(!target_instruction_boundary),
-            allow_word(!target_exfiltration),
-            allow_word(!target_tool_use),
-        ));
-
-        instruction_boundary.push_str(&format!(
-            "{},{},{},{}\n",
-            bit(fio),
-            bit(tsp),
-            bit(cida),
-            allow_word(!target_instruction_boundary),
-        ));
-        data_exfiltration.push_str(&format!(
-            "{},{},{}\n",
-            bit(rse),
-            bit(rdas),
-            allow_word(!target_exfiltration),
-        ));
-        tool_authorization.push_str(&format!(
-            "{},{},{}\n",
-            bit(rtm),
-            bit(rdas),
-            allow_word(!target_tool_use),
-        ));
-        route_status.push_str(&format!(
-            "{},{},{},{:.2},{},{}\n",
-            if target_tool_use { 1 } else { 0 },
-            if target_instruction_boundary { 1 } else { 0 },
-            if target_exfiltration { 1 } else { 0 },
-            attack_confidence,
-            bit(ilbq),
-            allow_word(case.expected_route == "allow"),
-        ));
-        rows += 1;
-    }
-
-    if rows == 0 {
-        return Err(guidance(
-            "observed benchmark dataset is empty",
-            "Run `logicpearl benchmark observe ...` first to generate observed feature rows.",
-        ));
-    }
-
-    fs::write(args.output_dir.join("multi_target.csv"), multi_target)
-        .into_diagnostic()
-        .wrap_err("failed to write multi_target.csv")?;
-    fs::write(
-        args.output_dir.join("instruction_boundary_traces.csv"),
-        instruction_boundary,
-    )
-    .into_diagnostic()
-    .wrap_err("failed to write instruction_boundary_traces.csv")?;
-    fs::write(
-        args.output_dir.join("data_exfiltration_traces.csv"),
-        data_exfiltration,
-    )
-    .into_diagnostic()
-    .wrap_err("failed to write data_exfiltration_traces.csv")?;
-    fs::write(
-        args.output_dir.join("tool_authorization_traces.csv"),
-        tool_authorization,
-    )
-    .into_diagnostic()
-    .wrap_err("failed to write tool_authorization_traces.csv")?;
-    fs::write(args.output_dir.join("route_status_traces.csv"), route_status)
-        .into_diagnostic()
-        .wrap_err("failed to write route_status_traces.csv")?;
+    let summary = emit_trace_tables(&args.observed_jsonl, &args.config, &args.output_dir)?;
 
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "rows": rows,
-                "output_dir": args.output_dir.display().to_string(),
-                "files": [
-                    "multi_target.csv",
-                    "instruction_boundary_traces.csv",
-                    "data_exfiltration_traces.csv",
-                    "tool_authorization_traces.csv",
-                    "route_status_traces.csv"
-                ]
-            }))
-            .into_diagnostic()?
+            serde_json::to_string_pretty(&summary).into_diagnostic()?
         );
     } else {
         println!("{} {}", "Emitted".bold().bright_green(), "discovery traces".bold());
-        println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), args.output_dir.display());
+        println!("  {} {}", "Rows".bright_black(), summary.rows);
+        println!("  {} {}", "Config".bright_black(), summary.config);
+        println!("  {} {}", "Output".bright_black(), summary.output_dir);
     }
     Ok(())
 }
@@ -922,6 +963,91 @@ fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
+    let raw_json = fs::read_to_string(&args.raw_alert_json)
+        .into_diagnostic()
+        .wrap_err("could not read raw ALERT JSON")?;
+    let rows = parse_json_object_rows(&raw_json)
+        .wrap_err("raw ALERT JSON is not valid for the expected dataset format")?;
+    if rows.is_empty() {
+        return Err(guidance(
+            "raw ALERT dataset is empty",
+            "Provide a JSON array or JSONL file of objects with a prompt-like text field.",
+        ));
+    }
+
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create adapted benchmark output directory")?;
+    }
+
+    let mut out = String::new();
+    for (index, row) in rows.iter().enumerate() {
+        let prompt = first_string_field(
+            row,
+            &["prompt", "instruction", "text", "question", "input", "content"],
+        )
+        .ok_or_else(|| {
+            guidance(
+                format!("ALERT row {} is missing a prompt-like text field", index + 1),
+                "Expected one of: prompt, instruction, text, question, input, content.",
+            )
+        })?;
+
+        let benchmark_case = BenchmarkCase {
+            id: row
+                .get("id")
+                .or_else(|| row.get("aid"))
+                .or_else(|| row.get("qid"))
+                .map(|value| format!("alert_{}", stable_value_id(value, index)))
+                .unwrap_or_else(|| format!("alert_{index:06}")),
+            input: serde_json::json!({
+                "prompt": prompt,
+                "requested_tool": args.requested_tool,
+                "requested_action": args.requested_action,
+                "scope": args.scope,
+                "document_instructions_present": false
+            }),
+            expected_route: "deny".to_string(),
+            category: first_string_field(
+                row,
+                &[
+                    "category",
+                    "subcategory",
+                    "harm_category",
+                    "attack_category",
+                    "label",
+                    "source",
+                ],
+            ),
+        };
+        out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
+        out.push('\n');
+    }
+
+    fs::write(&args.output, out)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted ALERT JSONL")?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source_benchmark": "alert",
+                "rows": rows.len(),
+                "output": args.output.display().to_string()
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Adapted".bold().bright_green(), "ALERT dataset".bold());
+        println!("  {} {}", "Rows".bright_black(), rows.len());
+        println!("  {} {}", "Output".bright_black(), args.output.display());
+    }
+    Ok(())
+}
+
 fn run_quickstart(args: QuickstartArgs) -> Result<()> {
     match args.topic {
         None => {
@@ -1020,6 +1146,16 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
         println!("  {} {}", "Features".bright_black(), result.features.join(", "));
         println!("  {} {}", "Targets".bright_black(), result.targets.join(", "));
         println!("  {} {}", "Artifacts".bright_black(), result.artifacts.len());
+        if !result.skipped_targets.is_empty() {
+            for skipped in &result.skipped_targets {
+                println!(
+                    "  {} {} ({})",
+                    "Skipped".bright_black(),
+                    skipped.name,
+                    skipped.reason
+                );
+            }
+        }
         println!(
             "  {} {}",
             "Artifact set".bright_black(),
@@ -1902,11 +2038,327 @@ fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
     }
 }
 
+fn observe_benchmark_cases(
+    dataset_jsonl: &PathBuf,
+    manifest: &PluginManifest,
+    output: &PathBuf,
+) -> Result<usize> {
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create observed benchmark output directory")?;
+    }
+
+    let mut rows = 0_usize;
+    let mut out = String::new();
+    for case in load_benchmark_cases(dataset_jsonl)? {
+        let request = PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            payload: serde_json::json!({
+                "raw_input": case.input,
+            }),
+        };
+        let response = run_plugin(manifest, &request)
+            .into_diagnostic()
+            .wrap_err(format!("observer plugin execution failed for case {}", case.id))?;
+        let features = response
+            .extra
+            .get("features")
+            .and_then(Value::as_object)
+            .cloned()
+            .ok_or_else(|| {
+                guidance(
+                    "observer plugin response is missing `features`",
+                    "An observer plugin used for benchmark observation must return a top-level features object.",
+                )
+            })?;
+        let observed = ObservedBenchmarkCase {
+            id: case.id,
+            input: case.input,
+            expected_route: case.expected_route,
+            category: case.category,
+            features,
+        };
+        out.push_str(&serde_json::to_string(&observed).into_diagnostic()?);
+        out.push('\n');
+        rows += 1;
+    }
+
+    if rows == 0 {
+        return Err(guidance(
+            "benchmark dataset is empty",
+            "Add one benchmark case JSON object per line before running benchmark observe.",
+        ));
+    }
+
+    fs::write(output, out)
+        .into_diagnostic()
+        .wrap_err("failed to write observed benchmark JSONL")?;
+    Ok(rows)
+}
+
+fn load_trace_projection_config(config_path: &PathBuf) -> Result<TraceProjectionConfig> {
+    let config_text = fs::read_to_string(config_path)
+        .into_diagnostic()
+        .wrap_err("could not read trace projection config")?;
+    let config: TraceProjectionConfig = serde_json::from_str(&config_text)
+        .into_diagnostic()
+        .wrap_err("trace projection config is not valid JSON")?;
+    if config.binary_targets.is_empty() {
+        return Err(guidance(
+            "trace projection config must declare at least one binary target",
+            "Add one or more entries under `binary_targets` in the projection config.",
+        ));
+    }
+    Ok(config)
+}
+
+fn emit_trace_tables(
+    observed_jsonl: &PathBuf,
+    config_path: &PathBuf,
+    output_dir: &PathBuf,
+) -> Result<TraceEmitSummary> {
+    let config = load_trace_projection_config(config_path)?;
+    let file = fs::File::open(observed_jsonl)
+        .into_diagnostic()
+        .wrap_err("could not open observed benchmark JSONL")?;
+    let reader = BufReader::new(file);
+    fs::create_dir_all(output_dir)
+        .into_diagnostic()
+        .wrap_err("failed to create trace output directory")?;
+
+    let mut inferred_features: Option<Vec<String>> = None;
+    let mut multi_target = String::new();
+    let mut target_csvs: BTreeMap<String, String> = BTreeMap::new();
+    let mut rows = 0_usize;
+
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line
+            .into_diagnostic()
+            .wrap_err("failed to read observed benchmark line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let case: ObservedBenchmarkCase = serde_json::from_str(trimmed)
+            .into_diagnostic()
+            .wrap_err(format!(
+                "invalid observed benchmark JSON on line {}",
+                line_no + 1
+            ))?;
+
+        let feature_columns = if config.feature_columns.is_empty() {
+            inferred_features.get_or_insert_with(|| {
+                let mut keys = case.features.keys().cloned().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            })
+        } else {
+            &config.feature_columns
+        };
+
+        if config.emit_multi_target && multi_target.is_empty() {
+            let mut header = feature_columns.join(",");
+            header.push(',');
+            header.push_str(
+                &config
+                    .binary_targets
+                    .iter()
+                    .map(|target| target.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            header.push('\n');
+            multi_target.push_str(&header);
+        }
+
+        let mut target_values = Vec::with_capacity(config.binary_targets.len());
+        for target in &config.binary_targets {
+            if target_csvs.get(&target.name).is_none() {
+                let target_features = if target.trace_features.is_empty() {
+                    feature_columns.clone()
+                } else {
+                    target.trace_features.clone()
+                };
+                let mut header = target_features.join(",");
+                header.push_str(",allowed\n");
+                target_csvs.insert(target.name.clone(), header);
+            }
+
+            let denied = projection_matches(&case, &target.positive_when);
+            target_values.push(allow_word(!denied).to_string());
+
+            let target_features = if target.trace_features.is_empty() {
+                feature_columns.clone()
+            } else {
+                target.trace_features.clone()
+            };
+            let values = target_features
+                .iter()
+                .map(|feature| csv_value(case.features.get(feature)))
+                .collect::<Vec<_>>()
+                .join(",");
+            target_csvs
+                .get_mut(&target.name)
+                .expect("target csv initialized")
+                .push_str(&format!("{values},{}\n", allow_word(!denied)));
+        }
+
+        if config.emit_multi_target {
+            let mut values = feature_columns
+                .iter()
+                .map(|feature| csv_value(case.features.get(feature)))
+                .collect::<Vec<_>>();
+            values.extend(target_values);
+            multi_target.push_str(&values.join(","));
+            multi_target.push('\n');
+        }
+        rows += 1;
+    }
+
+    if rows == 0 {
+        return Err(guidance(
+            "observed benchmark dataset is empty",
+            "Run `logicpearl benchmark observe ...` first to generate observed feature rows.",
+        ));
+    }
+
+    let mut files = Vec::new();
+    if config.emit_multi_target {
+        let path = output_dir.join("multi_target.csv");
+        fs::write(&path, multi_target)
+            .into_diagnostic()
+            .wrap_err("failed to write multi_target.csv")?;
+        files.push("multi_target.csv".to_string());
+    }
+    for (target_name, contents) in &target_csvs {
+        let filename = format!("{target_name}_traces.csv");
+        let path = output_dir.join(&filename);
+        fs::write(&path, contents)
+            .into_diagnostic()
+            .wrap_err(format!("failed to write {filename}"))?;
+        files.push(filename);
+    }
+
+    Ok(TraceEmitSummary {
+        rows,
+        output_dir: output_dir.display().to_string(),
+        config: config_path.display().to_string(),
+        files,
+    })
+}
+
+fn load_benchmark_cases(path: &PathBuf) -> Result<Vec<BenchmarkCase>> {
+    let file = fs::File::open(path)
+        .into_diagnostic()
+        .wrap_err("could not open benchmark dataset JSONL")?;
+    let reader = BufReader::new(file);
+    let mut cases = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line
+            .into_diagnostic()
+            .wrap_err("failed to read benchmark dataset line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let case: BenchmarkCase = serde_json::from_str(trimmed)
+            .into_diagnostic()
+            .wrap_err(format!(
+                "invalid benchmark case JSON on line {}. Each line must contain id, input, and expected_route",
+                line_no + 1
+            ))?;
+        cases.push(case);
+    }
+    Ok(cases)
+}
+
+fn parse_json_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
+    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) {
+        let mut rows = Vec::with_capacity(items.len());
+        for (index, item) in items.into_iter().enumerate() {
+            let object = item.as_object().cloned().ok_or_else(|| {
+                miette::miette!("row {} is not a JSON object", index + 1)
+            })?;
+            rows.push(object);
+        }
+        return Ok(rows);
+    }
+
+    let mut rows = Vec::new();
+    for (line_no, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(trimmed).map_err(|error| {
+            miette::miette!(
+                "invalid JSON on line {}: {}",
+                line_no + 1,
+                error
+            )
+        })?;
+        let object = value.as_object().cloned().ok_or_else(|| {
+            miette::miette!(
+                "line {} is not a JSON object",
+                line_no + 1
+            )
+        })?;
+        rows.push(object);
+    }
+    Ok(rows)
+}
+
+fn first_string_field(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter().find_map(|key| {
+        object
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
 fn stable_value_id(value: &serde_json::Value, fallback_index: usize) -> String {
     match value {
         serde_json::Value::String(text) => sanitize_identifier(text),
         serde_json::Value::Number(number) => number.to_string(),
         _ => format!("{fallback_index:06}"),
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn projection_matches(case: &ObservedBenchmarkCase, predicate: &ProjectionPredicate) -> bool {
+    let expected_route_match = predicate.expected_routes.is_empty()
+        || predicate
+            .expected_routes
+            .iter()
+            .any(|route| route == &case.expected_route);
+    let any_match = predicate.any_features.is_empty()
+        || predicate
+            .any_features
+            .iter()
+            .any(|feature| boolish(case.features.get(feature)));
+    let all_match = predicate
+        .all_features
+        .iter()
+        .all(|feature| boolish(case.features.get(feature)));
+    expected_route_match && any_match && all_match
+}
+
+fn csv_value(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::Bool(boolean)) => bit(*boolean).to_string(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::String(text)) => text.replace(',', "_"),
+        Some(Value::Null) | None => String::new(),
+        Some(other) => other.to_string().replace(',', "_"),
     }
 }
 
@@ -1916,14 +2368,6 @@ fn boolish(value: Option<&Value>) -> bool {
         Some(Value::Number(number)) => number.as_i64().unwrap_or_default() != 0,
         Some(Value::String(text)) => matches!(text.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y"),
         _ => false,
-    }
-}
-
-fn numericish(value: Option<&Value>) -> f64 {
-    match value {
-        Some(Value::Number(number)) => number.as_f64().unwrap_or_default(),
-        Some(Value::String(text)) => text.parse::<f64>().unwrap_or_default(),
-        _ => 0.0,
     }
 }
 

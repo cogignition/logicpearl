@@ -62,8 +62,8 @@ fn evaluate_comparison(expression: &ComparisonExpression, features: &HashMap<Str
     let right = &expression.value;
 
     match expression.op {
-        ComparisonOperator::Eq => Ok(left == right),
-        ComparisonOperator::Ne => Ok(left != right),
+        ComparisonOperator::Eq => Ok(values_equal(left, right)),
+        ComparisonOperator::Ne => Ok(!values_equal(left, right)),
         ComparisonOperator::Gt => compare_numbers(left, right, |l, r| l > r),
         ComparisonOperator::Gte => compare_numbers(left, right, |l, r| l >= r),
         ComparisonOperator::Lt => compare_numbers(left, right, |l, r| l < r),
@@ -83,9 +83,95 @@ fn compare_numbers(left: &Value, right: &Value, predicate: impl Fn(f64, f64) -> 
     Ok(predicate(left, right))
 }
 
+fn values_equal(left: &Value, right: &Value) -> bool {
+    match (left.as_f64(), right.as_f64()) {
+        (Some(l), Some(r)) => (l - r).abs() < f64::EPSILON,
+        _ => left == right,
+    }
+}
+
 fn value_in(left: &Value, right: &Value) -> Result<bool> {
     let items = right
         .as_array()
         .ok_or_else(|| LogicPearlError::message("runtime membership comparison requires array"))?;
-    Ok(items.iter().any(|item| item == left))
+    Ok(items.iter().any(|item| values_equal(item, left)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use logicpearl_ir::{
+        EvaluationConfig, FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition, RuleKind,
+        RuleVerificationStatus, VerificationConfig,
+    };
+    use serde_json::json;
+
+    fn gate_for_eq_test(value: Value) -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "eq_test".to_string(),
+            gate_type: "bitmask_gate".to_string(),
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "flag".to_string(),
+                    feature_type: FeatureType::Int,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                }],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_000".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "flag".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value,
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            }],
+            evaluation: EvaluationConfig {
+                combine: "bitwise_or".to_string(),
+                allow_when_bitmask: 0,
+            },
+            verification: Some(VerificationConfig {
+                domain_constraints: None,
+                correctness_scope: None,
+                verification_summary: Some(std::collections::HashMap::new()),
+            }),
+            provenance: Some(Provenance {
+                generator: Some("test".to_string()),
+                generator_version: Some("test".to_string()),
+                source_commit: None,
+                created_at: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn numeric_equality_matches_int_and_float_forms() {
+        let gate = gate_for_eq_test(json!(1.0));
+        let features = HashMap::from([("flag".to_string(), json!(1))]);
+        let bitmask = evaluate_gate(&gate, &features).expect("runtime evaluation should succeed");
+        assert_eq!(bitmask, 1);
+    }
+
+    #[test]
+    fn numeric_membership_matches_int_and_float_forms() {
+        let mut features = HashMap::new();
+        features.insert("flag".to_string(), json!(2));
+        let expression = ComparisonExpression {
+            feature: "flag".to_string(),
+            op: ComparisonOperator::In,
+            value: json!([1.0, 2.0]),
+        };
+        assert!(evaluate_comparison(&expression, &features).expect("membership should evaluate"));
+    }
 }
