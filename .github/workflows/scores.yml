@@ -1,0 +1,77 @@
+name: Scores
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "scores-pages"
+  cancel-in-progress: true
+
+jobs:
+  publish-scores:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Generate score JSON
+        run: |
+          python3 scripts/scoreboard/update_scores.py --output "$RUNNER_TEMP/SCORES.json"
+          python3 scripts/scoreboard/compute_contributor_points.py --output "$RUNNER_TEMP/contributor_points.json"
+
+      - name: Assemble Pages payload
+        run: |
+          site_dir="$RUNNER_TEMP/score-site"
+          mkdir -p "$site_dir/latest" "$site_dir/history/${GITHUB_SHA}"
+          cp "$RUNNER_TEMP/SCORES.json" "$site_dir/latest/SCORES.json"
+          cp "$RUNNER_TEMP/contributor_points.json" "$site_dir/latest/contributor_points.json"
+          cp scripts/scoreboard/score_model.json "$site_dir/latest/score_model.json"
+          cp "$RUNNER_TEMP/SCORES.json" "$site_dir/history/${GITHUB_SHA}/SCORES.json"
+          cp "$RUNNER_TEMP/contributor_points.json" "$site_dir/history/${GITHUB_SHA}/contributor_points.json"
+          cp scripts/scoreboard/score_model.json "$site_dir/history/${GITHUB_SHA}/score_model.json"
+          python3 - <<'PY' > "$site_dir/latest/index.json"
+          import json, os
+          payload = {
+              "commit": os.environ["GITHUB_SHA"],
+              "ref": os.environ.get("GITHUB_REF_NAME"),
+              "run_id": os.environ.get("GITHUB_RUN_ID"),
+              "repository": os.environ.get("GITHUB_REPOSITORY"),
+              "latest": {
+                  "scores": "SCORES.json",
+                  "contributors": "contributor_points.json",
+                  "score_model": "score_model.json",
+              },
+          }
+          print(json.dumps(payload, indent=2))
+          PY
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/score-site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

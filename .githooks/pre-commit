@@ -8,3 +8,7 @@ echo "Running LogicPearl pre-commit E2E check..."
 cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_getting_started
 cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_benchmark_heldout
 cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_demos
+
+echo "Refreshing LogicPearl score ledger..."
+python3 scripts/scoreboard/update_scores.py >/dev/null
+git add SCORES.json

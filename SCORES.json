@@ -1,0 +1,300 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "scripts/scoreboard/update_scores.py",
+  "generated_at": "2026-04-05T19:59:06.431374+00:00",
+  "author": {
+    "name": "Ken Erwin",
+    "email": "ken@devopslibrary.com"
+  },
+  "revision": {
+    "head": "b9c2a338ae3446bebb311aa484f478149c861b62",
+    "dirty": true
+  },
+  "suites": {
+    "getting_started": {
+      "status": "ok",
+      "csv": "examples/getting_started/decision_traces.csv",
+      "input": "examples/getting_started/new_input.json",
+      "build": {
+        "gate_id": "decision_traces",
+        "rows": 12,
+        "label_column": "allowed",
+        "rules_discovered": 1,
+        "residual_rules_discovered": 0,
+        "refined_rules_applied": 0,
+        "pinned_rules_applied": 0,
+        "selected_features": [
+          "age",
+          "is_member"
+        ],
+        "training_parity": 1.0,
+        "native_binary_emitted": true,
+        "wasm_emitted": true
+      },
+      "expected_bitmask": "0",
+      "actual_bitmask": "0",
+      "artifact_emitted": true,
+      "run_passed": true
+    },
+    "demos": {
+      "status": "ok",
+      "cases": {
+        "access_control": {
+          "status": "ok",
+          "csv": "examples/demos/access_control/traces.csv",
+          "build": {
+            "gate_id": "traces",
+            "rows": 26,
+            "label_column": "allowed",
+            "rules_discovered": 2,
+            "residual_rules_discovered": 0,
+            "refined_rules_applied": 0,
+            "pinned_rules_applied": 0,
+            "selected_features": [
+              "clearance_level",
+              "failed_login_attempts",
+              "mfa_enabled",
+              "resource_sensitivity"
+            ],
+            "training_parity": 1.0,
+            "native_binary_emitted": true,
+            "wasm_emitted": true
+          }
+        },
+        "content_moderation": {
+          "status": "ok",
+          "csv": "examples/demos/content_moderation/traces.csv",
+          "build": {
+            "gate_id": "traces",
+            "rows": 26,
+            "label_column": "allowed",
+            "rules_discovered": 2,
+            "residual_rules_discovered": 0,
+            "refined_rules_applied": 0,
+            "pinned_rules_applied": 0,
+            "selected_features": [
+              "account_age_days",
+              "spam_likelihood",
+              "toxicity_score",
+              "verified"
+            ],
+            "training_parity": 1.0,
+            "native_binary_emitted": true,
+            "wasm_emitted": true
+          }
+        },
+        "loan_approval": {
+          "status": "ok",
+          "csv": "examples/demos/loan_approval/traces.csv",
+          "build": {
+            "gate_id": "traces",
+            "rows": 26,
+            "label_column": "allowed",
+            "rules_discovered": 2,
+            "residual_rules_discovered": 0,
+            "refined_rules_applied": 0,
+            "pinned_rules_applied": 0,
+            "selected_features": [
+              "annual_income",
+              "credit_score",
+              "debt_ratio",
+              "employment_years"
+            ],
+            "training_parity": 1.0,
+            "native_binary_emitted": true,
+            "wasm_emitted": true
+          }
+        }
+      }
+    },
+    "guardrails_open_sample200": {
+      "status": "ok",
+      "bundle_dir": "/private/tmp/guardrails_pre_pint_bundle_all_dev_final",
+      "baseline": "/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/open_guardrail_regression_baseline.sample200.json",
+      "input_split": "final_holdout",
+      "sample_size": 200,
+      "benchmarks": {
+        "jailbreakbench": {
+          "total_cases": 20,
+          "sampled": false,
+          "sample_size": 20,
+          "matched_cases": 11,
+          "exact_match_rate": 0.55,
+          "attack_cases": 10,
+          "benign_cases": 10,
+          "attack_catch_rate": 0.1,
+          "benign_pass_rate": 1.0,
+          "false_positive_rate": 0.0,
+          "route_distribution": {
+            "allow": 19,
+            "deny_exfiltration_risk": 1
+          }
+        },
+        "promptshield": {
+          "total_cases": 200,
+          "sampled": true,
+          "sample_size": 200,
+          "matched_cases": 114,
+          "exact_match_rate": 0.57,
+          "attack_cases": 100,
+          "benign_cases": 100,
+          "attack_catch_rate": 0.15,
+          "benign_pass_rate": 0.99,
+          "false_positive_rate": 0.01,
+          "route_distribution": {
+            "allow": 184,
+            "deny_exfiltration_risk": 9,
+            "deny_untrusted_instruction": 7
+          }
+        },
+        "rogue-security-prompt-injections": {
+          "total_cases": 200,
+          "sampled": true,
+          "sample_size": 200,
+          "matched_cases": 107,
+          "exact_match_rate": 0.535,
+          "attack_cases": 100,
+          "benign_cases": 100,
+          "attack_catch_rate": 0.07,
+          "benign_pass_rate": 1.0,
+          "false_positive_rate": 0.0,
+          "route_distribution": {
+            "allow": 193,
+            "deny_exfiltration_risk": 7
+          }
+        }
+      }
+    }
+  },
+  "metrics": {
+    "getting_started.training_parity": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "getting_started"
+    },
+    "getting_started.run_passed": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 25.0,
+      "suite": "getting_started"
+    },
+    "demos.access_control.training_parity": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "demos"
+    },
+    "demos.access_control.rules_discovered": {
+      "value": 2.0,
+      "goal": "max",
+      "weight": 5.0,
+      "suite": "demos"
+    },
+    "demos.content_moderation.training_parity": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "demos"
+    },
+    "demos.content_moderation.rules_discovered": {
+      "value": 2.0,
+      "goal": "max",
+      "weight": 5.0,
+      "suite": "demos"
+    },
+    "demos.loan_approval.training_parity": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "demos"
+    },
+    "demos.loan_approval.rules_discovered": {
+      "value": 2.0,
+      "goal": "max",
+      "weight": 5.0,
+      "suite": "demos"
+    },
+    "guardrails.jailbreakbench.exact_match_rate": {
+      "value": 0.55,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "guardrails"
+    },
+    "guardrails.jailbreakbench.attack_catch_rate": {
+      "value": 0.1,
+      "goal": "max",
+      "weight": 125.0,
+      "suite": "guardrails"
+    },
+    "guardrails.jailbreakbench.benign_pass_rate": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 60.0,
+      "suite": "guardrails"
+    },
+    "guardrails.jailbreakbench.false_positive_rate": {
+      "value": 0.0,
+      "goal": "min",
+      "weight": 80.0,
+      "suite": "guardrails"
+    },
+    "guardrails.promptshield.exact_match_rate": {
+      "value": 0.57,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "guardrails"
+    },
+    "guardrails.promptshield.attack_catch_rate": {
+      "value": 0.15,
+      "goal": "max",
+      "weight": 125.0,
+      "suite": "guardrails"
+    },
+    "guardrails.promptshield.benign_pass_rate": {
+      "value": 0.99,
+      "goal": "max",
+      "weight": 60.0,
+      "suite": "guardrails"
+    },
+    "guardrails.promptshield.false_positive_rate": {
+      "value": 0.01,
+      "goal": "min",
+      "weight": 80.0,
+      "suite": "guardrails"
+    },
+    "guardrails.rogue-security-prompt-injections.exact_match_rate": {
+      "value": 0.535,
+      "goal": "max",
+      "weight": 100.0,
+      "suite": "guardrails"
+    },
+    "guardrails.rogue-security-prompt-injections.attack_catch_rate": {
+      "value": 0.07,
+      "goal": "max",
+      "weight": 125.0,
+      "suite": "guardrails"
+    },
+    "guardrails.rogue-security-prompt-injections.benign_pass_rate": {
+      "value": 1.0,
+      "goal": "max",
+      "weight": 60.0,
+      "suite": "guardrails"
+    },
+    "guardrails.rogue-security-prompt-injections.false_positive_rate": {
+      "value": 0.0,
+      "goal": "min",
+      "weight": 80.0,
+      "suite": "guardrails"
+    }
+  },
+  "summary": {
+    "suite_count": 3,
+    "metric_count": 20,
+    "available_suites": [
+      "demos",
+      "getting_started",
+      "guardrails_open_sample200"
+    ]
+  }
+}

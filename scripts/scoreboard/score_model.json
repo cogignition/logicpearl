@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "suites": [
+    {
+      "id": "onboarding",
+      "points_budget": 200.0,
+      "metrics": [
+        {
+          "id": "getting_started.training_parity",
+          "weight": 0.3
+        },
+        {
+          "id": "getting_started.run_passed",
+          "weight": 0.1
+        },
+        {
+          "id": "demos.access_control.training_parity",
+          "weight": 0.2
+        },
+        {
+          "id": "demos.content_moderation.training_parity",
+          "weight": 0.2
+        },
+        {
+          "id": "demos.loan_approval.training_parity",
+          "weight": 0.2
+        }
+      ]
+    },
+    {
+      "id": "guardrails",
+      "points_budget": 300.0,
+      "metrics": [
+        {
+          "id": "guardrails.jailbreakbench.exact_match_rate",
+          "weight": 0.3333333333
+        },
+        {
+          "id": "guardrails.promptshield.exact_match_rate",
+          "weight": 0.3333333333
+        },
+        {
+          "id": "guardrails.rogue-security-prompt-injections.exact_match_rate",
+          "weight": 0.3333333334
+        }
+      ]
+    }
+  ]
+}
