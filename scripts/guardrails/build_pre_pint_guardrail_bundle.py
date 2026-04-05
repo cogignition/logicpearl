@@ -54,6 +54,13 @@ DATASETS: tuple[DatasetSpec, ...] = (
     DatasetSpec("mcpmark", "mcpmark", DEFAULT_DATASETS_ROOT / "mcpmark" / "mcpmark_tasks.json"),
     DatasetSpec("safearena_safe", "safearena-safe", DEFAULT_DATASETS_ROOT / "safearena" / "safe.json"),
     DatasetSpec("safearena_harm", "safearena-harm", DEFAULT_DATASETS_ROOT / "safearena" / "harm.json"),
+    DatasetSpec("jailbreakbench", "jailbreakbench", DEFAULT_DATASETS_ROOT / "jailbreakbench" / "jbb_behaviors.json"),
+    DatasetSpec("promptshield", "promptshield", DEFAULT_DATASETS_ROOT / "promptshield" / "promptshield.json"),
+    DatasetSpec(
+        "rogue_security_prompt_injections",
+        "rogue-security-prompt-injections",
+        DEFAULT_DATASETS_ROOT / "rogue_security" / "prompt_injections_benchmark.json",
+    ),
 )
 
 
@@ -99,10 +106,10 @@ def parse_args() -> argparse.Namespace:
         help="Root directory containing the staged public datasets.",
     )
     parser.add_argument(
-        "--train-fraction",
+        "--dev-fraction",
         type=float,
-        default=0.8,
-        help="Deterministic train fraction for benchmark split-cases.",
+        default=0.9,
+        help="Deterministic development fraction for per-dataset dev/final_holdout split generation.",
     )
     parser.add_argument(
         "--use-installed-cli",
@@ -251,72 +258,71 @@ def build_artifact_hashes(bundle_dir: Path) -> dict[str, str]:
     return hashes
 
 
+def split_dir_for(datasets_root: Path, spec: DatasetSpec) -> Path:
+    dataset_parent = (datasets_root / spec.raw_path.relative_to(DEFAULT_DATASETS_ROOT)).parent
+    return dataset_parent / "logicpearl_splits" / spec.dataset_id
+
+
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir).resolve()
     datasets_root = Path(args.datasets_root).expanduser().resolve()
     cli = logicpearl_base_command(args.use_installed_cli)
 
-    cases_dir = output_dir / "cases"
     freeze_dir = output_dir / "freeze"
     train_prep_dir = output_dir / "train_prep"
-    dev_eval_dir = output_dir / "dev_eval"
+    final_holdout_eval_dir = output_dir / "final_holdout_eval"
     output_dir.mkdir(parents=True, exist_ok=True)
-    cases_dir.mkdir(parents=True, exist_ok=True)
     freeze_dir.mkdir(parents=True, exist_ok=True)
-    dev_eval_dir.mkdir(parents=True, exist_ok=True)
+    final_holdout_eval_dir.mkdir(parents=True, exist_ok=True)
 
-    adapted_reports: list[dict[str, Any]] = []
-    adapted_case_paths: list[Path] = []
+    run_json(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "guardrails" / "freeze_guardrail_holdouts.py"),
+            "--datasets-root",
+            str(datasets_root),
+            "--dev-fraction",
+            str(args.dev_fraction),
+            *(["--use-installed-cli"] if args.use_installed_cli else []),
+        ]
+    )
+
+    split_manifests: list[dict[str, Any]] = []
+    dev_case_paths: list[Path] = []
+    final_holdout_paths: list[Path] = []
     for spec in DATASETS:
         raw_path = datasets_root / spec.raw_path.relative_to(DEFAULT_DATASETS_ROOT)
         ensure_exists(raw_path)
-        output_path = cases_dir / f"{spec.dataset_id}.jsonl"
-        report = run_json(
-            [
-                *cli,
-                "benchmark",
-                "adapt",
-                str(raw_path),
-                "--profile",
-                spec.profile,
-                "--output",
-                str(output_path),
-                "--json",
-            ]
-        )
-        report["dataset_id"] = spec.dataset_id
-        report["raw_path"] = str(raw_path)
-        adapted_reports.append(report)
-        adapted_case_paths.append(output_path)
+        manifest_path = split_dir_for(datasets_root, spec) / "split_manifest.json"
+        ensure_exists(manifest_path)
+        manifest = read_json(manifest_path)
+        split_manifests.append(manifest)
+        dev_case_paths.append(Path(manifest["dev_cases"]).resolve())
+        final_holdout_paths.append(Path(manifest["final_holdout_cases"]).resolve())
 
-    merged_path = cases_dir / "guardrail_dev_full.jsonl"
+    merged_dev_path = output_dir / "guardrail_dev_full.jsonl"
     merge_report = run_json(
         [
             *cli,
             "benchmark",
             "merge-cases",
-            *[str(path) for path in adapted_case_paths],
+            *[str(path) for path in dev_case_paths],
             "--output",
-            str(merged_path),
+            str(merged_dev_path),
             "--json",
         ]
     )
 
-    train_path = cases_dir / "guardrail_train.jsonl"
-    dev_path = cases_dir / "guardrail_dev_holdout.jsonl"
-    split_report = run_json(
+    merged_final_holdout_path = output_dir / "guardrail_final_holdout_full.jsonl"
+    final_holdout_merge_report = run_json(
         [
             *cli,
             "benchmark",
-            "split-cases",
-            str(merged_path),
-            "--train-output",
-            str(train_path),
-            "--dev-output",
-            str(dev_path),
-            "--train-fraction",
-            str(args.train_fraction),
+            "merge-cases",
+            *[str(path) for path in final_holdout_paths],
+            "--output",
+            str(merged_final_holdout_path),
             "--json",
         ]
     )
@@ -349,9 +355,7 @@ def main() -> int:
                 "--artifact",
                 str(current_observer_path),
                 "--benchmark-cases",
-                str(train_path),
-                "--dev-benchmark-cases",
-                str(dev_path),
+                str(merged_dev_path),
                 "--signal",
                 signal,
                 "--output",
@@ -371,7 +375,7 @@ def main() -> int:
             *cli,
             "benchmark",
             "prepare",
-            str(train_path),
+            str(merged_dev_path),
             "--observer-artifact",
             str(observer_artifact_path),
             "--config",
@@ -382,44 +386,44 @@ def main() -> int:
         ]
     )
 
-    dev_observed_path = dev_eval_dir / "observed.jsonl"
+    final_holdout_observed_path = final_holdout_eval_dir / "observed.jsonl"
     observe_report = run_json(
         [
             *cli,
             "benchmark",
             "observe",
-            str(dev_path),
+            str(merged_final_holdout_path),
             "--observer-artifact",
             str(observer_artifact_path),
             "--output",
-            str(dev_observed_path),
+            str(final_holdout_observed_path),
             "--json",
         ]
     )
 
-    dev_traces_dir = dev_eval_dir / "traces"
+    final_holdout_traces_dir = final_holdout_eval_dir / "traces"
     emit_report = run_json(
         [
             *cli,
             "benchmark",
             "emit-traces",
-            str(dev_observed_path),
+            str(final_holdout_observed_path),
             "--config",
             str(TRACE_PROJECTION_CONFIG),
             "--output-dir",
-            str(dev_traces_dir),
+            str(final_holdout_traces_dir),
             "--json",
         ]
     )
 
-    score_report_path = dev_eval_dir / "artifact_score.json"
+    score_report_path = final_holdout_eval_dir / "artifact_score.json"
     score_report = run_json(
         [
             *cli,
             "benchmark",
             "score-artifacts",
             str(train_prep_dir / "discovered" / "artifact_set.json"),
-            str(dev_traces_dir / "multi_target.csv"),
+            str(final_holdout_traces_dir / "multi_target.csv"),
             "--output",
             str(score_report_path),
             "--json",
@@ -481,15 +485,15 @@ def main() -> int:
         "combined_native_binary": str(native_output),
         "combined_wasm_module": str(wasm_output) if wasm_compiled else None,
         "route_policy": str(route_policy_path),
-        "datasets": adapted_reports,
+        "datasets": split_manifests,
         "merge_report": merge_report,
-        "split_report": split_report,
+        "final_holdout_merge_report": final_holdout_merge_report,
         "observer_scaffold": observer_scaffold,
         "observer_synthesis": synthesis_reports,
         "prepare_report": prepare_report,
-        "dev_observe_report": observe_report,
-        "dev_emit_report": emit_report,
-        "dev_artifact_score": score_report,
+        "final_holdout_observe_report": observe_report,
+        "final_holdout_emit_report": emit_report,
+        "final_holdout_artifact_score": score_report,
     }
     write_json(output_dir / "bundle_manifest.json", bundle_manifest)
     write_json(output_dir / "artifact_hashes.json", build_artifact_hashes(freeze_dir))

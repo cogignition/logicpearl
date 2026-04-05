@@ -19,16 +19,19 @@ BENCHMARKS = [
         "id": "jailbreakbench",
         "profile": "jailbreakbench",
         "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/jbb_behaviors.json"),
+        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/logicpearl_splits/jailbreakbench"),
     },
     {
         "id": "promptshield",
         "profile": "promptshield",
         "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/promptshield/promptshield.json"),
+        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/promptshield/logicpearl_splits/promptshield"),
     },
     {
         "id": "rogue-security-prompt-injections",
         "profile": "rogue-security-prompt-injections",
         "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/rogue_security/prompt_injections_benchmark.json"),
+        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/rogue_security/logicpearl_splits/rogue_security_prompt_injections"),
     },
 ]
 
@@ -63,20 +66,42 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail instead of skipping when a benchmark dataset file is missing.",
     )
+    parser.add_argument(
+        "--input-split",
+        choices=("dev", "final_holdout", "raw"),
+        default="dev",
+        help="Which frozen external split to evaluate. Defaults to the dev split; use raw only for legacy full-dataset runs.",
+    )
     return parser.parse_args()
 
 
-def run_benchmark(bundle_dir: Path, benchmark: dict[str, Any], output_dir: Path, use_installed_cli: bool) -> dict[str, Any]:
+def benchmark_input_for_split(benchmark: dict[str, Any], input_split: str) -> tuple[Path, str]:
+    if input_split == "raw":
+        return Path(benchmark["path"]), "raw"
+    split_filename = "dev.jsonl" if input_split == "dev" else "final_holdout.jsonl"
+    return Path(benchmark["splits_dir"]) / split_filename, "cases-jsonl"
+
+
+def run_benchmark(
+    bundle_dir: Path,
+    benchmark: dict[str, Any],
+    output_dir: Path,
+    use_installed_cli: bool,
+    input_split: str,
+) -> dict[str, Any]:
     benchmark_output_dir = output_dir / benchmark["id"]
+    benchmark_input, input_format = benchmark_input_for_split(benchmark, input_split)
     cmd = [
         sys.executable,
         str(REPO_ROOT / "scripts" / "guardrails" / "evaluate_guardrail_bundle.py"),
         "--bundle-dir",
         str(bundle_dir),
         "--raw-benchmark",
-        str(benchmark["path"]),
+        str(benchmark_input),
         "--profile",
         benchmark["profile"],
+        "--input-format",
+        input_format,
         "--output-dir",
         str(benchmark_output_dir),
     ]
@@ -89,7 +114,8 @@ def run_benchmark(bundle_dir: Path, benchmark: dict[str, Any], output_dir: Path,
     return {
         "benchmark": benchmark["id"],
         "profile": benchmark["profile"],
-        "path": str(benchmark["path"]),
+        "path": str(benchmark_input),
+        "input_split": input_split,
         "report_path": str(report_path),
         "summary": report["summary"],
     }
@@ -111,7 +137,7 @@ def main() -> int:
         benchmark = selected.get(benchmark_id)
         if benchmark is None:
             continue
-        path = benchmark["path"]
+        path, _ = benchmark_input_for_split(benchmark, args.input_split)
         if not path.exists():
             entry = {
                 "benchmark": benchmark["id"],
@@ -123,10 +149,10 @@ def main() -> int:
             skipped.append(entry)
             continue
         aggregate.append(
-            run_benchmark(bundle_dir, benchmark, output_dir, args.use_installed_cli)
+            run_benchmark(bundle_dir, benchmark, output_dir, args.use_installed_cli, args.input_split)
         )
 
-    payload = {"benchmarks": aggregate, "skipped": skipped}
+    payload = {"input_split": args.input_split, "benchmarks": aggregate, "skipped": skipped}
     (output_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2))
     return 0

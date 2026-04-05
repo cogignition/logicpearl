@@ -106,6 +106,37 @@ fn auto_bootstrap_strategies(bootstrap: ObserverBootstrapStrategy) -> &'static [
     }
 }
 
+fn selection_metric_name() -> &'static str {
+    "lexicographic(negative_pass_rate,exact_match_rate,positive_recall,train_negative_hits,artifact_size)"
+}
+
+fn is_better_trial(
+    candidate_cap: usize,
+    candidate_train_report: &ObserverSynthesisReport,
+    candidate_score: &ObserverSignalScoreReport,
+    current_cap: usize,
+    current_train_report: &ObserverSynthesisReport,
+    current_score: &ObserverSignalScoreReport,
+) -> bool {
+    candidate_score.negative_pass_rate > current_score.negative_pass_rate
+        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+            && candidate_score.exact_match_rate > current_score.exact_match_rate)
+        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+            && candidate_score.exact_match_rate == current_score.exact_match_rate
+            && candidate_score.positive_recall > current_score.positive_recall)
+        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+            && candidate_score.exact_match_rate == current_score.exact_match_rate
+            && candidate_score.positive_recall == current_score.positive_recall
+            && candidate_train_report.matched_negatives_after
+                < current_train_report.matched_negatives_after)
+        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+            && candidate_score.exact_match_rate == current_score.exact_match_rate
+            && candidate_score.positive_recall == current_score.positive_recall
+            && candidate_train_report.matched_negatives_after
+                == current_train_report.matched_negatives_after
+            && candidate_cap < current_cap)
+}
+
 pub fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
     match signal {
         GuardrailsSignal::InstructionOverride => &["deny_untrusted_instruction", "deny_instruction_boundary"],
@@ -638,28 +669,28 @@ pub fn synthesize_guardrails_artifact_auto(
         ));
     }
 
-    let best_macro = trials
+    let best_negative_pass = trials
         .iter()
-        .map(|(_, _, _, score)| (score.positive_recall + score.negative_pass_rate) / 2.0)
+        .map(|(_, _, _, score)| score.negative_pass_rate)
         .fold(f64::NEG_INFINITY, f64::max);
 
     let mut chosen_index = None;
     for (index, (cap, _, train_report, score)) in trials.iter().enumerate() {
-        let macro_score = (score.positive_recall + score.negative_pass_rate) / 2.0;
-        if macro_score + tolerance < best_macro {
+        if score.negative_pass_rate + tolerance < best_negative_pass {
             continue;
         }
         match chosen_index {
             None => chosen_index = Some(index),
             Some(current) => {
-                let (current_cap, _, _, current_score) = &trials[current];
-                let better = cap < current_cap
-                    || (cap == current_cap
-                        && score.exact_match_rate > current_score.exact_match_rate)
-                    || (cap == current_cap
-                        && score.exact_match_rate == current_score.exact_match_rate
-                        && train_report.matched_negatives_after
-                            < trials[current].2.matched_negatives_after);
+                let (current_cap, _, current_train_report, current_score) = &trials[current];
+                let better = is_better_trial(
+                    *cap,
+                    train_report,
+                    score,
+                    *current_cap,
+                    current_train_report,
+                    current_score,
+                );
                 if better {
                     chosen_index = Some(index);
                 }
@@ -672,7 +703,7 @@ pub fn synthesize_guardrails_artifact_auto(
     })?;
     let (_, chosen_artifact, mut chosen_report, _) = trials.remove(chosen_index);
     chosen_report.auto_selection = Some(ObserverAutoSelectionReport {
-        selection_metric: "macro(positive_recall,negative_pass_rate)".to_string(),
+        selection_metric: selection_metric_name().to_string(),
         tolerance,
         tried: trials
             .into_iter()
