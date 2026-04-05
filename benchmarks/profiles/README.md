@@ -3,6 +3,7 @@
 LogicPearl benchmark adapters should move toward human-authored profile files plus a generic Rust adapter engine.
 
 Current state:
+- `salad-base-set.yaml` and `salad-attack-enhanced-set.yaml` are loaded by the Rust benchmark crate
 - `alert.yaml` is a real built-in adapter profile loaded by the Rust benchmark crate
 - `pint.yaml` is also loaded by the Rust benchmark crate
 - other benchmark adapters are still procedural and should migrate only when the format can be expressed honestly

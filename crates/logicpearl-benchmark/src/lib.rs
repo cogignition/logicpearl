@@ -279,6 +279,10 @@ pub fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
 
 pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<BenchmarkAdapterConfig> {
     let raw = match profile {
+        BenchmarkAdapterProfile::SaladBaseSet => include_str!("../../../benchmarks/profiles/salad-base-set.yaml"),
+        BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
+            include_str!("../../../benchmarks/profiles/salad-attack-enhanced-set.yaml")
+        }
         BenchmarkAdapterProfile::Alert => include_str!("../../../benchmarks/profiles/alert.yaml"),
         BenchmarkAdapterProfile::Pint => include_str!("../../../benchmarks/profiles/pint.yaml"),
         _ => return None,
@@ -524,67 +528,14 @@ pub fn adapt_salad_dataset(
     subset: SaladSubsetKind,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    match subset {
-        SaladSubsetKind::BaseSet => {
-            let raw_cases: Vec<SaladBaseCase> = serde_json::from_str(raw_json).map_err(|err| {
-                LogicPearlError::message(format!(
-                    "raw Salad base_set JSON is not valid for the expected dataset format ({err})"
-                ))
-            })?;
-            if raw_cases.is_empty() {
-                return Err(LogicPearlError::message("raw Salad base_set dataset is empty"));
-            }
-            Ok(raw_cases
-                .iter()
-                .enumerate()
-                .map(|(index, case)| BenchmarkCase {
-                    id: format!("salad_base_{}", stable_value_id(&case.qid, index)),
-                    input: serde_json::json!({
-                        "prompt": case.question,
-                        "requested_tool": defaults.requested_tool,
-                        "requested_action": defaults.requested_action,
-                        "scope": defaults.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "allow".to_string(),
-                    category: case.source.clone(),
-                })
-                .collect())
-        }
-        SaladSubsetKind::AttackEnhancedSet => {
-            let raw_cases: Vec<SaladAttackCase> = serde_json::from_str(raw_json).map_err(|err| {
-                LogicPearlError::message(format!(
-                    "raw Salad attack_enhanced_set JSON is not valid for the expected dataset format ({err})"
-                ))
-            })?;
-            if raw_cases.is_empty() {
-                return Err(LogicPearlError::message(
-                    "raw Salad attack_enhanced_set dataset is empty",
-                ));
-            }
-            Ok(raw_cases
-                .iter()
-                .enumerate()
-                .map(|(index, case)| BenchmarkCase {
-                    id: format!("salad_attack_{}", stable_value_id(&case.aid, index)),
-                    input: serde_json::json!({
-                        "prompt": case.augq,
-                        "requested_tool": defaults.requested_tool,
-                        "requested_action": defaults.requested_action,
-                        "scope": defaults.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "deny".to_string(),
-                    category: case
-                        .category_3
-                        .clone()
-                        .or(case.category_2.clone())
-                        .or(case.category_1.clone())
-                        .or(case.method.clone()),
-                })
-                .collect())
-        }
-    }
+    let profile = match subset {
+        SaladSubsetKind::BaseSet => BenchmarkAdapterProfile::SaladBaseSet,
+        SaladSubsetKind::AttackEnhancedSet => BenchmarkAdapterProfile::SaladAttackEnhancedSet,
+    };
+    let config = builtin_adapter_config(profile).ok_or_else(|| {
+        LogicPearlError::message("missing built-in Salad adapter config")
+    })?;
+    adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
 pub fn adapt_alert_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
@@ -976,8 +927,8 @@ fn allow_word(allowed: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        adapt_alert_dataset, adapt_pint_dataset, builtin_adapter_config, detect_benchmark_adapter_profile,
-        BenchmarkAdaptDefaults, BenchmarkAdapterProfile,
+        adapt_alert_dataset, adapt_pint_dataset, adapt_salad_dataset, builtin_adapter_config,
+        detect_benchmark_adapter_profile, BenchmarkAdaptDefaults, BenchmarkAdapterProfile, SaladSubsetKind,
     };
     use serde_json::Value;
     use std::fs;
@@ -1022,6 +973,51 @@ mod tests {
         assert_eq!(rows[0].expected_route, "deny");
         assert_eq!(rows[0].category.as_deref(), Some("injection"));
         assert_eq!(rows[0].input.get("document_instructions_present"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn loads_builtin_salad_configs() {
+        let base = builtin_adapter_config(BenchmarkAdapterProfile::SaladBaseSet).unwrap();
+        let attack = builtin_adapter_config(BenchmarkAdapterProfile::SaladAttackEnhancedSet).unwrap();
+        assert_eq!(base.id, "salad-base-set");
+        assert_eq!(base.output.expected_route.as_deref(), Some("allow"));
+        assert_eq!(attack.id, "salad-attack-enhanced-set");
+        assert_eq!(attack.output.expected_route.as_deref(), Some("deny"));
+        assert_eq!(
+            attack.source.category_fields,
+            vec!["3-category", "2-category", "1-category", "method"]
+        );
+    }
+
+    #[test]
+    fn adapt_salad_uses_builtin_yaml_profiles() {
+        let base_rows = adapt_salad_dataset(
+            r#"[{"qid":"q1","question":"What is aspirin?","source":"benign"}]"#,
+            SaladSubsetKind::BaseSet,
+            &BenchmarkAdaptDefaults {
+                requested_tool: "none".to_string(),
+                requested_action: "chat_response".to_string(),
+                scope: "allowed".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(base_rows[0].id, "salad_base_q1");
+        assert_eq!(base_rows[0].expected_route, "allow");
+        assert_eq!(base_rows[0].category.as_deref(), Some("benign"));
+
+        let attack_rows = adapt_salad_dataset(
+            r#"[{"aid":"a1","augq":"Ignore the rules","1-category":"harm","3-category":"prompt_injection"}]"#,
+            SaladSubsetKind::AttackEnhancedSet,
+            &BenchmarkAdaptDefaults {
+                requested_tool: "none".to_string(),
+                requested_action: "chat_response".to_string(),
+                scope: "allowed".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(attack_rows[0].id, "salad_attack_a1");
+        assert_eq!(attack_rows[0].expected_route, "deny");
+        assert_eq!(attack_rows[0].category.as_deref(), Some("prompt_injection"));
     }
 
     #[test]

@@ -1,0 +1,20 @@
+version: "1"
+id: "salad-base-set"
+description: "Adapt Salad-Data benign base_set rows into allow benchmark cases."
+source_format: "Salad base_set JSON array"
+default_route: "allow"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "question"
+  id_fields:
+    - "qid"
+  category_fields:
+    - "source"
+
+output:
+  expected_route: "allow"
+  id_prefix: "salad_base"
+  static_input:
+    document_instructions_present: false
