@@ -1,6 +1,9 @@
 use logicpearl_benchmark::SynthesisCase;
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_observer::{guardrails_signal_feature, guardrails_signal_label, prompt_matches_phrase, GuardrailsSignal};
+use logicpearl_observer::{
+    guardrails_signal_feature, guardrails_signal_label, guardrails_signal_phrases, prompt_matches_phrase,
+    set_guardrails_signal_phrases, GuardrailsSignal, NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -20,6 +23,34 @@ pub enum ObserverBootstrapMode {
     ObservedFeature,
     Route,
     Seed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverSynthesisReport {
+    pub signal: String,
+    pub bootstrap_mode: ObserverBootstrapMode,
+    pub positive_case_count: usize,
+    pub negative_case_count: usize,
+    pub candidate_count: usize,
+    pub phrases_before: Vec<String>,
+    pub phrases_after: Vec<String>,
+    pub matched_positives_after: usize,
+    pub matched_negatives_after: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverRepairReport {
+    pub signal: String,
+    pub bootstrap_mode: ObserverBootstrapMode,
+    pub phrases_before: Vec<String>,
+    pub phrases_after: Vec<String>,
+    pub removed_phrases: Vec<String>,
+    pub before_positive_hits: usize,
+    pub after_positive_hits: usize,
+    pub before_negative_hits: usize,
+    pub after_negative_hits: usize,
+    pub matched_positive_cases: usize,
+    pub matched_negative_cases: usize,
 }
 
 pub fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
@@ -324,6 +355,171 @@ pub fn solve_phrase_subset_with_z3(
     smt.push_str(&format!("(minimize {keep_terms})\n"));
     smt.push_str("(check-sat)\n(get-model)\n");
     solve_selected_phrase_indexes_with_z3(phrases, smt)
+}
+
+pub fn synthesize_guardrails_artifact(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    cases: &[SynthesisCase],
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+    max_candidates: usize,
+) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
+    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
+        return Err(LogicPearlError::message(
+            "observer synthesize currently supports guardrails_v1 artifacts only",
+        ));
+    }
+    let config = artifact
+        .guardrails
+        .as_ref()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    let phrases_before = guardrails_signal_phrases(config, signal).to_vec();
+    let (bootstrap_mode, positive_prompts, negative_prompts) =
+        infer_bootstrap_examples(cases, signal, bootstrap, positive_routes, &phrases_before)?;
+    let candidates = generate_phrase_candidates(signal, &positive_prompts, &negative_prompts, max_candidates);
+    if candidates.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "could not generate candidate phrases for {}",
+            guardrails_signal_label(signal)
+        )));
+    }
+
+    let positive_constraints: Vec<Vec<usize>> = positive_prompts
+        .iter()
+        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
+        .filter(|matches| !matches.is_empty())
+        .collect();
+    let negative_constraints: Vec<Vec<usize>> = negative_prompts
+        .iter()
+        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
+        .filter(|matches| !matches.is_empty())
+        .collect();
+    let selected = solve_phrase_subset_with_z3_soft(&candidates, &positive_constraints, &negative_constraints)?;
+    if selected.is_empty() {
+        return Err(LogicPearlError::message(
+            "z3 could not synthesize a useful phrase subset",
+        ));
+    }
+
+    let phrases_after: Vec<String> = selected.iter().map(|index| candidates[*index].clone()).collect();
+    let mut synthesized = artifact.clone();
+    let synthesized_config = synthesized
+        .guardrails
+        .as_mut()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    set_guardrails_signal_phrases(synthesized_config, signal, phrases_after.clone());
+
+    Ok((
+        synthesized,
+        ObserverSynthesisReport {
+            signal: guardrails_signal_label(signal).to_string(),
+            bootstrap_mode,
+            positive_case_count: positive_prompts.len(),
+            negative_case_count: negative_prompts.len(),
+            candidate_count: candidates.len(),
+            phrases_before,
+            matched_positives_after: count_selected_hits(&selected, &positive_constraints),
+            matched_negatives_after: count_selected_hits(&selected, &negative_constraints),
+            phrases_after,
+        },
+    ))
+}
+
+pub fn repair_guardrails_artifact(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    cases: &[SynthesisCase],
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+) -> Result<(NativeObserverArtifact, ObserverRepairReport)> {
+    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
+        return Err(LogicPearlError::message(
+            "observer repair currently supports guardrails_v1 artifacts only",
+        ));
+    }
+    let config = artifact
+        .guardrails
+        .as_ref()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    let phrases_before = guardrails_signal_phrases(config, signal).to_vec();
+    if phrases_before.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "observer artifact has no phrases for {}",
+            guardrails_signal_label(signal)
+        )));
+    }
+
+    let (bootstrap_mode, positive_prompts, negative_prompts) =
+        infer_bootstrap_examples(cases, signal, bootstrap, positive_routes, &phrases_before)?;
+
+    let mut positive_constraints: Vec<Vec<usize>> = Vec::new();
+    let mut negative_constraints: Vec<Vec<usize>> = Vec::new();
+
+    for prompt in &positive_prompts {
+        let matched: Vec<usize> = phrases_before
+            .iter()
+            .enumerate()
+            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
+            .collect();
+        if !matched.is_empty() {
+            positive_constraints.push(matched);
+        }
+    }
+    for prompt in &negative_prompts {
+        let matched: Vec<usize> = phrases_before
+            .iter()
+            .enumerate()
+            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
+            .collect();
+        if !matched.is_empty() {
+            negative_constraints.push(matched);
+        }
+    }
+    if positive_constraints.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "no positive benchmark cases currently match {} phrases",
+            guardrails_signal_label(signal)
+        )));
+    }
+
+    let selected = solve_phrase_subset_with_z3(&phrases_before, &positive_constraints, &negative_constraints)?;
+    let phrases_after: Vec<String> = selected.iter().map(|index| phrases_before[*index].clone()).collect();
+    if phrases_after.is_empty() {
+        return Err(LogicPearlError::message(
+            "z3 removed every phrase for the selected signal",
+        ));
+    }
+    let removed_phrases: Vec<String> = phrases_before
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !selected.contains(index))
+        .map(|(_, phrase)| phrase.clone())
+        .collect();
+
+    let mut repaired = artifact.clone();
+    let repaired_config = repaired
+        .guardrails
+        .as_mut()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    set_guardrails_signal_phrases(repaired_config, signal, phrases_after.clone());
+
+    Ok((
+        repaired,
+        ObserverRepairReport {
+            signal: guardrails_signal_label(signal).to_string(),
+            bootstrap_mode,
+            before_positive_hits: count_phrase_hits(&positive_constraints),
+            after_positive_hits: count_selected_hits(&selected, &positive_constraints),
+            before_negative_hits: count_phrase_hits(&negative_constraints),
+            after_negative_hits: count_selected_hits(&selected, &negative_constraints),
+            matched_positive_cases: positive_prompts.len(),
+            matched_negative_cases: negative_prompts.len(),
+            removed_phrases,
+            phrases_before,
+            phrases_after,
+        },
+    ))
 }
 
 fn boolish(value: Option<&serde_json::Value>) -> bool {

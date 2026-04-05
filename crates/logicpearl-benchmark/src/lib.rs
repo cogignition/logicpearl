@@ -1,6 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -102,6 +103,56 @@ pub struct BenchmarkAdapterDescriptor {
     pub description: &'static str,
     pub source_format: &'static str,
     pub default_route: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct BenchmarkAdaptDefaults {
+    pub requested_tool: String,
+    pub requested_action: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaladSubsetKind {
+    BaseSet,
+    AttackEnhancedSet,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceProjectionConfig {
+    #[serde(default)]
+    pub feature_columns: Vec<String>,
+    #[serde(default)]
+    pub binary_targets: Vec<BinaryTargetProjection>,
+    #[serde(default = "default_true")]
+    pub emit_multi_target: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BinaryTargetProjection {
+    pub name: String,
+    #[serde(default)]
+    pub trace_features: Vec<String>,
+    #[serde(default)]
+    pub positive_when: ProjectionPredicate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectionPredicate {
+    #[serde(default)]
+    pub expected_routes: Vec<String>,
+    #[serde(default)]
+    pub any_features: Vec<String>,
+    #[serde(default)]
+    pub all_features: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceEmitSummary {
+    pub rows: usize,
+    pub output_dir: String,
+    pub config: String,
+    pub files: Vec<String>,
 }
 
 impl BenchmarkAdapterProfile {
@@ -358,6 +409,391 @@ pub fn sanitize_identifier(value: &str) -> String {
     } else {
         out
     }
+}
+
+pub fn write_benchmark_cases_jsonl(cases: &[BenchmarkCase], output: &Path) -> Result<()> {
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut out = String::new();
+    for case in cases {
+        out.push_str(
+            &serde_json::to_string(case)
+                .map_err(|err| LogicPearlError::message(format!("could not serialize benchmark case ({err})")))?,
+        );
+        out.push('\n');
+    }
+    fs::write(output, out)?;
+    Ok(())
+}
+
+pub fn adapt_salad_dataset(
+    raw_json: &str,
+    subset: SaladSubsetKind,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    match subset {
+        SaladSubsetKind::BaseSet => {
+            let raw_cases: Vec<SaladBaseCase> = serde_json::from_str(raw_json).map_err(|err| {
+                LogicPearlError::message(format!(
+                    "raw Salad base_set JSON is not valid for the expected dataset format ({err})"
+                ))
+            })?;
+            if raw_cases.is_empty() {
+                return Err(LogicPearlError::message("raw Salad base_set dataset is empty"));
+            }
+            Ok(raw_cases
+                .iter()
+                .enumerate()
+                .map(|(index, case)| BenchmarkCase {
+                    id: format!("salad_base_{}", stable_value_id(&case.qid, index)),
+                    input: serde_json::json!({
+                        "prompt": case.question,
+                        "requested_tool": defaults.requested_tool,
+                        "requested_action": defaults.requested_action,
+                        "scope": defaults.scope,
+                        "document_instructions_present": false
+                    }),
+                    expected_route: "allow".to_string(),
+                    category: case.source.clone(),
+                })
+                .collect())
+        }
+        SaladSubsetKind::AttackEnhancedSet => {
+            let raw_cases: Vec<SaladAttackCase> = serde_json::from_str(raw_json).map_err(|err| {
+                LogicPearlError::message(format!(
+                    "raw Salad attack_enhanced_set JSON is not valid for the expected dataset format ({err})"
+                ))
+            })?;
+            if raw_cases.is_empty() {
+                return Err(LogicPearlError::message(
+                    "raw Salad attack_enhanced_set dataset is empty",
+                ));
+            }
+            Ok(raw_cases
+                .iter()
+                .enumerate()
+                .map(|(index, case)| BenchmarkCase {
+                    id: format!("salad_attack_{}", stable_value_id(&case.aid, index)),
+                    input: serde_json::json!({
+                        "prompt": case.augq,
+                        "requested_tool": defaults.requested_tool,
+                        "requested_action": defaults.requested_action,
+                        "scope": defaults.scope,
+                        "document_instructions_present": false
+                    }),
+                    expected_route: "deny".to_string(),
+                    category: case
+                        .category_3
+                        .clone()
+                        .or(case.category_2.clone())
+                        .or(case.category_1.clone())
+                        .or(case.method.clone()),
+                })
+                .collect())
+        }
+    }
+}
+
+pub fn adapt_alert_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+    let rows = parse_json_object_rows(raw_json)?;
+    if rows.is_empty() {
+        return Err(LogicPearlError::message("raw ALERT dataset is empty"));
+    }
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let prompt = first_string_field(
+                row,
+                &["prompt", "instruction", "text", "question", "input", "content"],
+            )
+            .ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "ALERT row {} is missing a prompt-like text field",
+                    index + 1
+                ))
+            })?;
+
+            Ok(BenchmarkCase {
+                id: row
+                    .get("id")
+                    .or_else(|| row.get("aid"))
+                    .or_else(|| row.get("qid"))
+                    .map(|value| format!("alert_{}", stable_value_id(value, index)))
+                    .unwrap_or_else(|| format!("alert_{index:06}")),
+                input: serde_json::json!({
+                    "prompt": prompt,
+                    "requested_tool": defaults.requested_tool,
+                    "requested_action": defaults.requested_action,
+                    "scope": defaults.scope,
+                    "document_instructions_present": false
+                }),
+                expected_route: "deny".to_string(),
+                category: first_string_field(
+                    row,
+                    &[
+                        "category",
+                        "subcategory",
+                        "harm_category",
+                        "attack_category",
+                        "label",
+                        "source",
+                    ],
+                ),
+            })
+        })
+        .collect()
+}
+
+pub fn adapt_squad_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+    let dataset: SquadDataset = serde_json::from_str(raw_json).map_err(|err| {
+        LogicPearlError::message(format!(
+            "raw SQuAD JSON is not valid for the expected dataset format ({err})"
+        ))
+    })?;
+    if dataset.data.is_empty() {
+        return Err(LogicPearlError::message("raw SQuAD dataset is empty"));
+    }
+
+    let mut cases = Vec::new();
+    for article in &dataset.data {
+        for paragraph in &article.paragraphs {
+            for question in &paragraph.qas {
+                cases.push(BenchmarkCase {
+                    id: format!("squad_{}", question.id),
+                    input: serde_json::json!({
+                        "prompt": question.question,
+                        "context": paragraph.context,
+                        "requested_tool": defaults.requested_tool,
+                        "requested_action": defaults.requested_action,
+                        "scope": defaults.scope,
+                        "document_instructions_present": false
+                    }),
+                    expected_route: "allow".to_string(),
+                    category: article
+                        .title
+                        .clone()
+                        .or_else(|| Some("benign_negative".to_string())),
+                });
+            }
+        }
+    }
+
+    if cases.is_empty() {
+        return Err(LogicPearlError::message(
+            "raw SQuAD dataset contains no question rows",
+        ));
+    }
+    Ok(cases)
+}
+
+pub fn adapt_pint_dataset(raw_yaml: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+    let raw_cases: Vec<PintRawCase> = serde_yaml::from_str(raw_yaml).map_err(|err| {
+        LogicPearlError::message(format!(
+            "raw PINT YAML is not valid for the expected dataset format ({err})"
+        ))
+    })?;
+    if raw_cases.is_empty() {
+        return Err(LogicPearlError::message("raw PINT dataset is empty"));
+    }
+    Ok(raw_cases
+        .iter()
+        .enumerate()
+        .map(|(index, case)| BenchmarkCase {
+            id: format!("pint_{index:06}"),
+            input: serde_json::json!({
+                "prompt": case.text,
+                "requested_tool": defaults.requested_tool,
+                "requested_action": defaults.requested_action,
+                "scope": defaults.scope,
+                "document_instructions_present": false
+            }),
+            expected_route: if case.label { "deny" } else { "allow" }.to_string(),
+            category: case.category.clone(),
+        })
+        .collect())
+}
+
+pub fn load_trace_projection_config(config_path: &Path) -> Result<TraceProjectionConfig> {
+    let config_text = fs::read_to_string(config_path)?;
+    let config: TraceProjectionConfig = serde_json::from_str(&config_text).map_err(|err| {
+        LogicPearlError::message(format!("trace projection config is not valid JSON ({err})"))
+    })?;
+    if config.binary_targets.is_empty() {
+        return Err(LogicPearlError::message(
+            "trace projection config must declare at least one binary target",
+        ));
+    }
+    Ok(config)
+}
+
+pub fn emit_trace_tables(observed_jsonl: &Path, config_path: &Path, output_dir: &Path) -> Result<TraceEmitSummary> {
+    let config = load_trace_projection_config(config_path)?;
+    let file = fs::File::open(observed_jsonl)?;
+    let reader = BufReader::new(file);
+    fs::create_dir_all(output_dir)?;
+
+    let mut inferred_features: Option<Vec<String>> = None;
+    let mut multi_target = String::new();
+    let mut target_csvs: BTreeMap<String, String> = BTreeMap::new();
+    let mut rows = 0_usize;
+
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let case: ObservedBenchmarkCase = serde_json::from_str(trimmed).map_err(|err| {
+            LogicPearlError::message(format!(
+                "invalid observed benchmark JSON on line {} ({err})",
+                line_no + 1
+            ))
+        })?;
+
+        let feature_columns = if config.feature_columns.is_empty() {
+            inferred_features.get_or_insert_with(|| {
+                let mut keys = case.features.keys().cloned().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            })
+        } else {
+            &config.feature_columns
+        };
+
+        if config.emit_multi_target && multi_target.is_empty() {
+            let mut header = feature_columns.join(",");
+            header.push(',');
+            header.push_str(
+                &config
+                    .binary_targets
+                    .iter()
+                    .map(|target| target.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            header.push('\n');
+            multi_target.push_str(&header);
+        }
+
+        let mut target_values = Vec::with_capacity(config.binary_targets.len());
+        for target in &config.binary_targets {
+            if !target_csvs.contains_key(&target.name) {
+                let target_features = if target.trace_features.is_empty() {
+                    feature_columns.clone()
+                } else {
+                    target.trace_features.clone()
+                };
+                let mut header = target_features.join(",");
+                header.push_str(",allowed\n");
+                target_csvs.insert(target.name.clone(), header);
+            }
+
+            let denied = projection_matches(&case, &target.positive_when);
+            target_values.push(allow_word(!denied).to_string());
+
+            let target_features = if target.trace_features.is_empty() {
+                feature_columns.clone()
+            } else {
+                target.trace_features.clone()
+            };
+            let values = target_features
+                .iter()
+                .map(|feature| csv_value(case.features.get(feature)))
+                .collect::<Vec<_>>()
+                .join(",");
+            target_csvs
+                .get_mut(&target.name)
+                .expect("target csv initialized")
+                .push_str(&format!("{values},{}\n", allow_word(!denied)));
+        }
+
+        if config.emit_multi_target {
+            let mut values = feature_columns
+                .iter()
+                .map(|feature| csv_value(case.features.get(feature)))
+                .collect::<Vec<_>>();
+            values.extend(target_values);
+            multi_target.push_str(&values.join(","));
+            multi_target.push('\n');
+        }
+        rows += 1;
+    }
+
+    if rows == 0 {
+        return Err(LogicPearlError::message(
+            "observed benchmark dataset is empty",
+        ));
+    }
+
+    let mut files = Vec::new();
+    if config.emit_multi_target {
+        let path = output_dir.join("multi_target.csv");
+        fs::write(&path, multi_target)?;
+        files.push("multi_target.csv".to_string());
+    }
+    for (target_name, contents) in &target_csvs {
+        let filename = format!("{target_name}_traces.csv");
+        let path = output_dir.join(&filename);
+        fs::write(&path, contents)?;
+        files.push(filename);
+    }
+
+    Ok(TraceEmitSummary {
+        rows,
+        output_dir: output_dir.display().to_string(),
+        config: config_path.display().to_string(),
+        files,
+    })
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn projection_matches(case: &ObservedBenchmarkCase, predicate: &ProjectionPredicate) -> bool {
+    let expected_route_match = predicate.expected_routes.is_empty()
+        || predicate
+            .expected_routes
+            .iter()
+            .any(|route| route == &case.expected_route);
+    let any_match = predicate.any_features.is_empty()
+        || predicate
+            .any_features
+            .iter()
+            .any(|feature| boolish(case.features.get(feature)));
+    let all_match = predicate
+        .all_features
+        .iter()
+        .all(|feature| boolish(case.features.get(feature)));
+    expected_route_match && any_match && all_match
+}
+
+fn csv_value(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::Bool(boolean)) => bit(*boolean).to_string(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::String(text)) => text.replace(',', "_"),
+        Some(Value::Null) | None => String::new(),
+        Some(other) => other.to_string().replace(',', "_"),
+    }
+}
+
+fn boolish(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(boolean)) => *boolean,
+        Some(Value::Number(number)) => number.as_i64().unwrap_or_default() != 0,
+        Some(Value::String(text)) => matches!(text.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y"),
+        _ => false,
+    }
+}
+
+fn bit(value: bool) -> u8 {
+    if value { 1 } else { 0 }
+}
+
+fn allow_word(allowed: bool) -> &'static str {
+    if allowed { "allowed" } else { "denied" }
 }
 
 #[cfg(test)]

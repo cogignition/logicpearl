@@ -1,8 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
-    benchmark_adapter_registry, detect_benchmark_adapter_profile, first_string_field, load_benchmark_cases,
-    load_synthesis_cases, parse_json_object_rows, sanitize_identifier, stable_value_id, BenchmarkAdapterProfile,
-    BenchmarkCase, ObservedBenchmarkCase, PintRawCase, SaladAttackCase, SaladBaseCase, SquadDataset,
+    adapt_alert_dataset, adapt_pint_dataset, adapt_salad_dataset, adapt_squad_dataset, benchmark_adapter_registry,
+    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases, load_synthesis_cases,
+    load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl, BenchmarkAdaptDefaults,
+    BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_conformance::{
@@ -14,16 +15,13 @@ use logicpearl_discovery::{
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
-    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_label, guardrails_signal_phrases,
-    load_artifact, observe_with_artifact, observe_with_profile, profile_id as native_profile_id, profile_registry,
-    prompt_matches_phrase,
-    set_guardrails_signal_phrases, status as observer_status, GuardrailsSignal,
+    default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
+    observe_with_profile, profile_id as native_profile_id, profile_registry, status as observer_status,
+    GuardrailsSignal,
     NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
 };
 use logicpearl_observer_synthesis::{
-    count_phrase_hits, count_selected_hits, generate_phrase_candidates, infer_bootstrap_examples,
-    matching_candidate_indexes, solve_phrase_subset_with_z3, solve_phrase_subset_with_z3_soft,
-    ObserverBootstrapStrategy,
+    repair_guardrails_artifact, synthesize_guardrails_artifact, ObserverBootstrapStrategy,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
@@ -31,9 +29,8 @@ use logicpearl_render::TextInspector;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
-use serde_yaml;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -830,34 +827,6 @@ struct ObserverRepairArgs {
     json: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TraceProjectionConfig {
-    #[serde(default)]
-    feature_columns: Vec<String>,
-    #[serde(default = "default_true")]
-    emit_multi_target: bool,
-    binary_targets: Vec<BinaryTargetProjection>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BinaryTargetProjection {
-    name: String,
-    #[serde(default)]
-    trace_features: Vec<String>,
-    #[serde(default)]
-    positive_when: ProjectionPredicate,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct ProjectionPredicate {
-    #[serde(default)]
-    expected_routes: Vec<String>,
-    #[serde(default)]
-    any_features: Vec<String>,
-    #[serde(default)]
-    all_features: Vec<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkCaseResult {
     id: String,
@@ -890,14 +859,6 @@ struct BenchmarkResult {
     dataset_path: String,
     summary: BenchmarkSummary,
     cases: Vec<BenchmarkCaseResult>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct TraceEmitSummary {
-    rows: usize,
-    output_dir: String,
-    config: String,
-    files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1189,8 +1150,12 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
         args.plugin_manifest.clone(),
     )?;
     let observed_rows = observe_benchmark_cases(&args.dataset_jsonl, &observer, &observed_path)?;
-    let trace_summary = emit_trace_tables(&observed_path, &args.config, &traces_dir)?;
-    let config = load_trace_projection_config(&args.config)?;
+    let trace_summary = emit_trace_tables(&observed_path, &args.config, &traces_dir)
+        .into_diagnostic()
+        .wrap_err("failed to emit trace tables")?;
+    let config = load_trace_projection_config(&args.config)
+        .into_diagnostic()
+        .wrap_err("failed to load trace projection config")?;
 
     let discover_result = if config.emit_multi_target {
         let targets = config
@@ -1327,7 +1292,9 @@ fn run_benchmark_detect_profile(args: BenchmarkDetectProfileArgs) -> Result<()> 
 }
 
 fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
-    let summary = emit_trace_tables(&args.observed_jsonl, &args.config, &args.output_dir)?;
+    let summary = emit_trace_tables(&args.observed_jsonl, &args.config, &args.output_dir)
+        .into_diagnostic()
+        .wrap_err("failed to emit trace tables")?;
 
     if args.json {
         println!(
@@ -1403,81 +1370,22 @@ fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
     let raw_json = fs::read_to_string(&args.raw_salad_json)
         .into_diagnostic()
         .wrap_err("could not read raw Salad-Data JSON")?;
-    if let Some(parent) = args.output.parent() {
-        fs::create_dir_all(parent)
-            .into_diagnostic()
-            .wrap_err("failed to create adapted benchmark output directory")?;
-    }
-
-    let mut out = String::new();
-    let rows = match args.subset {
-        SaladSubset::BaseSet => {
-            let raw_cases: Vec<SaladBaseCase> = serde_json::from_str(&raw_json)
-                .into_diagnostic()
-                .wrap_err("raw Salad base_set JSON is not valid for the expected dataset format")?;
-            if raw_cases.is_empty() {
-                return Err(guidance(
-                    "raw Salad base_set dataset is empty",
-                    "Provide a JSON array of rows with qid, question, and optional source.",
-                ));
-            }
-            let count = raw_cases.len();
-            for (index, case) in raw_cases.iter().enumerate() {
-                let benchmark_case = BenchmarkCase {
-                    id: format!("salad_base_{}", stable_value_id(&case.qid, index)),
-                    input: serde_json::json!({
-                        "prompt": case.question,
-                        "requested_tool": args.requested_tool,
-                        "requested_action": args.requested_action,
-                        "scope": args.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "allow".to_string(),
-                    category: case.source.clone(),
-                };
-                out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
-                out.push('\n');
-            }
-            count
-        }
-        SaladSubset::AttackEnhancedSet => {
-            let raw_cases: Vec<SaladAttackCase> = serde_json::from_str(&raw_json)
-                .into_diagnostic()
-                .wrap_err("raw Salad attack_enhanced_set JSON is not valid for the expected dataset format")?;
-            if raw_cases.is_empty() {
-                return Err(guidance(
-                    "raw Salad attack_enhanced_set dataset is empty",
-                    "Provide a JSON array of rows with aid, augq, and optional method/category fields.",
-                ));
-            }
-            let count = raw_cases.len();
-            for (index, case) in raw_cases.iter().enumerate() {
-                let category = case
-                    .category_3
-                    .clone()
-                    .or(case.category_2.clone())
-                    .or(case.category_1.clone())
-                    .or(case.method.clone());
-                let benchmark_case = BenchmarkCase {
-                    id: format!("salad_attack_{}", stable_value_id(&case.aid, index)),
-                    input: serde_json::json!({
-                        "prompt": case.augq,
-                        "requested_tool": args.requested_tool,
-                        "requested_action": args.requested_action,
-                        "scope": args.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "deny".to_string(),
-                    category,
-                };
-                out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
-                out.push('\n');
-            }
-            count
-        }
-    };
-
-    fs::write(&args.output, out)
+    let cases = adapt_salad_dataset(
+        &raw_json,
+        match args.subset {
+            SaladSubset::BaseSet => SaladSubsetKind::BaseSet,
+            SaladSubset::AttackEnhancedSet => SaladSubsetKind::AttackEnhancedSet,
+        },
+        &BenchmarkAdaptDefaults {
+            requested_tool: args.requested_tool.clone(),
+            requested_action: args.requested_action.clone(),
+            scope: args.scope.clone(),
+        },
+    )
+    .into_diagnostic()
+    .wrap_err("failed to adapt Salad-Data benchmark dataset")?;
+    let rows = cases.len();
+    write_benchmark_cases_jsonl(&cases, &args.output)
         .into_diagnostic()
         .wrap_err("failed to write adapted Salad JSONL")?;
 
@@ -1515,67 +1423,18 @@ fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
     let raw_json = fs::read_to_string(&args.raw_alert_json)
         .into_diagnostic()
         .wrap_err("could not read raw ALERT JSON")?;
-    let rows = parse_json_object_rows(&raw_json)
-        .into_diagnostic()
-        .wrap_err("raw ALERT JSON is not valid for the expected dataset format")?;
-    if rows.is_empty() {
-        return Err(guidance(
-            "raw ALERT dataset is empty",
-            "Provide a JSON array or JSONL file of objects with a prompt-like text field.",
-        ));
-    }
-
-    if let Some(parent) = args.output.parent() {
-        fs::create_dir_all(parent)
-            .into_diagnostic()
-            .wrap_err("failed to create adapted benchmark output directory")?;
-    }
-
-    let mut out = String::new();
-    for (index, row) in rows.iter().enumerate() {
-        let prompt = first_string_field(
-            row,
-            &["prompt", "instruction", "text", "question", "input", "content"],
-        )
-        .ok_or_else(|| {
-            guidance(
-                format!("ALERT row {} is missing a prompt-like text field", index + 1),
-                "Expected one of: prompt, instruction, text, question, input, content.",
-            )
-        })?;
-
-        let benchmark_case = BenchmarkCase {
-            id: row
-                .get("id")
-                .or_else(|| row.get("aid"))
-                .or_else(|| row.get("qid"))
-                .map(|value| format!("alert_{}", stable_value_id(value, index)))
-                .unwrap_or_else(|| format!("alert_{index:06}")),
-            input: serde_json::json!({
-                "prompt": prompt,
-                "requested_tool": args.requested_tool,
-                "requested_action": args.requested_action,
-                "scope": args.scope,
-                "document_instructions_present": false
-            }),
-            expected_route: "deny".to_string(),
-            category: first_string_field(
-                row,
-                &[
-                    "category",
-                    "subcategory",
-                    "harm_category",
-                    "attack_category",
-                    "label",
-                    "source",
-                ],
-            ),
-        };
-        out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
-        out.push('\n');
-    }
-
-    fs::write(&args.output, out)
+    let cases = adapt_alert_dataset(
+        &raw_json,
+        &BenchmarkAdaptDefaults {
+            requested_tool: args.requested_tool.clone(),
+            requested_action: args.requested_action.clone(),
+            scope: args.scope.clone(),
+        },
+    )
+    .into_diagnostic()
+    .wrap_err("failed to adapt ALERT benchmark dataset")?;
+    let rows = cases.len();
+    write_benchmark_cases_jsonl(&cases, &args.output)
         .into_diagnostic()
         .wrap_err("failed to write adapted ALERT JSONL")?;
 
@@ -1584,14 +1443,14 @@ fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "alert",
-                "rows": rows.len(),
+                "rows": rows,
                 "output": args.output.display().to_string()
             }))
             .into_diagnostic()?
         );
     } else {
         println!("{} {}", "Adapted".bold().bright_green(), "ALERT dataset".bold());
-        println!("  {} {}", "Rows".bright_black(), rows.len());
+        println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
@@ -1601,58 +1460,18 @@ fn run_benchmark_adapt_squad(args: BenchmarkAdaptSquadArgs) -> Result<()> {
     let raw_json = fs::read_to_string(&args.raw_squad_json)
         .into_diagnostic()
         .wrap_err("could not read raw SQuAD JSON")?;
-    let dataset: SquadDataset = serde_json::from_str(&raw_json)
-        .into_diagnostic()
-        .wrap_err("raw SQuAD JSON is not valid for the expected dataset format")?;
-    if dataset.data.is_empty() {
-        return Err(guidance(
-            "raw SQuAD dataset is empty",
-            "Provide a SQuAD-style JSON file with a top-level data array.",
-        ));
-    }
-
-    if let Some(parent) = args.output.parent() {
-        fs::create_dir_all(parent)
-            .into_diagnostic()
-            .wrap_err("failed to create adapted benchmark output directory")?;
-    }
-
-    let mut out = String::new();
-    let mut rows = 0_usize;
-    for article in &dataset.data {
-        for paragraph in &article.paragraphs {
-            for question in &paragraph.qas {
-                let benchmark_case = BenchmarkCase {
-                    id: format!("squad_{}", question.id),
-                    input: serde_json::json!({
-                        "prompt": question.question,
-                        "context": paragraph.context,
-                        "requested_tool": args.requested_tool,
-                        "requested_action": args.requested_action,
-                        "scope": args.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "allow".to_string(),
-                    category: article
-                        .title
-                        .clone()
-                        .or_else(|| Some("benign_negative".to_string())),
-                };
-                out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
-                out.push('\n');
-                rows += 1;
-            }
-        }
-    }
-
-    if rows == 0 {
-        return Err(guidance(
-            "raw SQuAD dataset contains no question rows",
-            "Make sure the JSON contains data[].paragraphs[].qas[] entries.",
-        ));
-    }
-
-    fs::write(&args.output, out)
+    let cases = adapt_squad_dataset(
+        &raw_json,
+        &BenchmarkAdaptDefaults {
+            requested_tool: args.requested_tool.clone(),
+            requested_action: args.requested_action.clone(),
+            scope: args.scope.clone(),
+        },
+    )
+    .into_diagnostic()
+    .wrap_err("failed to adapt SQuAD benchmark dataset")?;
+    let rows = cases.len();
+    write_benchmark_cases_jsonl(&cases, &args.output)
         .into_diagnostic()
         .wrap_err("failed to write adapted SQuAD JSONL")?;
 
@@ -1832,45 +1651,18 @@ fn run_benchmark_adapt_pint(args: BenchmarkAdaptPintArgs) -> Result<()> {
     let raw_yaml = fs::read_to_string(&args.raw_pint_yaml)
         .into_diagnostic()
         .wrap_err("could not read raw PINT YAML")?;
-    let raw_cases: Vec<PintRawCase> = serde_yaml::from_str(&raw_yaml)
-        .into_diagnostic()
-        .wrap_err("raw PINT YAML is not valid for the expected dataset format")?;
-    if raw_cases.is_empty() {
-        return Err(guidance(
-            "raw PINT dataset is empty",
-            "Provide a YAML list of rows with text, optional category, and boolean label.",
-        ));
-    }
-
-    if let Some(parent) = args.output.parent() {
-        fs::create_dir_all(parent)
-            .into_diagnostic()
-            .wrap_err("failed to create adapted benchmark output directory")?;
-    }
-
-    let mut out = String::new();
-    for (index, case) in raw_cases.iter().enumerate() {
-        let benchmark_case = BenchmarkCase {
-            id: format!("pint_{index:06}"),
-            input: serde_json::json!({
-                "prompt": case.text,
-                "requested_tool": args.requested_tool,
-                "requested_action": args.requested_action,
-                "scope": args.scope,
-                "document_instructions_present": false
-            }),
-            expected_route: if case.label {
-                "deny".to_string()
-            } else {
-                "allow".to_string()
-            },
-            category: case.category.clone(),
-        };
-        out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
-        out.push('\n');
-    }
-
-    fs::write(&args.output, out)
+    let cases = adapt_pint_dataset(
+        &raw_yaml,
+        &BenchmarkAdaptDefaults {
+            requested_tool: args.requested_tool.clone(),
+            requested_action: args.requested_action.clone(),
+            scope: args.scope.clone(),
+        },
+    )
+    .into_diagnostic()
+    .wrap_err("failed to adapt PINT benchmark dataset")?;
+    let rows = cases.len();
+    write_benchmark_cases_jsonl(&cases, &args.output)
         .into_diagnostic()
         .wrap_err("failed to write adapted PINT JSONL")?;
 
@@ -1879,14 +1671,14 @@ fn run_benchmark_adapt_pint(args: BenchmarkAdaptPintArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "pint",
-                "rows": raw_cases.len(),
+                "rows": rows,
                 "output": args.output.display().to_string()
             }))
             .into_diagnostic()?
         );
     } else {
         println!("{} {}", "Adapted".bold().bright_green(), "PINT dataset".bold());
-        println!("  {} {}", "Rows".bright_black(), raw_cases.len());
+        println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
@@ -2981,206 +2773,6 @@ fn observe_features(observer: &ResolvedObserver, raw_input: &Value) -> Result<Ma
     }
 }
 
-fn load_trace_projection_config(config_path: &PathBuf) -> Result<TraceProjectionConfig> {
-    let config_text = fs::read_to_string(config_path)
-        .into_diagnostic()
-        .wrap_err("could not read trace projection config")?;
-    let config: TraceProjectionConfig = serde_json::from_str(&config_text)
-        .into_diagnostic()
-        .wrap_err("trace projection config is not valid JSON")?;
-    if config.binary_targets.is_empty() {
-        return Err(guidance(
-            "trace projection config must declare at least one binary target",
-            "Add one or more entries under `binary_targets` in the projection config.",
-        ));
-    }
-    Ok(config)
-}
-
-fn emit_trace_tables(
-    observed_jsonl: &PathBuf,
-    config_path: &PathBuf,
-    output_dir: &PathBuf,
-) -> Result<TraceEmitSummary> {
-    let config = load_trace_projection_config(config_path)?;
-    let file = fs::File::open(observed_jsonl)
-        .into_diagnostic()
-        .wrap_err("could not open observed benchmark JSONL")?;
-    let reader = BufReader::new(file);
-    fs::create_dir_all(output_dir)
-        .into_diagnostic()
-        .wrap_err("failed to create trace output directory")?;
-
-    let mut inferred_features: Option<Vec<String>> = None;
-    let mut multi_target = String::new();
-    let mut target_csvs: BTreeMap<String, String> = BTreeMap::new();
-    let mut rows = 0_usize;
-
-    for (line_no, line) in reader.lines().enumerate() {
-        let line = line
-            .into_diagnostic()
-            .wrap_err("failed to read observed benchmark line")?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let case: ObservedBenchmarkCase = serde_json::from_str(trimmed)
-            .into_diagnostic()
-            .wrap_err(format!(
-                "invalid observed benchmark JSON on line {}",
-                line_no + 1
-            ))?;
-
-        let feature_columns = if config.feature_columns.is_empty() {
-            inferred_features.get_or_insert_with(|| {
-                let mut keys = case.features.keys().cloned().collect::<Vec<_>>();
-                keys.sort();
-                keys
-            })
-        } else {
-            &config.feature_columns
-        };
-
-        if config.emit_multi_target && multi_target.is_empty() {
-            let mut header = feature_columns.join(",");
-            header.push(',');
-            header.push_str(
-                &config
-                    .binary_targets
-                    .iter()
-                    .map(|target| target.name.clone())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-            header.push('\n');
-            multi_target.push_str(&header);
-        }
-
-        let mut target_values = Vec::with_capacity(config.binary_targets.len());
-        for target in &config.binary_targets {
-            if target_csvs.get(&target.name).is_none() {
-                let target_features = if target.trace_features.is_empty() {
-                    feature_columns.clone()
-                } else {
-                    target.trace_features.clone()
-                };
-                let mut header = target_features.join(",");
-                header.push_str(",allowed\n");
-                target_csvs.insert(target.name.clone(), header);
-            }
-
-            let denied = projection_matches(&case, &target.positive_when);
-            target_values.push(allow_word(!denied).to_string());
-
-            let target_features = if target.trace_features.is_empty() {
-                feature_columns.clone()
-            } else {
-                target.trace_features.clone()
-            };
-            let values = target_features
-                .iter()
-                .map(|feature| csv_value(case.features.get(feature)))
-                .collect::<Vec<_>>()
-                .join(",");
-            target_csvs
-                .get_mut(&target.name)
-                .expect("target csv initialized")
-                .push_str(&format!("{values},{}\n", allow_word(!denied)));
-        }
-
-        if config.emit_multi_target {
-            let mut values = feature_columns
-                .iter()
-                .map(|feature| csv_value(case.features.get(feature)))
-                .collect::<Vec<_>>();
-            values.extend(target_values);
-            multi_target.push_str(&values.join(","));
-            multi_target.push('\n');
-        }
-        rows += 1;
-    }
-
-    if rows == 0 {
-        return Err(guidance(
-            "observed benchmark dataset is empty",
-            "Run `logicpearl benchmark observe ...` first to generate observed feature rows.",
-        ));
-    }
-
-    let mut files = Vec::new();
-    if config.emit_multi_target {
-        let path = output_dir.join("multi_target.csv");
-        fs::write(&path, multi_target)
-            .into_diagnostic()
-            .wrap_err("failed to write multi_target.csv")?;
-        files.push("multi_target.csv".to_string());
-    }
-    for (target_name, contents) in &target_csvs {
-        let filename = format!("{target_name}_traces.csv");
-        let path = output_dir.join(&filename);
-        fs::write(&path, contents)
-            .into_diagnostic()
-            .wrap_err(format!("failed to write {filename}"))?;
-        files.push(filename);
-    }
-
-    Ok(TraceEmitSummary {
-        rows,
-        output_dir: output_dir.display().to_string(),
-        config: config_path.display().to_string(),
-        files,
-    })
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn projection_matches(case: &ObservedBenchmarkCase, predicate: &ProjectionPredicate) -> bool {
-    let expected_route_match = predicate.expected_routes.is_empty()
-        || predicate
-            .expected_routes
-            .iter()
-            .any(|route| route == &case.expected_route);
-    let any_match = predicate.any_features.is_empty()
-        || predicate
-            .any_features
-            .iter()
-            .any(|feature| boolish(case.features.get(feature)));
-    let all_match = predicate
-        .all_features
-        .iter()
-        .all(|feature| boolish(case.features.get(feature)));
-    expected_route_match && any_match && all_match
-}
-
-fn csv_value(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::Bool(boolean)) => bit(*boolean).to_string(),
-        Some(Value::Number(number)) => number.to_string(),
-        Some(Value::String(text)) => text.replace(',', "_"),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string().replace(',', "_"),
-    }
-}
-
-fn boolish(value: Option<&Value>) -> bool {
-    match value {
-        Some(Value::Bool(boolean)) => *boolean,
-        Some(Value::Number(number)) => number.as_i64().unwrap_or_default() != 0,
-        Some(Value::String(text)) => matches!(text.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y"),
-        _ => false,
-    }
-}
-
-fn bit(value: bool) -> u8 {
-    if value { 1 } else { 0 }
-}
-
-fn allow_word(allowed: bool) -> &'static str {
-    if allowed { "allowed" } else { "denied" }
-}
-
 fn default_compiled_output_path(
     pearl_ir: &PathBuf,
     pearl_name: &str,
@@ -3353,20 +2945,7 @@ fn run_observer_scaffold(args: ObserverScaffoldArgs) -> Result<()> {
 
 fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
     let artifact = resolve_synthesis_artifact(args.profile, args.artifact.as_ref())?;
-    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
-        return Err(guidance(
-            "observer synthesize currently supports guardrails_v1 artifacts only",
-            "Use the built-in guardrails-v1 profile or a guardrails_v1 artifact as the synthesis seed.",
-        ));
-    }
     let signal = to_guardrails_signal(args.signal);
-    let signal_label = guardrails_signal_label(signal);
-    let config = artifact.guardrails.as_ref().ok_or_else(|| {
-        guidance(
-            "guardrails_v1 artifact is missing its cue configuration",
-            "Scaffold a fresh guardrails_v1 artifact or add the guardrails config block back.",
-        )
-    })?;
 
     let cases = load_synthesis_cases(&args.benchmark_cases)
         .into_diagnostic()
@@ -3377,53 +2956,16 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
             "Add one benchmark case JSON object per line before running observer synthesize.",
         ));
     }
-
-    let seed_phrases = guardrails_signal_phrases(config, signal);
-    let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
-        &cases,
+    let (synthesized, report) = synthesize_guardrails_artifact(
+        &artifact,
         signal,
+        &cases,
         to_observer_bootstrap_strategy(args.bootstrap),
         &args.positive_routes,
-        seed_phrases,
+        args.max_candidates,
     )
     .into_diagnostic()
-    .wrap_err("failed to infer bootstrap examples for observer synthesis")?;
-
-    let candidates =
-        generate_phrase_candidates(signal, &positive_prompts, &negative_prompts, args.max_candidates);
-    if candidates.is_empty() {
-        return Err(guidance(
-            format!("could not generate candidate phrases for {signal_label}"),
-            "Try a larger benchmark dataset or repair the existing cue list instead of synthesizing.",
-        ));
-    }
-
-    let positive_constraints: Vec<Vec<usize>> = positive_prompts
-        .iter()
-        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
-        .filter(|matches| !matches.is_empty())
-        .collect();
-    let negative_constraints: Vec<Vec<usize>> = negative_prompts
-        .iter()
-        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
-        .filter(|matches| !matches.is_empty())
-        .collect();
-
-    let selected = solve_phrase_subset_with_z3_soft(&candidates, &positive_constraints, &negative_constraints)
-        .into_diagnostic()
-        .wrap_err("failed to synthesize phrase subset with Z3")?;
-    if selected.is_empty() {
-        return Err(guidance(
-            "Z3 could not synthesize a useful phrase subset",
-            "Try a larger benchmark dataset or a different signal family.",
-        ));
-    }
-
-    let synthesized_phrases: Vec<String> =
-        selected.iter().map(|index| candidates[*index].clone()).collect();
-    let mut synthesized = artifact.clone();
-    let synthesized_config = synthesized.guardrails.as_mut().expect("validated guardrails config");
-    set_guardrails_signal_phrases(synthesized_config, signal, synthesized_phrases.clone());
+    .wrap_err("failed to synthesize observer artifact")?;
 
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent)
@@ -3438,54 +2980,34 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
     .wrap_err("failed to write synthesized observer artifact")?;
 
     let response = serde_json::json!({
-        "signal": signal_label,
-        "bootstrap_mode": bootstrap_mode,
-        "positive_case_count": positive_prompts.len(),
-        "negative_case_count": negative_prompts.len(),
-        "candidate_count": candidates.len(),
-        "phrases_before": seed_phrases,
-        "phrases_after": synthesized_phrases,
+        "signal": report.signal,
+        "bootstrap_mode": report.bootstrap_mode,
+        "positive_case_count": report.positive_case_count,
+        "negative_case_count": report.negative_case_count,
+        "candidate_count": report.candidate_count,
+        "phrases_before": report.phrases_before,
+        "phrases_after": report.phrases_after,
         "output": args.output.display().to_string(),
-        "matched_positives_after": count_selected_hits(&selected, &positive_constraints),
-        "matched_negatives_after": count_selected_hits(&selected, &negative_constraints),
+        "matched_positives_after": report.matched_positives_after,
+        "matched_negatives_after": report.matched_negatives_after,
     });
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
     } else {
-        println!("{} {}", "Synthesized".bold().bright_green(), signal_label.bold());
+        println!("{} {}", "Synthesized".bold().bright_green(), report.signal.bold());
         println!("  {} {}", "Output".bright_black(), args.output.display());
-        println!("  {} {}", "Candidates".bright_black(), candidates.len());
-        println!("  {} {}", "Selected".bright_black(), synthesized_phrases.join(", "));
+        println!("  {} {}", "Candidates".bright_black(), report.candidate_count);
+        println!("  {} {}", "Selected".bright_black(), report.phrases_after.join(", "));
     }
     Ok(())
 }
 
 fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
-    let mut artifact = load_artifact(&args.artifact)
+    let artifact = load_artifact(&args.artifact)
         .into_diagnostic()
         .wrap_err("failed to read native observer artifact")?;
-    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
-        return Err(guidance(
-            "observer repair currently supports guardrails_v1 artifacts only",
-            "Use a guardrails_v1 scaffolded artifact for this first Z3-backed repair flow.",
-        ));
-    }
     let signal = to_guardrails_signal(args.signal);
-    let signal_label = guardrails_signal_label(signal);
-    let config = artifact.guardrails.as_mut().ok_or_else(|| {
-        guidance(
-            "guardrails_v1 artifact is missing its cue configuration",
-            "Scaffold a fresh guardrails_v1 artifact or add the guardrails config block back.",
-        )
-    })?;
-    let phrases = guardrails_signal_phrases(config, signal).to_vec();
-    if phrases.is_empty() {
-        return Err(guidance(
-            format!("observer artifact has no phrases for {signal_label}"),
-            "Choose another signal or scaffold a fresh observer artifact first.",
-        ));
-    }
 
     let cases = load_synthesis_cases(&args.benchmark_cases)
         .into_diagnostic()
@@ -3496,70 +3018,15 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
             "Add one benchmark case JSON object per line before running observer repair.",
         ));
     }
-    let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
-        &cases,
+    let (repaired, report) = repair_guardrails_artifact(
+        &artifact,
         signal,
+        &cases,
         to_observer_bootstrap_strategy(args.bootstrap),
         &args.positive_routes,
-        &phrases,
     )
     .into_diagnostic()
-    .wrap_err("failed to infer bootstrap examples for observer repair")?;
-
-    let mut positive_constraints: Vec<Vec<usize>> = Vec::new();
-    let mut negative_constraints: Vec<Vec<usize>> = Vec::new();
-
-    for prompt in &positive_prompts {
-        let matched: Vec<usize> = phrases
-            .iter()
-            .enumerate()
-            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
-            .collect();
-        if !matched.is_empty() {
-            positive_constraints.push(matched);
-        }
-    }
-    for prompt in &negative_prompts {
-        let matched: Vec<usize> = phrases
-            .iter()
-            .enumerate()
-            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
-            .collect();
-        if !matched.is_empty() {
-            negative_constraints.push(matched);
-        }
-    }
-
-    if positive_constraints.is_empty() {
-        return Err(guidance(
-            format!("no positive benchmark cases currently match {signal_label} phrases"),
-            "Choose a signal that already fires on some positive examples, switch bootstrap modes, or provide a broader benchmark dataset.",
-        ));
-    }
-
-    let selected = solve_phrase_subset_with_z3(&phrases, &positive_constraints, &negative_constraints)
-        .into_diagnostic()
-        .wrap_err("failed to repair phrase subset with Z3")?;
-    let repaired_phrases: Vec<String> = selected.iter().map(|index| phrases[*index].clone()).collect();
-    if repaired_phrases.is_empty() {
-        return Err(guidance(
-            "Z3 removed every phrase for the selected signal",
-            "Use a broader benchmark dataset or repair a different signal first.",
-        ));
-    }
-
-    let before_negatives = count_phrase_hits(&negative_constraints);
-    let after_negatives = count_selected_hits(&selected, &negative_constraints);
-    let before_positives = count_phrase_hits(&positive_constraints);
-    let after_positives = count_selected_hits(&selected, &positive_constraints);
-    let removed_phrases: Vec<String> = phrases
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !selected.contains(index))
-        .map(|(_, phrase)| phrase.clone())
-        .collect();
-
-    set_guardrails_signal_phrases(config, signal, repaired_phrases.clone());
+    .wrap_err("failed to repair observer artifact")?;
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent)
             .into_diagnostic()
@@ -3567,40 +3034,50 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
     }
     fs::write(
         &args.output,
-        serde_json::to_string_pretty(&artifact).into_diagnostic()? + "\n",
+        serde_json::to_string_pretty(&repaired).into_diagnostic()? + "\n",
     )
     .into_diagnostic()
     .wrap_err("failed to write repaired observer artifact")?;
 
     let response = serde_json::json!({
-        "signal": signal_label,
+        "signal": report.signal,
         "input_artifact": args.artifact.display().to_string(),
         "output": args.output.display().to_string(),
-        "phrases_before": phrases,
-        "phrases_after": repaired_phrases,
-        "removed_phrases": removed_phrases,
-        "bootstrap_mode": bootstrap_mode,
+        "phrases_before": report.phrases_before,
+        "phrases_after": report.phrases_after,
+        "removed_phrases": report.removed_phrases,
+        "bootstrap_mode": report.bootstrap_mode,
         "positives_preserved": {
-            "before": before_positives,
-            "after": after_positives
+            "before": report.before_positive_hits,
+            "after": report.after_positive_hits
         },
         "negative_hits": {
-            "before": before_negatives,
-            "after": after_negatives
+            "before": report.before_negative_hits,
+            "after": report.after_negative_hits
         },
         "matched_case_counts": {
-            "positive": positive_prompts.len(),
-            "negative": negative_prompts.len()
+            "positive": report.matched_positive_cases,
+            "negative": report.matched_negative_cases
         }
     });
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
     } else {
-        println!("{} {}", "Repaired".bold().bright_green(), signal_label.bold());
+        println!("{} {}", "Repaired".bold().bright_green(), report.signal.bold());
         println!("  {} {}", "Output".bright_black(), args.output.display());
-        println!("  {} {} -> {}", "Negative hits".bright_black(), before_negatives, after_negatives);
-        println!("  {} {} -> {}", "Preserved denied coverage".bright_black(), before_positives, after_positives);
+        println!(
+            "  {} {} -> {}",
+            "Negative hits".bright_black(),
+            report.before_negative_hits,
+            report.after_negative_hits
+        );
+        println!(
+            "  {} {} -> {}",
+            "Preserved denied coverage".bright_black(),
+            report.before_positive_hits,
+            report.after_positive_hits
+        );
     }
     Ok(())
 }
