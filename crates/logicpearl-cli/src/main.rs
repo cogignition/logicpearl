@@ -167,10 +167,13 @@ enum BenchmarkCommand {
     DetectProfile(BenchmarkDetectProfileArgs),
     /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
     Adapt(BenchmarkAdaptArgs),
+    #[command(hide = true)]
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
     AdaptSalad(BenchmarkAdaptSaladArgs),
+    #[command(hide = true)]
     /// Convert a raw ALERT JSON file into LogicPearl benchmark-case JSONL.
     AdaptAlert(BenchmarkAdaptAlertArgs),
+    #[command(hide = true)]
     /// Convert a raw SQuAD-style JSON file into LogicPearl benchmark-case JSONL.
     AdaptSquad(BenchmarkAdaptSquadArgs),
     /// Observe benchmark cases, emit traces, and discover artifacts in one run.
@@ -181,6 +184,7 @@ enum BenchmarkCommand {
     Observe(BenchmarkObserveArgs),
     /// Project observed benchmark rows into discovery-ready trace CSVs.
     EmitTraces(BenchmarkEmitTracesArgs),
+    #[command(hide = true)]
     /// Convert a raw PINT YAML dataset into LogicPearl benchmark-case JSONL.
     AdaptPint(BenchmarkAdaptPintArgs),
     /// Run a benchmark dataset through a pipeline and compute metrics.
@@ -248,22 +252,22 @@ struct BuildArgs {
     #[arg(long, default_value = "allowed")]
     label_column: String,
     /// Plugin manifest for a trace-source plugin that emits decision traces over JSON.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced")]
     trace_plugin_manifest: Option<PathBuf>,
     /// Source passed to the trace-source plugin.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced")]
     trace_plugin_input: Option<String>,
     /// Plugin manifest for an enricher plugin that transforms decision traces over JSON.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced")]
     enricher_plugin_manifest: Option<PathBuf>,
     /// Run a second solver-backed residual pass to recover missed deny slices from binary features.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     residual_pass: bool,
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     refine: bool,
     /// JSON file of pinned rules to merge after discovery and refinement.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -291,16 +295,16 @@ struct DiscoverArgs {
     #[arg(long)]
     output_dir: Option<PathBuf>,
     /// Stable artifact set identifier.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     artifact_set_id: Option<String>,
     /// Run a second solver-backed residual pass on each target after the first discovery pass.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     residual_pass: bool,
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     refine: bool,
     /// JSON file of pinned rules to merge after discovery and refinement.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -758,10 +762,10 @@ struct ObserverScaffoldArgs {
 #[command(after_help = "Example:\n  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json --json")]
 struct ObserverSynthesizeArgs {
     /// Existing native observer artifact to use as the semantic seed. Z3 then selects a compact phrase subset from candidates mined around that signal.
-    #[arg(long)]
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
     artifact: Option<PathBuf>,
     /// Built-in profile to use when no artifact is provided.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help_heading = "Advanced Observer Synthesis")]
     profile: Option<ObserverProfileArg>,
     /// Benchmark-case JSONL with id, input, expected_route, and optional category.
     #[arg(long)]
@@ -770,16 +774,16 @@ struct ObserverSynthesizeArgs {
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
     /// How LogicPearl should choose positive examples before Z3 selects a compact phrase subset.
-    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto)]
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
     bootstrap: ObserverBootstrapArg,
     /// Optional route labels to treat as positive examples when using route-based bootstrapping.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', help_heading = "Advanced Observer Synthesis")]
     positive_routes: Vec<String>,
     /// Where to write the synthesized observer artifact.
     #[arg(long)]
     output: PathBuf,
     /// Cap the number of candidate phrases sent to Z3.
-    #[arg(long, default_value_t = 64)]
+    #[arg(long, default_value_t = 64, help_heading = "Advanced Observer Synthesis")]
     max_candidates: usize,
     #[arg(long)]
     json: bool,
@@ -798,10 +802,10 @@ struct ObserverRepairArgs {
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
     /// How LogicPearl should choose positive examples before Z3 repairs the phrase family.
-    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto)]
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
     bootstrap: ObserverBootstrapArg,
     /// Optional route labels to treat as positive examples when using route-based bootstrapping.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', help_heading = "Advanced Observer Synthesis")]
     positive_routes: Vec<String>,
     /// Where to write the repaired observer artifact.
     #[arg(long)]
