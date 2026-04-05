@@ -60,6 +60,7 @@ Examples:
 
 const BENCHMARK_AFTER_HELP: &str = "\
 Examples:
+  logicpearl benchmark list-profiles
   logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl
   logicpearl benchmark observe /tmp/salad_dev.jsonl --output /tmp/salad_dev_observed.jsonl
   logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
@@ -157,6 +158,8 @@ enum ConformanceCommand {
 #[derive(Debug, Subcommand)]
 #[command(after_help = BENCHMARK_AFTER_HELP)]
 enum BenchmarkCommand {
+    /// List the built-in benchmark adapter profiles.
+    ListProfiles(BenchmarkListProfilesArgs),
     /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
     Adapt(BenchmarkAdaptArgs),
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
@@ -177,6 +180,12 @@ enum BenchmarkCommand {
     AdaptPint(BenchmarkAdaptPintArgs),
     /// Run a benchmark dataset through a pipeline and compute metrics.
     Run(BenchmarkRunArgs),
+}
+
+#[derive(Debug, Args)]
+struct BenchmarkListProfilesArgs {
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -364,6 +373,14 @@ enum BenchmarkAdapterProfile {
     Alert,
     Squad,
     Pint,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BenchmarkAdapterDescriptor {
+    id: &'static str,
+    description: &'static str,
+    source_format: &'static str,
+    default_route: &'static str,
 }
 
 #[derive(Debug, Args)]
@@ -921,6 +938,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Benchmark {
+            command: BenchmarkCommand::ListProfiles(args),
+        } => run_benchmark_list_profiles(args),
+        Commands::Benchmark {
             command: BenchmarkCommand::Adapt(args),
         } => run_benchmark_adapt(args),
         Commands::Benchmark {
@@ -1001,6 +1021,66 @@ fn main() -> Result<()> {
             command: ObserverCommand::Repair(args),
         } => run_observer_repair(args),
     }
+}
+
+impl BenchmarkAdapterProfile {
+    fn id(&self) -> &'static str {
+        match self {
+            Self::SaladBaseSet => "salad-base-set",
+            Self::SaladAttackEnhancedSet => "salad-attack-enhanced-set",
+            Self::Alert => "alert",
+            Self::Squad => "squad",
+            Self::Pint => "pint",
+        }
+    }
+
+    fn description(&self) -> &'static str {
+        match self {
+            Self::SaladBaseSet => "Adapt Salad-Data benign base_set rows into allow benchmark cases.",
+            Self::SaladAttackEnhancedSet => {
+                "Adapt Salad-Data attack_enhanced_set rows into deny benchmark cases."
+            }
+            Self::Alert => "Adapt ALERT adversarial instruction rows into deny benchmark cases.",
+            Self::Squad => "Adapt SQuAD-style benign question rows into allow benchmark cases.",
+            Self::Pint => "Adapt PINT YAML rows into allow or deny benchmark cases for proof-only scoring.",
+        }
+    }
+
+    fn source_format(&self) -> &'static str {
+        match self {
+            Self::SaladBaseSet => "Salad base_set JSON array",
+            Self::SaladAttackEnhancedSet => "Salad attack_enhanced_set JSON array",
+            Self::Alert => "JSON array or JSONL of prompt-like objects",
+            Self::Squad => "SQuAD-style JSON with data[].paragraphs[].qas[]",
+            Self::Pint => "PINT YAML list with text/category/label",
+        }
+    }
+
+    fn default_route(&self) -> &'static str {
+        match self {
+            Self::SaladBaseSet | Self::Squad => "allow",
+            Self::SaladAttackEnhancedSet | Self::Alert => "deny",
+            Self::Pint => "mixed",
+        }
+    }
+}
+
+fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
+    [
+        BenchmarkAdapterProfile::SaladBaseSet,
+        BenchmarkAdapterProfile::SaladAttackEnhancedSet,
+        BenchmarkAdapterProfile::Alert,
+        BenchmarkAdapterProfile::Squad,
+        BenchmarkAdapterProfile::Pint,
+    ]
+    .into_iter()
+    .map(|profile| BenchmarkAdapterDescriptor {
+        id: profile.id(),
+        description: profile.description(),
+        source_format: profile.source_format(),
+        default_route: profile.default_route(),
+    })
+    .collect()
 }
 
 fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
@@ -1280,6 +1360,25 @@ fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
             render_observer_resolution(&observer_resolution(&observer))
         );
         println!("  {} {}", "Output".bright_black(), args.output.display());
+    }
+    Ok(())
+}
+
+fn run_benchmark_list_profiles(args: BenchmarkListProfilesArgs) -> Result<()> {
+    let profiles = benchmark_adapter_registry();
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "profiles": profiles }))
+                .into_diagnostic()?
+        );
+    } else {
+        println!("{}", "Benchmark adapter profiles".bold().bright_blue());
+        for profile in profiles {
+            println!("  {} {}", profile.id.bold(), profile.description.bright_black());
+            println!("    {} {}", "Format".bright_black(), profile.source_format);
+            println!("    {} {}", "Default route".bright_black(), profile.default_route);
+        }
     }
     Ok(())
 }
