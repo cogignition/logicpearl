@@ -14,6 +14,7 @@ SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_OUTPUT = REPO_ROOT / "scripts" / "scoreboard" / "contributor_points.json"
 SCORE_MODEL_PATH = REPO_ROOT / "scripts" / "scoreboard" / "score_model.json"
+PARTICIPATION_POINTS_PER_COMMIT = 1.0
 
 
 def parse_args() -> Path:
@@ -81,12 +82,24 @@ def suite_score(scores: dict[str, Any], suite_model: dict[str, Any]) -> float:
 def main() -> int:
     output_path = parse_args()
     score_model = load_score_model()
+    score_commits = (
+        git_output(
+            "log",
+            "--reverse",
+            "--format=%H",
+            "--",
+            "SCORES.json",
+        )
+        .splitlines()
+    )
+    if not score_commits:
+        raise SystemExit("no SCORES.json history found")
+    first_score_commit = score_commits[0]
     log_lines = git_output(
         "log",
         "--reverse",
         "--format=%H\t%an\t%ae\t%aI",
-        "--",
-        "SCORES.json",
+        f"{first_score_commit}^..HEAD",
     ).splitlines()
 
     commits: list[dict[str, Any]] = []
@@ -95,7 +108,9 @@ def main() -> int:
             "author_name": "",
             "author_email": "",
             "github_login": None,
-            "points": 0.0,
+            "participation_points": 0.0,
+            "improvement_points": 0.0,
+            "total_points": 0.0,
             "commits": [],
         }
     )
@@ -107,11 +122,11 @@ def main() -> int:
         contributor_key = github_login or author_email
         current_scores = load_scores_for_commit(commit)
         if current_scores is None:
-            continue
+            current_scores = previous_scores
 
         suite_changes: dict[str, Any] = {}
         improvement_points = 0.0
-        if previous_scores is not None:
+        if previous_scores is not None and current_scores is not None:
             for suite_model in score_model["suites"]:
                 suite_id = suite_model["id"]
                 previous_suite_score = suite_score(previous_scores, suite_model)
@@ -130,13 +145,17 @@ def main() -> int:
                 }
                 improvement_points += weighted_points
 
+        participation_points = PARTICIPATION_POINTS_PER_COMMIT
+        total_points = participation_points + improvement_points
         commit_entry = {
             "commit": commit,
             "author_name": author_name,
             "author_email": author_email,
             "github_login": github_login,
             "authored_at": authored_at,
+            "participation_points": participation_points,
             "improvement_points": improvement_points,
+            "total_points": total_points,
             "suite_changes": suite_changes,
         }
         commits.append(commit_entry)
@@ -144,24 +163,31 @@ def main() -> int:
         contributor["author_name"] = author_name
         contributor["author_email"] = author_email
         contributor["github_login"] = github_login
-        contributor["points"] += improvement_points
+        contributor["participation_points"] += participation_points
+        contributor["improvement_points"] += improvement_points
+        contributor["total_points"] += total_points
+        contributor["points"] = contributor["total_points"]
         contributor["commits"].append(
             {
                 "commit": commit,
                 "authored_at": authored_at,
+                "participation_points": participation_points,
                 "improvement_points": improvement_points,
+                "total_points": total_points,
             }
         )
-        previous_scores = current_scores
+        if current_scores is not None:
+            previous_scores = current_scores
 
     payload = {
         "schema_version": "1.0",
         "generated_by": "scripts/scoreboard/compute_contributor_points.py",
+        "participation_points_per_commit": PARTICIPATION_POINTS_PER_COMMIT,
         "score_model": score_model,
         "commits": commits,
         "contributors": sorted(
             contributor_points.values(),
-            key=lambda item: (-item["points"], item["github_login"] or item["author_email"]),
+            key=lambda item: (-item["total_points"], item["github_login"] or item["author_email"]),
         ),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)

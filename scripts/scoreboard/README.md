@@ -11,7 +11,8 @@ These scripts keep a small public score ledger for LogicPearl.
 - `compute_contributor_points.py`
   - walks git history for `SCORES.json`
   - computes per-commit suite deltas
-  - aggregates a weighted improvement score per contributor using `score_model.json`
+  - gives every scored `main` commit a base participation point
+  - aggregates weighted improvement points per contributor using `score_model.json`
 
 - `build_contributor_summary.py`
   - derives a small leaderboard-friendly summary from `contributor_points.json`
@@ -53,6 +54,10 @@ python3 scripts/scoreboard/compute_contributor_points.py
 - If that bundle is unavailable, the score ledger records the guardrail suite as unavailable instead of failing.
 - Raw metrics live in `SCORES.json`.
 - Contributor points are intentionally computed from curated suite-level scores instead of summing every numeric metric.
+- Contributor totals are split into:
+  - `participation_points`
+  - `improvement_points`
+  - `total_points`
 - That keeps correlated metrics from being double-counted and makes it easier to add new benchmarks without silently changing the total point budget.
 - `.github/workflows/scores.yml` publishes:
   - `latest/SCORES.json`

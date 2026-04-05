@@ -52,7 +52,10 @@ def main() -> int:
                 "author_name": contributor.get("author_name"),
                 "author_email": contributor.get("author_email"),
                 "github_login": contributor.get("github_login"),
-                "points": contributor.get("points", 0.0),
+                "participation_points": contributor.get("participation_points", 0.0),
+                "improvement_points": contributor.get("improvement_points", 0.0),
+                "total_points": contributor.get("total_points", contributor.get("points", 0.0)),
+                "points": contributor.get("total_points", contributor.get("points", 0.0)),
                 "commit_count": len(commits),
                 "latest_commit": latest_commit,
             }
