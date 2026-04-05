@@ -431,13 +431,17 @@ fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
     while !remaining_denied.is_empty() {
         let candidate = best_candidate_rule(rows, &remaining_denied, &allowed_indices)
             .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
-        if candidate.denied_coverage == 0 || candidate.false_positives > 0 {
+        if candidate.denied_coverage == 0 {
             break;
         }
 
         let bit = discovered.len() as u32;
+        let has_false_positives = candidate.false_positives > 0;
         discovered.push(rule_from_candidate(bit, &candidate));
         remaining_denied.retain(|index| !matches_candidate(&rows[*index].features, &candidate));
+        if has_false_positives {
+            break;
+        }
     }
 
     Ok(discovered)
@@ -499,13 +503,19 @@ fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule
     match best {
         None => *best = Some(candidate),
         Some(current) => {
-            let better = match candidate.false_positives.cmp(&current.false_positives) {
-                Ordering::Less => true,
-                Ordering::Greater => false,
-                Ordering::Equal => match candidate.denied_coverage.cmp(&current.denied_coverage) {
-                    Ordering::Greater => true,
-                    Ordering::Less => false,
-                    Ordering::Equal => candidate.feature < current.feature,
+            let candidate_net = candidate.denied_coverage as isize - candidate.false_positives as isize;
+            let current_net = current.denied_coverage as isize - current.false_positives as isize;
+            let better = match candidate_net.cmp(&current_net) {
+                Ordering::Greater => true,
+                Ordering::Less => false,
+                Ordering::Equal => match candidate.false_positives.cmp(&current.false_positives) {
+                    Ordering::Less => true,
+                    Ordering::Greater => false,
+                    Ordering::Equal => match candidate.denied_coverage.cmp(&current.denied_coverage) {
+                        Ordering::Greater => true,
+                        Ordering::Less => false,
+                        Ordering::Equal => candidate.feature < current.feature,
+                    },
                 },
             };
             if better {
@@ -751,5 +761,32 @@ mod tests {
         assert!(output_dir.join("artifacts/target_a/pearl.ir.json").exists());
         assert!(output_dir.join("artifacts/target_b/pearl.ir.json").exists());
         assert!(result.skipped_targets.is_empty());
+    }
+
+    #[test]
+    fn build_prefers_higher_parity_rule_over_tiny_zero_fp_fragment() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "signal_flag,confidence,allowed\n0,0.02,allowed\n0,0.02,allowed\n0,0.02,allowed\n1,0.02,allowed\n1,0.02,denied\n1,0.02,denied\n1,0.02,denied\n1,0.21,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &csv_path,
+            &BuildOptions {
+                output_dir: PathBuf::from(&output_dir),
+                gate_id: "approximate_gate".to_string(),
+                label_column: "allowed".to_string(),
+            },
+        )
+        .unwrap();
+
+        let pearl_ir = std::fs::read_to_string(output_dir.join("pearl.ir.json")).unwrap();
+        assert!(pearl_ir.contains("\"feature\": \"signal_flag\""));
+        assert!(!pearl_ir.contains("\"feature\": \"confidence\""));
+        assert!(result.training_parity > 0.8);
     }
 }
