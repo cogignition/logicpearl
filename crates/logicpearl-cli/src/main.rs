@@ -35,21 +35,32 @@ const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
 
 Use this CLI to:
+- get a guided first run
 - build pearls from labeled traces
-- discover multiple target artifacts from one dataset
 - inspect and run pearls
 - compose and execute string-of-pearls pipelines
-- score benchmark datasets with explicit route outputs";
+- score benchmark datasets with explicit route outputs
+
+The main public path is:
+- quickstart
+- build
+- inspect
+- run
+- pipeline
+- benchmark";
 
 const CLI_AFTER_HELP: &str = "\
 Examples:
+  logicpearl quickstart
   logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
-  logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/output --residual-pass --refine
   logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration,target_tool_use
-  logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration --residual-pass --refine
   logicpearl inspect examples/getting_started/output/pearl.ir.json
+  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json
   logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
-  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
+  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json
+
+For more advanced surfaces, run:
+  logicpearl <command> --help";
 
 const PIPELINE_AFTER_HELP: &str = "\
 Examples:
@@ -109,37 +120,42 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Test a pipeline against a benchmark dataset and see how it performs.
-    Benchmark {
-        #[command(subcommand)]
-        command: BenchmarkCommand,
-    },
-    /// Turn labeled examples into a pearl.
-    Build(BuildArgs),
     /// Show the quickest ways to try LogicPearl.
     Quickstart(QuickstartArgs),
-    /// Learn multiple pearls from one dataset.
-    Discover(DiscoverArgs),
-    /// Create a starter pipeline from existing pearls.
-    Compose(ComposeArgs),
-    /// Compile a pearl into a standalone executable.
-    Compile(CompileArgs),
-    /// Validate artifact freshness and check runtime parity.
-    Conformance {
-        #[command(subcommand)]
-        command: ConformanceCommand,
-    },
-    /// Run a pearl on an input file.
-    Run(RunArgs),
+    /// Turn labeled examples into a pearl.
+    Build(BuildArgs),
     /// Inspect a pearl and see what it does.
     Inspect(InspectArgs),
-    /// Check a pearl with a verifier plugin.
-    Verify(VerifyArgs),
+    /// Run a pearl on an input file.
+    Run(RunArgs),
     /// Work with string-of-pearls pipelines.
     Pipeline {
         #[command(subcommand)]
         command: PipelineCommand,
     },
+    /// Test a pipeline against a benchmark dataset and see how it performs.
+    Benchmark {
+        #[command(subcommand)]
+        command: BenchmarkCommand,
+    },
+    /// Learn multiple pearls from one dataset.
+    Discover(DiscoverArgs),
+    #[command(hide = true)]
+    /// Create a starter pipeline from existing pearls.
+    Compose(ComposeArgs),
+    #[command(hide = true)]
+    /// Compile a pearl into a standalone executable.
+    Compile(CompileArgs),
+    #[command(hide = true)]
+    /// Validate artifact freshness and check runtime parity.
+    Conformance {
+        #[command(subcommand)]
+        command: ConformanceCommand,
+    },
+    #[command(hide = true)]
+    /// Check a pearl with a verifier plugin.
+    Verify(VerifyArgs),
+    #[command(hide = true)]
     /// Work with observers that turn messy input into normalized features.
     Observer {
         #[command(subcommand)]
