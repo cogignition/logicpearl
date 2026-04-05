@@ -1,10 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
-    adapt_alert_dataset, adapt_pint_dataset, adapt_salad_dataset, adapt_squad_dataset,
-    benchmark_adapter_registry, detect_benchmark_adapter_profile, emit_trace_tables,
-    load_benchmark_cases, load_synthesis_cases, load_trace_projection_config, sanitize_identifier,
-    write_benchmark_cases_jsonl, BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase,
-    ObservedBenchmarkCase, SaladSubsetKind,
+    adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_noeti_toxicqa_dataset,
+    adapt_pint_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset,
+    benchmark_adapter_registry, detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases,
+    load_synthesis_cases, load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
+    BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
@@ -41,7 +41,8 @@ use benchmark_cmd::{
     run_benchmark, run_benchmark_adapt, run_benchmark_adapt_alert, run_benchmark_adapt_pint,
     run_benchmark_adapt_salad, run_benchmark_adapt_squad, run_benchmark_detect_profile,
     run_benchmark_emit_traces, run_benchmark_list_profiles, run_benchmark_merge_cases,
-    run_benchmark_observe, run_benchmark_prepare,
+    run_benchmark_observe, run_benchmark_prepare, run_benchmark_score_artifacts,
+    run_benchmark_split_cases,
 };
 use conformance_cmd::{
     run_conformance_runtime_parity, run_conformance_validate_artifacts,
@@ -98,9 +99,11 @@ Examples:
   logicpearl benchmark list-profiles
   logicpearl benchmark detect-profile ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --json
   logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl
+  logicpearl benchmark split-cases /tmp/guardrail_dev.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev_holdout.jsonl --train-fraction 0.8 --json
   logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl
-  logicpearl benchmark observe /tmp/salad_dev.jsonl --output /tmp/salad_dev_observed.jsonl
-  logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
+  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl
+  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
+  logicpearl benchmark score-artifacts /tmp/guardrail_train_prep/discovered/artifact_set.json /tmp/guardrail_dev_holdout_traces/multi_target.csv --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
 
 const OBSERVER_AFTER_HELP: &str = "\
@@ -207,6 +210,8 @@ enum BenchmarkCommand {
     DetectProfile(BenchmarkDetectProfileArgs),
     /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
     Adapt(BenchmarkAdaptArgs),
+    /// Deterministically split benchmark cases into train and dev sets.
+    SplitCases(BenchmarkSplitCasesArgs),
     #[command(hide = true)]
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
     AdaptSalad(BenchmarkAdaptSaladArgs),
@@ -224,6 +229,8 @@ enum BenchmarkCommand {
     Observe(BenchmarkObserveArgs),
     /// Project observed benchmark rows into discovery-ready trace CSVs.
     EmitTraces(BenchmarkEmitTracesArgs),
+    /// Score a discovered artifact set against a held-out multi-target trace CSV.
+    ScoreArtifacts(BenchmarkScoreArtifactsArgs),
     #[command(hide = true)]
     /// Convert a raw PINT YAML dataset into LogicPearl benchmark-case JSONL.
     AdaptPint(BenchmarkAdaptPintArgs),
@@ -285,7 +292,11 @@ enum BenchmarkAdapterProfileArg {
     SaladBaseSet,
     SaladAttackEnhancedSet,
     Alert,
+    ChatgptJailbreakPrompts,
     Squad,
+    Vigil,
+    #[value(name = "noeti-toxicqa", alias = "noeti-toxic-qa")]
+    NoetiToxicQa,
     Pint,
 }
 
@@ -434,7 +445,7 @@ struct BenchmarkRunArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_benign.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl"
+    after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl"
 )]
 struct BenchmarkAdaptArgs {
     raw_dataset: PathBuf,
@@ -454,6 +465,22 @@ struct BenchmarkAdaptArgs {
     #[arg(long, default_value = "allowed")]
     scope: String,
     /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark split-cases /tmp/guardrail_dev_full.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev.jsonl --train-fraction 0.8 --json"
+)]
+struct BenchmarkSplitCasesArgs {
+    dataset_jsonl: PathBuf,
+    #[arg(long)]
+    train_output: PathBuf,
+    #[arg(long)]
+    dev_output: PathBuf,
+    #[arg(long, default_value_t = 0.8)]
+    train_fraction: f64,
     #[arg(long)]
     json: bool,
 }
@@ -489,7 +516,7 @@ enum SaladSubset {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark adapt-salad raw_base_set.json --subset base-set --output /tmp/salad_benign.jsonl\n  logicpearl benchmark adapt-salad raw_attack_enhanced_set.json --subset attack-enhanced-set --output /tmp/salad_attack.jsonl"
+    after_help = "Examples:\n  logicpearl benchmark adapt-salad raw_base_set.json --subset base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt-salad raw_attack_enhanced_set.json --subset attack-enhanced-set --output /tmp/salad_attack.jsonl"
 )]
 struct BenchmarkAdaptSaladArgs {
     raw_salad_json: PathBuf,
@@ -561,7 +588,7 @@ struct BenchmarkAdaptSquadArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl benchmark merge-cases /tmp/salad_base.jsonl /tmp/salad_attack.jsonl --output /tmp/salad_dev.jsonl"
+    after_help = "Example:\n  logicpearl benchmark merge-cases /tmp/squad_benign.jsonl /tmp/alert_attack.jsonl /tmp/chatgpt_jailbreak_attack.jsonl --output /tmp/guardrail_dev.jsonl"
 )]
 struct BenchmarkMergeCasesArgs {
     inputs: Vec<PathBuf>,
@@ -575,7 +602,7 @@ struct BenchmarkMergeCasesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
+    after_help = "Examples:\n  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
 )]
 struct BenchmarkPrepareArgs {
     dataset_jsonl: PathBuf,
@@ -601,7 +628,7 @@ struct BenchmarkPrepareArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --output /tmp/salad_attack_observed.jsonl\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/salad_attack_observed.jsonl"
+    after_help = "Examples:\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/guardrail_dev_observed.jsonl"
 )]
 struct BenchmarkObserveArgs {
     dataset_jsonl: PathBuf,
@@ -618,6 +645,19 @@ struct BenchmarkObserveArgs {
     #[arg(long)]
     output: PathBuf,
     /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark score-artifacts /tmp/guardrail_train/discovered/artifact_set.json /tmp/guardrail_dev/traces/multi_target.csv --json"
+)]
+struct BenchmarkScoreArtifactsArgs {
+    artifact_set_json: PathBuf,
+    trace_csv: PathBuf,
+    #[arg(long)]
+    output: Option<PathBuf>,
     #[arg(long)]
     json: bool,
 }
@@ -938,6 +978,9 @@ fn main() -> Result<()> {
             command: BenchmarkCommand::Adapt(args),
         } => run_benchmark_adapt(args),
         Commands::Benchmark {
+            command: BenchmarkCommand::SplitCases(args),
+        } => run_benchmark_split_cases(args),
+        Commands::Benchmark {
             command: BenchmarkCommand::AdaptSalad(args),
         } => run_benchmark_adapt_salad(args),
         Commands::Benchmark {
@@ -958,6 +1001,9 @@ fn main() -> Result<()> {
         Commands::Benchmark {
             command: BenchmarkCommand::EmitTraces(args),
         } => run_benchmark_emit_traces(args),
+        Commands::Benchmark {
+            command: BenchmarkCommand::ScoreArtifacts(args),
+        } => run_benchmark_score_artifacts(args),
         Commands::Benchmark {
             command: BenchmarkCommand::AdaptPint(args),
         } => run_benchmark_adapt_pint(args),
@@ -2087,7 +2133,12 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
             BenchmarkAdapterProfile::SaladAttackEnhancedSet
         }
         BenchmarkAdapterProfileArg::Alert => BenchmarkAdapterProfile::Alert,
+        BenchmarkAdapterProfileArg::ChatgptJailbreakPrompts => {
+            BenchmarkAdapterProfile::ChatgptJailbreakPrompts
+        }
         BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
+        BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,
+        BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,
         BenchmarkAdapterProfileArg::Pint => BenchmarkAdapterProfile::Pint,
     }
 }

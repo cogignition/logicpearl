@@ -6,3 +6,4 @@ cd "$repo_root"
 
 echo "Running LogicPearl pre-commit E2E check..."
 cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_getting_started
+cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_benchmark_heldout

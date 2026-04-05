@@ -6,6 +6,7 @@ Current state:
 - `squad.yaml` is loaded by the Rust benchmark crate through a hybrid parser + profile path
 - `salad-base-set.yaml` and `salad-attack-enhanced-set.yaml` are loaded by the Rust benchmark crate
 - `alert.yaml` is a real built-in adapter profile loaded by the Rust benchmark crate
+- `chatgpt-jailbreak-prompts.yaml`, `vigil.yaml`, and `noeti-toxicqa.yaml` are built-in adapter profiles too
 - `pint.yaml` is also loaded by the Rust benchmark crate
 - all current built-in benchmark adapters are now profile-backed
 

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 clap.workspace = true
+csv.workspace = true
 logicpearl-benchmark = { path = "../logicpearl-benchmark" }
 logicpearl-conformance = { path = "../logicpearl-conformance" }
 logicpearl-core = { path = "../logicpearl-core" }
@@ -22,6 +23,7 @@ owo-colors.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

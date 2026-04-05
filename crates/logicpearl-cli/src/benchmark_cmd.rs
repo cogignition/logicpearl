@@ -2,8 +2,14 @@ use super::*;
 use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution, resolve_observer_for_cases,
 };
-use std::collections::BTreeMap;
+use logicpearl_discovery::ArtifactSet;
+use logicpearl_core::LogicPearlError;
+use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_runtime::evaluate_gate;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkCaseResult {
@@ -39,6 +45,47 @@ struct BenchmarkResult {
     cases: Vec<BenchmarkCaseResult>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct BenchmarkSplitSummary {
+    input_rows: usize,
+    train_rows: usize,
+    dev_rows: usize,
+    train_fraction: f64,
+    train_output: String,
+    dev_output: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactScoreSummary {
+    target_count: usize,
+    total_target_rows: usize,
+    macro_exact_match_rate: f64,
+    macro_positive_recall: f64,
+    macro_negative_pass_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactTargetScore {
+    target: String,
+    artifact: String,
+    rows: usize,
+    positive_rows: usize,
+    negative_rows: usize,
+    matching_rows: usize,
+    exact_match_rate: f64,
+    positive_recall: f64,
+    negative_pass_rate: f64,
+    false_positive_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactScoreReport {
+    artifact_set_id: String,
+    trace_csv: String,
+    summary: ArtifactScoreSummary,
+    targets: Vec<ArtifactTargetScore>,
+}
+
 pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
     if args.inputs.is_empty() {
         return Err(guidance(
@@ -55,16 +102,21 @@ pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result
     let mut merged = String::new();
     let mut total_rows = 0_usize;
     let mut seen_ids = std::collections::BTreeSet::new();
+    let mut rewritten_ids = 0_usize;
     for input in &args.inputs {
+        let source_tag = input
+            .file_stem()
+            .map(|stem| sanitize_identifier(&stem.to_string_lossy()))
+            .filter(|tag| !tag.is_empty())
+            .unwrap_or_else(|| "source".to_string());
         let cases = load_benchmark_cases(input)
             .into_diagnostic()
             .wrap_err("failed to load benchmark cases for merge")?;
-        for case in cases {
+        for mut case in cases {
             if !seen_ids.insert(case.id.clone()) {
-                return Err(guidance(
-                    format!("duplicate benchmark case id detected: {}", case.id),
-                    "Make sure merged benchmark-case files have unique ids before combining them.",
-                ));
+                case.id = disambiguate_case_id(&case.id, &source_tag, &seen_ids);
+                seen_ids.insert(case.id.clone());
+                rewritten_ids += 1;
             }
             merged.push_str(&serde_json::to_string(&case).into_diagnostic()?);
             merged.push('\n');
@@ -81,6 +133,7 @@ pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "rows": total_rows,
+                "rewritten_ids": rewritten_ids,
                 "inputs": args.inputs.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
                 "output": args.output.display().to_string()
             }))
@@ -90,9 +143,84 @@ pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result
         println!("{} {}", "Merged".bold().bright_green(), "benchmark cases".bold());
         println!("  {} {}", "Inputs".bright_black(), args.inputs.len());
         println!("  {} {}", "Rows".bright_black(), total_rows);
+        println!("  {} {}", "Rewritten ids".bright_black(), rewritten_ids);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
+}
+
+pub(crate) fn run_benchmark_split_cases(args: BenchmarkSplitCasesArgs) -> Result<()> {
+    if !(0.0..=1.0).contains(&args.train_fraction) {
+        return Err(guidance(
+            format!("invalid --train-fraction: {}", args.train_fraction),
+            "Use a fraction between 0.0 and 1.0, for example --train-fraction 0.8.",
+        ));
+    }
+
+    let cases = load_benchmark_cases(&args.dataset_jsonl)
+        .into_diagnostic()
+        .wrap_err("failed to load benchmark cases for split")?;
+    if cases.is_empty() {
+        return Err(guidance(
+            "benchmark split needs at least one case",
+            "Pass a non-empty benchmark-case JSONL file.",
+        ));
+    }
+
+    let (train_cases, dev_cases) = split_benchmark_cases(cases, args.train_fraction);
+
+    if let Some(parent) = args.train_output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create train split output directory")?;
+    }
+    if let Some(parent) = args.dev_output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create dev split output directory")?;
+    }
+
+    write_benchmark_cases_jsonl(&train_cases, &args.train_output)
+        .into_diagnostic()
+        .wrap_err("failed to write train split JSONL")?;
+    write_benchmark_cases_jsonl(&dev_cases, &args.dev_output)
+        .into_diagnostic()
+        .wrap_err("failed to write dev split JSONL")?;
+
+    let summary = BenchmarkSplitSummary {
+        input_rows: train_cases.len() + dev_cases.len(),
+        train_rows: train_cases.len(),
+        dev_rows: dev_cases.len(),
+        train_fraction: args.train_fraction,
+        train_output: args.train_output.display().to_string(),
+        dev_output: args.dev_output.display().to_string(),
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Split".bold().bright_green(), "benchmark cases".bold());
+        println!("  {} {}", "Input rows".bright_black(), summary.input_rows);
+        println!("  {} {}", "Train rows".bright_black(), summary.train_rows);
+        println!("  {} {}", "Dev rows".bright_black(), summary.dev_rows);
+        println!("  {} {}", "Train output".bright_black(), summary.train_output);
+        println!("  {} {}", "Dev output".bright_black(), summary.dev_output);
+    }
+    Ok(())
+}
+
+fn disambiguate_case_id(base_id: &str, source_tag: &str, seen_ids: &std::collections::BTreeSet<String>) -> String {
+    let base = format!("{base_id}__{source_tag}");
+    if !seen_ids.contains(&base) {
+        return base;
+    }
+    for index in 2.. {
+        let candidate = format!("{base}__dup{index}");
+        if !seen_ids.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("duplicate id disambiguation should always find a suffix")
 }
 
 pub(crate) fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
@@ -305,6 +433,18 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             scope: args.scope,
             json: args.json,
         }),
+        BenchmarkAdapterProfile::ChatgptJailbreakPrompts => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "ChatGPT-Jailbreak-Prompts",
+            adapt_chatgpt_jailbreak_prompts_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
         BenchmarkAdapterProfile::Squad => run_benchmark_adapt_squad(BenchmarkAdaptSquadArgs {
             raw_squad_json: args.raw_dataset,
             output: args.output,
@@ -313,6 +453,30 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             scope: args.scope,
             json: args.json,
         }),
+        BenchmarkAdapterProfile::Vigil => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "Vigil",
+            adapt_vigil_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::NoetiToxicQa => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "NOETI ToxicQAFinal",
+            adapt_noeti_toxicqa_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
         BenchmarkAdapterProfile::Pint => run_benchmark_adapt_pint(BenchmarkAdaptPintArgs {
             raw_pint_yaml: args.raw_dataset,
             output: args.output,
@@ -322,6 +486,45 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             json: args.json,
         }),
     }
+}
+
+fn run_benchmark_adapt_prompt_json_rows(
+    raw_dataset: &Path,
+    output: &Path,
+    dataset_name: &str,
+    adapter: fn(&str, &BenchmarkAdaptDefaults) -> logicpearl_core::Result<Vec<BenchmarkCase>>,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let raw_json = fs::read_to_string(raw_dataset)
+        .into_diagnostic()
+        .wrap_err(format!("could not read raw {dataset_name} data"))?;
+    let cases = adapter(&raw_json, defaults)
+        .into_diagnostic()
+        .wrap_err(format!("failed to adapt {dataset_name} rows"))?;
+    write_benchmark_cases_jsonl(&cases, output)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted benchmark cases")?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "rows": cases.len(),
+                "output": output.display().to_string(),
+                "expected_route": cases.first().map(|case| case.expected_route.clone()).unwrap_or_else(|| "mixed".to_string())
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Adapted".bold().bright_green(), dataset_name.bold());
+        println!("  {} {}", "Rows".bright_black(), cases.len());
+        if let Some(first) = cases.first() {
+            println!("  {} {}", "Route".bright_black(), first.expected_route);
+        }
+        println!("  {} {}", "Output".bright_black(), output.display());
+    }
+    Ok(())
 }
 
 pub(crate) fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
@@ -660,11 +863,361 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -> Result<()> {
+    let artifact_set_path = &args.artifact_set_json;
+    let artifact_set_dir = artifact_set_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let artifact_set: ArtifactSet = serde_json::from_str(
+        &fs::read_to_string(artifact_set_path)
+            .into_diagnostic()
+            .wrap_err("failed to read artifact set JSON")?,
+    )
+    .into_diagnostic()
+    .wrap_err("artifact set is not valid JSON")?;
+
+    let mut reader = csv::Reader::from_path(&args.trace_csv)
+        .into_diagnostic()
+        .wrap_err("failed to read held-out trace CSV")?;
+    let headers = reader
+        .headers()
+        .into_diagnostic()
+        .wrap_err("failed to read held-out trace CSV headers")?
+        .clone();
+    let records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, csv::Error>>()
+        .into_diagnostic()
+        .wrap_err("failed to read held-out trace CSV rows")?;
+
+    let mut target_scores = Vec::new();
+    for descriptor in &artifact_set.binary_targets {
+        let artifact_path = artifact_set_dir.join(&descriptor.artifact);
+        let gate = LogicPearlGateIr::from_path(&artifact_path)
+            .into_diagnostic()
+            .wrap_err(format!("failed to load artifact for target {}", descriptor.name))?;
+        let target_score = score_target_against_records(&gate, &headers, &records, &descriptor.name)
+            .into_diagnostic()
+            .wrap_err(format!("failed to score target {}", descriptor.name))?;
+        target_scores.push(ArtifactTargetScore {
+            target: descriptor.name.clone(),
+            artifact: artifact_path.display().to_string(),
+            rows: target_score.rows,
+            positive_rows: target_score.positive_rows,
+            negative_rows: target_score.negative_rows,
+            matching_rows: target_score.matching_rows,
+            exact_match_rate: ratio(target_score.matching_rows, target_score.rows),
+            positive_recall: ratio(target_score.true_positives, target_score.positive_rows),
+            negative_pass_rate: ratio(target_score.true_negatives, target_score.negative_rows),
+            false_positive_rate: ratio(target_score.false_positives, target_score.negative_rows),
+        });
+    }
+
+    let target_count = target_scores.len();
+    let total_target_rows = target_scores.iter().map(|score| score.rows).sum();
+    let summary = ArtifactScoreSummary {
+        target_count,
+        total_target_rows,
+        macro_exact_match_rate: average(target_scores.iter().map(|score| score.exact_match_rate)),
+        macro_positive_recall: average(target_scores.iter().map(|score| score.positive_recall)),
+        macro_negative_pass_rate: average(target_scores.iter().map(|score| score.negative_pass_rate)),
+    };
+    let report = ArtifactScoreReport {
+        artifact_set_id: artifact_set.artifact_set_id,
+        trace_csv: args.trace_csv.display().to_string(),
+        summary,
+        targets: target_scores,
+    };
+
+    if let Some(output) = &args.output {
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)
+                .into_diagnostic()
+                .wrap_err("failed to create artifact score output directory")?;
+        }
+        fs::write(
+            output,
+            serde_json::to_string_pretty(&report).into_diagnostic()? + "\n",
+        )
+        .into_diagnostic()
+        .wrap_err("failed to write artifact score report")?;
+    }
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Scored".bold().bright_green(), report.artifact_set_id.bold());
+        println!("  {} {}", "Targets".bright_black(), report.summary.target_count);
+        println!(
+            "  {} {:.1}%",
+            "Macro exact match".bright_black(),
+            report.summary.macro_exact_match_rate * 100.0
+        );
+        println!(
+            "  {} {:.1}%",
+            "Macro positive recall".bright_black(),
+            report.summary.macro_positive_recall * 100.0
+        );
+        println!(
+            "  {} {:.1}%",
+            "Macro negative pass".bright_black(),
+            report.summary.macro_negative_pass_rate * 100.0
+        );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct TargetScoreCounts {
+    rows: usize,
+    positive_rows: usize,
+    negative_rows: usize,
+    matching_rows: usize,
+    true_positives: usize,
+    true_negatives: usize,
+    false_positives: usize,
+}
+
+fn score_target_against_records(
+    gate: &LogicPearlGateIr,
+    headers: &csv::StringRecord,
+    records: &[csv::StringRecord],
+    target_column: &str,
+) -> logicpearl_core::Result<TargetScoreCounts> {
+    let Some(target_index) = headers.iter().position(|header| header == target_column) else {
+        return Err(LogicPearlError::message(format!(
+            "held-out trace CSV is missing target column {:?}",
+            target_column
+        )));
+    };
+
+    let mut rows = 0usize;
+    let mut positive_rows = 0usize;
+    let mut negative_rows = 0usize;
+    let mut matching_rows = 0usize;
+    let mut true_positives = 0usize;
+    let mut true_negatives = 0usize;
+    let mut false_positives = 0usize;
+
+    for (row_index, record) in records.iter().enumerate() {
+        let expected_positive = parse_target_label(
+            record.get(target_index).unwrap_or(""),
+            row_index + 2,
+            target_column,
+        )?;
+        let mut features = HashMap::new();
+        for (header, value) in headers.iter().zip(record.iter()) {
+            if header == target_column {
+                continue;
+            }
+            features.insert(header.to_string(), parse_scalar(value)?);
+        }
+        let predicted_positive = evaluate_gate(gate, &features)? != 0;
+        rows += 1;
+        if expected_positive {
+            positive_rows += 1;
+            if predicted_positive {
+                true_positives += 1;
+            }
+        } else {
+            negative_rows += 1;
+            if !predicted_positive {
+                true_negatives += 1;
+            } else {
+                false_positives += 1;
+            }
+        }
+        if expected_positive == predicted_positive {
+            matching_rows += 1;
+        }
+    }
+
+    Ok(TargetScoreCounts {
+        rows,
+        positive_rows,
+        negative_rows,
+        matching_rows,
+        true_positives,
+        true_negatives,
+        false_positives,
+    })
+}
+
+fn parse_target_label(raw: &str, line_no: usize, column: &str) -> logicpearl_core::Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "deny" | "denied" => Ok(true),
+        "0" | "false" | "no" | "allow" | "allowed" => Ok(false),
+        other => Err(LogicPearlError::message(format!(
+            "row {} has a non-binary target label {:?} in column {:?}",
+            line_no, other, column
+        ))),
+    }
+}
+
+fn split_benchmark_cases(cases: Vec<BenchmarkCase>, train_fraction: f64) -> (Vec<BenchmarkCase>, Vec<BenchmarkCase>) {
+    let mut groups: BTreeMap<String, Vec<BenchmarkCase>> = BTreeMap::new();
+    for case in cases {
+        let group_key = format!(
+            "{}::{}",
+            case.expected_route,
+            case.category.clone().unwrap_or_else(|| "_none".to_string())
+        );
+        groups.entry(group_key).or_default().push(case);
+    }
+
+    let mut train_cases = Vec::new();
+    let mut dev_cases = Vec::new();
+    for mut group_cases in groups.into_values() {
+        group_cases.sort_by_key(|case| stable_case_hash(&case.id));
+        let total = group_cases.len();
+        let mut train_count = ((total as f64) * train_fraction).floor() as usize;
+        if total > 1 {
+            if train_count == 0 {
+                train_count = 1;
+            }
+            if train_count >= total {
+                train_count = total - 1;
+            }
+        }
+        for (index, case) in group_cases.into_iter().enumerate() {
+            if index < train_count {
+                train_cases.push(case);
+            } else {
+                dev_cases.push(case);
+            }
+        }
+    }
+    (train_cases, dev_cases)
+}
+
+fn parse_scalar(raw: &str) -> logicpearl_core::Result<Value> {
+    if let Ok(parsed) = raw.parse::<i64>() {
+        return Ok(Value::from(parsed));
+    }
+    if let Ok(parsed) = raw.parse::<f64>() {
+        return Ok(Value::from(parsed));
+    }
+    let lowered = raw.trim().to_ascii_lowercase();
+    if lowered == "true" {
+        return Ok(Value::from(true));
+    }
+    if lowered == "false" {
+        return Ok(Value::from(false));
+    }
+    Ok(Value::from(raw.to_string()))
+}
+
+fn stable_case_hash(case_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(case_id.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 fn ratio(numerator: usize, denominator: usize) -> f64 {
     if denominator == 0 {
         0.0
     } else {
         numerator as f64 / denominator as f64
+    }
+}
+
+fn average(values: impl Iterator<Item = f64>) -> f64 {
+    let collected: Vec<f64> = values.collect();
+    if collected.is_empty() {
+        0.0
+    } else {
+        collected.iter().sum::<f64>() / collected.len() as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn split_benchmark_cases_is_stratified_and_non_empty_when_possible() {
+        let cases = vec![
+            BenchmarkCase {
+                id: "a1".to_string(),
+                input: json!({"x": 1}),
+                expected_route: "allow".to_string(),
+                category: Some("benign".to_string()),
+            },
+            BenchmarkCase {
+                id: "a2".to_string(),
+                input: json!({"x": 2}),
+                expected_route: "allow".to_string(),
+                category: Some("benign".to_string()),
+            },
+            BenchmarkCase {
+                id: "d1".to_string(),
+                input: json!({"x": 3}),
+                expected_route: "deny".to_string(),
+                category: Some("attack".to_string()),
+            },
+            BenchmarkCase {
+                id: "d2".to_string(),
+                input: json!({"x": 4}),
+                expected_route: "deny".to_string(),
+                category: Some("attack".to_string()),
+            },
+        ];
+
+        let (train, dev) = split_benchmark_cases(cases, 0.5);
+        assert_eq!(train.len(), 2);
+        assert_eq!(dev.len(), 2);
+        assert!(train.iter().any(|case| case.expected_route == "allow"));
+        assert!(train.iter().any(|case| case.expected_route == "deny"));
+        assert!(dev.iter().any(|case| case.expected_route == "allow"));
+        assert!(dev.iter().any(|case| case.expected_route == "deny"));
+    }
+
+    #[test]
+    fn score_target_counts_binary_matches_correctly() {
+        let gate = LogicPearlGateIr::from_json_str(
+            &serde_json::to_string(&json!({
+                "ir_version": "1.0",
+                "gate_id": "demo",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "flag", "type": "int", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [{
+                    "id": "rule_000",
+                    "kind": "predicate",
+                    "bit": 0,
+                    "deny_when": {"feature": "flag", "op": "==", "value": 1},
+                    "label": null,
+                    "message": null,
+                    "severity": null,
+                    "counterfactual_hint": null,
+                    "verification_status": "pipeline_unverified"
+                }],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = csv::StringRecord::from(vec!["flag", "target_exfiltration"]);
+        let records = vec![
+            csv::StringRecord::from(vec!["0", "0"]),
+            csv::StringRecord::from(vec!["1", "1"]),
+            csv::StringRecord::from(vec!["0", "0"]),
+        ];
+        let score = score_target_against_records(&gate, &headers, &records, "target_exfiltration").unwrap();
+        assert_eq!(score.rows, 3);
+        assert_eq!(score.positive_rows, 1);
+        assert_eq!(score.negative_rows, 2);
+        assert_eq!(score.matching_rows, 3);
+        assert_eq!(score.true_positives, 1);
+        assert_eq!(score.true_negatives, 2);
+        assert_eq!(score.false_positives, 0);
     }
 }
 

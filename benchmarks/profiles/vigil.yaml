@@ -1,0 +1,26 @@
+version: "1"
+id: "vigil"
+description: "Adapt Vigil jailbreak scanner rows into deny benchmark cases."
+source_format: "JSON array or JSONL with text and embeddings fields"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "text"
+    - "prompt"
+  id_fields:
+    - "id"
+    - "text"
+  category_fields:
+    - "category"
+  input_fields:
+    - source: "embeddings"
+      target: "embeddings"
+
+output:
+  expected_route: "deny"
+  id_prefix: "vigil"
+  default_category: "prompt_injection"
+  static_input:
+    document_instructions_present: false

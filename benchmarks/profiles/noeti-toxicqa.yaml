@@ -1,0 +1,35 @@
+version: "1"
+id: "noeti-toxicqa"
+description: "Adapt NOETI ToxicQAFinal rows into deny benchmark cases."
+source_format: "JSON array or JSONL with prompt/topic metadata"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "prompt"
+    - "text"
+    - "question"
+  id_fields:
+    - "id"
+    - "prompt"
+  category_fields:
+    - "topic"
+    - "majortopic"
+    - "subtopics"
+  input_fields:
+    - source: "majortopic"
+      target: "major_topic"
+    - source: "topic"
+      target: "topic"
+    - source: "subtopics"
+      target: "subtopics"
+    - source: "conversations"
+      target: "conversations"
+
+output:
+  expected_route: "deny"
+  id_prefix: "noeti_toxicqa"
+  default_category: "moderation"
+  static_input:
+    document_instructions_present: false

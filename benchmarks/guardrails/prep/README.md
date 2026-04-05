@@ -35,6 +35,14 @@ Recommended local filenames:
 - `train-v2.0.json`
 - `dev-v2.0.json`
 
+Recommended local staging paths for the remaining public development corpora:
+
+```text
+~/Documents/LogicPearl/datasets/public/chatgpt_jailbreak/
+~/Documents/LogicPearl/datasets/public/vigil/
+~/Documents/LogicPearl/datasets/public/noeti_toxicqa/
+```
+
 ## Workflow
 
 The intended automated flow is:
@@ -76,6 +84,8 @@ Today, the public pieces already in place are:
 - `logicpearl benchmark adapt-salad`
 - `logicpearl benchmark adapt-alert`
 - `logicpearl benchmark adapt-squad`
+- `logicpearl benchmark list-profiles`
+- `logicpearl benchmark detect-profile`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
 - `logicpearl benchmark adapt-pint`
@@ -94,10 +104,10 @@ Useful native observer commands:
 
 ## Current Public Adapter Path
 
-Benign `Salad-Data base_set`:
+Attack `Salad-Data base_set`:
 
 ```bash
-logicpearl benchmark adapt \
+  logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_salad_base_set.json \
   --profile salad-base-set \
   --output /tmp/salad_base.jsonl
@@ -119,6 +129,33 @@ logicpearl benchmark adapt \
   ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl \
   --profile alert \
   --output /tmp/alert_attack.jsonl
+```
+
+Attack `ChatGPT-Jailbreak-Prompts`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/chatgpt_jailbreak/chatgpt_jailbreak_prompts.json \
+  --profile chatgpt-jailbreak-prompts \
+  --output /tmp/chatgpt_jailbreak_attack.jsonl
+```
+
+Attack `Vigil`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/vigil/vigil.json \
+  --profile vigil \
+  --output /tmp/vigil_attack.jsonl
+```
+
+Attack `NOETI ToxicQAFinal`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/noeti_toxicqa/noeti_toxicqa.json \
+  --profile noeti-toxicqa \
+  --output /tmp/noeti_attack.jsonl
 ```
 
 Benign `SQuAD 2.0`:
@@ -148,21 +185,41 @@ logicpearl benchmark adapt \
   --output /tmp/alert_attack_sample.jsonl
 ```
 
+Small checked-in attack samples for the other corpora:
+
+```bash
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_chatgpt_jailbreak_prompts.json \
+  --profile chatgpt-jailbreak-prompts \
+  --output /tmp/chatgpt_jailbreak_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_vigil.json \
+  --profile vigil \
+  --output /tmp/vigil_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_noeti_toxicqa.json \
+  --profile noeti-toxicqa \
+  --output /tmp/noeti_sample.jsonl
+```
+
 Merge benign and attack slices into one development set:
 
 ```bash
 logicpearl benchmark merge-cases \
   /tmp/squad_benign.jsonl \
+  /tmp/salad_base.jsonl \
   /tmp/alert_attack.jsonl \
-  --output /tmp/salad_dev.jsonl
+  --output /tmp/guardrail_dev.jsonl
 ```
 
 Observe those adapted rows:
 
 ```bash
 logicpearl benchmark observe \
-  /tmp/salad_dev.jsonl \
-  --output /tmp/salad_dev_observed.jsonl
+  /tmp/guardrail_dev.jsonl \
+  --output /tmp/guardrail_dev_observed.jsonl
 ```
 
 If the input shape matches a built-in native observer profile, LogicPearl detects and uses it automatically. Use `--observer-artifact` to pin a scaffolded observer artifact, or `--plugin-manifest` only when you truly need an external observer.
@@ -171,7 +228,7 @@ Then project them into discovery-ready traces:
 
 ```bash
 logicpearl benchmark emit-traces \
-  /tmp/salad_dev_observed.jsonl \
+  /tmp/guardrail_dev_observed.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_traces
 ```
@@ -180,9 +237,50 @@ Or run the generic middle stage in one shot:
 
 ```bash
 logicpearl benchmark prepare \
-  /tmp/salad_dev.jsonl \
+  /tmp/guardrail_dev.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
+  --json
+```
+
+## Honest Held-Out Evaluation
+
+Do not use the `training_parity` inside `benchmark prepare` as the headline number.
+
+For a real non-`PINT` evaluation:
+
+1. split the merged benchmark cases into deterministic `train` and `dev`
+2. run `benchmark prepare` only on `train`
+3. observe and emit traces for untouched `dev`
+4. score the discovered artifact set against the held-out `dev` traces
+
+Example:
+
+```bash
+logicpearl benchmark split-cases \
+  /tmp/guardrail_dev.jsonl \
+  --train-output /tmp/guardrail_train.jsonl \
+  --dev-output /tmp/guardrail_dev_holdout.jsonl \
+  --train-fraction 0.8
+
+logicpearl benchmark prepare \
+  /tmp/guardrail_train.jsonl \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
+  --output-dir /tmp/guardrail_train_prep \
+  --json
+
+logicpearl benchmark observe \
+  /tmp/guardrail_dev_holdout.jsonl \
+  --output /tmp/guardrail_dev_holdout_observed.jsonl
+
+logicpearl benchmark emit-traces \
+  /tmp/guardrail_dev_holdout_observed.jsonl \
+  --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
+  --output-dir /tmp/guardrail_dev_holdout_traces
+
+logicpearl benchmark score-artifacts \
+  /tmp/guardrail_train_prep/discovered/artifact_set.json \
+  /tmp/guardrail_dev_holdout_traces/multi_target.csv \
   --json
 ```
 

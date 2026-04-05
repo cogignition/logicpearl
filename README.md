@@ -26,7 +26,7 @@ Software should run as artifact, not fog.
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Guardrail Benchmarks](#guardrail-benchmarks) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Benchmarks](./BENCHMARKS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
 Quick proof path:
 
@@ -452,59 +452,15 @@ The goal is to generate the deterministic middle artifact, then let you inspect 
 - see how observer specs and feature contracts connect raw inputs to pearls
 - inspect the generated artifact chain instead of treating the pearl as a black box
 
-## Guardrail Benchmarks
+## Benchmarks
 
-If you want a defensible guardrail benchmark story, keep development corpora separate from proof corpora.
+The benchmark summary lives in [BENCHMARKS.md](./BENCHMARKS.md).
 
-Public benchmark layout:
-- [benchmarks/guardrails/README.md](./benchmarks/guardrails/README.md)
-- [benchmarks/guardrails/guardrail_benchmark.manifest.json](./benchmarks/guardrails/guardrail_benchmark.manifest.json)
-
-The recommended public split is:
-- `train`: Salad-Data, ChatGPT-Jailbreak-Prompts, Vigil, ALERT Adverserial, NOETI ToxicQAFinal, SQuAD 2.0
-- `dev`: held-out slices for threshold and false-positive tuning
-- `proof`: `PINT` only
-
-That keeps the headline result honest:
-- build on broad public corpora
-- tune on held-out development traffic
-- prove on an untouched benchmark
-
-The first public artifact set for this is:
-- [benchmarks/guardrails/examples/agent_guardrail/README.md](./benchmarks/guardrails/examples/agent_guardrail/README.md)
-- [benchmarks/guardrails/examples/agent_guardrail/discovery/README.md](./benchmarks/guardrails/examples/agent_guardrail/discovery/README.md)
-- [docs/advanced-guardrail-guide.md](./docs/advanced-guardrail-guide.md)
-
-And the public CLI can score a dataset slice directly:
-
-```bash
-logicpearl benchmark run \
-  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
-  benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl
-```
-
-The next LogicPearl step is learning the pearls from normalized traces, not hand-writing them:
-
-```bash
-logicpearl build \
-  benchmarks/guardrails/examples/agent_guardrail/discovery/instruction_boundary_traces.csv \
-  --output-dir /tmp/instruction_boundary
-```
-
-And for generalized multi-target discovery:
-
-```bash
-logicpearl discover \
-  benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv \
-  --targets target_instruction_boundary,target_exfiltration,target_tool_use
-```
-
-That same command surface also supports:
-
-```bash
-logicpearl discover traces.csv --targets target_a,target_b --residual-pass --refine
-logicpearl discover traces.csv --targets target_a --pinned-rules rules.json
-```
+That file covers:
+- the public OPA parity demo
+- the current guardrail corpus story
+- held-out non-`PINT` results
+- what the current public benchmark numbers do and do not prove
 
 ## Next Demos
 
