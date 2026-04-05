@@ -1,11 +1,13 @@
 [workspace]
 members = [
   "crates/logicpearl-cli",
+  "crates/logicpearl-benchmark",
   "crates/logicpearl-core",
   "crates/logicpearl-ir",
   "crates/logicpearl-runtime",
   "crates/logicpearl-discovery",
   "crates/logicpearl-observer",
+  "crates/logicpearl-observer-synthesis",
   "crates/logicpearl-plugin",
   "crates/logicpearl-pipeline",
   "crates/logicpearl-verify",

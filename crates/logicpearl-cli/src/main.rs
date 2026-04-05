@@ -1,4 +1,9 @@
 use clap::{Args, Parser, Subcommand};
+use logicpearl_benchmark::{
+    benchmark_adapter_registry, detect_benchmark_adapter_profile, first_string_field, load_benchmark_cases,
+    load_synthesis_cases, parse_json_object_rows, sanitize_identifier, stable_value_id, BenchmarkAdapterProfile,
+    BenchmarkCase, ObservedBenchmarkCase, PintRawCase, SaladAttackCase, SaladBaseCase, SquadDataset,
+};
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_conformance::{
     build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest, write_artifact_manifest,
@@ -9,11 +14,16 @@ use logicpearl_discovery::{
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
-    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_feature,
-    guardrails_signal_label, guardrails_signal_phrases, load_artifact, observe_with_artifact, observe_with_profile,
-    profile_id as native_profile_id, profile_registry, prompt_matches_phrase,
+    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_label, guardrails_signal_phrases,
+    load_artifact, observe_with_artifact, observe_with_profile, profile_id as native_profile_id, profile_registry,
+    prompt_matches_phrase,
     set_guardrails_signal_phrases, status as observer_status, GuardrailsSignal,
     NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
+};
+use logicpearl_observer_synthesis::{
+    count_phrase_hits, count_selected_hits, generate_phrase_candidates, infer_bootstrap_examples,
+    matching_candidate_indexes, solve_phrase_subset_with_z3, solve_phrase_subset_with_z3_soft,
+    ObserverBootstrapStrategy,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
@@ -25,11 +35,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_yaml;
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -253,6 +261,16 @@ enum ObserverBootstrapArg {
     Seed,
 }
 
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum BenchmarkAdapterProfileArg {
+    Auto,
+    SaladBaseSet,
+    SaladAttackEnhancedSet,
+    Alert,
+    Squad,
+    Pint,
+}
+
 #[derive(Debug, Args)]
 #[command(after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.csv --pinned-rules rules.json --output-dir /tmp/output")]
 struct BuildArgs {
@@ -389,7 +407,7 @@ struct BenchmarkAdaptArgs {
     raw_dataset: PathBuf,
     /// Built-in adapter profile to use for this dataset.
     #[arg(long, value_enum)]
-    profile: BenchmarkAdapterProfile,
+    profile: BenchmarkAdapterProfileArg,
     /// Output JSONL path in LogicPearl benchmark-case format.
     #[arg(long)]
     output: PathBuf,
@@ -405,24 +423,6 @@ struct BenchmarkAdaptArgs {
     /// Emit machine-readable JSON summary instead of styled terminal output.
     #[arg(long)]
     json: bool,
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-enum BenchmarkAdapterProfile {
-    Auto,
-    SaladBaseSet,
-    SaladAttackEnhancedSet,
-    Alert,
-    Squad,
-    Pint,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct BenchmarkAdapterDescriptor {
-    id: &'static str,
-    description: &'static str,
-    source_format: &'static str,
-    default_route: &'static str,
 }
 
 #[derive(Debug, Args)]
@@ -831,48 +831,6 @@ struct ObserverRepairArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BenchmarkCase {
-    id: String,
-    input: Value,
-    expected_route: String,
-    #[serde(default)]
-    category: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PintRawCase {
-    text: String,
-    #[serde(default)]
-    category: Option<String>,
-    label: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ObservedBenchmarkCase {
-    id: String,
-    input: Value,
-    expected_route: String,
-    #[serde(default)]
-    category: Option<String>,
-    features: serde_json::Map<String, Value>,
-}
-
-#[derive(Debug, Clone)]
-struct SynthesisCase {
-    prompt: String,
-    expected_route: String,
-    features: Option<serde_json::Map<String, Value>>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ObserverBootstrapMode {
-    ObservedFeature,
-    Route,
-    Seed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TraceProjectionConfig {
     #[serde(default)]
     feature_columns: Vec<String>,
@@ -898,52 +856,6 @@ struct ProjectionPredicate {
     any_features: Vec<String>,
     #[serde(default)]
     all_features: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SaladBaseCase {
-    qid: serde_json::Value,
-    question: String,
-    #[serde(default)]
-    source: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SaladAttackCase {
-    aid: serde_json::Value,
-    augq: String,
-    #[serde(default)]
-    method: Option<String>,
-    #[serde(default, rename = "1-category")]
-    category_1: Option<String>,
-    #[serde(default, rename = "2-category")]
-    category_2: Option<String>,
-    #[serde(default, rename = "3-category")]
-    category_3: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SquadDataset {
-    data: Vec<SquadArticle>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SquadArticle {
-    #[serde(default)]
-    title: Option<String>,
-    paragraphs: Vec<SquadParagraph>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SquadParagraph {
-    context: String,
-    qas: Vec<SquadQuestion>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SquadQuestion {
-    id: String,
-    question: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1095,71 +1007,6 @@ fn main() -> Result<()> {
     }
 }
 
-impl BenchmarkAdapterProfile {
-    fn id(&self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::SaladBaseSet => "salad-base-set",
-            Self::SaladAttackEnhancedSet => "salad-attack-enhanced-set",
-            Self::Alert => "alert",
-            Self::Squad => "squad",
-            Self::Pint => "pint",
-        }
-    }
-
-    fn description(&self) -> &'static str {
-        match self {
-            Self::Auto => "Detect the adapter profile from the raw dataset shape when the format is obvious.",
-            Self::SaladBaseSet => "Adapt Salad-Data benign base_set rows into allow benchmark cases.",
-            Self::SaladAttackEnhancedSet => {
-                "Adapt Salad-Data attack_enhanced_set rows into deny benchmark cases."
-            }
-            Self::Alert => "Adapt ALERT adversarial instruction rows into deny benchmark cases.",
-            Self::Squad => "Adapt SQuAD-style benign question rows into allow benchmark cases.",
-            Self::Pint => "Adapt PINT YAML rows into allow or deny benchmark cases for proof-only scoring.",
-        }
-    }
-
-    fn source_format(&self) -> &'static str {
-        match self {
-            Self::Auto => "Any supported raw benchmark format",
-            Self::SaladBaseSet => "Salad base_set JSON array",
-            Self::SaladAttackEnhancedSet => "Salad attack_enhanced_set JSON array",
-            Self::Alert => "JSON array or JSONL of prompt-like objects",
-            Self::Squad => "SQuAD-style JSON with data[].paragraphs[].qas[]",
-            Self::Pint => "PINT YAML list with text/category/label",
-        }
-    }
-
-    fn default_route(&self) -> &'static str {
-        match self {
-            Self::Auto => "detected",
-            Self::SaladBaseSet | Self::Squad => "allow",
-            Self::SaladAttackEnhancedSet | Self::Alert => "deny",
-            Self::Pint => "mixed",
-        }
-    }
-}
-
-fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
-    [
-        BenchmarkAdapterProfile::Auto,
-        BenchmarkAdapterProfile::SaladBaseSet,
-        BenchmarkAdapterProfile::SaladAttackEnhancedSet,
-        BenchmarkAdapterProfile::Alert,
-        BenchmarkAdapterProfile::Squad,
-        BenchmarkAdapterProfile::Pint,
-    ]
-    .into_iter()
-    .map(|profile| BenchmarkAdapterDescriptor {
-        id: profile.id(),
-        description: profile.description(),
-        source_format: profile.source_format(),
-        default_route: profile.default_route(),
-    })
-    .collect()
-}
-
 fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
     if args.inputs.is_empty() {
         return Err(guidance(
@@ -1177,7 +1024,9 @@ fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
     let mut total_rows = 0_usize;
     let mut seen_ids = std::collections::BTreeSet::new();
     for input in &args.inputs {
-        let cases = load_benchmark_cases(input)?;
+        let cases = load_benchmark_cases(input)
+            .into_diagnostic()
+            .wrap_err("failed to load benchmark cases for merge")?;
         for case in cases {
             if !seen_ids.insert(case.id.clone()) {
                 return Err(guidance(
@@ -1461,7 +1310,9 @@ fn run_benchmark_list_profiles(args: BenchmarkListProfilesArgs) -> Result<()> {
 }
 
 fn run_benchmark_detect_profile(args: BenchmarkDetectProfileArgs) -> Result<()> {
-    let profile = detect_benchmark_adapter_profile(&args.raw_dataset)?;
+    let profile = detect_benchmark_adapter_profile(&args.raw_dataset)
+        .into_diagnostic()
+        .wrap_err("failed to detect benchmark adapter profile")?;
     let response = serde_json::json!({
         "raw_dataset": args.raw_dataset.display().to_string(),
         "detected_profile": profile.id(),
@@ -1493,8 +1344,10 @@ fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
 }
 
 fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
-    let profile = match args.profile {
-        BenchmarkAdapterProfile::Auto => detect_benchmark_adapter_profile(&args.raw_dataset)?,
+    let profile = match to_benchmark_adapter_profile(args.profile) {
+        BenchmarkAdapterProfile::Auto => detect_benchmark_adapter_profile(&args.raw_dataset)
+            .into_diagnostic()
+            .wrap_err("failed to detect benchmark adapter profile")?,
         other => other,
     };
     match profile {
@@ -1544,65 +1397,6 @@ fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             json: args.json,
         }),
     }
-}
-
-fn detect_benchmark_adapter_profile(path: &Path) -> Result<BenchmarkAdapterProfile> {
-    let raw = fs::read_to_string(path)
-        .into_diagnostic()
-        .wrap_err("could not read raw benchmark dataset for profile detection")?;
-    if path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| matches!(ext, "yaml" | "yml"))
-        .unwrap_or(false)
-    {
-        if let Ok(rows) = serde_yaml::from_str::<Vec<PintRawCase>>(&raw) {
-            if !rows.is_empty() {
-                return Ok(BenchmarkAdapterProfile::Pint);
-            }
-        }
-    }
-
-    if let Ok(dataset) = serde_json::from_str::<SquadDataset>(&raw) {
-        if !dataset.data.is_empty() {
-            return Ok(BenchmarkAdapterProfile::Squad);
-        }
-    }
-
-    if let Ok(base_rows) = serde_json::from_str::<Vec<SaladBaseCase>>(&raw) {
-        if !base_rows.is_empty() {
-            return Ok(BenchmarkAdapterProfile::SaladBaseSet);
-        }
-    }
-
-    if let Ok(attack_rows) = serde_json::from_str::<Vec<SaladAttackCase>>(&raw) {
-        if !attack_rows.is_empty() {
-            return Ok(BenchmarkAdapterProfile::SaladAttackEnhancedSet);
-        }
-    }
-
-    if let Ok(rows) = parse_json_object_rows(&raw) {
-        if !rows.is_empty() {
-            let first = &rows[0];
-            if first.contains_key("prompt")
-                || first.contains_key("instruction")
-                || first.contains_key("text")
-                || first.contains_key("question")
-                || first.contains_key("input")
-                || first.contains_key("content")
-            {
-                return Ok(BenchmarkAdapterProfile::Alert);
-            }
-        }
-    }
-
-    Err(guidance(
-        format!(
-            "could not auto-detect a built-in benchmark adapter profile for {}",
-            path.display()
-        ),
-        "Use `logicpearl benchmark list-profiles` to inspect supported profiles, then rerun with --profile <profile>.",
-    ))
 }
 
 fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
@@ -1722,6 +1516,7 @@ fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("could not read raw ALERT JSON")?;
     let rows = parse_json_object_rows(&raw_json)
+        .into_diagnostic()
         .wrap_err("raw ALERT JSON is not valid for the expected dataset format")?;
     if rows.is_empty() {
         return Err(guidance(
@@ -3015,7 +2810,9 @@ fn resolve_observer_for_cases(
     if let Some(profile) = observer_profile {
         return match profile {
             ObserverProfileArg::Auto => {
-                let cases = load_benchmark_cases(dataset_jsonl)?;
+                let cases = load_benchmark_cases(dataset_jsonl)
+                    .into_diagnostic()
+                    .wrap_err("failed to load benchmark dataset for observer auto-detection")?;
                 let sample = cases
                     .first()
                     .ok_or_else(|| guidance("benchmark dataset is empty", "Add at least one case before using --observer-profile auto."))?;
@@ -3031,7 +2828,9 @@ fn resolve_observer_for_cases(
         };
     }
 
-    let cases = load_benchmark_cases(dataset_jsonl)?;
+    let cases = load_benchmark_cases(dataset_jsonl)
+        .into_diagnostic()
+        .wrap_err("failed to load benchmark dataset for observer auto-detection")?;
     let sample = cases
         .first()
         .ok_or_else(|| guidance("benchmark dataset is empty", "Add at least one case before running benchmark observe."))?;
@@ -3117,7 +2916,10 @@ fn observe_benchmark_cases(
 
     let mut rows = 0_usize;
     let mut out = String::new();
-    for case in load_benchmark_cases(dataset_jsonl)? {
+    for case in load_benchmark_cases(dataset_jsonl)
+        .into_diagnostic()
+        .wrap_err("failed to load benchmark cases for observation")?
+    {
         let features = observe_features(observer, &case.input)
             .wrap_err(format!("observer execution failed for case {}", case.id))?;
         let observed = ObservedBenchmarkCase {
@@ -3330,250 +3132,6 @@ fn emit_trace_tables(
     })
 }
 
-fn load_benchmark_cases(path: &PathBuf) -> Result<Vec<BenchmarkCase>> {
-    let file = fs::File::open(path)
-        .into_diagnostic()
-        .wrap_err("could not open benchmark dataset JSONL")?;
-    let reader = BufReader::new(file);
-    let mut cases = Vec::new();
-    for (line_no, line) in reader.lines().enumerate() {
-        let line = line
-            .into_diagnostic()
-            .wrap_err("failed to read benchmark dataset line")?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let case: BenchmarkCase = serde_json::from_str(trimmed)
-            .into_diagnostic()
-            .wrap_err(format!(
-                "invalid benchmark case JSON on line {}. Each line must contain id, input, and expected_route",
-                line_no + 1
-            ))?;
-        cases.push(case);
-    }
-    Ok(cases)
-}
-
-fn load_synthesis_cases(path: &PathBuf) -> Result<Vec<SynthesisCase>> {
-    let file = fs::File::open(path)
-        .into_diagnostic()
-        .wrap_err("could not open synthesis benchmark JSONL")?;
-    let reader = BufReader::new(file);
-    let mut cases = Vec::new();
-    for (line_no, line) in reader.lines().enumerate() {
-        let line = line
-            .into_diagnostic()
-            .wrap_err("failed to read synthesis benchmark line")?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(trimmed)
-            .into_diagnostic()
-            .wrap_err(format!("invalid JSON on line {}", line_no + 1))?;
-        let object = value.as_object().ok_or_else(|| {
-            guidance(
-                format!("invalid synthesis row on line {}", line_no + 1),
-                "Each JSONL row must be a benchmark case or observed benchmark case object.",
-            )
-        })?;
-
-        let prompt = object
-            .get("input")
-            .and_then(Value::as_object)
-            .and_then(|input| input.get("prompt"))
-            .and_then(Value::as_str)
-            .map(|prompt| prompt.to_ascii_lowercase())
-            .ok_or_else(|| {
-                guidance(
-                    format!("synthesis row {} is missing input.prompt", line_no + 1),
-                    "Use benchmark-case JSONL or observed benchmark-case JSONL with an input.prompt field.",
-                )
-            })?;
-        let expected_route = object
-            .get("expected_route")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| {
-                guidance(
-                    format!("synthesis row {} is missing expected_route", line_no + 1),
-                    "Each benchmark row must include an expected_route string.",
-                )
-            })?;
-        let features = object
-            .get("features")
-            .and_then(Value::as_object)
-            .cloned();
-
-        cases.push(SynthesisCase {
-            prompt,
-            expected_route,
-            features,
-        });
-    }
-    Ok(cases)
-}
-
-fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
-    match signal {
-        GuardrailsSignal::InstructionOverride => &["deny_untrusted_instruction", "deny_instruction_boundary"],
-        GuardrailsSignal::SystemPrompt => &["deny_untrusted_instruction", "deny_system_prompt"],
-        GuardrailsSignal::SecretExfiltration => &["deny_exfiltration_risk", "deny_secret_exfiltration"],
-        GuardrailsSignal::ToolMisuse => &["deny_tool_use", "deny_tool_misuse"],
-        GuardrailsSignal::DataAccessOutsideScope => &["deny_exfiltration_risk", "needs_scope_reduction"],
-        GuardrailsSignal::IndirectDocumentAuthority => {
-            &["deny_untrusted_instruction", "deny_indirect_document_authority"]
-        }
-        GuardrailsSignal::BenignQuestion => &["allow"],
-    }
-}
-
-fn infer_bootstrap_examples(
-    cases: &[SynthesisCase],
-    signal: GuardrailsSignal,
-    bootstrap: ObserverBootstrapArg,
-    positive_routes: &[String],
-    seed_phrases: &[String],
-) -> Result<(ObserverBootstrapMode, Vec<String>, Vec<String>)> {
-    let signal_feature = guardrails_signal_feature(signal);
-
-    if matches!(bootstrap, ObserverBootstrapArg::Auto | ObserverBootstrapArg::ObservedFeature) {
-        let positives: Vec<String> = cases
-            .iter()
-            .filter(|case| case.features.as_ref().map(|features| boolish(features.get(signal_feature))).unwrap_or(false))
-            .map(|case| case.prompt.clone())
-            .collect();
-        if !positives.is_empty() {
-            let negatives: Vec<String> = cases
-                .iter()
-                .filter(|case| {
-                    case.features
-                        .as_ref()
-                        .map(|features| !boolish(features.get(signal_feature)))
-                        .unwrap_or(false)
-                })
-                .map(|case| case.prompt.clone())
-                .collect();
-            return Ok((ObserverBootstrapMode::ObservedFeature, positives, negatives));
-        }
-        if matches!(bootstrap, ObserverBootstrapArg::ObservedFeature) {
-            return Err(guidance(
-                format!("no observed feature rows expose {}", signal_feature),
-                "Use observed benchmark JSONL with a features object, switch to --bootstrap route, or let auto fall back.",
-            ));
-        }
-    }
-
-    if matches!(bootstrap, ObserverBootstrapArg::Auto | ObserverBootstrapArg::Route) {
-        let route_hints: Vec<String> = if positive_routes.is_empty() {
-            default_positive_routes_for_signal(signal)
-                .iter()
-                .map(|route| route.to_string())
-                .collect()
-        } else {
-            positive_routes.to_vec()
-        };
-        let positives: Vec<String> = cases
-            .iter()
-            .filter(|case| route_hints.iter().any(|route| route == &case.expected_route))
-            .map(|case| case.prompt.clone())
-            .collect();
-        if !positives.is_empty() {
-            let negatives: Vec<String> = cases
-                .iter()
-                .filter(|case| case.expected_route == "allow")
-                .map(|case| case.prompt.clone())
-                .collect();
-            return Ok((ObserverBootstrapMode::Route, positives, negatives));
-        }
-        if matches!(bootstrap, ObserverBootstrapArg::Route) {
-            return Err(guidance(
-                "route-based observer bootstrapping found no positive examples",
-                "Pass --positive-routes <route_a,route_b>, use observed benchmark rows, or let auto fall back.",
-            ));
-        }
-    }
-
-    let positives: Vec<String> = cases
-        .iter()
-        .filter(|case| case.expected_route != "allow")
-        .filter(|case| seed_phrases.iter().any(|phrase| prompt_matches_phrase(&case.prompt, phrase)))
-        .map(|case| case.prompt.clone())
-        .collect();
-    if positives.is_empty() {
-        return Err(guidance(
-            format!(
-                "could not find positive examples for {} with the current bootstrap strategy",
-                guardrails_signal_label(signal)
-            ),
-            "Use observed benchmark rows, pass --positive-routes, or provide a broader seed artifact.",
-        ));
-    }
-    let negatives: Vec<String> = cases
-        .iter()
-        .filter(|case| case.expected_route == "allow")
-        .map(|case| case.prompt.clone())
-        .collect();
-    Ok((ObserverBootstrapMode::Seed, positives, negatives))
-}
-
-fn parse_json_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
-    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) {
-        let mut rows = Vec::with_capacity(items.len());
-        for (index, item) in items.into_iter().enumerate() {
-            let object = item.as_object().cloned().ok_or_else(|| {
-                miette::miette!("row {} is not a JSON object", index + 1)
-            })?;
-            rows.push(object);
-        }
-        return Ok(rows);
-    }
-
-    let mut rows = Vec::new();
-    for (line_no, line) in raw.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(trimmed).map_err(|error| {
-            miette::miette!(
-                "invalid JSON on line {}: {}",
-                line_no + 1,
-                error
-            )
-        })?;
-        let object = value.as_object().cloned().ok_or_else(|| {
-            miette::miette!(
-                "line {} is not a JSON object",
-                line_no + 1
-            )
-        })?;
-        rows.push(object);
-    }
-    Ok(rows)
-}
-
-fn first_string_field(
-    object: &serde_json::Map<String, Value>,
-    keys: &[&str],
-) -> Option<String> {
-    keys.iter().find_map(|key| {
-        object
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn stable_value_id(value: &serde_json::Value, fallback_index: usize) -> String {
-    match value {
-        serde_json::Value::String(text) => sanitize_identifier(text),
-        serde_json::Value::Number(number) => number.to_string(),
-        _ => format!("{fallback_index:06}"),
-    }
-}
-
 fn default_true() -> bool {
     true
 }
@@ -3621,22 +3179,6 @@ fn bit(value: bool) -> u8 {
 
 fn allow_word(allowed: bool) -> &'static str {
     if allowed { "allowed" } else { "denied" }
-}
-
-fn sanitize_identifier(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        "pearl".to_string()
-    } else {
-        out
-    }
 }
 
 fn default_compiled_output_path(
@@ -3826,7 +3368,9 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
         )
     })?;
 
-    let cases = load_synthesis_cases(&args.benchmark_cases)?;
+    let cases = load_synthesis_cases(&args.benchmark_cases)
+        .into_diagnostic()
+        .wrap_err("failed to load synthesis benchmark cases")?;
     if cases.is_empty() {
         return Err(guidance(
             "benchmark dataset is empty",
@@ -3838,10 +3382,12 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
     let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
         &cases,
         signal,
-        args.bootstrap,
+        to_observer_bootstrap_strategy(args.bootstrap),
         &args.positive_routes,
         seed_phrases,
-    )?;
+    )
+    .into_diagnostic()
+    .wrap_err("failed to infer bootstrap examples for observer synthesis")?;
 
     let candidates =
         generate_phrase_candidates(signal, &positive_prompts, &negative_prompts, args.max_candidates);
@@ -3863,8 +3409,9 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
         .filter(|matches| !matches.is_empty())
         .collect();
 
-    let selected =
-        solve_phrase_subset_with_z3_soft(&candidates, &positive_constraints, &negative_constraints)?;
+    let selected = solve_phrase_subset_with_z3_soft(&candidates, &positive_constraints, &negative_constraints)
+        .into_diagnostic()
+        .wrap_err("failed to synthesize phrase subset with Z3")?;
     if selected.is_empty() {
         return Err(guidance(
             "Z3 could not synthesize a useful phrase subset",
@@ -3940,7 +3487,9 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         ));
     }
 
-    let cases = load_synthesis_cases(&args.benchmark_cases)?;
+    let cases = load_synthesis_cases(&args.benchmark_cases)
+        .into_diagnostic()
+        .wrap_err("failed to load synthesis benchmark cases")?;
     if cases.is_empty() {
         return Err(guidance(
             "benchmark dataset is empty",
@@ -3950,10 +3499,12 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
     let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
         &cases,
         signal,
-        args.bootstrap,
+        to_observer_bootstrap_strategy(args.bootstrap),
         &args.positive_routes,
         &phrases,
-    )?;
+    )
+    .into_diagnostic()
+    .wrap_err("failed to infer bootstrap examples for observer repair")?;
 
     let mut positive_constraints: Vec<Vec<usize>> = Vec::new();
     let mut negative_constraints: Vec<Vec<usize>> = Vec::new();
@@ -3986,7 +3537,9 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         ));
     }
 
-    let selected = solve_phrase_subset_with_z3(&phrases, &positive_constraints, &negative_constraints)?;
+    let selected = solve_phrase_subset_with_z3(&phrases, &positive_constraints, &negative_constraints)
+        .into_diagnostic()
+        .wrap_err("failed to repair phrase subset with Z3")?;
     let repaired_phrases: Vec<String> = selected.iter().map(|index| phrases[*index].clone()).collect();
     if repaired_phrases.is_empty() {
         return Err(guidance(
@@ -3995,9 +3548,9 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         ));
     }
 
-    let before_negatives = count_phrase_hits(&phrases, &negative_constraints);
+    let before_negatives = count_phrase_hits(&negative_constraints);
     let after_negatives = count_selected_hits(&selected, &negative_constraints);
-    let before_positives = count_phrase_hits(&phrases, &positive_constraints);
+    let before_positives = count_phrase_hits(&positive_constraints);
     let after_positives = count_selected_hits(&selected, &positive_constraints);
     let removed_phrases: Vec<String> = phrases
         .iter()
@@ -4052,17 +3605,6 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
     Ok(())
 }
 
-fn count_phrase_hits(_phrases: &[String], constraints: &[Vec<usize>]) -> usize {
-    constraints.len()
-}
-
-fn count_selected_hits(selected: &[usize], constraints: &[Vec<usize>]) -> usize {
-    constraints
-        .iter()
-        .filter(|matched| matched.iter().any(|index| selected.contains(index)))
-        .count()
-}
-
 fn resolve_synthesis_artifact(
     profile: Option<ObserverProfileArg>,
     artifact_path: Option<&PathBuf>,
@@ -4085,488 +3627,32 @@ fn resolve_synthesis_artifact(
     Ok(default_artifact_for_profile(profile))
 }
 
-fn generate_phrase_candidates(
-    signal: GuardrailsSignal,
-    positive_prompts: &[String],
-    negative_prompts: &[String],
-    max_candidates: usize,
-) -> Vec<String> {
-    let mut positive_hits: BTreeMap<String, usize> = BTreeMap::new();
-    let mut negative_hits: BTreeMap<String, usize> = BTreeMap::new();
-
-    for prompt in positive_prompts {
-        let seen: HashSet<String> = candidate_ngrams(prompt, signal).into_iter().collect();
-        for phrase in seen {
-            *positive_hits.entry(phrase).or_default() += 1;
-        }
-    }
-    for prompt in negative_prompts {
-        let seen: HashSet<String> = candidate_ngrams(prompt, signal).into_iter().collect();
-        for phrase in seen {
-            *negative_hits.entry(phrase).or_default() += 1;
-        }
-    }
-
-    let mut ranked: Vec<(String, usize, usize)> = positive_hits
-        .into_iter()
-        .filter_map(|(phrase, pos_hits)| {
-            let neg_hits = negative_hits.get(&phrase).copied().unwrap_or_default();
-            let keep = match signal {
-                GuardrailsSignal::SecretExfiltration => pos_hits >= 2 && pos_hits >= neg_hits,
-                _ => pos_hits >= 2,
-            };
-            keep.then_some((phrase, pos_hits, neg_hits))
-        })
-        .collect();
-
-    ranked.sort_by(|left, right| {
-        let left_score = left.1 as isize - left.2 as isize;
-        let right_score = right.1 as isize - right.2 as isize;
-        right_score
-            .cmp(&left_score)
-            .then(left.2.cmp(&right.2))
-            .then(right.1.cmp(&left.1))
-            .then(left.0.len().cmp(&right.0.len()))
-            .then(left.0.cmp(&right.0))
-    });
-
-    ranked
-        .into_iter()
-        .take(max_candidates)
-        .map(|(phrase, _, _)| phrase)
-        .collect()
-}
-
-fn candidate_ngrams(prompt: &str, signal: GuardrailsSignal) -> Vec<String> {
-    let tokens = tokenize(prompt);
-    let lengths: &[usize] = match signal {
-        GuardrailsSignal::SecretExfiltration => &[1, 2, 3],
-        _ => &[2, 3, 4],
-    };
-    let mut out = Vec::new();
-    for &width in lengths {
-        if width > tokens.len() {
-            continue;
-        }
-        for window in tokens.windows(width) {
-            if !candidate_window_is_useful(window, signal) {
-                continue;
-            }
-            let phrase = window.join(" ");
-            if phrase.len() >= 3 {
-                out.push(phrase);
-            }
-        }
-    }
-    out
-}
-
-fn tokenize(prompt: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    for ch in prompt.chars() {
-        if ch.is_ascii_alphanumeric() {
-            current.push(ch.to_ascii_lowercase());
-        } else if !current.is_empty() {
-            tokens.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-fn candidate_window_is_useful(window: &[String], signal: GuardrailsSignal) -> bool {
-    if window.is_empty() {
-        return false;
-    }
-    let stopwords = [
-        "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "is", "are",
-        "was", "were", "be", "by", "as", "at", "it", "this", "that", "what", "how", "why",
-        "who", "when", "where", "tell", "me", "your",
-    ];
-    if window.iter().all(|token| stopwords.contains(&token.as_str())) {
-        return false;
-    }
-    if window.len() == 1 && window[0].len() < 6 {
-        return false;
-    }
-    let edge_stopwords = [
-        "the", "a", "an", "this", "that", "these", "those", "my", "your", "our", "their",
-        "his", "her", "its", "some", "any",
-    ];
-    if edge_stopwords.contains(&window[0].as_str()) || edge_stopwords.contains(&window[window.len() - 1].as_str())
-    {
-        return false;
-    }
-    signal_window_is_useful(window, signal)
-}
-
-fn signal_window_is_useful(window: &[String], signal: GuardrailsSignal) -> bool {
-    match signal {
-        GuardrailsSignal::InstructionOverride => {
-            contains_any_token(window, &instruction_override_verbs())
-                && contains_any_token(window, &instruction_override_targets())
-        }
-        GuardrailsSignal::SystemPrompt => {
-            contains_any_token(window, &system_prompt_request_verbs())
-                && contains_any_token(window, &system_prompt_targets())
-        }
-        GuardrailsSignal::SecretExfiltration => contains_any_token(window, &secret_exfiltration_tokens()),
-        GuardrailsSignal::ToolMisuse => {
-            contains_any_token(window, &tool_misuse_verbs())
-                && contains_any_token(window, &tool_misuse_targets())
-        }
-        GuardrailsSignal::DataAccessOutsideScope => {
-            contains_any_token(window, &data_access_scope_tokens())
-                && contains_any_token(window, &data_access_target_tokens())
-        }
-        GuardrailsSignal::IndirectDocumentAuthority => {
-            contains_any_token(window, &indirect_authority_sources())
-                && contains_any_token(window, &indirect_authority_verbs())
-        }
-        GuardrailsSignal::BenignQuestion => contains_any_token(window, &benign_question_tokens()),
+fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> BenchmarkAdapterProfile {
+    match profile {
+        BenchmarkAdapterProfileArg::Auto => BenchmarkAdapterProfile::Auto,
+        BenchmarkAdapterProfileArg::SaladBaseSet => BenchmarkAdapterProfile::SaladBaseSet,
+        BenchmarkAdapterProfileArg::SaladAttackEnhancedSet => BenchmarkAdapterProfile::SaladAttackEnhancedSet,
+        BenchmarkAdapterProfileArg::Alert => BenchmarkAdapterProfile::Alert,
+        BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
+        BenchmarkAdapterProfileArg::Pint => BenchmarkAdapterProfile::Pint,
     }
 }
 
-fn contains_any_token(window: &[String], tokens: &[&str]) -> bool {
-    window.iter().any(|token| tokens.contains(&token.as_str()))
-}
-
-fn instruction_override_verbs() -> [&'static str; 9] {
-    [
-        "ignore",
-        "disregard",
-        "override",
-        "bypass",
-        "forget",
-        "drop",
-        "skip",
-        "shrug",
-        "evade",
-    ]
-}
-
-fn instruction_override_targets() -> [&'static str; 9] {
-    [
-        "instruction",
-        "instructions",
-        "guideline",
-        "guidelines",
-        "rule",
-        "rules",
-        "prompt",
-        "policy",
-        "policies",
-    ]
-}
-
-fn system_prompt_request_verbs() -> [&'static str; 9] {
-    [
-        "reveal",
-        "show",
-        "print",
-        "display",
-        "dump",
-        "expose",
-        "return",
-        "tell",
-        "share",
-    ]
-}
-
-fn system_prompt_targets() -> [&'static str; 8] {
-    [
-        "system",
-        "prompt",
-        "hidden",
-        "instruction",
-        "instructions",
-        "policy",
-        "policies",
-        "message",
-    ]
-}
-
-fn secret_exfiltration_tokens() -> [&'static str; 15] {
-    [
-        "api",
-        "access",
-        "bearer",
-        "credential",
-        "credentials",
-        "key",
-        "keys",
-        "password",
-        "passwords",
-        "secret",
-        "secrets",
-        "shared",
-        "token",
-        "tokens",
-        "vault",
-    ]
-}
-
-fn tool_misuse_verbs() -> [&'static str; 10] {
-    [
-        "delete",
-        "destroy",
-        "download",
-        "dump",
-        "export",
-        "return",
-        "send",
-        "transfer",
-        "upload",
-        "wipe",
-    ]
-}
-
-fn tool_misuse_targets() -> [&'static str; 11] {
-    [
-        "account",
-        "credentials",
-        "customer",
-        "customers",
-        "database",
-        "emails",
-        "files",
-        "funds",
-        "records",
-        "table",
-        "tables",
-    ]
-}
-
-fn data_access_scope_tokens() -> [&'static str; 6] {
-    ["all", "entire", "outside", "scope", "every", "full"]
-}
-
-fn data_access_target_tokens() -> [&'static str; 8] {
-    [
-        "customer",
-        "customers",
-        "database",
-        "emails",
-        "files",
-        "project",
-        "records",
-        "scope",
-    ]
-}
-
-fn indirect_authority_sources() -> [&'static str; 8] {
-    ["document", "documents", "email", "file", "page", "pdf", "webpage", "website"]
-}
-
-fn indirect_authority_verbs() -> [&'static str; 8] {
-    ["claims", "instructs", "says", "said", "shows", "states", "tells", "writes"]
-}
-
-fn benign_question_tokens() -> [&'static str; 9] {
-    [
-        "explain",
-        "help",
-        "summarize",
-        "summary",
-        "translate",
-        "understand",
-        "why",
-        "what",
-        "how",
-    ]
-}
-
-fn matching_candidate_indexes(prompt: &str, candidates: &[String]) -> Vec<usize> {
-    candidates
-        .iter()
-        .enumerate()
-        .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
-        .collect()
-}
-
-fn solve_phrase_subset_with_z3_soft(
-    phrases: &[String],
-    positive_constraints: &[Vec<usize>],
-    negative_constraints: &[Vec<usize>],
-) -> Result<Vec<usize>> {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
-    for index in 0..phrases.len() {
-        smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
-    }
-    for (index, matches) in positive_constraints.iter().enumerate() {
-        smt.push_str(&format!("(declare-fun pos_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= pos_{index} {}))\n", z3_or(matches)));
-    }
-    for (index, matches) in negative_constraints.iter().enumerate() {
-        smt.push_str(&format!("(declare-fun neg_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= neg_{index} {}))\n", z3_or(matches)));
-    }
-    let missed_terms = if positive_constraints.is_empty() {
-        "0".to_string()
-    } else {
-        format!(
-            "(+ {})",
-            positive_constraints
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite pos_{index} 0 1)"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
-    let negative_terms = if negative_constraints.is_empty() {
-        "0".to_string()
-    } else {
-        format!(
-            "(+ {})",
-            negative_constraints
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
-    let keep_terms = if phrases.is_empty() {
-        "0".to_string()
-    } else {
-        format!(
-            "(+ {})",
-            phrases
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
-    smt.push_str(&format!("(minimize {missed_terms})\n"));
-    smt.push_str(&format!("(minimize {negative_terms})\n"));
-    smt.push_str(&format!("(minimize {keep_terms})\n"));
-    smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes_with_z3(phrases, smt)
-}
-
-fn solve_selected_phrase_indexes_with_z3(phrases: &[String], smt: String) -> Result<Vec<usize>> {
-    let smt_path = std::env::temp_dir().join(format!(
-        "logicpearl-observer-z3-{}.smt2",
-        std::process::id()
-    ));
-    fs::write(&smt_path, smt)
-        .into_diagnostic()
-        .wrap_err("failed to write temporary Z3 program")?;
-
-    let output = Command::new("z3")
-        .arg("-smt2")
-        .arg(&smt_path)
-        .output()
-        .into_diagnostic()
-        .wrap_err("failed to launch z3; make sure Z3 is installed and on PATH")?;
-    let _ = fs::remove_file(&smt_path);
-    if !output.status.success() {
-        return Err(guidance(
-            "z3 failed while solving the observer phrase subset",
-            String::from_utf8_lossy(&output.stderr).trim(),
-        ));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .into_diagnostic()
-        .wrap_err("z3 output was not valid UTF-8")?;
-    if !stdout.lines().next().unwrap_or_default().contains("sat") {
-        return Err(guidance(
-            "z3 could not find a satisfying phrase subset",
-            "Try a larger benchmark dataset or a different signal family.",
-        ));
-    }
-    let mut selected = Vec::new();
-    for index in 0..phrases.len() {
-        let needle = format!("(define-fun keep_{index} () Bool");
-        if let Some(position) = stdout.find(&needle) {
-            let remainder = &stdout[position + needle.len()..];
-            let value = remainder.trim_start();
-            if value.starts_with("true") {
-                selected.push(index);
-            }
-        }
-    }
-    Ok(selected)
-}
-
-fn solve_phrase_subset_with_z3(
-    phrases: &[String],
-    positive_constraints: &[Vec<usize>],
-    negative_constraints: &[Vec<usize>],
-) -> Result<Vec<usize>> {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
-    for index in 0..phrases.len() {
-        smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
-    }
-    for matches in positive_constraints {
-        smt.push_str(&format!("(assert {})\n", z3_or(matches)));
-    }
-    for (index, matches) in negative_constraints.iter().enumerate() {
-        smt.push_str(&format!("(declare-fun neg_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= neg_{index} {}))\n", z3_or(matches)));
-    }
-    let negative_terms = if negative_constraints.is_empty() {
-        "0".to_string()
-    } else {
-        format!(
-            "(+ {})",
-            negative_constraints
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
-    let keep_terms = if phrases.is_empty() {
-        "0".to_string()
-    } else {
-        format!(
-            "(+ {})",
-            phrases
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-    };
-    smt.push_str(&format!("(minimize {negative_terms})\n"));
-    smt.push_str(&format!("(minimize {keep_terms})\n"));
-    smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes_with_z3(phrases, smt)
-}
-
-fn z3_or(indices: &[usize]) -> String {
-    if indices.is_empty() {
-        "false".to_string()
-    } else if indices.len() == 1 {
-        format!("keep_{}", indices[0])
-    } else {
-        format!(
-            "(or {})",
-            indices
-                .iter()
-                .map(|index| format!("keep_{index}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
+fn to_observer_bootstrap_strategy(arg: ObserverBootstrapArg) -> ObserverBootstrapStrategy {
+    match arg {
+        ObserverBootstrapArg::Auto => ObserverBootstrapStrategy::Auto,
+        ObserverBootstrapArg::ObservedFeature => ObserverBootstrapStrategy::ObservedFeature,
+        ObserverBootstrapArg::Route => ObserverBootstrapStrategy::Route,
+        ObserverBootstrapArg::Seed => ObserverBootstrapStrategy::Seed,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        candidate_ngrams, detect_benchmark_adapter_profile, infer_bootstrap_examples, BenchmarkAdapterProfile,
-        ObserverBootstrapArg, ObserverBootstrapMode, SynthesisCase,
-    };
+    use super::{to_observer_bootstrap_strategy, ObserverBootstrapArg};
+    use logicpearl_benchmark::{detect_benchmark_adapter_profile, BenchmarkAdapterProfile, SynthesisCase};
     use logicpearl_observer::GuardrailsSignal;
+    use logicpearl_observer_synthesis::{candidate_ngrams, infer_bootstrap_examples, ObserverBootstrapMode};
     use serde_json::{Map, Value};
     use std::fs;
 
@@ -4635,7 +3721,7 @@ mod tests {
         let (mode, positives, negatives) = infer_bootstrap_examples(
             &cases,
             GuardrailsSignal::SecretExfiltration,
-            ObserverBootstrapArg::Auto,
+            to_observer_bootstrap_strategy(ObserverBootstrapArg::Auto),
             &[],
             &["password".to_string()],
         )
@@ -4664,7 +3750,7 @@ mod tests {
         let (mode, positives, negatives) = infer_bootstrap_examples(
             &cases,
             GuardrailsSignal::InstructionOverride,
-            ObserverBootstrapArg::Auto,
+            to_observer_bootstrap_strategy(ObserverBootstrapArg::Auto),
             &[],
             &["ignore previous instructions".to_string()],
         )

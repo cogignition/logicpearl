@@ -6,11 +6,13 @@ license.workspace = true
 
 [dependencies]
 clap.workspace = true
+logicpearl-benchmark = { path = "../logicpearl-benchmark" }
 logicpearl-conformance = { path = "../logicpearl-conformance" }
 logicpearl-core = { path = "../logicpearl-core" }
 logicpearl-discovery = { path = "../logicpearl-discovery" }
 logicpearl-ir = { path = "../logicpearl-ir" }
 logicpearl-observer = { path = "../logicpearl-observer" }
+logicpearl-observer-synthesis = { path = "../logicpearl-observer-synthesis" }
 logicpearl-plugin = { path = "../logicpearl-plugin" }
 logicpearl-pipeline = { path = "../logicpearl-pipeline" }
 logicpearl-render = { path = "../logicpearl-render" }
@@ -21,9 +23,9 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "logicpearl"
 path = "src/main.rs"
-
-[dev-dependencies]
-tempfile = "3"
