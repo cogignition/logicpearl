@@ -7,6 +7,9 @@ The goal is not to train on a benchmark and then brag about the benchmark. The g
 - tune on a held-out development slice
 - prove generalization on an untouched proof set
 
+Dataset source links, expected local staging paths, and the checked-in split/build/eval commands live in:
+- [DATASETS.md](../../DATASETS.md)
+
 ## Dataset Roles
 
 Development corpora:

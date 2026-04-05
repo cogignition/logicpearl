@@ -3,6 +3,7 @@
 This file is the short benchmark summary for the public LogicPearl repo.
 
 For the full workflow details, use:
+- [DATASETS.md](./DATASETS.md)
 - [benchmarks/guardrails/README.md](./benchmarks/guardrails/README.md)
 - [docs/advanced-guardrail-guide.md](./docs/advanced-guardrail-guide.md)
 - [scripts/guardrails/README.md](./scripts/guardrails/README.md)

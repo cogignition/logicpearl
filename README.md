@@ -26,7 +26,7 @@ Software should run as artifact, not fog.
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Benchmarks](./BENCHMARKS.md) · [Scores](./SCORES.json) · [Agent Guide](./AGENTS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Agent Guide](./AGENTS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
 Quick proof path:
 

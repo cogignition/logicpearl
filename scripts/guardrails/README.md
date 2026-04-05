@@ -2,6 +2,9 @@
 
 These scripts make the public non-`PINT` and final-`PINT` guardrail workflow reproducible.
 
+Dataset sources, expected local staging paths, and the full split/build/eval flow are documented in:
+- [DATASETS.md](../../DATASETS.md)
+
 ## Scripts
 
 - `build_pre_pint_guardrail_bundle.py`
