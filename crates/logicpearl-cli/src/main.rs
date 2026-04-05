@@ -44,7 +44,9 @@ Use this CLI to:
 const CLI_AFTER_HELP: &str = "\
 Examples:
   logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
+  logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/output --residual-pass --refine
   logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration,target_tool_use
+  logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration --residual-pass --refine
   logicpearl inspect examples/getting_started/output/pearl.ir.json
   logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
@@ -202,7 +204,7 @@ enum ObserverSignalArg {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json")]
+#[command(after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.csv --pinned-rules rules.json --output-dir /tmp/output")]
 struct BuildArgs {
     /// Path to a CSV file of labeled decision traces.
     decision_traces: Option<PathBuf>,
@@ -230,6 +232,9 @@ struct BuildArgs {
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
     #[arg(long)]
     refine: bool,
+    /// JSON file of pinned rules to merge after discovery and refinement.
+    #[arg(long)]
+    pinned_rules: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -243,7 +248,7 @@ struct QuickstartArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered")]
+#[command(after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.csv --targets target_a --pinned-rules rules.json --output-dir discovered")]
 struct DiscoverArgs {
     dataset_csv: PathBuf,
     /// Single binary target column to learn.
@@ -264,6 +269,9 @@ struct DiscoverArgs {
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
     #[arg(long)]
     refine: bool,
+    /// JSON file of pinned rules to merge after discovery and refinement.
+    #[arg(long)]
+    pinned_rules: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1199,6 +1207,7 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
                     target_columns: targets,
                     residual_pass: false,
                     refine: false,
+                    pinned_rules: None,
                 },
             )
             .into_diagnostic()
@@ -1698,6 +1707,7 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
             target_columns: targets,
             residual_pass: args.residual_pass,
             refine: args.refine,
+            pinned_rules: args.pinned_rules.clone(),
         },
     )
     .into_diagnostic()
@@ -1725,11 +1735,19 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
             .iter()
             .map(|artifact| artifact.refined_rules_applied)
             .sum();
+        let pinned_rules: usize = result
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.pinned_rules_applied)
+            .sum();
         if residual_rules > 0 {
             println!("  {} {}", "Residual rules".bright_black(), residual_rules);
         }
         if refined_rules > 0 {
             println!("  {} {}", "Refined rules".bright_black(), refined_rules);
+        }
+        if pinned_rules > 0 {
+            println!("  {} {}", "Pinned rules".bright_black(), pinned_rules);
         }
         if !result.skipped_targets.is_empty() {
             for skipped in &result.skipped_targets {
@@ -2070,6 +2088,7 @@ fn run_build(args: BuildArgs) -> Result<()> {
         label_column: args.label_column.clone(),
         residual_pass: args.residual_pass,
         refine: args.refine,
+        pinned_rules: args.pinned_rules.clone(),
     };
 
     let mut rows = match (&args.trace_plugin_manifest, &args.decision_traces) {
@@ -2200,6 +2219,13 @@ fn run_build(args: BuildArgs) -> Result<()> {
                 "  {} {}",
                 "Refined rules".bright_black(),
                 result.refined_rules_applied
+            );
+        }
+        if result.pinned_rules_applied > 0 {
+            println!(
+                "  {} {}",
+                "Pinned rules".bright_black(),
+                result.pinned_rules_applied
             );
         }
         println!(

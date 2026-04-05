@@ -106,6 +106,17 @@ What you should see:
 - a discovered pearl emitted to `examples/getting_started/output/pearl.ir.json`
 - a `build_report.json` with the number of rows, discovered rules, and training parity
 
+You can also ask the public builder to do a second pass:
+- `--residual-pass` adds solver-backed recovery for missed denied slices
+- `--refine` tightens uniquely over-broad rules
+- `--pinned-rules rules.json` merges a maintained rule layer after discovery
+
+Example:
+
+```bash
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --residual-pass --refine
+```
+
 Inspect the artifact:
 
 ```bash
@@ -488,6 +499,13 @@ And for generalized multi-target discovery:
 logicpearl discover \
   benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv \
   --targets target_instruction_boundary,target_exfiltration,target_tool_use
+```
+
+That same command surface also supports:
+
+```bash
+logicpearl discover traces.csv --targets target_a,target_b --residual-pass --refine
+logicpearl discover traces.csv --targets target_a --pinned-rules rules.json
 ```
 
 ## Next Demos

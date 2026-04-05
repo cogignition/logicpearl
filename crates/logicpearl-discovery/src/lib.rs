@@ -22,6 +22,7 @@ pub struct BuildOptions {
     pub label_column: String,
     pub residual_pass: bool,
     pub refine: bool,
+    pub pinned_rules: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -39,6 +40,7 @@ pub struct BuildResult {
     pub rules_discovered: usize,
     pub residual_rules_discovered: usize,
     pub refined_rules_applied: usize,
+    pub pinned_rules_applied: usize,
     pub selected_features: Vec<String>,
     pub training_parity: f64,
     pub output_files: OutputFiles,
@@ -51,6 +53,7 @@ pub struct DiscoverOptions {
     pub target_columns: Vec<String>,
     pub residual_pass: bool,
     pub refine: bool,
+    pub pinned_rules: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,6 +99,15 @@ pub struct OutputFiles {
     pub pearl_ir: String,
 }
 
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct PinnedRuleSet {
+    #[serde(default = "default_rule_set_version")]
+    pub rule_set_version: String,
+    #[serde(default = "default_rule_set_id")]
+    pub rule_set_id: String,
+    pub rules: Vec<RuleDefinition>,
+}
+
 #[derive(Debug, Clone)]
 struct CandidateRule {
     feature: String,
@@ -131,6 +143,14 @@ const DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS: UniqueCoverageRefinementOption
         min_unique_false_positives: 1,
         min_true_positive_retention: 0.5,
     };
+
+fn default_rule_set_version() -> String {
+    "1.0".to_string()
+}
+
+fn default_rule_set_id() -> String {
+    "pinned_rules".to_string()
+}
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
     let rows = load_decision_traces(csv_path, &options.label_column)?;
@@ -253,6 +273,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 label_column: target.clone(),
                 residual_pass: options.residual_pass,
                 refine: options.refine,
+                pinned_rules: options.pinned_rules.clone(),
             },
         ) {
             Ok(build) => build,
@@ -331,8 +352,19 @@ pub fn build_pearl_from_rows(
     let refinement_options = options
         .refine
         .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
-    let (gate, residual_rules_discovered, refined_rules_applied) =
-        build_gate(&rows, &options.gate_id, residual_options.as_ref(), refinement_options.as_ref())?;
+    let pinned_rules = options
+        .pinned_rules
+        .as_ref()
+        .map(|path| load_pinned_rule_set(path))
+        .transpose()?;
+    let (gate, residual_rules_discovered, refined_rules_applied, pinned_rules_applied) =
+        build_gate(
+            &rows,
+            &options.gate_id,
+            residual_options.as_ref(),
+            refinement_options.as_ref(),
+            pinned_rules.as_ref(),
+        )?;
     options.output_dir.mkdir_all()?;
     let pearl_ir_path = options.output_dir.join("pearl.ir.json");
     gate.write_pretty(&pearl_ir_path)?;
@@ -355,6 +387,7 @@ pub fn build_pearl_from_rows(
         rules_discovered: gate.rules.len(),
         residual_rules_discovered,
         refined_rules_applied,
+        pinned_rules_applied,
         selected_features: sorted_feature_names(&rows),
         training_parity,
         output_files: OutputFiles {
@@ -416,12 +449,14 @@ fn build_gate(
     gate_id: &str,
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
-) -> Result<(LogicPearlGateIr, usize, usize)> {
+    pinned_rules: Option<&PinnedRuleSet>,
+) -> Result<(LogicPearlGateIr, usize, usize, usize)> {
     let mut rules = discover_rules(rows)?;
-    let initial_rules = rules.len();
+    let mut residual_rules_discovered = 0usize;
     if let Some(options) = residual_options {
         let first_pass_gate = gate_from_rules(rows, gate_id, rules.clone())?;
         let residual_rules = discover_residual_rules(rows, &first_pass_gate, options)?;
+        residual_rules_discovered = residual_rules.len();
         rules.extend(residual_rules);
     }
     let mut refined_rules_applied = 0usize;
@@ -430,17 +465,24 @@ fn build_gate(
         rules = refined_rules;
         refined_rules_applied = applied;
     }
+    let mut pinned_rules_applied = 0usize;
+    if let Some(pinned_rules) = pinned_rules {
+        pinned_rules_applied = pinned_rules.rules.len();
+        rules = merge_discovered_and_pinned_rules(rules, pinned_rules);
+    } else {
+        rules = dedupe_rules_by_signature(rules);
+    }
     if rules.is_empty() {
         return Err(LogicPearlError::message(
             "no deny rules could be discovered from decision traces",
         ));
     }
 
-    let residual_rules_discovered = rules.len().saturating_sub(initial_rules);
     Ok((
         gate_from_rules(rows, gate_id, rules)?,
         residual_rules_discovered,
         refined_rules_applied,
+        pinned_rules_applied,
     ))
 }
 
@@ -507,6 +549,83 @@ fn rule_verification_summary(rules: &[RuleDefinition]) -> HashMap<String, u64> {
         *counts.entry(key.to_string()).or_insert(0) += 1;
     }
     counts
+}
+
+pub fn load_pinned_rule_set(path: &Path) -> Result<PinnedRuleSet> {
+    let payload = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&payload)?)
+}
+
+pub fn merge_discovered_and_pinned_rules(
+    discovered: Vec<RuleDefinition>,
+    pinned: &PinnedRuleSet,
+) -> Vec<RuleDefinition> {
+    let mut merged = discovered;
+    merged.extend(pinned.rules.clone());
+    dedupe_rules_by_signature(merged)
+}
+
+pub fn dedupe_rules_by_signature(rules: Vec<RuleDefinition>) -> Vec<RuleDefinition> {
+    let mut by_signature: BTreeMap<String, RuleDefinition> = BTreeMap::new();
+    for rule in rules {
+        let signature = rule_signature(&rule);
+        match by_signature.get(&signature) {
+            None => {
+                by_signature.insert(signature, rule);
+            }
+            Some(existing) => {
+                if prefer_rule(&rule, existing) == Ordering::Greater {
+                    by_signature.insert(signature, rule);
+                }
+            }
+        }
+    }
+
+    by_signature
+        .into_values()
+        .enumerate()
+        .map(|(index, mut rule)| {
+            rule.bit = index as u32;
+            rule.id = format!("rule_{index:03}");
+            rule
+        })
+        .collect()
+}
+
+fn prefer_rule(left: &RuleDefinition, right: &RuleDefinition) -> Ordering {
+    verification_rank(left)
+        .cmp(&verification_rank(right))
+        .then_with(|| expression_complexity(&right.deny_when).cmp(&expression_complexity(&left.deny_when)))
+}
+
+fn verification_rank(rule: &RuleDefinition) -> i32 {
+    match rule
+        .verification_status
+        .as_ref()
+        .unwrap_or(&RuleVerificationStatus::PipelineUnverified)
+    {
+        RuleVerificationStatus::Z3Verified => 4,
+        RuleVerificationStatus::RefinedUnverified => 3,
+        RuleVerificationStatus::PipelineUnverified => 2,
+        RuleVerificationStatus::HeuristicUnverified => 1,
+    }
+}
+
+fn expression_complexity(expression: &Expression) -> usize {
+    match expression {
+        Expression::Comparison(_) => 1,
+        Expression::All { all } => all.iter().map(expression_complexity).sum(),
+        Expression::Any { any } => any.iter().map(expression_complexity).sum(),
+        Expression::Not { expr } => expression_complexity(expr),
+    }
+}
+
+fn rule_signature(rule: &RuleDefinition) -> String {
+    let mut normalized = rule.clone();
+    normalized.id = String::new();
+    normalized.bit = 0;
+    normalized.verification_status = None;
+    serde_json::to_string(&normalized).expect("rule signature serialization")
 }
 
 fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
@@ -1078,11 +1197,12 @@ impl CreateDirAllExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pearl_from_csv, discover_from_csv, discover_residual_rules, gate_from_rules,
-        load_decision_traces, rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
-        DiscoverOptions, ResidualPassOptions,
+        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv, discover_residual_rules,
+        gate_from_rules, load_decision_traces, merge_discovered_and_pinned_rules, rule_from_candidate,
+        BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow, DiscoverOptions,
+        PinnedRuleSet, ResidualPassOptions,
     };
-    use logicpearl_ir::{Expression, LogicPearlGateIr};
+    use logicpearl_ir::{ComparisonExpression, Expression, LogicPearlGateIr, RuleDefinition, RuleKind, RuleVerificationStatus};
     use serde_json::{Number, Value};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1124,6 +1244,7 @@ mod tests {
                 label_column: "allowed".to_string(),
                 residual_pass: false,
                 refine: false,
+                pinned_rules: None,
             },
         )
         .unwrap();
@@ -1154,6 +1275,7 @@ mod tests {
                 target_columns: vec!["target_a".to_string(), "target_b".to_string()],
                 residual_pass: false,
                 refine: false,
+                pinned_rules: None,
             },
         )
         .unwrap();
@@ -1186,6 +1308,7 @@ mod tests {
                 label_column: "allowed".to_string(),
                 residual_pass: false,
                 refine: false,
+                pinned_rules: None,
             },
         )
         .unwrap();
@@ -1265,6 +1388,7 @@ mod tests {
                 label_column: "allowed".to_string(),
                 residual_pass: false,
                 refine: true,
+                pinned_rules: None,
             },
         )
         .unwrap();
@@ -1277,6 +1401,101 @@ mod tests {
         assert!(gate_json.contains("\"all\""));
         assert!(gate_json.contains("\"feature\": \"signal\""));
         assert!(gate_json.contains("\"feature\": \"guard\""));
+    }
+
+    #[test]
+    fn dedupe_prefers_stronger_verification_for_same_rule() {
+        let pipeline_rule = RuleDefinition {
+            id: "rule_a".to_string(),
+            kind: RuleKind::Predicate,
+            bit: 5,
+            deny_when: Expression::Comparison(ComparisonExpression {
+                feature: "flag".to_string(),
+                op: ComparisonOperator::Gt,
+                value: Value::Number(Number::from(0)),
+            }),
+            label: None,
+            message: None,
+            severity: None,
+            counterfactual_hint: None,
+            verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+        };
+        let refined_rule = RuleDefinition {
+            id: "rule_b".to_string(),
+            kind: RuleKind::Predicate,
+            bit: 9,
+            deny_when: Expression::Comparison(ComparisonExpression {
+                feature: "flag".to_string(),
+                op: ComparisonOperator::Gt,
+                value: Value::Number(Number::from(0)),
+            }),
+            label: None,
+            message: None,
+            severity: None,
+            counterfactual_hint: None,
+            verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+        };
+
+        let deduped = dedupe_rules_by_signature(vec![pipeline_rule, refined_rule]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0].verification_status,
+            Some(RuleVerificationStatus::RefinedUnverified)
+        );
+        assert_eq!(deduped[0].bit, 0);
+        assert_eq!(deduped[0].id, "rule_000");
+    }
+
+    #[test]
+    fn merge_applies_pinned_rule_layer() {
+        let discovered = vec![RuleDefinition {
+            id: "rule_000".to_string(),
+            kind: RuleKind::Predicate,
+            bit: 0,
+            deny_when: Expression::Comparison(ComparisonExpression {
+                feature: "signal".to_string(),
+                op: ComparisonOperator::Gt,
+                value: Value::Number(Number::from(0)),
+            }),
+            label: None,
+            message: None,
+            severity: None,
+            counterfactual_hint: None,
+            verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+        }];
+        let pinned = PinnedRuleSet {
+            rule_set_version: "1.0".to_string(),
+            rule_set_id: "pinned_rules".to_string(),
+            rules: vec![RuleDefinition {
+                id: "claims_r05".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 99,
+                deny_when: Expression::All {
+                    all: vec![
+                        Expression::Comparison(ComparisonExpression {
+                            feature: "signal".to_string(),
+                            op: ComparisonOperator::Gt,
+                            value: Value::Number(Number::from(0)),
+                        }),
+                        Expression::Comparison(ComparisonExpression {
+                            feature: "guard".to_string(),
+                            op: ComparisonOperator::Gt,
+                            value: Value::Number(Number::from(0)),
+                        }),
+                    ],
+                },
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+            }],
+        };
+
+        let merged = merge_discovered_and_pinned_rules(discovered, &pinned);
+        assert_eq!(merged.len(), 2);
+        let rendered = serde_json::to_string(&merged).unwrap();
+        assert!(rendered.contains("\"feature\":\"guard\""));
     }
 
     fn row(features: &[(&str, i64)], allowed: bool) -> DecisionTraceRow {
