@@ -19,7 +19,7 @@ python3 -m http.server 8000
 Then open:
 
 ```text
-http://localhost:8000/logicpearl/demos/demo_shell/?manifest=../opa_rego/demo_manifest.json
+http://localhost:8000/examples/demo_shell/?manifest=./packs/opa_rego.demo_manifest.json
 ```
 
 If you open the shell without changing anything, it also shows a small pack gallery so the entry path is obvious.
@@ -44,7 +44,7 @@ Manifest validation helpers live in the private workspace tooling, not in the pu
 
 Current manifest-backed demos:
 
-- `../opa_rego/demo_manifest.json`
+- `./packs/opa_rego.demo_manifest.json`
 
 The OPA pack proves the shell can also carry a parity/import story without assuming healthcare-specific concepts.
 

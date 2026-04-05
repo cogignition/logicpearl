@@ -1,5 +1,5 @@
 const params = new URLSearchParams(window.location.search);
-const manifestPath = params.get("manifest") || "../opa_rego/demo_manifest.json";
+const manifestPath = params.get("manifest") || "./packs/opa_rego.demo_manifest.json";
 const packsPath = "./packs.json";
 const directManifestMode = params.has("manifest");
 let loadedManifest = null;

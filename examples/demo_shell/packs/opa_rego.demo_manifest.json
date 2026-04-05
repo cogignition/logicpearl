@@ -60,7 +60,7 @@
       "title": "RBAC Rego Policy",
       "kind": "policy source",
       "publisher": "Local benchmark policy",
-      "url": "../../benchmarks/opa_rego/policy.rego",
+      "url": "../../../benchmarks/opa_rego/policy.rego",
       "note": "Source policy used for the parity/import benchmark.",
       "last_updated": null
     },
@@ -69,7 +69,7 @@
       "title": "Equivalent LogicPearl Rule Pack",
       "kind": "artifact source",
       "publisher": "LogicPearl benchmark adapter",
-      "url": "../../benchmarks/opa_rego/common.py",
+      "url": "../../../benchmarks/opa_rego/common.py",
       "note": "Equivalent hand-authored rule pack used for the current parity path.",
       "last_updated": null
     }
@@ -78,25 +78,25 @@
     {
       "label": "Readable Pearl",
       "kind": "review artifact",
-      "path": "../../benchmarks/opa_rego/output/pearl.json",
+      "path": "../../../benchmarks/opa_rego/output/pearl.json",
       "description": "Readable representation of the compiled rule pack."
     },
     {
       "label": "Executable Pearl IR",
       "kind": "runtime artifact",
-      "path": "../../benchmarks/opa_rego/output/pearl.ir.json",
+      "path": "../../../benchmarks/opa_rego/output/pearl.ir.json",
       "description": "Deterministic executable artifact for runtime and WASM generation."
     },
     {
       "label": "Parity Audit",
       "kind": "benchmark output",
-      "path": "../../benchmarks/opa_rego/output/pearl_audit.json",
+      "path": "../../../benchmarks/opa_rego/output/pearl_audit.json",
       "description": "Parity and latency summary for the OPA benchmark."
     },
     {
       "label": "WASM Pearl",
       "kind": "compiled binary",
-      "path": "../../benchmarks/opa_rego/output/opa_rbac_pearl.wasm",
+      "path": "../../../benchmarks/opa_rego/output/opa_rbac_pearl.wasm",
       "description": "Compiled WASM artifact for the parity demo."
     }
   ],
