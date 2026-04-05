@@ -349,6 +349,7 @@ dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
  "logicpearl-runtime",
+ "logicpearl-verify",
  "serde",
  "serde_json",
  "tempfile",
@@ -415,6 +416,7 @@ name = "logicpearl-verify"
 version = "0.1.0"
 dependencies = [
  "logicpearl-core",
+ "serde",
 ]
 
 [[package]]

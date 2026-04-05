@@ -84,7 +84,13 @@ Today, the public pieces already in place are:
 Useful native observer commands:
 - `logicpearl observer list`
 - `logicpearl observer scaffold`
+- `logicpearl observer synthesize`
 - `logicpearl observer repair`
+
+`observer synthesize` is seed-based and Z3-first:
+- start from a built-in or scaffolded signal family
+- mine deterministic candidates from matched denied cases
+- let Z3 select a compact subset
 
 ## Current Public Adapter Path
 

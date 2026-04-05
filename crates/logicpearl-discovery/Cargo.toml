@@ -9,6 +9,7 @@ csv.workspace = true
 logicpearl-core = { path = "../logicpearl-core" }
 logicpearl-ir = { path = "../logicpearl-ir" }
 logicpearl-runtime = { path = "../logicpearl-runtime" }
+logicpearl-verify = { path = "../logicpearl-verify" }
 serde.workspace = true
 serde_json.workspace = true
 

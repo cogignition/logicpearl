@@ -56,6 +56,23 @@ logicpearl observer scaffold \
   --output /tmp/guardrails_observer.json
 ```
 
+Synthesize a compact cue set from benchmark data using the current signal family as the seed:
+
+```bash
+logicpearl observer synthesize \
+  --benchmark-cases /tmp/squad_alert_full_dev.jsonl \
+  --signal secret-exfiltration \
+  --output /tmp/guardrails_observer.synthesized.json \
+  --json
+```
+
+This path is intentionally seed-based:
+- the observer artifact or built-in profile defines the signal family
+- LogicPearl mines deterministic candidate phrases around that signal
+- Z3 chooses the smallest subset that keeps denied coverage and reduces benign hits
+
+That keeps the first pass solver-driven without pretending Z3 can invent a useful text ontology from arbitrary raw prompts.
+
 Repair one signal family with Z3 while preserving current denied-case coverage:
 
 ```bash

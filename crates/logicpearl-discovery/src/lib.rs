@@ -5,10 +5,14 @@ use logicpearl_ir::{
     VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
+use logicpearl_verify::{
+    synthesize_boolean_conjunctions, BooleanConjunctionCandidate, BooleanConjunctionSearchOptions,
+    BooleanSearchExample,
+};
 use serde::Serialize;
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -16,6 +20,8 @@ pub struct BuildOptions {
     pub output_dir: PathBuf,
     pub gate_id: String,
     pub label_column: String,
+    pub residual_pass: bool,
+    pub refine: bool,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -31,6 +37,8 @@ pub struct BuildResult {
     pub rows: usize,
     pub label_column: String,
     pub rules_discovered: usize,
+    pub residual_rules_discovered: usize,
+    pub refined_rules_applied: usize,
     pub selected_features: Vec<String>,
     pub training_parity: f64,
     pub output_files: OutputFiles,
@@ -41,6 +49,8 @@ pub struct DiscoverOptions {
     pub output_dir: PathBuf,
     pub artifact_set_id: String,
     pub target_columns: Vec<String>,
+    pub residual_pass: bool,
+    pub refine: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +104,33 @@ struct CandidateRule {
     denied_coverage: usize,
     false_positives: usize,
 }
+
+#[derive(Debug, Clone)]
+struct ResidualPassOptions {
+    max_conditions: usize,
+    min_positive_support: usize,
+    max_negative_hits: usize,
+    max_rules: usize,
+}
+
+#[derive(Debug, Clone)]
+struct UniqueCoverageRefinementOptions {
+    min_unique_false_positives: usize,
+    min_true_positive_retention: f64,
+}
+
+const DEFAULT_RESIDUAL_PASS_OPTIONS: ResidualPassOptions = ResidualPassOptions {
+    max_conditions: 3,
+    min_positive_support: 2,
+    max_negative_hits: 0,
+    max_rules: 4,
+};
+
+const DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS: UniqueCoverageRefinementOptions =
+    UniqueCoverageRefinementOptions {
+        min_unique_false_positives: 1,
+        min_true_positive_retention: 0.5,
+    };
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
     let rows = load_decision_traces(csv_path, &options.label_column)?;
@@ -214,6 +251,8 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 output_dir: target_dir.clone(),
                 gate_id: target.clone(),
                 label_column: target.clone(),
+                residual_pass: options.residual_pass,
+                refine: options.refine,
             },
         ) {
             Ok(build) => build,
@@ -286,7 +325,14 @@ pub fn build_pearl_from_rows(
         return Err(LogicPearlError::message("decision trace CSV is empty"));
     }
 
-    let gate = build_gate(&rows, &options.gate_id)?;
+    let residual_options = options
+        .residual_pass
+        .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
+    let refinement_options = options
+        .refine
+        .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
+    let (gate, residual_rules_discovered, refined_rules_applied) =
+        build_gate(&rows, &options.gate_id, residual_options.as_ref(), refinement_options.as_ref())?;
     options.output_dir.mkdir_all()?;
     let pearl_ir_path = options.output_dir.join("pearl.ir.json");
     gate.write_pretty(&pearl_ir_path)?;
@@ -307,6 +353,8 @@ pub fn build_pearl_from_rows(
         rows: rows.len(),
         label_column: options.label_column.clone(),
         rules_discovered: gate.rules.len(),
+        residual_rules_discovered,
+        refined_rules_applied,
         selected_features: sorted_feature_names(&rows),
         training_parity,
         output_files: OutputFiles {
@@ -363,15 +411,46 @@ pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<D
     Ok(rows)
 }
 
-fn build_gate(rows: &[DecisionTraceRow], gate_id: &str) -> Result<LogicPearlGateIr> {
-    let feature_sample = rows[0].features.clone();
-    let rules = discover_rules(rows)?;
+fn build_gate(
+    rows: &[DecisionTraceRow],
+    gate_id: &str,
+    residual_options: Option<&ResidualPassOptions>,
+    refinement_options: Option<&UniqueCoverageRefinementOptions>,
+) -> Result<(LogicPearlGateIr, usize, usize)> {
+    let mut rules = discover_rules(rows)?;
+    let initial_rules = rules.len();
+    if let Some(options) = residual_options {
+        let first_pass_gate = gate_from_rules(rows, gate_id, rules.clone())?;
+        let residual_rules = discover_residual_rules(rows, &first_pass_gate, options)?;
+        rules.extend(residual_rules);
+    }
+    let mut refined_rules_applied = 0usize;
+    if let Some(options) = refinement_options {
+        let (refined_rules, applied) = refine_rules_unique_coverage(rows, &rules, options)?;
+        rules = refined_rules;
+        refined_rules_applied = applied;
+    }
     if rules.is_empty() {
         return Err(LogicPearlError::message(
             "no deny rules could be discovered from decision traces",
         ));
     }
 
+    let residual_rules_discovered = rules.len().saturating_sub(initial_rules);
+    Ok((
+        gate_from_rules(rows, gate_id, rules)?,
+        residual_rules_discovered,
+        refined_rules_applied,
+    ))
+}
+
+fn gate_from_rules(
+    rows: &[DecisionTraceRow],
+    gate_id: &str,
+    rules: Vec<RuleDefinition>,
+) -> Result<LogicPearlGateIr> {
+    let feature_sample = rows[0].features.clone();
+    let verification_summary = rule_verification_summary(&rules);
     Ok(LogicPearlGateIr {
         ir_version: "1.0".to_string(),
         gate_id: gate_id.to_string(),
@@ -401,10 +480,7 @@ fn build_gate(rows: &[DecisionTraceRow], gate_id: &str) -> Result<LogicPearlGate
                 "training parity against {} decision traces",
                 rows.len()
             )),
-            verification_summary: Some(HashMap::from([(
-                "pipeline_unverified".to_string(),
-                1_u64,
-            )])),
+            verification_summary: Some(verification_summary),
         }),
         provenance: Some(Provenance {
             generator: Some("logicpearl.build".to_string()),
@@ -413,6 +489,24 @@ fn build_gate(rows: &[DecisionTraceRow], gate_id: &str) -> Result<LogicPearlGate
             created_at: None,
         }),
     })
+}
+
+fn rule_verification_summary(rules: &[RuleDefinition]) -> HashMap<String, u64> {
+    let mut counts = HashMap::new();
+    for rule in rules {
+        let key = match rule
+            .verification_status
+            .as_ref()
+            .unwrap_or(&RuleVerificationStatus::PipelineUnverified)
+        {
+            RuleVerificationStatus::Z3Verified => "z3_verified",
+            RuleVerificationStatus::PipelineUnverified => "pipeline_unverified",
+            RuleVerificationStatus::HeuristicUnverified => "heuristic_unverified",
+            RuleVerificationStatus::RefinedUnverified => "refined_unverified",
+        };
+        *counts.entry(key.to_string()).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
@@ -445,6 +539,159 @@ fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
     }
 
     Ok(discovered)
+}
+
+fn discover_residual_rules(
+    rows: &[DecisionTraceRow],
+    gate: &LogicPearlGateIr,
+    options: &ResidualPassOptions,
+) -> Result<Vec<RuleDefinition>> {
+    let binary_features = infer_binary_feature_names(rows);
+    if binary_features.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut examples = Vec::new();
+    for row in rows {
+        let predicted_deny = evaluate_gate(gate, &row.features)? != 0;
+        if !row.allowed && !predicted_deny {
+            examples.push(BooleanSearchExample {
+                features: boolean_feature_map(&row.features, &binary_features),
+                positive: true,
+            });
+        } else if row.allowed {
+            examples.push(BooleanSearchExample {
+                features: boolean_feature_map(&row.features, &binary_features),
+                positive: false,
+            });
+        }
+    }
+
+    if examples.iter().filter(|example| example.positive).count() < options.min_positive_support {
+        return Ok(Vec::new());
+    }
+
+    let candidates = synthesize_boolean_conjunctions(
+        &examples,
+        &BooleanConjunctionSearchOptions {
+            max_conditions: options.max_conditions,
+            min_positive_support: options.min_positive_support,
+            max_negative_hits: options.max_negative_hits,
+            max_rules: options.max_rules,
+        },
+    )?;
+
+    Ok(candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, candidate)| residual_rule_from_candidate(gate.rules.len() as u32 + index as u32, candidate))
+        .collect())
+}
+
+fn refine_rules_unique_coverage(
+    rows: &[DecisionTraceRow],
+    rules: &[RuleDefinition],
+    options: &UniqueCoverageRefinementOptions,
+) -> Result<(Vec<RuleDefinition>, usize)> {
+    let binary_features = infer_binary_feature_names(rows);
+    if binary_features.is_empty() || rules.is_empty() {
+        return Ok((rules.to_vec(), 0));
+    }
+
+    let mut refined = Vec::with_capacity(rules.len());
+    let mut refined_rules_applied = 0usize;
+
+    for (rule_index, rule) in rules.iter().enumerate() {
+        let mut unique_positive_rows = Vec::new();
+        let mut unique_negative_rows = Vec::new();
+
+        for row in rows {
+            if !expression_matches(&rule.deny_when, &row.features) {
+                continue;
+            }
+            let matched_by_other = rules
+                .iter()
+                .enumerate()
+                .any(|(other_index, other)| other_index != rule_index && expression_matches(&other.deny_when, &row.features));
+            if matched_by_other {
+                continue;
+            }
+            if row.allowed {
+                unique_negative_rows.push(row);
+            } else {
+                unique_positive_rows.push(row);
+            }
+        }
+
+        if unique_negative_rows.len() < options.min_unique_false_positives || unique_positive_rows.is_empty() {
+            refined.push(rule.clone());
+            continue;
+        }
+
+        let current_negative_hits = unique_negative_rows.len();
+        let current_positive_hits = unique_positive_rows.len();
+        let mut best_addition: Option<(ComparisonExpression, usize, usize)> = None;
+
+        for feature in &binary_features {
+            if rule_contains_feature(rule, feature) {
+                continue;
+            }
+            for op in [ComparisonOperator::Gt, ComparisonOperator::Lte] {
+                let candidate = ComparisonExpression {
+                    feature: feature.clone(),
+                    op: op.clone(),
+                    value: Value::Number(Number::from(0)),
+                };
+                let positive_hits = unique_positive_rows
+                    .iter()
+                    .filter(|row| comparison_matches(&candidate, &row.features))
+                    .count();
+                if positive_hits == 0 {
+                    continue;
+                }
+                let retained = positive_hits as f64 / current_positive_hits as f64;
+                if retained < options.min_true_positive_retention {
+                    continue;
+                }
+                let negative_hits = unique_negative_rows
+                    .iter()
+                    .filter(|row| comparison_matches(&candidate, &row.features))
+                    .count();
+                if negative_hits >= current_negative_hits {
+                    continue;
+                }
+
+                let better = match &best_addition {
+                    None => true,
+                    Some((_best, best_positive_hits, best_negative_hits)) => {
+                        let candidate_reduction = current_negative_hits.saturating_sub(negative_hits);
+                        let best_reduction = current_negative_hits.saturating_sub(*best_negative_hits);
+                        match candidate_reduction.cmp(&best_reduction) {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => match positive_hits.cmp(best_positive_hits) {
+                                Ordering::Greater => true,
+                                Ordering::Less => false,
+                                Ordering::Equal => negative_hits < *best_negative_hits,
+                            },
+                        }
+                    }
+                };
+                if better {
+                    best_addition = Some((candidate, positive_hits, negative_hits));
+                }
+            }
+        }
+
+        if let Some((addition, _positive_hits, _negative_hits)) = best_addition {
+            refined.push(rule_with_added_condition(rule, addition));
+            refined_rules_applied += 1;
+        } else {
+            refined.push(rule.clone());
+        }
+    }
+
+    Ok((refined, refined_rules_applied))
 }
 
 fn best_candidate_rule(
@@ -595,6 +842,42 @@ fn rule_from_candidate(bit: u32, candidate: &CandidateRule) -> RuleDefinition {
     }
 }
 
+fn residual_rule_from_candidate(bit: u32, candidate: BooleanConjunctionCandidate) -> RuleDefinition {
+    let deny_when = if candidate.required_true_features.len() == 1 {
+        Expression::Comparison(ComparisonExpression {
+            feature: candidate.required_true_features[0].clone(),
+            op: ComparisonOperator::Gt,
+            value: Value::Number(Number::from(0)),
+        })
+    } else {
+        Expression::All {
+            all: candidate
+                .required_true_features
+                .iter()
+                .map(|feature| {
+                    Expression::Comparison(ComparisonExpression {
+                        feature: feature.clone(),
+                        op: ComparisonOperator::Gt,
+                        value: Value::Number(Number::from(0)),
+                    })
+                })
+                .collect(),
+        }
+    };
+
+    RuleDefinition {
+        id: format!("rule_{bit:03}"),
+        kind: RuleKind::Predicate,
+        bit,
+        deny_when,
+        label: None,
+        message: None,
+        severity: None,
+        counterfactual_hint: None,
+        verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+    }
+}
+
 fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRule) -> bool {
     let value = match features.get(&candidate.feature) {
         Some(value) => value,
@@ -616,6 +899,116 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
         }
         _ => false,
     }
+}
+
+fn expression_matches(expression: &Expression, features: &HashMap<String, Value>) -> bool {
+    match expression {
+        Expression::Comparison(comparison) => comparison_matches(comparison, features),
+        Expression::All { all } => all.iter().all(|expr| expression_matches(expr, features)),
+        Expression::Any { any } => any.iter().any(|expr| expression_matches(expr, features)),
+        Expression::Not { expr } => !expression_matches(expr, features),
+    }
+}
+
+fn comparison_matches(comparison: &ComparisonExpression, features: &HashMap<String, Value>) -> bool {
+    let Some(value) = features.get(&comparison.feature) else {
+        return false;
+    };
+    match (&comparison.op, value, &comparison.value) {
+        (ComparisonOperator::Eq, Value::Number(left), Value::Number(right)) => {
+            match (left.as_f64(), right.as_f64()) {
+                (Some(left), Some(right)) => (left - right).abs() < 1e-9,
+                _ => false,
+            }
+        }
+        (ComparisonOperator::Eq, left, right) => left == right,
+        (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => {
+            left.as_f64().unwrap_or_default() <= right.as_f64().unwrap_or_default()
+        }
+        (ComparisonOperator::Gt, Value::Number(left), Value::Number(right)) => {
+            left.as_f64().unwrap_or_default() > right.as_f64().unwrap_or_default()
+        }
+        _ => false,
+    }
+}
+
+fn rule_contains_feature(rule: &RuleDefinition, feature: &str) -> bool {
+    expression_features(&rule.deny_when).iter().any(|existing| existing == feature)
+}
+
+fn expression_features(expression: &Expression) -> Vec<String> {
+    match expression {
+        Expression::Comparison(comparison) => vec![comparison.feature.clone()],
+        Expression::All { all } => all.iter().flat_map(expression_features).collect(),
+        Expression::Any { any } => any.iter().flat_map(expression_features).collect(),
+        Expression::Not { expr } => expression_features(expr),
+    }
+}
+
+fn rule_with_added_condition(rule: &RuleDefinition, addition: ComparisonExpression) -> RuleDefinition {
+    let deny_when = match &rule.deny_when {
+        Expression::Comparison(existing) => Expression::All {
+            all: vec![Expression::Comparison(existing.clone()), Expression::Comparison(addition)],
+        },
+        Expression::All { all } => {
+            let mut next = all.clone();
+            next.push(Expression::Comparison(addition));
+            Expression::All { all: next }
+        }
+        _ => rule.deny_when.clone(),
+    };
+
+    RuleDefinition {
+        id: rule.id.clone(),
+        kind: rule.kind.clone(),
+        bit: rule.bit,
+        deny_when,
+        label: rule.label.clone(),
+        message: rule.message.clone(),
+        severity: rule.severity.clone(),
+        counterfactual_hint: rule.counterfactual_hint.clone(),
+        verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+    }
+}
+
+fn infer_binary_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {
+    rows.first()
+        .map(|row| {
+            let mut names: Vec<String> = row
+                .features
+                .keys()
+                .filter(|feature| rows.iter().all(|row| is_binary_value(row.features.get(*feature))))
+                .cloned()
+                .collect();
+            names.sort();
+            names
+        })
+        .unwrap_or_default()
+}
+
+fn is_binary_value(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(_)) => true,
+        Some(Value::Number(number)) => number
+            .as_f64()
+            .map(|value| (value - 0.0).abs() < 1e-9 || (value - 1.0).abs() < 1e-9)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn boolean_feature_map(features: &HashMap<String, Value>, binary_features: &[String]) -> BTreeMap<String, bool> {
+    binary_features
+        .iter()
+        .map(|feature| {
+            let value = match features.get(feature) {
+                Some(Value::Bool(value)) => *value,
+                Some(Value::Number(number)) => number.as_f64().unwrap_or_default() > 0.5,
+                _ => false,
+            };
+            (feature.clone(), value)
+        })
+        .collect()
 }
 
 fn sorted_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {
@@ -684,7 +1077,14 @@ impl CreateDirAllExt for PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_pearl_from_csv, discover_from_csv, load_decision_traces, BuildOptions, DiscoverOptions};
+    use super::{
+        build_pearl_from_csv, discover_from_csv, discover_residual_rules, gate_from_rules,
+        load_decision_traces, rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
+        DiscoverOptions, ResidualPassOptions,
+    };
+    use logicpearl_ir::{Expression, LogicPearlGateIr};
+    use serde_json::{Number, Value};
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
     #[test]
@@ -722,6 +1122,8 @@ mod tests {
                 output_dir: PathBuf::from(&output_dir),
                 gate_id: "age_gate".to_string(),
                 label_column: "allowed".to_string(),
+                residual_pass: false,
+                refine: false,
             },
         )
         .unwrap();
@@ -750,6 +1152,8 @@ mod tests {
                 output_dir: output_dir.clone(),
                 artifact_set_id: "multi_target_demo".to_string(),
                 target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+                residual_pass: false,
+                refine: false,
             },
         )
         .unwrap();
@@ -780,6 +1184,8 @@ mod tests {
                 output_dir: PathBuf::from(&output_dir),
                 gate_id: "approximate_gate".to_string(),
                 label_column: "allowed".to_string(),
+                residual_pass: false,
+                refine: false,
             },
         )
         .unwrap();
@@ -788,5 +1194,98 @@ mod tests {
         assert!(pearl_ir.contains("\"feature\": \"signal_flag\""));
         assert!(!pearl_ir.contains("\"feature\": \"confidence\""));
         assert!(result.training_parity > 0.8);
+    }
+
+    #[test]
+    fn build_residual_pass_recovers_missed_boolean_slice() {
+        let rows = vec![
+            row(&[("seed", 1), ("a", 1), ("b", 1)], false),
+            row(&[("seed", 0), ("a", 1), ("b", 1)], false),
+            row(&[("seed", 0), ("a", 1), ("b", 1)], false),
+            row(&[("seed", 0), ("a", 1), ("b", 0)], true),
+            row(&[("seed", 0), ("a", 0), ("b", 1)], true),
+            row(&[("seed", 0), ("a", 0), ("b", 0)], true),
+        ];
+        let first_pass_gate = gate_from_rules(
+            &rows,
+            "residual_gate",
+            vec![rule_from_candidate(
+                0,
+                &CandidateRule {
+                    feature: "seed".to_string(),
+                    op: ComparisonOperator::Gt,
+                    value: Value::Number(Number::from(0)),
+                    denied_coverage: 1,
+                    false_positives: 0,
+                },
+            )],
+        )
+        .unwrap();
+
+        let residual_rules = discover_residual_rules(
+            &rows,
+            &first_pass_gate,
+            &ResidualPassOptions {
+                max_conditions: 2,
+                min_positive_support: 2,
+                max_negative_hits: 0,
+                max_rules: 1,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(residual_rules.len(), 1);
+        match &residual_rules[0].deny_when {
+            Expression::All { all } => {
+                assert_eq!(all.len(), 2);
+                let rendered = serde_json::to_string(all).unwrap();
+                assert!(rendered.contains("\"feature\":\"a\""));
+                assert!(rendered.contains("\"feature\":\"b\""));
+            }
+            other => panic!("expected residual all-expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_refine_tightens_uniquely_overbroad_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "signal,guard,allowed\n1,1,denied\n1,1,denied\n1,0,allowed\n0,1,allowed\n0,0,allowed\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &csv_path,
+            &BuildOptions {
+                output_dir: PathBuf::from(&output_dir),
+                gate_id: "refined_gate".to_string(),
+                label_column: "allowed".to_string(),
+                residual_pass: false,
+                refine: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.refined_rules_applied, 1);
+        assert_eq!(result.training_parity, 1.0);
+
+        let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+        let gate_json = serde_json::to_string_pretty(&gate).unwrap();
+        assert!(gate_json.contains("\"all\""));
+        assert!(gate_json.contains("\"feature\": \"signal\""));
+        assert!(gate_json.contains("\"feature\": \"guard\""));
+    }
+
+    fn row(features: &[(&str, i64)], allowed: bool) -> DecisionTraceRow {
+        DecisionTraceRow {
+            features: features
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), Value::Number(Number::from(*value))))
+                .collect::<HashMap<_, _>>(),
+            allowed,
+        }
     }
 }
