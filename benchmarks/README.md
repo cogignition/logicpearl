@@ -9,6 +9,8 @@ For guardrail work, the important split is:
 
 The public guardrail benchmark layout lives in [guardrails](./guardrails/README.md).
 
+Benchmark adapter profile schema and examples live in [profiles](./profiles/README.md).
+
 Rules:
 - do not tune on `proof`
 - do not use `PINT` as a development set

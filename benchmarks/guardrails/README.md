@@ -60,6 +60,7 @@ Proof design:
 
 Non-proof preparation:
 - [prep/README.md](./prep/README.md)
+- [../profiles/README.md](../profiles/README.md)
 
 ## Recommended LogicPearl Metrics
 
