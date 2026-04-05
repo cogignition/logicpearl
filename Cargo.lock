@@ -309,6 +309,7 @@ name = "logicpearl-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "logicpearl-conformance",
  "logicpearl-core",
  "logicpearl-discovery",
  "logicpearl-ir",
@@ -329,6 +330,11 @@ name = "logicpearl-conformance"
 version = "0.1.0"
 dependencies = [
  "logicpearl-core",
+ "logicpearl-ir",
+ "logicpearl-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

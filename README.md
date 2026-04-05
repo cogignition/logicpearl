@@ -151,6 +151,23 @@ The same stage model is available to plugins:
 - `enricher` plugins transform records before artifact emission
 - `verify` plugins annotate proof or audit status
 
+You can also validate artifact freshness and runtime parity directly:
+
+```bash
+logicpearl conformance write-manifest \
+  --output /tmp/authz_manifest.json \
+  --artifact pearl=examples/getting_started/output/pearl.ir.json \
+  --data traces=examples/getting_started/decision_traces.csv
+
+logicpearl conformance validate-artifacts /tmp/authz_manifest.json
+logicpearl conformance runtime-parity examples/getting_started/output/pearl.ir.json examples/getting_started/decision_traces.csv --label-column allowed
+```
+
+That gives you:
+- a reproducible artifact manifest
+- a freshness check for saved outputs
+- a direct runtime-vs-traces parity report
+
 You can also scaffold a starter string-of-pearls artifact from existing pearls:
 
 ```bash

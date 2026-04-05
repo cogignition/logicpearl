@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 clap.workspace = true
+logicpearl-conformance = { path = "../logicpearl-conformance" }
 logicpearl-core = { path = "../logicpearl-core" }
 logicpearl-discovery = { path = "../logicpearl-discovery" }
 logicpearl-ir = { path = "../logicpearl-ir" }

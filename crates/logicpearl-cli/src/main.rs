@@ -1,5 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 use logicpearl_core::ArtifactRenderer;
+use logicpearl_conformance::{
+    build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest, write_artifact_manifest,
+    DecisionTraceRow as ConformanceDecisionTraceRow,
+};
 use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, BuildOptions, DecisionTraceRow, DiscoverOptions,
 };
@@ -75,6 +79,11 @@ Examples:
   logicpearl quickstart pipeline
   logicpearl quickstart benchmark";
 
+const CONFORMANCE_AFTER_HELP: &str = "\
+Examples:
+  logicpearl conformance validate-artifacts output/artifact_manifest.json
+  logicpearl conformance runtime-parity examples/getting_started/output/pearl.ir.json examples/getting_started/decision_traces.csv --label-column allowed --json";
+
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
 }
@@ -109,6 +118,11 @@ enum Commands {
     Compose(ComposeArgs),
     /// Compile a pearl into a standalone executable.
     Compile(CompileArgs),
+    /// Validate artifact freshness and check runtime parity.
+    Conformance {
+        #[command(subcommand)]
+        command: ConformanceCommand,
+    },
     /// Run a pearl on an input file.
     Run(RunArgs),
     /// Inspect a pearl and see what it does.
@@ -125,6 +139,17 @@ enum Commands {
         #[command(subcommand)]
         command: ObserverCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = CONFORMANCE_AFTER_HELP)]
+enum ConformanceCommand {
+    /// Write a generic artifact manifest from grouped file paths.
+    WriteManifest(ConformanceWriteManifestArgs),
+    /// Validate whether a saved artifact manifest is still fresh.
+    ValidateArtifacts(ConformanceValidateArtifactsArgs),
+    /// Compare a pearl's runtime behavior against labeled decision traces.
+    RuntimeParity(ConformanceRuntimeParityArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -240,6 +265,46 @@ struct DiscoverArgs {
     #[arg(long)]
     refine: bool,
     /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl conformance validate-artifacts output/artifact_manifest.json --json")]
+struct ConformanceValidateArtifactsArgs {
+    manifest_json: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl conformance write-manifest --output output/artifact_manifest.json --artifact pearl=output/pearl.ir.json --data traces=examples/getting_started/decision_traces.csv")]
+struct ConformanceWriteManifestArgs {
+    #[arg(long)]
+    output: PathBuf,
+    /// Repeated key=value source-control entries such as root_commit=abc123.
+    #[arg(long = "source-control")]
+    source_control: Vec<String>,
+    /// Repeated key=path source file entries.
+    #[arg(long = "source")]
+    source: Vec<String>,
+    /// Repeated key=path data file entries.
+    #[arg(long = "data")]
+    data: Vec<String>,
+    /// Repeated key=path artifact entries.
+    #[arg(long = "artifact")]
+    artifact: Vec<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl conformance runtime-parity examples/getting_started/output/pearl.ir.json examples/getting_started/decision_traces.csv --label-column allowed --json")]
+struct ConformanceRuntimeParityArgs {
+    pearl_ir: PathBuf,
+    decision_traces_csv: PathBuf,
+    #[arg(long, default_value = "allowed")]
+    label_column: String,
     #[arg(long)]
     json: bool,
 }
@@ -882,6 +947,15 @@ fn main() -> Result<()> {
         Commands::Discover(args) => run_discover(args),
         Commands::Compose(args) => run_compose(args),
         Commands::Compile(args) => run_compile(args),
+        Commands::Conformance {
+            command: ConformanceCommand::WriteManifest(args),
+        } => run_conformance_write_manifest(args),
+        Commands::Conformance {
+            command: ConformanceCommand::ValidateArtifacts(args),
+        } => run_conformance_validate_artifacts(args),
+        Commands::Conformance {
+            command: ConformanceCommand::RuntimeParity(args),
+        } => run_conformance_runtime_parity(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),
@@ -973,6 +1047,116 @@ fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
+}
+
+fn run_conformance_write_manifest(args: ConformanceWriteManifestArgs) -> Result<()> {
+    let source_control = parse_key_value_entries(&args.source_control, "source-control")?;
+    let source_files = parse_key_value_entries(&args.source, "source")?;
+    let data_files = parse_key_value_entries(&args.data, "data")?;
+    let artifacts = parse_key_value_entries(&args.artifact, "artifact")?;
+    let manifest = build_artifact_manifest(
+        generated_at_string(),
+        source_control,
+        source_files,
+        data_files,
+        artifacts,
+    )
+    .into_diagnostic()
+    .wrap_err("could not build artifact manifest")?;
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("could not create manifest output directory")?;
+    }
+    write_artifact_manifest(&manifest, &args.output)
+        .into_diagnostic()
+        .wrap_err("could not write artifact manifest")?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&manifest).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Wrote".bold().bright_green(), args.output.display());
+    }
+    Ok(())
+}
+
+fn run_conformance_validate_artifacts(args: ConformanceValidateArtifactsArgs) -> Result<()> {
+    let report = validate_artifact_manifest(&args.manifest_json)
+        .into_diagnostic()
+        .wrap_err("could not validate artifact manifest")?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+    } else if report.fresh {
+        println!("{} {}", "Fresh".bold().bright_green(), args.manifest_json.display());
+    } else {
+        println!("{} {}", "Stale".bold().bright_red(), args.manifest_json.display());
+        for problem in &report.problems {
+            println!("  {} {}", "Problem".bright_black(), problem);
+        }
+    }
+    Ok(())
+}
+
+fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs) -> Result<()> {
+    let gate = LogicPearlGateIr::from_path(&args.pearl_ir)
+        .into_diagnostic()
+        .wrap_err("could not load pearl IR")?;
+    let rows = logicpearl_discovery::load_decision_traces(&args.decision_traces_csv, &args.label_column)
+        .into_diagnostic()
+        .wrap_err("could not load labeled decision traces")?;
+    let conformance_rows: Vec<ConformanceDecisionTraceRow> = rows
+        .into_iter()
+        .map(|row| ConformanceDecisionTraceRow {
+            features: row.features.into_iter().collect(),
+            allowed: row.allowed,
+        })
+        .collect();
+    let report = compare_runtime_parity(&gate, &conformance_rows)
+        .into_diagnostic()
+        .wrap_err("could not compare runtime parity")?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Parity".bold().bright_green(), args.pearl_ir.display());
+        println!("  {} {}", "Rows".bright_black(), report.total_rows);
+        println!("  {} {}", "Matching rows".bright_black(), report.matching_rows);
+        println!(
+            "  {} {}",
+            "Runtime parity".bright_black(),
+            format!("{:.1}%", report.parity * 100.0).bold()
+        );
+    }
+    Ok(())
+}
+
+fn parse_key_value_entries(entries: &[String], flag_name: &str) -> Result<BTreeMap<String, String>> {
+    let mut parsed = BTreeMap::new();
+    for entry in entries {
+        let Some((key, value)) = entry.split_once('=') else {
+            return Err(guidance(
+                format!("invalid --{flag_name} entry: {entry:?}"),
+                format!("Use repeated --{flag_name} key=value entries."),
+            ));
+        };
+        if key.trim().is_empty() || value.trim().is_empty() {
+            return Err(guidance(
+                format!("invalid --{flag_name} entry: {entry:?}"),
+                format!("Use repeated --{flag_name} key=value entries."),
+            ));
+        }
+        parsed.insert(key.trim().to_string(), value.trim().to_string());
+    }
+    Ok(parsed)
+}
+
+fn generated_at_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => format!("unix:{}", duration.as_secs()),
+        Err(_) => "unix:0".to_string(),
+    }
 }
 
 fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
