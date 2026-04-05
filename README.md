@@ -35,11 +35,7 @@ cargo install --path crates/logicpearl-cli
 logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
 ```
 
-If that output makes you think “wait, that became a pearl from examples alone,” you are looking at the point of the project.
-
-This repo gives you the public proof layer. If you want the bigger story, the harder migrations, or help attacking a real legacy decision system, go to [logicpearl.com](https://logicpearl.com) or [reach out directly](mailto:ken@logicpearl.com?subject=LogicPearl%20Consulting).
-
-We are looking for the world's hardest decision-logic problems: the systems with ten years of conditionals, brittle policy layers, hidden behavior, and real consequences. That is the kind of work this model is for, and it is the kind of work we are used to solving.
+That command takes a small labeled behavior slice and turns it into a deployable artifact bundle you can inspect and run locally.
 
 ## What LogicPearl Is
 
@@ -86,7 +82,7 @@ For local development inside the repo, the equivalent form is:
 cargo run --manifest-path Cargo.toml -p logicpearl-cli -- <command>
 ```
 
-### 1. Build a pearl from decision traces
+### Build a pearl from decision traces
 
 Start with a tiny labeled behavior slice:
 
@@ -192,7 +188,7 @@ logicpearl compose \
 
 That emits a `pipeline.json` with explicit placeholder root mappings like `$.TODO_action` so the composition stays inspectable instead of hiding inference magic.
 
-### 5. Validate and run a string-of-pearls pipeline artifact
+### Validate and run a string-of-pearls pipeline artifact
 
 Public product language: a string of pearls.
 
@@ -233,7 +229,7 @@ That gives you a full public chain:
 - deterministic pearl
 - verify plugin
 
-### 2. Run a pearl in under a minute
+### Run a pearl in under a minute
 
 ```bash
 logicpearl inspect fixtures/ir/valid/auth-demo-v1.json
@@ -251,7 +247,7 @@ That small output shows the core shape:
 - explicit reasons
 - behavior that does not disappear into service code
 
-### 3. Use a Python observer plugin at the edge
+### Use a Python observer plugin at the edge
 
 ```bash
 logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
@@ -273,7 +269,7 @@ In the full LogicPearl workflow, observers are an artifact boundary too:
 - the normalized contract stays explicit
 - the pearl stays deterministic in the middle
 
-### 4. Build through Python plugin stages
+### Build through Python plugin stages
 
 Use a Python trace-source plugin:
 
@@ -387,8 +383,6 @@ Expected OPA outputs:
 
 ## Generate Your Own Pearl
 
-The real LogicPearl story is not “open a JSON file and hand-author a rules blob.”
-
 The intended workflow is:
 1. start from behavior, examples, or an existing policy/runtime
 2. generate a pearl artifact
@@ -430,9 +424,9 @@ That shows the intended observer loop:
 - observer behavior is validated exactly
 - the emitted feature contract can be trusted by the pearl runtime
 
-### What “make your own pearl” really means
+### Common ways to create a pearl
 
-In practice, making a new pearl usually means one of these:
+In practice, creating a new pearl usually means one of these:
 - importing an existing policy/runtime into a bounded LogicPearl artifact
 - learning a deterministic pearl from labeled examples or known behavior
 - generating an observer/adapter boundary for raw input, then validating it against fixtures
@@ -443,7 +437,7 @@ If you want to inspect the artifact shape directly, start here:
 - [auth-demo-v1.json](./fixtures/ir/valid/auth-demo-v1.json)
 - [auth-observer-v1.json](./fixtures/observer/valid/auth-observer-v1.json)
 
-But the interesting claim is that LogicPearl can come up with the middle artifact chain for you, then let you inspect and run the result.
+The goal is to generate the deterministic middle artifact, then let you inspect and run the result.
 
 ## What You Can Do Here
 
@@ -514,39 +508,26 @@ logicpearl discover traces.csv --targets target_a --pinned-rules rules.json
 
 ### Auth Demo
 
-Best first technical demo for understanding the artifact model.
+A compact artifact-first demo for learning the pearl format and runtime shape.
 
 ### OPA / Rego Demo
 
-Best public demo for parity/import framing.
-
-Important framing:
-- this is a parity/import demo
-- not an automatic discovery demo
+A parity/import demo that starts from an existing Rego policy and emits LogicPearl artifacts.
 
 See:
 - [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md)
 
-### Private Healthcare / Corpus Demo
-
-The strongest private product demo currently is the healthcare corpus-aware pearl flow, where:
-- a request goes in
-- a selector runs internally
-- applicable policies are chosen deterministically
-- logic/documentation bitmasks come back in one response
-
-That flow is not the public open-source entry path, but it is where the broader product story becomes very obvious.
-
 ## Reproducible Artifacts
 
 The public demos write real artifacts you can inspect:
-- `pearl.json`
+- `artifact.json`
 - `pearl.ir.json`
-- `pearl_audit.json`
-- compiled `.wasm`
+- `build_report.json`
+- compiled native binaries
+- compiled `.wasm` modules
 
-The promise is simple:
-- you should be able to run, inspect, and validate pearls yourself
+The core promise is simple:
+- you should be able to build, run, inspect, and validate pearls yourself
 
 ## Why Use LogicPearl
 
