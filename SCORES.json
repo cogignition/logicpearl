@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-05T20:31:19.475125+00:00",
+  "generated_at": "2026-04-05T20:44:53.237930+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+    "head": "8ac80a4efd906fd092fda931dbb55917da50a114",
     "dirty": true
   },
   "suites": {
@@ -67,9 +67,9 @@
           "csv": "examples/demos/content_moderation/traces.csv",
           "build": {
             "gate_id": "traces",
-            "rows": 26,
+            "rows": 27,
             "label_column": "verdict",
-            "rules_discovered": 5,
+            "rules_discovered": 4,
             "residual_rules_discovered": 0,
             "refined_rules_applied": 0,
             "pinned_rules_applied": 0,
@@ -90,9 +90,9 @@
           "csv": "examples/demos/loan_approval/traces.csv",
           "build": {
             "gate_id": "traces",
-            "rows": 26,
+            "rows": 27,
             "label_column": "approved",
-            "rules_discovered": 5,
+            "rules_discovered": 4,
             "residual_rules_discovered": 0,
             "refined_rules_applied": 0,
             "pinned_rules_applied": 0,
@@ -200,7 +200,7 @@
       "suite": "demos"
     },
     "demos.content_moderation.rules_discovered": {
-      "value": 5.0,
+      "value": 4.0,
       "goal": "max",
       "weight": 5.0,
       "suite": "demos"
@@ -212,7 +212,7 @@
       "suite": "demos"
     },
     "demos.loan_approval.rules_discovered": {
-      "value": 5.0,
+      "value": 4.0,
       "goal": "max",
       "weight": 5.0,
       "suite": "demos"

@@ -910,6 +910,7 @@ fn build_gate(
     }
     rules = canonicalize_rules(rules);
     rules = dedupe_rules_by_signature(rules);
+    rules = prune_redundant_rules(rows, rules);
     if rules.is_empty() {
         return Err(LogicPearlError::message(
             "no deny rules could be discovered from decision traces",
@@ -922,6 +923,34 @@ fn build_gate(
         refined_rules_applied,
         pinned_rules_applied,
     ))
+}
+
+fn prune_redundant_rules(rows: &[DecisionTraceRow], rules: Vec<RuleDefinition>) -> Vec<RuleDefinition> {
+    let mut pruned = rules;
+    let mut index = 0usize;
+    while index < pruned.len() {
+        let mut candidate = pruned.clone();
+        candidate.remove(index);
+        let predictions_changed = rows.iter().any(|row| {
+            let with_rule = pruned
+                .iter()
+                .any(|rule| expression_matches(&rule.deny_when, &row.features));
+            let without_rule = candidate
+                .iter()
+                .any(|rule| expression_matches(&rule.deny_when, &row.features));
+            with_rule != without_rule
+        });
+        if predictions_changed {
+            index += 1;
+        } else {
+            pruned = candidate;
+        }
+    }
+    for (index, rule) in pruned.iter_mut().enumerate() {
+        rule.bit = index as u32;
+        rule.id = format!("rule_{index:03}");
+    }
+    pruned
 }
 
 fn gate_from_rules(
@@ -1351,7 +1380,7 @@ fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
 
     let mut discovered = Vec::new();
     while !remaining_denied.is_empty() {
-        let candidate = best_candidate_rule(rows, &remaining_denied, &allowed_indices)
+        let candidate = select_candidate_rule(rows, &remaining_denied, &allowed_indices)
             .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
             break;
@@ -1367,6 +1396,112 @@ fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
     }
 
     Ok(discovered)
+}
+
+const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
+
+#[derive(Debug, Clone, PartialEq)]
+struct CandidatePlanScore {
+    training_parity: f64,
+    total_false_positives: usize,
+    uncovered_denied: usize,
+    rule_count: usize,
+}
+
+fn select_candidate_rule(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+) -> Option<CandidateRule> {
+    let mut candidates = candidate_rules(rows, denied_indices, allowed_indices);
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(compare_candidate_priority);
+    candidates.truncate(LOOKAHEAD_FRONTIER_LIMIT);
+
+    let mut best: Option<(CandidateRule, CandidatePlanScore)> = None;
+    for candidate in candidates {
+        let score = simulate_candidate_plan(rows, denied_indices, allowed_indices, &candidate);
+        let better = match &best {
+            None => true,
+            Some((current_candidate, current_score)) => {
+                compare_candidate_plan(&candidate, &score, current_candidate, current_score)
+                    == Ordering::Less
+            }
+        };
+        if better {
+            best = Some((candidate, score));
+        }
+    }
+    best.map(|(candidate, _score)| candidate)
+}
+
+fn simulate_candidate_plan(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+    first_candidate: &CandidateRule,
+) -> CandidatePlanScore {
+    let mut rules = vec![first_candidate.clone()];
+    let mut remaining_denied: Vec<usize> = denied_indices
+        .iter()
+        .copied()
+        .filter(|index| !matches_candidate(&rows[*index].features, first_candidate))
+        .collect();
+
+    if first_candidate.false_positives == 0 {
+        while !remaining_denied.is_empty() {
+            let Some(next) =
+                best_immediate_candidate_rule(rows, &remaining_denied, allowed_indices)
+            else {
+                break;
+            };
+            if next.denied_coverage == 0 {
+                break;
+            }
+            remaining_denied.retain(|index| !matches_candidate(&rows[*index].features, &next));
+            let has_false_positives = next.false_positives > 0;
+            rules.push(next);
+            if has_false_positives {
+                break;
+            }
+        }
+    }
+
+    let total_false_positives = allowed_indices
+        .iter()
+        .filter(|index| rules.iter().any(|rule| matches_candidate(&rows[**index].features, rule)))
+        .count();
+    let correct = rows
+        .iter()
+        .filter(|row| {
+            let predicted_deny = rules.iter().any(|rule| matches_candidate(&row.features, rule));
+            predicted_deny != row.allowed
+        })
+        .count();
+
+    CandidatePlanScore {
+        training_parity: correct as f64 / rows.len() as f64,
+        total_false_positives,
+        uncovered_denied: remaining_denied.len(),
+        rule_count: rules.len(),
+    }
+}
+
+fn compare_candidate_plan(
+    candidate: &CandidateRule,
+    score: &CandidatePlanScore,
+    current_candidate: &CandidateRule,
+    current_score: &CandidatePlanScore,
+) -> Ordering {
+    current_score
+        .training_parity
+        .total_cmp(&score.training_parity)
+        .then_with(|| score.total_false_positives.cmp(&current_score.total_false_positives))
+        .then_with(|| score.uncovered_denied.cmp(&current_score.uncovered_denied))
+        .then_with(|| score.rule_count.cmp(&current_score.rule_count))
+        .then_with(|| compare_candidate_priority(candidate, current_candidate))
 }
 
 fn discover_residual_rules(
@@ -1527,14 +1662,14 @@ fn refine_rules_unique_coverage(
     Ok((refined, refined_rules_applied))
 }
 
-fn best_candidate_rule(
+fn candidate_rules(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
-) -> Option<CandidateRule> {
+) -> Vec<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
     let numeric_features = numeric_feature_names(rows);
-    let mut best: Option<CandidateRule> = None;
+    let mut candidates = Vec::new();
 
     for feature in feature_names {
         let values: Vec<&Value> = rows
@@ -1545,8 +1680,10 @@ fn best_candidate_rule(
             let unique_thresholds = numeric_thresholds(rows, denied_indices, &feature);
             for threshold in unique_thresholds {
                 for op in [
+                    ComparisonOperator::Lt,
                     ComparisonOperator::Lte,
                     ComparisonOperator::Eq,
+                    ComparisonOperator::Gte,
                     ComparisonOperator::Gt,
                 ] {
                     let candidate = CandidateRule {
@@ -1563,7 +1700,7 @@ fn best_candidate_rule(
                         false_positives: candidate_coverage(rows, allowed_indices, &candidate),
                         ..candidate
                     };
-                    consider_candidate(&mut best, candidate);
+                    candidates.push(candidate);
                 }
             }
         } else if values.iter().all(|value| value.is_boolean()) {
@@ -1600,7 +1737,7 @@ fn best_candidate_rule(
                         },
                     ),
                 };
-                consider_candidate(&mut best, candidate);
+                candidates.push(candidate);
             }
         } else {
             let unique_values: BTreeSet<String> = rows
@@ -1616,7 +1753,7 @@ fn best_candidate_rule(
                     denied_coverage: string_coverage_for(rows, denied_indices, &feature, &text),
                     false_positives: string_coverage_for(rows, allowed_indices, &feature, &text),
                 };
-                consider_candidate(&mut best, candidate);
+                candidates.push(candidate);
             }
         }
     }
@@ -1648,43 +1785,59 @@ fn best_candidate_rule(
                     false_positives: candidate_coverage(rows, allowed_indices, &candidate),
                     ..candidate
                 };
-                consider_candidate(&mut best, candidate);
+                candidates.push(candidate);
             }
         }
     }
 
-    best
+    candidates.retain(|candidate| candidate.denied_coverage > 0);
+    candidates.sort_by(compare_candidate_priority);
+    candidates.dedup_by(|left, right| left.signature() == right.signature());
+    candidates
 }
 
-fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule) {
-    if candidate.denied_coverage == 0 {
-        return;
+fn best_immediate_candidate_rule(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+) -> Option<CandidateRule> {
+    candidate_rules(rows, denied_indices, allowed_indices)
+        .into_iter()
+        .next()
+}
+
+fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
+    let left_net = left.denied_coverage as isize - left.false_positives as isize;
+    let right_net = right.denied_coverage as isize - right.false_positives as isize;
+    right_net
+        .cmp(&left_net)
+        .then_with(|| left.false_positives.cmp(&right.false_positives))
+        .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
+        .then_with(|| candidate_complexity_penalty(left).cmp(&candidate_complexity_penalty(right)))
+        .then_with(|| {
+            candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
+        })
+        .then_with(|| left.signature().cmp(&right.signature()))
+}
+
+fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
+    match candidate.value {
+        ComparisonValue::FeatureRef { .. } => 1,
+        ComparisonValue::Literal(_) => 0,
     }
-    match best {
-        None => *best = Some(candidate),
-        Some(current) => {
-            let candidate_net =
-                candidate.denied_coverage as isize - candidate.false_positives as isize;
-            let current_net = current.denied_coverage as isize - current.false_positives as isize;
-            let better = match candidate_net.cmp(&current_net) {
-                Ordering::Greater => true,
-                Ordering::Less => false,
-                Ordering::Equal => match candidate.false_positives.cmp(&current.false_positives) {
-                    Ordering::Less => true,
-                    Ordering::Greater => false,
-                    Ordering::Equal => {
-                        match candidate.denied_coverage.cmp(&current.denied_coverage) {
-                            Ordering::Greater => true,
-                            Ordering::Less => false,
-                            Ordering::Equal => candidate.signature() < current.signature(),
-                        }
-                    }
-                },
-            };
-            if better {
-                *best = Some(candidate);
-            }
-        }
+}
+
+fn candidate_memorization_penalty(candidate: &CandidateRule) -> usize {
+    if candidate.op == ComparisonOperator::Eq
+        && candidate
+            .value
+            .literal()
+            .and_then(Value::as_f64)
+            .is_some()
+    {
+        1_000_000usize.saturating_sub(candidate.denied_coverage)
+    } else {
+        0
     }
 }
 
@@ -2271,8 +2424,9 @@ mod tests {
     use super::{
         build_pearl_from_csv, canonicalize_rules, dedupe_rules_by_signature, discover_from_csv,
         discover_residual_rules, gate_from_rules, load_decision_traces, load_decision_traces_auto,
-        merge_discovered_and_pinned_rules, rule_from_candidate, BuildOptions, CandidateRule,
-        ComparisonOperator, DecisionTraceRow, DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
+        merge_discovered_and_pinned_rules, prune_redundant_rules, rule_from_candidate,
+        BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow, DiscoverOptions,
+        PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
         ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
@@ -2696,33 +2850,15 @@ mod tests {
         let csv_path = dir.path().join("access_control.csv");
         std::fs::write(
             &csv_path,
-            "clearance_level,resource_sensitivity,mfa_enabled,failed_login_attempts,allowed\n\
-5,3,1,0,allowed\n\
-4,2,1,1,allowed\n\
-3,1,1,0,allowed\n\
-5,5,1,0,allowed\n\
-4,4,1,2,allowed\n\
-3,3,1,0,allowed\n\
-5,4,1,1,allowed\n\
-4,3,1,0,allowed\n\
-3,2,0,1,allowed\n\
-5,2,0,0,allowed\n\
-4,1,0,2,allowed\n\
-2,1,1,0,allowed\n\
-2,3,1,0,denied\n\
-1,3,1,1,denied\n\
-1,4,1,0,denied\n\
-0,2,1,0,denied\n\
-2,4,1,2,denied\n\
-1,5,1,0,denied\n\
-0,3,1,1,denied\n\
-3,2,0,8,denied\n\
-4,3,0,10,denied\n\
-2,1,0,7,denied\n\
-5,4,0,12,denied\n\
-3,3,0,9,denied\n\
-1,1,0,6,denied\n\
-4,2,0,11,denied\n",
+            "clearance_level,resource_sensitivity,allowed\n\
+5,2,allowed\n\
+4,1,allowed\n\
+3,2,allowed\n\
+2,1,allowed\n\
+4,5,denied\n\
+3,4,denied\n\
+2,3,denied\n\
+1,2,denied\n",
         )
         .unwrap();
         let output_dir = dir.path().join("output");
@@ -2742,10 +2878,158 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.training_parity > 0.9);
+        assert_eq!(result.training_parity, 1.0);
         let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
         let rendered = serde_json::to_string(&gate).unwrap();
         assert!(rendered.contains("\"feature_ref\":\"resource_sensitivity\""));
+    }
+
+    #[test]
+    fn build_prefers_zero_false_positive_multi_rule_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("content.csv");
+        std::fs::write(
+            &csv_path,
+            "toxicity,spam,account_age,report_count,allowed\n\
+0.05,0.10,730,0,allowed\n\
+0.12,0.08,1200,1,allowed\n\
+0.20,0.15,365,0,allowed\n\
+0.08,0.22,540,1,allowed\n\
+0.15,0.18,900,0,allowed\n\
+0.03,0.05,2000,0,allowed\n\
+0.18,0.12,450,1,allowed\n\
+0.10,0.30,180,0,allowed\n\
+0.22,0.25,60,2,allowed\n\
+0.06,0.11,1500,0,allowed\n\
+0.25,0.20,300,1,allowed\n\
+0.14,0.35,90,1,allowed\n\
+0.28,0.40,45,2,allowed\n\
+0.80,0.15,800,0,denied\n\
+0.82,0.20,1200,1,denied\n\
+0.90,0.10,600,0,denied\n\
+0.78,0.25,365,0,denied\n\
+0.18,0.85,180,0,denied\n\
+0.12,0.90,365,1,denied\n\
+0.22,0.82,540,0,denied\n\
+0.15,0.18,10,0,denied\n\
+0.08,0.25,5,1,denied\n\
+0.20,0.22,20,0,denied\n\
+0.18,0.20,730,5,denied\n\
+0.10,0.18,900,6,denied\n\
+0.22,0.25,540,7,denied\n\
+0.78,0.88,8,9,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &csv_path,
+            &BuildOptions {
+                output_dir: output_dir.clone(),
+                gate_id: "content_gate".to_string(),
+                label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.training_parity, 1.0);
+        let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+        let rendered = serde_json::to_string(&gate).unwrap();
+        assert!(rendered.contains("\"feature\":\"spam\""));
+        assert!(rendered.contains("\"feature\":\"toxicity\""));
+        assert!(!rendered.contains("\"feature\":\"toxicity\",\"op\":\">\",\"value\":0.15"));
+    }
+
+    #[test]
+    fn prune_redundant_rules_drops_exact_match_shards() {
+        let rows = vec![
+            row_values(
+                &[
+                    ("annual_income", Value::Number(Number::from(85000))),
+                    ("debt_ratio", Value::Number(Number::from_f64(0.56).unwrap())),
+                    ("credit_score", Value::Number(Number::from(680))),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("annual_income", Value::Number(Number::from(62000))),
+                    ("debt_ratio", Value::Number(Number::from_f64(0.55).unwrap())),
+                    ("credit_score", Value::Number(Number::from(680))),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("annual_income", Value::Number(Number::from(48000))),
+                    ("debt_ratio", Value::Number(Number::from_f64(0.61).unwrap())),
+                    ("credit_score", Value::Number(Number::from(650))),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("annual_income", Value::Number(Number::from(45000))),
+                    ("debt_ratio", Value::Number(Number::from_f64(0.35).unwrap())),
+                    ("credit_score", Value::Number(Number::from(650))),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("annual_income", Value::Number(Number::from(72000))),
+                    ("debt_ratio", Value::Number(Number::from_f64(0.31).unwrap())),
+                    ("credit_score", Value::Number(Number::from(720))),
+                ],
+                true,
+            ),
+        ];
+        let rules = vec![
+            rule_from_candidate(
+                0,
+                &CandidateRule {
+                    feature: "annual_income".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from(85000))),
+                    denied_coverage: 1,
+                    false_positives: 0,
+                },
+            ),
+            rule_from_candidate(
+                1,
+                &CandidateRule {
+                    feature: "credit_score".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from(680))),
+                    denied_coverage: 2,
+                    false_positives: 0,
+                },
+            ),
+            rule_from_candidate(
+                2,
+                &CandidateRule {
+                    feature: "debt_ratio".to_string(),
+                    op: ComparisonOperator::Gte,
+                    value: ComparisonValue::Literal(
+                        Value::Number(Number::from_f64(0.55).unwrap()),
+                    ),
+                    denied_coverage: 3,
+                    false_positives: 0,
+                },
+            ),
+        ];
+
+        let pruned = prune_redundant_rules(&rows, rules);
+        let rendered = serde_json::to_string(&pruned).unwrap();
+        assert_eq!(pruned.len(), 1);
+        assert!(rendered.contains("\"feature\":\"debt_ratio\""));
+        assert!(!rendered.contains("\"feature\":\"annual_income\""));
+        assert!(!rendered.contains("\"feature\":\"credit_score\""));
     }
 
     #[test]
@@ -2904,6 +3188,16 @@ mod tests {
             features: features
                 .iter()
                 .map(|(name, value)| ((*name).to_string(), Value::Number(Number::from(*value))))
+                .collect::<HashMap<_, _>>(),
+            allowed,
+        }
+    }
+
+    fn row_values(features: &[(&str, Value)], allowed: bool) -> DecisionTraceRow {
+        DecisionTraceRow {
+            features: features
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), value.clone()))
                 .collect::<HashMap<_, _>>(),
             allowed,
         }

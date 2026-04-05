@@ -12,9 +12,10 @@ toxicity_score,spam_likelihood,account_age_days,verified,report_count_24h,verdic
 25%,20%,300,Yes,1,pass
 14%,35%,90,No,1,pass
 28%,40%,45,No,2,pass
-76%,15%,800,Yes,0,flagged
+80%,15%,800,Yes,0,flagged
 82%,20%,"1,200",Yes,1,flagged
 90%,10%,600,No,0,flagged
+78%,25%,365,Yes,0,flagged
 18%,85%,180,Yes,0,flagged
 12%,90%,365,No,1,flagged
 22%,82%,540,Yes,0,flagged
