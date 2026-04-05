@@ -507,6 +507,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         ));
     }
     let bootstrap = to_observer_bootstrap_strategy(args.bootstrap);
+    let target_goal = to_observer_target_goal(args.target_goal);
     let (synthesized, report) = if let Some((train_cases, dev_cases)) =
         choose_synthesis_train_and_dev(case_rows.clone(), args.dev_benchmark_cases.as_ref())?
     {
@@ -522,6 +523,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
             &train_cases,
             &dev_cases,
             bootstrap,
+            target_goal,
             &args.positive_routes,
             &args.candidate_frontier,
             args.selection_tolerance,
@@ -557,6 +559,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
     let response = serde_json::json!({
         "signal": report.signal,
         "bootstrap_mode": report.bootstrap_mode,
+        "target_goal": target_goal,
         "positive_case_count": report.positive_case_count,
         "negative_case_count": report.negative_case_count,
         "candidate_count": report.candidate_count,
@@ -574,6 +577,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
     } else {
         println!("{} {}", "Synthesized".bold().bright_green(), report.signal.bold());
         println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {}", "Target goal".bright_black(), serde_json::to_string(&target_goal).into_diagnostic()?.trim_matches('"'));
         println!("  {} {}", "Candidates".bright_black(), report.candidate_count);
         if let Some(selected) = report.selected_max_candidates {
             println!("  {} {}", "Selected cap".bright_black(), selected);

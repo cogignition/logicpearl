@@ -22,7 +22,7 @@ use logicpearl_observer::{
 };
 use logicpearl_observer_synthesis::{
     repair_guardrails_artifact, synthesize_guardrails_artifact,
-    synthesize_guardrails_artifact_auto, ObserverBootstrapStrategy,
+    synthesize_guardrails_artifact_auto, ObserverBootstrapStrategy, ObserverTargetGoal,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
@@ -298,6 +298,15 @@ enum ObserverBootstrapArg {
     ObservedFeature,
     Route,
     Seed,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum ObserverTargetGoalArg {
+    ParityFirst,
+    ProtectiveGate,
+    CustomerSafe,
+    Balanced,
+    ReviewQueue,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -945,6 +954,9 @@ struct ObserverSynthesizeArgs {
     /// How LogicPearl should choose positive examples before Z3 selects a compact phrase subset.
     #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
     bootstrap: ObserverBootstrapArg,
+    /// What LogicPearl should optimize for when choosing the synthesized observer on held-out dev data.
+    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ParityFirst)]
+    target_goal: ObserverTargetGoalArg,
     /// Optional route labels to treat as positive examples when using route-based bootstrapping.
     #[arg(
         long,
@@ -973,7 +985,7 @@ struct ObserverSynthesizeArgs {
         help_heading = "Advanced Observer Synthesis"
     )]
     candidate_frontier: Vec<usize>,
-    /// Tolerance from the best dev macro score when choosing the smallest near-best artifact.
+    /// Tolerance from the best dev score for the selected target goal when choosing the smallest near-best artifact.
     #[arg(long, default_value_t = 0.001, help_heading = "Advanced Observer Synthesis")]
     selection_tolerance: f64,
     #[arg(long)]
@@ -1145,15 +1157,28 @@ fn to_observer_bootstrap_strategy(arg: ObserverBootstrapArg) -> ObserverBootstra
     }
 }
 
+fn to_observer_target_goal(arg: ObserverTargetGoalArg) -> ObserverTargetGoal {
+    match arg {
+        ObserverTargetGoalArg::ParityFirst => ObserverTargetGoal::ParityFirst,
+        ObserverTargetGoalArg::ProtectiveGate => ObserverTargetGoal::ProtectiveGate,
+        ObserverTargetGoalArg::CustomerSafe => ObserverTargetGoal::CustomerSafe,
+        ObserverTargetGoalArg::Balanced => ObserverTargetGoal::Balanced,
+        ObserverTargetGoalArg::ReviewQueue => ObserverTargetGoal::ReviewQueue,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{to_observer_bootstrap_strategy, ObserverBootstrapArg};
+    use super::{
+        to_observer_bootstrap_strategy, to_observer_target_goal, ObserverBootstrapArg,
+        ObserverTargetGoalArg,
+    };
     use logicpearl_benchmark::{
         detect_benchmark_adapter_profile, BenchmarkAdapterProfile, SynthesisCase,
     };
     use logicpearl_observer::GuardrailsSignal;
     use logicpearl_observer_synthesis::{
-        candidate_ngrams, infer_bootstrap_examples, ObserverBootstrapMode,
+        candidate_ngrams, infer_bootstrap_examples, ObserverBootstrapMode, ObserverTargetGoal,
     };
     use serde_json::{Map, Value};
     use std::fs;
@@ -1276,5 +1301,21 @@ mod tests {
         assert!(matches!(mode, ObserverBootstrapMode::Route));
         assert_eq!(positives.len(), 1);
         assert_eq!(negatives.len(), 1);
+    }
+
+    #[test]
+    fn target_goal_maps_to_internal_goal() {
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::ParityFirst),
+            ObserverTargetGoal::ParityFirst
+        ));
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::ProtectiveGate),
+            ObserverTargetGoal::ProtectiveGate
+        ));
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::CustomerSafe),
+            ObserverTargetGoal::CustomerSafe
+        ));
     }
 }

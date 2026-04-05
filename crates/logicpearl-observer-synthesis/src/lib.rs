@@ -27,6 +27,16 @@ pub enum ObserverBootstrapMode {
     Seed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ObserverTargetGoal {
+    ParityFirst,
+    ProtectiveGate,
+    CustomerSafe,
+    Balanced,
+    ReviewQueue,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ObserverSynthesisReport {
     pub signal: String,
@@ -82,6 +92,7 @@ pub struct ObserverSynthesisTrialReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ObserverAutoSelectionReport {
+    pub target_goal: ObserverTargetGoal,
     pub selection_metric: String,
     pub tolerance: f64,
     pub tried: Vec<ObserverSynthesisTrialReport>,
@@ -106,11 +117,42 @@ fn auto_bootstrap_strategies(bootstrap: ObserverBootstrapStrategy) -> &'static [
     }
 }
 
-fn selection_metric_name() -> &'static str {
-    "lexicographic(negative_pass_rate,exact_match_rate,positive_recall,train_negative_hits,artifact_size)"
+fn selection_metric_name(goal: ObserverTargetGoal) -> &'static str {
+    match goal {
+        ObserverTargetGoal::ParityFirst => {
+            "lexicographic(exact_match_rate,macro_balance,negative_pass_rate,positive_recall,train_negative_hits,artifact_size)"
+        }
+        ObserverTargetGoal::ProtectiveGate => {
+            "lexicographic(positive_recall,negative_pass_rate,exact_match_rate,train_negative_hits,artifact_size)"
+        }
+        ObserverTargetGoal::CustomerSafe => {
+            "lexicographic(negative_pass_rate,positive_recall,exact_match_rate,train_negative_hits,artifact_size)"
+        }
+        ObserverTargetGoal::Balanced => {
+            "lexicographic(macro_balance,exact_match_rate,negative_pass_rate,positive_recall,train_negative_hits,artifact_size)"
+        }
+        ObserverTargetGoal::ReviewQueue => {
+            "lexicographic(positive_recall,exact_match_rate,artifact_size,negative_pass_rate,train_negative_hits)"
+        }
+    }
+}
+
+fn macro_balance(score: &ObserverSignalScoreReport) -> f64 {
+    (score.positive_recall + score.negative_pass_rate) / 2.0
+}
+
+fn primary_metric(goal: ObserverTargetGoal, score: &ObserverSignalScoreReport) -> f64 {
+    match goal {
+        ObserverTargetGoal::ParityFirst => score.exact_match_rate,
+        ObserverTargetGoal::ProtectiveGate => score.positive_recall,
+        ObserverTargetGoal::CustomerSafe => score.negative_pass_rate,
+        ObserverTargetGoal::Balanced => macro_balance(score),
+        ObserverTargetGoal::ReviewQueue => score.positive_recall,
+    }
 }
 
 fn is_better_trial(
+    goal: ObserverTargetGoal,
     candidate_cap: usize,
     candidate_train_report: &ObserverSynthesisReport,
     candidate_score: &ObserverSignalScoreReport,
@@ -118,23 +160,114 @@ fn is_better_trial(
     current_train_report: &ObserverSynthesisReport,
     current_score: &ObserverSignalScoreReport,
 ) -> bool {
-    candidate_score.negative_pass_rate > current_score.negative_pass_rate
-        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
-            && candidate_score.exact_match_rate > current_score.exact_match_rate)
-        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
-            && candidate_score.exact_match_rate == current_score.exact_match_rate
-            && candidate_score.positive_recall > current_score.positive_recall)
-        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
-            && candidate_score.exact_match_rate == current_score.exact_match_rate
-            && candidate_score.positive_recall == current_score.positive_recall
-            && candidate_train_report.matched_negatives_after
-                < current_train_report.matched_negatives_after)
-        || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
-            && candidate_score.exact_match_rate == current_score.exact_match_rate
-            && candidate_score.positive_recall == current_score.positive_recall
-            && candidate_train_report.matched_negatives_after
-                == current_train_report.matched_negatives_after
-            && candidate_cap < current_cap)
+    match goal {
+        ObserverTargetGoal::ParityFirst => {
+            candidate_score.exact_match_rate > current_score.exact_match_rate
+                || (candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && macro_balance(candidate_score) > macro_balance(current_score))
+                || (candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.negative_pass_rate > current_score.negative_pass_rate)
+                || (candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall > current_score.positive_recall)
+                || (candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_train_report.matched_negatives_after
+                        < current_train_report.matched_negatives_after)
+                || (candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_train_report.matched_negatives_after
+                        == current_train_report.matched_negatives_after
+                    && candidate_cap < current_cap)
+        }
+        ObserverTargetGoal::ProtectiveGate => {
+            candidate_score.positive_recall > current_score.positive_recall
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.negative_pass_rate > current_score.negative_pass_rate)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.exact_match_rate > current_score.exact_match_rate)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_train_report.matched_negatives_after
+                        < current_train_report.matched_negatives_after)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_train_report.matched_negatives_after
+                        == current_train_report.matched_negatives_after
+                    && candidate_cap < current_cap)
+        }
+        ObserverTargetGoal::CustomerSafe => {
+            candidate_score.negative_pass_rate > current_score.negative_pass_rate
+                || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall > current_score.positive_recall)
+                || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate > current_score.exact_match_rate)
+                || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_train_report.matched_negatives_after
+                        < current_train_report.matched_negatives_after)
+                || (candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_train_report.matched_negatives_after
+                        == current_train_report.matched_negatives_after
+                    && candidate_cap < current_cap)
+        }
+        ObserverTargetGoal::Balanced => {
+            macro_balance(candidate_score) > macro_balance(current_score)
+                || (macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.exact_match_rate > current_score.exact_match_rate)
+                || (macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_score.negative_pass_rate > current_score.negative_pass_rate)
+                || (macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall > current_score.positive_recall)
+                || (macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_train_report.matched_negatives_after
+                        < current_train_report.matched_negatives_after)
+                || (macro_balance(candidate_score) == macro_balance(current_score)
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_train_report.matched_negatives_after
+                        == current_train_report.matched_negatives_after
+                    && candidate_cap < current_cap)
+        }
+        ObserverTargetGoal::ReviewQueue => {
+            candidate_score.positive_recall > current_score.positive_recall
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate > current_score.exact_match_rate)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_cap < current_cap)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_cap == current_cap
+                    && candidate_score.negative_pass_rate > current_score.negative_pass_rate)
+                || (candidate_score.positive_recall == current_score.positive_recall
+                    && candidate_score.exact_match_rate == current_score.exact_match_rate
+                    && candidate_cap == current_cap
+                    && candidate_score.negative_pass_rate == current_score.negative_pass_rate
+                    && candidate_train_report.matched_negatives_after
+                        < current_train_report.matched_negatives_after)
+        }
+    }
 }
 
 pub fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
@@ -631,6 +764,7 @@ pub fn synthesize_guardrails_artifact_auto(
     train_cases: &[SynthesisCase],
     dev_cases: &[SynthesisCase],
     bootstrap: ObserverBootstrapStrategy,
+    target_goal: ObserverTargetGoal,
     positive_routes: &[String],
     candidate_frontier: &[usize],
     tolerance: f64,
@@ -680,14 +814,14 @@ pub fn synthesize_guardrails_artifact_auto(
         ));
     }
 
-    let best_negative_pass = trials
+    let best_primary_metric = trials
         .iter()
-        .map(|(_, _, _, score)| score.negative_pass_rate)
+        .map(|(_, _, _, score)| primary_metric(target_goal, score))
         .fold(f64::NEG_INFINITY, f64::max);
 
     let mut chosen_index = None;
     for (index, (cap, _, train_report, score)) in trials.iter().enumerate() {
-        if score.negative_pass_rate + tolerance < best_negative_pass {
+        if primary_metric(target_goal, score) + tolerance < best_primary_metric {
             continue;
         }
         match chosen_index {
@@ -695,6 +829,7 @@ pub fn synthesize_guardrails_artifact_auto(
             Some(current) => {
                 let (current_cap, _, current_train_report, current_score) = &trials[current];
                 let better = is_better_trial(
+                    target_goal,
                     *cap,
                     train_report,
                     score,
@@ -714,7 +849,8 @@ pub fn synthesize_guardrails_artifact_auto(
     })?;
     let (_, chosen_artifact, mut chosen_report, _) = trials.remove(chosen_index);
     chosen_report.auto_selection = Some(ObserverAutoSelectionReport {
-        selection_metric: selection_metric_name().to_string(),
+        target_goal,
+        selection_metric: selection_metric_name(target_goal).to_string(),
         tolerance,
         tried: trials
             .into_iter()
