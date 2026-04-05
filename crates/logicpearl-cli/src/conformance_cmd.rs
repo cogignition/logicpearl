@@ -1,7 +1,7 @@
 use super::*;
 use logicpearl_conformance::{
-    build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest, write_artifact_manifest,
-    DecisionTraceRow as ConformanceDecisionTraceRow,
+    build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest,
+    write_artifact_manifest, DecisionTraceRow as ConformanceDecisionTraceRow,
 };
 use std::collections::BTreeMap;
 
@@ -29,24 +29,44 @@ pub(crate) fn run_conformance_write_manifest(args: ConformanceWriteManifestArgs)
         .wrap_err("could not write artifact manifest")?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&manifest).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&manifest).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Wrote".bold().bright_green(), args.output.display());
+        println!(
+            "{} {}",
+            "Wrote".bold().bright_green(),
+            args.output.display()
+        );
     }
     Ok(())
 }
 
-pub(crate) fn run_conformance_validate_artifacts(args: ConformanceValidateArtifactsArgs) -> Result<()> {
+pub(crate) fn run_conformance_validate_artifacts(
+    args: ConformanceValidateArtifactsArgs,
+) -> Result<()> {
     let report = validate_artifact_manifest(&args.manifest_json)
         .into_diagnostic()
         .wrap_err("could not validate artifact manifest")?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
     } else if report.fresh {
-        println!("{} {}", "Fresh".bold().bright_green(), args.manifest_json.display());
+        println!(
+            "{} {}",
+            "Fresh".bold().bright_green(),
+            args.manifest_json.display()
+        );
     } else {
-        println!("{} {}", "Stale".bold().bright_red(), args.manifest_json.display());
+        println!(
+            "{} {}",
+            "Stale".bold().bright_red(),
+            args.manifest_json.display()
+        );
         for problem in &report.problems {
             println!("  {} {}", "Problem".bright_black(), problem);
         }
@@ -55,12 +75,14 @@ pub(crate) fn run_conformance_validate_artifacts(args: ConformanceValidateArtifa
 }
 
 pub(crate) fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs) -> Result<()> {
-    let gate = LogicPearlGateIr::from_path(&args.pearl_ir)
+    let resolved = resolve_artifact_input(&args.pearl_ir)?;
+    let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
-    let rows = logicpearl_discovery::load_decision_traces(&args.decision_traces_csv, &args.label_column)
-        .into_diagnostic()
-        .wrap_err("could not load labeled decision traces")?;
+    let rows =
+        logicpearl_discovery::load_decision_traces(&args.decision_traces_csv, &args.label_column)
+            .into_diagnostic()
+            .wrap_err("could not load labeled decision traces")?;
     let conformance_rows: Vec<ConformanceDecisionTraceRow> = rows
         .into_iter()
         .map(|row| ConformanceDecisionTraceRow {
@@ -73,11 +95,22 @@ pub(crate) fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs)
         .wrap_err("could not compare runtime parity")?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Parity".bold().bright_green(), args.pearl_ir.display());
+        println!(
+            "{} {}",
+            "Parity".bold().bright_green(),
+            resolved.artifact_dir.display()
+        );
         println!("  {} {}", "Rows".bright_black(), report.total_rows);
-        println!("  {} {}", "Matching rows".bright_black(), report.matching_rows);
+        println!(
+            "  {} {}",
+            "Matching rows".bright_black(),
+            report.matching_rows
+        );
         println!(
             "  {} {}",
             "Runtime parity".bright_black(),
@@ -87,7 +120,10 @@ pub(crate) fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs)
     Ok(())
 }
 
-fn parse_key_value_entries(entries: &[String], flag_name: &str) -> Result<BTreeMap<String, String>> {
+fn parse_key_value_entries(
+    entries: &[String],
+    flag_name: &str,
+) -> Result<BTreeMap<String, String>> {
     let mut parsed = BTreeMap::new();
     for entry in entries {
         let Some((key, value)) = entry.split_once('=') else {

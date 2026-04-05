@@ -1,8 +1,8 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, EvaluationConfig, Expression, FeatureDefinition, FeatureType,
-    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind, RuleVerificationStatus,
-    VerificationConfig,
+    ComparisonExpression, ComparisonOperator, EvaluationConfig, Expression, FeatureDefinition,
+    FeatureType, InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind,
+    RuleVerificationStatus, VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
 use logicpearl_verify::{
@@ -103,7 +103,14 @@ pub struct DiscoverOutputFiles {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct OutputFiles {
+    pub artifact_dir: String,
+    pub artifact_manifest: String,
     pub pearl_ir: String,
+    pub build_report: String,
+    #[serde(default)]
+    pub native_binary: Option<String>,
+    #[serde(default)]
+    pub wasm_module: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -217,7 +224,11 @@ fn build_cache_manifest(
         .iter()
         .map(|row| BuildFingerprintRow {
             allowed: row.allowed,
-            features: row.features.iter().map(|(key, value)| (key.as_str(), value)).collect(),
+            features: row
+                .features
+                .iter()
+                .map(|(key, value)| (key.as_str(), value))
+                .collect(),
         })
         .collect();
     let pinned_rules_fingerprint = options
@@ -306,7 +317,8 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
     let artifact_set_path = options.output_dir.join("artifact_set.json");
     if artifact_set_path.exists() && discover_report_path.exists() {
         if load_cache_manifest(&discover_cache_path)?.as_ref() == Some(&discover_manifest) {
-            let mut cached: DiscoverResult = serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
+            let mut cached: DiscoverResult =
+                serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
             cached.cache_hit = true;
             for artifact in &mut cached.artifacts {
                 artifact.cache_hit = true;
@@ -328,7 +340,12 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
     let feature_columns: Vec<String> = headers
         .iter()
-        .filter(|header| !options.target_columns.iter().any(|target| target == *header))
+        .filter(|header| {
+            !options
+                .target_columns
+                .iter()
+                .any(|target| target == *header)
+        })
         .map(ToOwned::to_owned)
         .collect();
     if feature_columns.is_empty() {
@@ -395,9 +412,9 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         .unwrap_or_default();
 
     for target in &options.target_columns {
-        let target_rows = per_target_rows
-            .remove(target)
-            .ok_or_else(|| LogicPearlError::message(format!("missing rows for target {target:?}")))?;
+        let target_rows = per_target_rows.remove(target).ok_or_else(|| {
+            LogicPearlError::message(format!("missing rows for target {target:?}"))
+        })?;
         let denied_count = target_rows.iter().filter(|row| !row.allowed).count();
         let allowed_count = target_rows.iter().filter(|row| row.allowed).count();
         if denied_count == 0 {
@@ -467,7 +484,10 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         rows: row_count,
         features: feature_columns,
         targets: options.target_columns.clone(),
-        cached_artifacts: artifacts.iter().filter(|artifact| artifact.cache_hit).count(),
+        cached_artifacts: artifacts
+            .iter()
+            .filter(|artifact| artifact.cache_hit)
+            .count(),
         cache_hit: false,
         artifacts,
         skipped_targets,
@@ -502,7 +522,8 @@ pub fn build_pearl_from_rows(
     let pearl_ir_path = options.output_dir.join("pearl.ir.json");
     if pearl_ir_path.exists() && build_report_path.exists() {
         if load_cache_manifest(&build_cache_path)?.as_ref() == Some(&build_manifest) {
-            let mut cached: BuildResult = serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
+            let mut cached: BuildResult =
+                serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
             cached.cache_hit = true;
             return Ok(cached);
         }
@@ -552,7 +573,16 @@ pub fn build_pearl_from_rows(
         training_parity,
         cache_hit: false,
         output_files: OutputFiles {
+            artifact_dir: options.output_dir.display().to_string(),
+            artifact_manifest: options
+                .output_dir
+                .join("artifact.json")
+                .display()
+                .to_string(),
             pearl_ir: pearl_ir_path.display().to_string(),
+            build_report: build_report_path.display().to_string(),
+            native_binary: None,
+            wasm_module: None,
         },
     };
 
@@ -756,7 +786,9 @@ pub fn dedupe_rules_by_signature(rules: Vec<RuleDefinition>) -> Vec<RuleDefiniti
 fn prefer_rule(left: &RuleDefinition, right: &RuleDefinition) -> Ordering {
     verification_rank(left)
         .cmp(&verification_rank(right))
-        .then_with(|| expression_complexity(&right.deny_when).cmp(&expression_complexity(&left.deny_when)))
+        .then_with(|| {
+            expression_complexity(&right.deny_when).cmp(&expression_complexity(&left.deny_when))
+        })
 }
 
 fn verification_rank(rule: &RuleDefinition) -> i32 {
@@ -864,7 +896,9 @@ fn discover_residual_rules(
     Ok(candidates
         .into_iter()
         .enumerate()
-        .map(|(index, candidate)| residual_rule_from_candidate(gate.rules.len() as u32 + index as u32, candidate))
+        .map(|(index, candidate)| {
+            residual_rule_from_candidate(gate.rules.len() as u32 + index as u32, candidate)
+        })
         .collect())
 }
 
@@ -889,10 +923,9 @@ fn refine_rules_unique_coverage(
             if !expression_matches(&rule.deny_when, &row.features) {
                 continue;
             }
-            let matched_by_other = rules
-                .iter()
-                .enumerate()
-                .any(|(other_index, other)| other_index != rule_index && expression_matches(&other.deny_when, &row.features));
+            let matched_by_other = rules.iter().enumerate().any(|(other_index, other)| {
+                other_index != rule_index && expression_matches(&other.deny_when, &row.features)
+            });
             if matched_by_other {
                 continue;
             }
@@ -903,7 +936,9 @@ fn refine_rules_unique_coverage(
             }
         }
 
-        if unique_negative_rows.len() < options.min_unique_false_positives || unique_positive_rows.is_empty() {
+        if unique_negative_rows.len() < options.min_unique_false_positives
+            || unique_positive_rows.is_empty()
+        {
             refined.push(rule.clone());
             continue;
         }
@@ -944,8 +979,10 @@ fn refine_rules_unique_coverage(
                 let better = match &best_addition {
                     None => true,
                     Some((_best, best_positive_hits, best_negative_hits)) => {
-                        let candidate_reduction = current_negative_hits.saturating_sub(negative_hits);
-                        let best_reduction = current_negative_hits.saturating_sub(*best_negative_hits);
+                        let candidate_reduction =
+                            current_negative_hits.saturating_sub(negative_hits);
+                        let best_reduction =
+                            current_negative_hits.saturating_sub(*best_negative_hits);
                         match candidate_reduction.cmp(&best_reduction) {
                             Ordering::Greater => true,
                             Ordering::Less => false,
@@ -990,13 +1027,29 @@ fn best_candidate_rule(
         if values.iter().all(|value| value.is_number()) {
             let unique_thresholds = numeric_thresholds(rows, denied_indices, &feature);
             for threshold in unique_thresholds {
-                for op in [ComparisonOperator::Lte, ComparisonOperator::Eq, ComparisonOperator::Gt] {
+                for op in [
+                    ComparisonOperator::Lte,
+                    ComparisonOperator::Eq,
+                    ComparisonOperator::Gt,
+                ] {
                     let candidate = CandidateRule {
                         feature: feature.clone(),
                         op: op.clone(),
                         value: Value::Number(Number::from_f64(threshold).unwrap()),
-                        denied_coverage: coverage_for(rows, denied_indices, &feature, &op, threshold),
-                        false_positives: coverage_for(rows, allowed_indices, &feature, &op, threshold),
+                        denied_coverage: coverage_for(
+                            rows,
+                            denied_indices,
+                            &feature,
+                            &op,
+                            threshold,
+                        ),
+                        false_positives: coverage_for(
+                            rows,
+                            allowed_indices,
+                            &feature,
+                            &op,
+                            threshold,
+                        ),
                     };
                     consider_candidate(&mut best, candidate);
                 }
@@ -1030,7 +1083,8 @@ fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule
     match best {
         None => *best = Some(candidate),
         Some(current) => {
-            let candidate_net = candidate.denied_coverage as isize - candidate.false_positives as isize;
+            let candidate_net =
+                candidate.denied_coverage as isize - candidate.false_positives as isize;
             let current_net = current.denied_coverage as isize - current.false_positives as isize;
             let better = match candidate_net.cmp(&current_net) {
                 Ordering::Greater => true,
@@ -1038,11 +1092,13 @@ fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule
                 Ordering::Equal => match candidate.false_positives.cmp(&current.false_positives) {
                     Ordering::Less => true,
                     Ordering::Greater => false,
-                    Ordering::Equal => match candidate.denied_coverage.cmp(&current.denied_coverage) {
-                        Ordering::Greater => true,
-                        Ordering::Less => false,
-                        Ordering::Equal => candidate.feature < current.feature,
-                    },
+                    Ordering::Equal => {
+                        match candidate.denied_coverage.cmp(&current.denied_coverage) {
+                            Ordering::Greater => true,
+                            Ordering::Less => false,
+                            Ordering::Equal => candidate.feature < current.feature,
+                        }
+                    }
                 },
             };
             if better {
@@ -1052,7 +1108,11 @@ fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule
     }
 }
 
-fn numeric_thresholds(rows: &[DecisionTraceRow], denied_indices: &[usize], feature: &str) -> Vec<f64> {
+fn numeric_thresholds(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    feature: &str,
+) -> Vec<f64> {
     let mut thresholds: BTreeSet<i64> = BTreeSet::new();
     for index in denied_indices {
         if let Some(value) = rows[*index].features.get(feature).and_then(Value::as_f64) {
@@ -1090,7 +1150,12 @@ fn coverage_for(
         .count()
 }
 
-fn string_coverage_for(rows: &[DecisionTraceRow], indices: &[usize], feature: &str, expected: &str) -> usize {
+fn string_coverage_for(
+    rows: &[DecisionTraceRow],
+    indices: &[usize],
+    feature: &str,
+    expected: &str,
+) -> usize {
     indices
         .iter()
         .filter(|index| {
@@ -1122,7 +1187,10 @@ fn rule_from_candidate(bit: u32, candidate: &CandidateRule) -> RuleDefinition {
     }
 }
 
-fn residual_rule_from_candidate(bit: u32, candidate: BooleanConjunctionCandidate) -> RuleDefinition {
+fn residual_rule_from_candidate(
+    bit: u32,
+    candidate: BooleanConjunctionCandidate,
+) -> RuleDefinition {
     let deny_when = if candidate.required_true_features.len() == 1 {
         Expression::Comparison(ComparisonExpression {
             feature: candidate.required_true_features[0].clone(),
@@ -1190,7 +1258,10 @@ fn expression_matches(expression: &Expression, features: &HashMap<String, Value>
     }
 }
 
-fn comparison_matches(comparison: &ComparisonExpression, features: &HashMap<String, Value>) -> bool {
+fn comparison_matches(
+    comparison: &ComparisonExpression,
+    features: &HashMap<String, Value>,
+) -> bool {
     let Some(value) = features.get(&comparison.feature) else {
         return false;
     };
@@ -1213,7 +1284,9 @@ fn comparison_matches(comparison: &ComparisonExpression, features: &HashMap<Stri
 }
 
 fn rule_contains_feature(rule: &RuleDefinition, feature: &str) -> bool {
-    expression_features(&rule.deny_when).iter().any(|existing| existing == feature)
+    expression_features(&rule.deny_when)
+        .iter()
+        .any(|existing| existing == feature)
 }
 
 fn expression_features(expression: &Expression) -> Vec<String> {
@@ -1225,10 +1298,16 @@ fn expression_features(expression: &Expression) -> Vec<String> {
     }
 }
 
-fn rule_with_added_condition(rule: &RuleDefinition, addition: ComparisonExpression) -> RuleDefinition {
+fn rule_with_added_condition(
+    rule: &RuleDefinition,
+    addition: ComparisonExpression,
+) -> RuleDefinition {
     let deny_when = match &rule.deny_when {
         Expression::Comparison(existing) => Expression::All {
-            all: vec![Expression::Comparison(existing.clone()), Expression::Comparison(addition)],
+            all: vec![
+                Expression::Comparison(existing.clone()),
+                Expression::Comparison(addition),
+            ],
         },
         Expression::All { all } => {
             let mut next = all.clone();
@@ -1257,7 +1336,10 @@ fn infer_binary_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {
             let mut names: Vec<String> = row
                 .features
                 .keys()
-                .filter(|feature| rows.iter().all(|row| is_binary_value(row.features.get(*feature))))
+                .filter(|feature| {
+                    rows.iter()
+                        .all(|row| is_binary_value(row.features.get(*feature)))
+                })
                 .cloned()
                 .collect();
             names.sort();
@@ -1277,7 +1359,10 @@ fn is_binary_value(value: Option<&Value>) -> bool {
     }
 }
 
-fn boolean_feature_map(features: &HashMap<String, Value>, binary_features: &[String]) -> BTreeMap<String, bool> {
+fn boolean_feature_map(
+    features: &HashMap<String, Value>,
+    binary_features: &[String],
+) -> BTreeMap<String, bool> {
     binary_features
         .iter()
         .map(|feature| {
@@ -1336,10 +1421,9 @@ fn parse_scalar(raw: &str) -> Result<Value> {
         return Ok(Value::Number(Number::from(parsed)));
     }
     if let Ok(parsed) = value.parse::<f64>() {
-        return Ok(Value::Number(
-            Number::from_f64(parsed)
-                .ok_or_else(|| LogicPearlError::message("encountered non-finite float"))?,
-        ));
+        return Ok(Value::Number(Number::from_f64(parsed).ok_or_else(
+            || LogicPearlError::message("encountered non-finite float"),
+        )?));
     }
     Ok(Value::String(value.to_string()))
 }
@@ -1358,12 +1442,15 @@ impl CreateDirAllExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv, discover_residual_rules,
-        gate_from_rules, load_decision_traces, merge_discovered_and_pinned_rules, rule_from_candidate,
-        BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow, DiscoverOptions,
-        PinnedRuleSet, ResidualPassOptions,
+        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv,
+        discover_residual_rules, gate_from_rules, load_decision_traces,
+        merge_discovered_and_pinned_rules, rule_from_candidate, BuildOptions, CandidateRule,
+        ComparisonOperator, DecisionTraceRow, DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
     };
-    use logicpearl_ir::{ComparisonExpression, Expression, LogicPearlGateIr, RuleDefinition, RuleKind, RuleVerificationStatus};
+    use logicpearl_ir::{
+        ComparisonExpression, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
+        RuleVerificationStatus,
+    };
     use serde_json::{Number, Value};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1568,11 +1655,7 @@ mod tests {
     fn build_reuses_cached_output_when_rows_and_options_match() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
-        std::fs::write(
-            &csv_path,
-            "flag,allowed\n0,allowed\n1,denied\n1,denied\n",
-        )
-        .unwrap();
+        std::fs::write(&csv_path, "flag,allowed\n0,allowed\n1,denied\n1,denied\n").unwrap();
         let output_dir = dir.path().join("output");
         let options = BuildOptions {
             output_dir: output_dir.clone(),

@@ -103,8 +103,8 @@ logicpearl build examples/getting_started/decision_traces.csv --output-dir examp
 ```
 
 What you should see:
-- a discovered pearl emitted to `examples/getting_started/output/pearl.ir.json`
-- a `build_report.json` with the number of rows, discovered rules, and training parity
+- a named artifact directory at `examples/getting_started/output`
+- `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, and a `.wasm` module inside it
 
 You can also ask the public builder to do a second pass:
 - `--residual-pass` adds solver-backed recovery for missed denied slices
@@ -120,28 +120,28 @@ logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/
 Inspect the artifact:
 
 ```bash
-logicpearl inspect examples/getting_started/output/pearl.ir.json
+logicpearl inspect examples/getting_started/output
 ```
 
 Run it on a new input:
 
 ```bash
-logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json
+logicpearl run examples/getting_started/output examples/getting_started/new_input.json
 ```
 
 Compile it into a standalone native executable:
 
 ```bash
-logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo
-./examples/getting_started/output/authz-demo.pearl examples/getting_started/new_input.json
+./examples/getting_started/output/decision_traces.pearl examples/getting_started/new_input.json
 ```
 
-You can also target specific platforms by Rust target triple:
+You can also recompile for specific platforms by Rust target triple:
 
 ```bash
-logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-unknown-linux-gnu
-logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-pc-windows-msvc
-logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target aarch64-apple-darwin
+logicpearl compile examples/getting_started/output --name authz-demo --target x86_64-unknown-linux-gnu
+logicpearl compile examples/getting_started/output --name authz-demo --target x86_64-pc-windows-msvc
+logicpearl compile examples/getting_started/output --name authz-demo --target aarch64-apple-darwin
+logicpearl compile examples/getting_started/output --name authz-demo --target wasm32-unknown-unknown
 ```
 
 That is the simplest LogicPearl loop:
@@ -167,11 +167,11 @@ You can also validate artifact freshness and runtime parity directly:
 ```bash
 logicpearl conformance write-manifest \
   --output /tmp/authz_manifest.json \
-  --artifact pearl=examples/getting_started/output/pearl.ir.json \
+  --artifact pearl=examples/getting_started/output/artifact.json \
   --data traces=examples/getting_started/decision_traces.csv
 
 logicpearl conformance validate-artifacts /tmp/authz_manifest.json
-logicpearl conformance runtime-parity examples/getting_started/output/pearl.ir.json examples/getting_started/decision_traces.csv --label-column allowed
+logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed
 ```
 
 That gives you:
@@ -295,7 +295,7 @@ logicpearl build \
 Verify an emitted pearl through a Python verify plugin:
 
 ```bash
-logicpearl verify examples/getting_started/output/pearl.ir.json \
+logicpearl verify examples/getting_started/output \
   --plugin-manifest examples/plugins/python_verify/manifest.json \
   --json
 ```
