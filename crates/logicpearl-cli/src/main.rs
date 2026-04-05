@@ -9,8 +9,8 @@ use logicpearl_discovery::{
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
-    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_label,
-    guardrails_signal_phrases, load_artifact, observe_with_artifact, observe_with_profile,
+    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_feature,
+    guardrails_signal_label, guardrails_signal_phrases, load_artifact, observe_with_artifact, observe_with_profile,
     profile_id as native_profile_id, profile_registry, prompt_matches_phrase,
     set_guardrails_signal_phrases, status as observer_status, GuardrailsSignal,
     NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CLI_LONG_ABOUT: &str = "\
@@ -61,7 +61,9 @@ Examples:
 const BENCHMARK_AFTER_HELP: &str = "\
 Examples:
   logicpearl benchmark list-profiles
+  logicpearl benchmark detect-profile ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --json
   logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl
+  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl
   logicpearl benchmark observe /tmp/salad_dev.jsonl --output /tmp/salad_dev_observed.jsonl
   logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
@@ -73,6 +75,7 @@ Examples:
   logicpearl observer run --observer-profile guardrails-v1 --input examples/plugins/python_observer/raw_input.json --json
   logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json
   logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json
+  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_observed.jsonl --signal instruction-override --bootstrap observed-feature --output /tmp/guardrails_observer.synthesized.json
   logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
 
 const QUICKSTART_AFTER_HELP: &str = "\
@@ -160,6 +163,8 @@ enum ConformanceCommand {
 enum BenchmarkCommand {
     /// List the built-in benchmark adapter profiles.
     ListProfiles(BenchmarkListProfilesArgs),
+    /// Detect which built-in benchmark adapter profile fits a raw dataset.
+    DetectProfile(BenchmarkDetectProfileArgs),
     /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
     Adapt(BenchmarkAdaptArgs),
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
@@ -188,6 +193,14 @@ struct BenchmarkListProfilesArgs {
     json: bool,
 }
 
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl benchmark detect-profile ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --json")]
+struct BenchmarkDetectProfileArgs {
+    raw_dataset: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum QuickstartTopic {
     Build,
@@ -210,6 +223,14 @@ enum ObserverSignalArg {
     DataAccessOutsideScope,
     IndirectDocumentAuthority,
     BenignQuestion,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum ObserverBootstrapArg {
+    Auto,
+    ObservedFeature,
+    Route,
+    Seed,
 }
 
 #[derive(Debug, Args)]
@@ -343,7 +364,7 @@ struct BenchmarkRunArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_benign.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl")]
+#[command(after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_benign.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl")]
 struct BenchmarkAdaptArgs {
     raw_dataset: PathBuf,
     /// Built-in adapter profile to use for this dataset.
@@ -368,6 +389,7 @@ struct BenchmarkAdaptArgs {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum BenchmarkAdapterProfile {
+    Auto,
     SaladBaseSet,
     SaladAttackEnhancedSet,
     Alert,
@@ -747,6 +769,12 @@ struct ObserverSynthesizeArgs {
     /// Which guardrail signal to synthesize.
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
+    /// How LogicPearl should choose positive examples before Z3 selects a compact phrase subset.
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto)]
+    bootstrap: ObserverBootstrapArg,
+    /// Optional route labels to treat as positive examples when using route-based bootstrapping.
+    #[arg(long, value_delimiter = ',')]
+    positive_routes: Vec<String>,
     /// Where to write the synthesized observer artifact.
     #[arg(long)]
     output: PathBuf,
@@ -769,6 +797,12 @@ struct ObserverRepairArgs {
     /// Which guardrail signal to repair.
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
+    /// How LogicPearl should choose positive examples before Z3 repairs the phrase family.
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto)]
+    bootstrap: ObserverBootstrapArg,
+    /// Optional route labels to treat as positive examples when using route-based bootstrapping.
+    #[arg(long, value_delimiter = ',')]
+    positive_routes: Vec<String>,
     /// Where to write the repaired observer artifact.
     #[arg(long)]
     output: PathBuf,
@@ -801,6 +835,21 @@ struct ObservedBenchmarkCase {
     #[serde(default)]
     category: Option<String>,
     features: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone)]
+struct SynthesisCase {
+    prompt: String,
+    expected_route: String,
+    features: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ObserverBootstrapMode {
+    ObservedFeature,
+    Route,
+    Seed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -941,6 +990,9 @@ fn main() -> Result<()> {
             command: BenchmarkCommand::ListProfiles(args),
         } => run_benchmark_list_profiles(args),
         Commands::Benchmark {
+            command: BenchmarkCommand::DetectProfile(args),
+        } => run_benchmark_detect_profile(args),
+        Commands::Benchmark {
             command: BenchmarkCommand::Adapt(args),
         } => run_benchmark_adapt(args),
         Commands::Benchmark {
@@ -1026,6 +1078,7 @@ fn main() -> Result<()> {
 impl BenchmarkAdapterProfile {
     fn id(&self) -> &'static str {
         match self {
+            Self::Auto => "auto",
             Self::SaladBaseSet => "salad-base-set",
             Self::SaladAttackEnhancedSet => "salad-attack-enhanced-set",
             Self::Alert => "alert",
@@ -1036,6 +1089,7 @@ impl BenchmarkAdapterProfile {
 
     fn description(&self) -> &'static str {
         match self {
+            Self::Auto => "Detect the adapter profile from the raw dataset shape when the format is obvious.",
             Self::SaladBaseSet => "Adapt Salad-Data benign base_set rows into allow benchmark cases.",
             Self::SaladAttackEnhancedSet => {
                 "Adapt Salad-Data attack_enhanced_set rows into deny benchmark cases."
@@ -1048,6 +1102,7 @@ impl BenchmarkAdapterProfile {
 
     fn source_format(&self) -> &'static str {
         match self {
+            Self::Auto => "Any supported raw benchmark format",
             Self::SaladBaseSet => "Salad base_set JSON array",
             Self::SaladAttackEnhancedSet => "Salad attack_enhanced_set JSON array",
             Self::Alert => "JSON array or JSONL of prompt-like objects",
@@ -1058,6 +1113,7 @@ impl BenchmarkAdapterProfile {
 
     fn default_route(&self) -> &'static str {
         match self {
+            Self::Auto => "detected",
             Self::SaladBaseSet | Self::Squad => "allow",
             Self::SaladAttackEnhancedSet | Self::Alert => "deny",
             Self::Pint => "mixed",
@@ -1067,6 +1123,7 @@ impl BenchmarkAdapterProfile {
 
 fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
     [
+        BenchmarkAdapterProfile::Auto,
         BenchmarkAdapterProfile::SaladBaseSet,
         BenchmarkAdapterProfile::SaladAttackEnhancedSet,
         BenchmarkAdapterProfile::Alert,
@@ -1383,6 +1440,21 @@ fn run_benchmark_list_profiles(args: BenchmarkListProfilesArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_benchmark_detect_profile(args: BenchmarkDetectProfileArgs) -> Result<()> {
+    let profile = detect_benchmark_adapter_profile(&args.raw_dataset)?;
+    let response = serde_json::json!({
+        "raw_dataset": args.raw_dataset.display().to_string(),
+        "detected_profile": profile.id(),
+    });
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Detected".bold().bright_green(), profile.id().bold());
+        println!("  {} {}", "Dataset".bright_black(), args.raw_dataset.display());
+    }
+    Ok(())
+}
+
 fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
     let summary = emit_trace_tables(&args.observed_jsonl, &args.config, &args.output_dir)?;
 
@@ -1401,7 +1473,12 @@ fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
 }
 
 fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
-    match args.profile {
+    let profile = match args.profile {
+        BenchmarkAdapterProfile::Auto => detect_benchmark_adapter_profile(&args.raw_dataset)?,
+        other => other,
+    };
+    match profile {
+        BenchmarkAdapterProfile::Auto => unreachable!("auto profile should be resolved before dispatch"),
         BenchmarkAdapterProfile::SaladBaseSet => run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
             raw_salad_json: args.raw_dataset,
             subset: SaladSubset::BaseSet,
@@ -1447,6 +1524,65 @@ fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             json: args.json,
         }),
     }
+}
+
+fn detect_benchmark_adapter_profile(path: &Path) -> Result<BenchmarkAdapterProfile> {
+    let raw = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err("could not read raw benchmark dataset for profile detection")?;
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext, "yaml" | "yml"))
+        .unwrap_or(false)
+    {
+        if let Ok(rows) = serde_yaml::from_str::<Vec<PintRawCase>>(&raw) {
+            if !rows.is_empty() {
+                return Ok(BenchmarkAdapterProfile::Pint);
+            }
+        }
+    }
+
+    if let Ok(dataset) = serde_json::from_str::<SquadDataset>(&raw) {
+        if !dataset.data.is_empty() {
+            return Ok(BenchmarkAdapterProfile::Squad);
+        }
+    }
+
+    if let Ok(base_rows) = serde_json::from_str::<Vec<SaladBaseCase>>(&raw) {
+        if !base_rows.is_empty() {
+            return Ok(BenchmarkAdapterProfile::SaladBaseSet);
+        }
+    }
+
+    if let Ok(attack_rows) = serde_json::from_str::<Vec<SaladAttackCase>>(&raw) {
+        if !attack_rows.is_empty() {
+            return Ok(BenchmarkAdapterProfile::SaladAttackEnhancedSet);
+        }
+    }
+
+    if let Ok(rows) = parse_json_object_rows(&raw) {
+        if !rows.is_empty() {
+            let first = &rows[0];
+            if first.contains_key("prompt")
+                || first.contains_key("instruction")
+                || first.contains_key("text")
+                || first.contains_key("question")
+                || first.contains_key("input")
+                || first.contains_key("content")
+            {
+                return Ok(BenchmarkAdapterProfile::Alert);
+            }
+        }
+    }
+
+    Err(guidance(
+        format!(
+            "could not auto-detect a built-in benchmark adapter profile for {}",
+            path.display()
+        ),
+        "Use `logicpearl benchmark list-profiles` to inspect supported profiles, then rerun with --profile <profile>.",
+    ))
 }
 
 fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
@@ -3199,6 +3335,169 @@ fn load_benchmark_cases(path: &PathBuf) -> Result<Vec<BenchmarkCase>> {
     Ok(cases)
 }
 
+fn load_synthesis_cases(path: &PathBuf) -> Result<Vec<SynthesisCase>> {
+    let file = fs::File::open(path)
+        .into_diagnostic()
+        .wrap_err("could not open synthesis benchmark JSONL")?;
+    let reader = BufReader::new(file);
+    let mut cases = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line
+            .into_diagnostic()
+            .wrap_err("failed to read synthesis benchmark line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(trimmed)
+            .into_diagnostic()
+            .wrap_err(format!("invalid JSON on line {}", line_no + 1))?;
+        let object = value.as_object().ok_or_else(|| {
+            guidance(
+                format!("invalid synthesis row on line {}", line_no + 1),
+                "Each JSONL row must be a benchmark case or observed benchmark case object.",
+            )
+        })?;
+
+        let prompt = object
+            .get("input")
+            .and_then(Value::as_object)
+            .and_then(|input| input.get("prompt"))
+            .and_then(Value::as_str)
+            .map(|prompt| prompt.to_ascii_lowercase())
+            .ok_or_else(|| {
+                guidance(
+                    format!("synthesis row {} is missing input.prompt", line_no + 1),
+                    "Use benchmark-case JSONL or observed benchmark-case JSONL with an input.prompt field.",
+                )
+            })?;
+        let expected_route = object
+            .get("expected_route")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                guidance(
+                    format!("synthesis row {} is missing expected_route", line_no + 1),
+                    "Each benchmark row must include an expected_route string.",
+                )
+            })?;
+        let features = object
+            .get("features")
+            .and_then(Value::as_object)
+            .cloned();
+
+        cases.push(SynthesisCase {
+            prompt,
+            expected_route,
+            features,
+        });
+    }
+    Ok(cases)
+}
+
+fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
+    match signal {
+        GuardrailsSignal::InstructionOverride => &["deny_untrusted_instruction", "deny_instruction_boundary"],
+        GuardrailsSignal::SystemPrompt => &["deny_untrusted_instruction", "deny_system_prompt"],
+        GuardrailsSignal::SecretExfiltration => &["deny_exfiltration_risk", "deny_secret_exfiltration"],
+        GuardrailsSignal::ToolMisuse => &["deny_tool_use", "deny_tool_misuse"],
+        GuardrailsSignal::DataAccessOutsideScope => &["deny_exfiltration_risk", "needs_scope_reduction"],
+        GuardrailsSignal::IndirectDocumentAuthority => {
+            &["deny_untrusted_instruction", "deny_indirect_document_authority"]
+        }
+        GuardrailsSignal::BenignQuestion => &["allow"],
+    }
+}
+
+fn infer_bootstrap_examples(
+    cases: &[SynthesisCase],
+    signal: GuardrailsSignal,
+    bootstrap: ObserverBootstrapArg,
+    positive_routes: &[String],
+    seed_phrases: &[String],
+) -> Result<(ObserverBootstrapMode, Vec<String>, Vec<String>)> {
+    let signal_feature = guardrails_signal_feature(signal);
+
+    if matches!(bootstrap, ObserverBootstrapArg::Auto | ObserverBootstrapArg::ObservedFeature) {
+        let positives: Vec<String> = cases
+            .iter()
+            .filter(|case| case.features.as_ref().map(|features| boolish(features.get(signal_feature))).unwrap_or(false))
+            .map(|case| case.prompt.clone())
+            .collect();
+        if !positives.is_empty() {
+            let negatives: Vec<String> = cases
+                .iter()
+                .filter(|case| {
+                    case.features
+                        .as_ref()
+                        .map(|features| !boolish(features.get(signal_feature)))
+                        .unwrap_or(false)
+                })
+                .map(|case| case.prompt.clone())
+                .collect();
+            return Ok((ObserverBootstrapMode::ObservedFeature, positives, negatives));
+        }
+        if matches!(bootstrap, ObserverBootstrapArg::ObservedFeature) {
+            return Err(guidance(
+                format!("no observed feature rows expose {}", signal_feature),
+                "Use observed benchmark JSONL with a features object, switch to --bootstrap route, or let auto fall back.",
+            ));
+        }
+    }
+
+    if matches!(bootstrap, ObserverBootstrapArg::Auto | ObserverBootstrapArg::Route) {
+        let route_hints: Vec<String> = if positive_routes.is_empty() {
+            default_positive_routes_for_signal(signal)
+                .iter()
+                .map(|route| route.to_string())
+                .collect()
+        } else {
+            positive_routes.to_vec()
+        };
+        let positives: Vec<String> = cases
+            .iter()
+            .filter(|case| route_hints.iter().any(|route| route == &case.expected_route))
+            .map(|case| case.prompt.clone())
+            .collect();
+        if !positives.is_empty() {
+            let negatives: Vec<String> = cases
+                .iter()
+                .filter(|case| case.expected_route == "allow")
+                .map(|case| case.prompt.clone())
+                .collect();
+            return Ok((ObserverBootstrapMode::Route, positives, negatives));
+        }
+        if matches!(bootstrap, ObserverBootstrapArg::Route) {
+            return Err(guidance(
+                "route-based observer bootstrapping found no positive examples",
+                "Pass --positive-routes <route_a,route_b>, use observed benchmark rows, or let auto fall back.",
+            ));
+        }
+    }
+
+    let positives: Vec<String> = cases
+        .iter()
+        .filter(|case| case.expected_route != "allow")
+        .filter(|case| seed_phrases.iter().any(|phrase| prompt_matches_phrase(&case.prompt, phrase)))
+        .map(|case| case.prompt.clone())
+        .collect();
+    if positives.is_empty() {
+        return Err(guidance(
+            format!(
+                "could not find positive examples for {} with the current bootstrap strategy",
+                guardrails_signal_label(signal)
+            ),
+            "Use observed benchmark rows, pass --positive-routes, or provide a broader seed artifact.",
+        ));
+    }
+    let negatives: Vec<String> = cases
+        .iter()
+        .filter(|case| case.expected_route == "allow")
+        .map(|case| case.prompt.clone())
+        .collect();
+    Ok((ObserverBootstrapMode::Seed, positives, negatives))
+}
+
 fn parse_json_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
     if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) {
         let mut rows = Vec::with_capacity(items.len());
@@ -3507,7 +3806,7 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
         )
     })?;
 
-    let cases = load_benchmark_cases(&args.benchmark_cases)?;
+    let cases = load_synthesis_cases(&args.benchmark_cases)?;
     if cases.is_empty() {
         return Err(guidance(
             "benchmark dataset is empty",
@@ -3516,35 +3815,13 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
     }
 
     let seed_phrases = guardrails_signal_phrases(config, signal);
-    let mut positive_prompts = Vec::new();
-    let mut negative_prompts = Vec::new();
-    let mut seed_positive_cases = 0usize;
-
-    for case in &cases {
-        let prompt = case
-            .input
-            .get("prompt")
-            .and_then(Value::as_str)
-            .map(|prompt| prompt.to_ascii_lowercase());
-        let Some(prompt) = prompt else {
-            continue;
-        };
-        if case.expected_route == "allow" {
-            negative_prompts.push(prompt);
-            continue;
-        }
-        if seed_phrases.iter().any(|phrase| prompt_matches_phrase(&prompt, phrase)) {
-            positive_prompts.push(prompt);
-            seed_positive_cases += 1;
-        }
-    }
-
-    if positive_prompts.is_empty() {
-        return Err(guidance(
-            format!("no denied benchmark cases matched the seed phrases for {signal_label}"),
-            "Use a broader seed artifact, a different signal, or a benchmark dataset with clearer signal examples.",
-        ));
-    }
+    let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
+        &cases,
+        signal,
+        args.bootstrap,
+        &args.positive_routes,
+        seed_phrases,
+    )?;
 
     let candidates =
         generate_phrase_candidates(signal, &positive_prompts, &negative_prompts, args.max_candidates);
@@ -3595,7 +3872,9 @@ fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
 
     let response = serde_json::json!({
         "signal": signal_label,
-        "seed_case_count": seed_positive_cases,
+        "bootstrap_mode": bootstrap_mode,
+        "positive_case_count": positive_prompts.len(),
+        "negative_case_count": negative_prompts.len(),
         "candidate_count": candidates.len(),
         "phrases_before": seed_phrases,
         "phrases_after": synthesized_phrases,
@@ -3641,55 +3920,49 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         ));
     }
 
-    let cases = load_benchmark_cases(&args.benchmark_cases)?;
+    let cases = load_synthesis_cases(&args.benchmark_cases)?;
     if cases.is_empty() {
         return Err(guidance(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running observer repair.",
         ));
     }
-
-    let lower_prompts: Vec<Option<String>> = cases
-        .iter()
-        .map(|case| {
-            case.input
-                .get("prompt")
-                .and_then(Value::as_str)
-                .map(|prompt| prompt.to_ascii_lowercase())
-        })
-        .collect();
+    let (bootstrap_mode, positive_prompts, negative_prompts) = infer_bootstrap_examples(
+        &cases,
+        signal,
+        args.bootstrap,
+        &args.positive_routes,
+        &phrases,
+    )?;
 
     let mut positive_constraints: Vec<Vec<usize>> = Vec::new();
     let mut negative_constraints: Vec<Vec<usize>> = Vec::new();
-    let mut positives_seen = 0usize;
-    let mut negatives_seen = 0usize;
 
-    for (case, prompt) in cases.iter().zip(lower_prompts.iter()) {
-        let prompt = match prompt {
-            Some(prompt) => prompt,
-            None => continue,
-        };
+    for prompt in &positive_prompts {
         let matched: Vec<usize> = phrases
             .iter()
             .enumerate()
             .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
             .collect();
-        if matched.is_empty() {
-            continue;
-        }
-        if case.expected_route == "allow" {
-            negatives_seen += 1;
-            negative_constraints.push(matched);
-        } else {
-            positives_seen += 1;
+        if !matched.is_empty() {
             positive_constraints.push(matched);
+        }
+    }
+    for prompt in &negative_prompts {
+        let matched: Vec<usize> = phrases
+            .iter()
+            .enumerate()
+            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
+            .collect();
+        if !matched.is_empty() {
+            negative_constraints.push(matched);
         }
     }
 
     if positive_constraints.is_empty() {
         return Err(guidance(
-            format!("no denied benchmark cases currently match {signal_label} phrases"),
-            "Choose a signal that actually fires on denied cases or provide a more representative benchmark dataset.",
+            format!("no positive benchmark cases currently match {signal_label} phrases"),
+            "Choose a signal that already fires on some positive examples, switch bootstrap modes, or provide a broader benchmark dataset.",
         ));
     }
 
@@ -3733,6 +4006,7 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         "phrases_before": phrases,
         "phrases_after": repaired_phrases,
         "removed_phrases": removed_phrases,
+        "bootstrap_mode": bootstrap_mode,
         "positives_preserved": {
             "before": before_positives,
             "after": after_positives
@@ -3742,8 +4016,8 @@ fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
             "after": after_negatives
         },
         "matched_case_counts": {
-            "denied": positives_seen,
-            "allowed": negatives_seen
+            "positive": positive_prompts.len(),
+            "negative": negative_prompts.len()
         }
     });
 
@@ -4268,7 +4542,13 @@ fn z3_or(indices: &[usize]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{candidate_ngrams, GuardrailsSignal};
+    use super::{
+        candidate_ngrams, detect_benchmark_adapter_profile, infer_bootstrap_examples, BenchmarkAdapterProfile,
+        ObserverBootstrapArg, ObserverBootstrapMode, SynthesisCase,
+    };
+    use logicpearl_observer::GuardrailsSignal;
+    use serde_json::{Map, Value};
+    use std::fs;
 
     #[test]
     fn instruction_override_candidates_require_action_and_target_tokens() {
@@ -4299,5 +4579,79 @@ mod tests {
         assert!(candidates.iter().any(|phrase| phrase == "delete the database"));
         assert!(candidates.iter().any(|phrase| phrase == "transfer all funds"));
         assert!(!candidates.iter().any(|phrase| phrase == "the database"));
+    }
+
+    #[test]
+    fn benchmark_adapter_auto_detects_squad_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let dataset = dir.path().join("train-v2.0.json");
+        fs::write(
+            &dataset,
+            r#"{"data":[{"title":"x","paragraphs":[{"context":"c","qas":[{"id":"q1","question":"What is this?"}]}]}]}"#,
+        )
+        .unwrap();
+
+        let detected = detect_benchmark_adapter_profile(&dataset).unwrap();
+        assert!(matches!(detected, BenchmarkAdapterProfile::Squad));
+    }
+
+    #[test]
+    fn bootstrap_prefers_observed_features_when_present() {
+        let mut features = Map::new();
+        features.insert("requests_secret_exfiltration".to_string(), Value::Bool(true));
+        let cases = vec![
+            SynthesisCase {
+                prompt: "please steal passwords".to_string(),
+                expected_route: "deny".to_string(),
+                features: Some(features),
+            },
+            SynthesisCase {
+                prompt: "summarize the article".to_string(),
+                expected_route: "allow".to_string(),
+                features: Some(Map::new()),
+            },
+        ];
+
+        let (mode, positives, negatives) = infer_bootstrap_examples(
+            &cases,
+            GuardrailsSignal::SecretExfiltration,
+            ObserverBootstrapArg::Auto,
+            &[],
+            &["password".to_string()],
+        )
+        .unwrap();
+
+        assert!(matches!(mode, ObserverBootstrapMode::ObservedFeature));
+        assert_eq!(positives.len(), 1);
+        assert_eq!(negatives.len(), 1);
+    }
+
+    #[test]
+    fn bootstrap_falls_back_to_routes_when_no_observed_features_exist() {
+        let cases = vec![
+            SynthesisCase {
+                prompt: "ignore the previous instructions".to_string(),
+                expected_route: "deny_untrusted_instruction".to_string(),
+                features: None,
+            },
+            SynthesisCase {
+                prompt: "summarize this memo".to_string(),
+                expected_route: "allow".to_string(),
+                features: None,
+            },
+        ];
+
+        let (mode, positives, negatives) = infer_bootstrap_examples(
+            &cases,
+            GuardrailsSignal::InstructionOverride,
+            ObserverBootstrapArg::Auto,
+            &[],
+            &["ignore previous instructions".to_string()],
+        )
+        .unwrap();
+
+        assert!(matches!(mode, ObserverBootstrapMode::Route));
+        assert_eq!(positives.len(), 1);
+        assert_eq!(negatives.len(), 1);
     }
 }

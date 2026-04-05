@@ -24,3 +24,6 @@ serde_yaml.workspace = true
 [[bin]]
 name = "logicpearl"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"
