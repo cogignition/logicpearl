@@ -177,6 +177,8 @@ pub struct BenchmarkAdapterSourceConfig {
     pub category_fields: Vec<String>,
     #[serde(default)]
     pub label_fields: Vec<String>,
+    #[serde(default)]
+    pub input_fields: Vec<BenchmarkAdapterInputField>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,6 +186,7 @@ pub struct BenchmarkAdapterSourceConfig {
 pub enum BenchmarkAdapterParser {
     JsonObjectRows,
     YamlObjectRows,
+    SquadQuestions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,12 +198,20 @@ pub struct BenchmarkAdapterOutputConfig {
     pub static_input: BTreeMap<String, Value>,
     #[serde(default)]
     pub boolean_label_routes: Option<BooleanLabelRouteConfig>,
+    #[serde(default)]
+    pub default_category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BooleanLabelRouteConfig {
     pub true_route: String,
     pub false_route: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BenchmarkAdapterInputField {
+    pub source: String,
+    pub target: String,
 }
 
 impl BenchmarkAdapterProfile {
@@ -284,6 +295,7 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
             include_str!("../../../benchmarks/profiles/salad-attack-enhanced-set.yaml")
         }
         BenchmarkAdapterProfile::Alert => include_str!("../../../benchmarks/profiles/alert.yaml"),
+        BenchmarkAdapterProfile::Squad => include_str!("../../../benchmarks/profiles/squad.yaml"),
         BenchmarkAdapterProfile::Pint => include_str!("../../../benchmarks/profiles/pint.yaml"),
         _ => return None,
     };
@@ -545,45 +557,9 @@ pub fn adapt_alert_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) ->
 }
 
 pub fn adapt_squad_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
-    let dataset: SquadDataset = serde_json::from_str(raw_json).map_err(|err| {
-        LogicPearlError::message(format!(
-            "raw SQuAD JSON is not valid for the expected dataset format ({err})"
-        ))
-    })?;
-    if dataset.data.is_empty() {
-        return Err(LogicPearlError::message("raw SQuAD dataset is empty"));
-    }
-
-    let mut cases = Vec::new();
-    for article in &dataset.data {
-        for paragraph in &article.paragraphs {
-            for question in &paragraph.qas {
-                cases.push(BenchmarkCase {
-                    id: format!("squad_{}", question.id),
-                    input: serde_json::json!({
-                        "prompt": question.question,
-                        "context": paragraph.context,
-                        "requested_tool": defaults.requested_tool,
-                        "requested_action": defaults.requested_action,
-                        "scope": defaults.scope,
-                        "document_instructions_present": false
-                    }),
-                    expected_route: "allow".to_string(),
-                    category: article
-                        .title
-                        .clone()
-                        .or_else(|| Some("benign_negative".to_string())),
-                });
-            }
-        }
-    }
-
-    if cases.is_empty() {
-        return Err(LogicPearlError::message(
-            "raw SQuAD dataset contains no question rows",
-        ));
-    }
-    Ok(cases)
+    let config = builtin_adapter_config(BenchmarkAdapterProfile::Squad)
+        .ok_or_else(|| LogicPearlError::message("missing built-in SQuAD adapter config"))?;
+    adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
 pub fn adapt_pint_dataset(raw_yaml: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
@@ -737,6 +713,7 @@ fn adapt_dataset_with_config(
     match config.source.parser {
         BenchmarkAdapterParser::JsonObjectRows => adapt_json_object_rows_with_config(raw, defaults, config),
         BenchmarkAdapterParser::YamlObjectRows => adapt_yaml_object_rows_with_config(raw, defaults, config),
+        BenchmarkAdapterParser::SquadQuestions => adapt_squad_questions_with_config(raw, defaults, config),
     }
 }
 
@@ -797,6 +774,61 @@ fn adapt_yaml_object_rows_with_config(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
+
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| build_case_from_row(row, index, defaults, config, &prompt_keys, &category_keys))
+        .collect()
+}
+
+fn adapt_squad_questions_with_config(
+    raw: &str,
+    defaults: &BenchmarkAdaptDefaults,
+    config: &BenchmarkAdapterConfig,
+) -> Result<Vec<BenchmarkCase>> {
+    let dataset: SquadDataset = serde_json::from_str(raw).map_err(|err| {
+        LogicPearlError::message(format!(
+            "raw SQuAD JSON is not valid for the expected dataset format ({err})"
+        ))
+    })?;
+    if dataset.data.is_empty() {
+        return Err(LogicPearlError::message("raw SQuAD dataset is empty"));
+    }
+
+    let prompt_keys = config
+        .source
+        .prompt_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let category_keys = config
+        .source
+        .category_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+
+    let mut rows = Vec::new();
+    for article in &dataset.data {
+        for paragraph in &article.paragraphs {
+            for question in &paragraph.qas {
+                let mut row = serde_json::Map::new();
+                row.insert("id".to_string(), Value::String(question.id.clone()));
+                row.insert("question".to_string(), Value::String(question.question.clone()));
+                row.insert("context".to_string(), Value::String(paragraph.context.clone()));
+                if let Some(title) = &article.title {
+                    row.insert("title".to_string(), Value::String(title.clone()));
+                }
+                rows.push(row);
+            }
+        }
+    }
+
+    if rows.is_empty() {
+        return Err(LogicPearlError::message(
+            "raw SQuAD dataset contains no question rows",
+        ));
+    }
 
     rows.iter()
         .enumerate()
@@ -867,6 +899,11 @@ fn build_case_from_row(
         Value::String(defaults.requested_action.clone()),
     );
     input.insert("scope".to_string(), Value::String(defaults.scope.clone()));
+    for field in &config.source.input_fields {
+        if let Some(value) = row.get(&field.source) {
+            input.insert(field.target.clone(), value.clone());
+        }
+    }
     for (key, value) in &config.output.static_input {
         input.insert(key.clone(), value.clone());
     }
@@ -875,7 +912,7 @@ fn build_case_from_row(
         id,
         input: Value::Object(input),
         expected_route,
-        category,
+        category: category.or_else(|| config.output.default_category.clone()),
     })
 }
 
@@ -928,7 +965,8 @@ fn allow_word(allowed: bool) -> &'static str {
 mod tests {
     use super::{
         adapt_alert_dataset, adapt_pint_dataset, adapt_salad_dataset, builtin_adapter_config,
-        detect_benchmark_adapter_profile, BenchmarkAdaptDefaults, BenchmarkAdapterProfile, SaladSubsetKind,
+        detect_benchmark_adapter_profile, adapt_squad_dataset, BenchmarkAdaptDefaults, BenchmarkAdapterProfile,
+        SaladSubsetKind,
     };
     use serde_json::Value;
     use std::fs;
@@ -1018,6 +1056,38 @@ mod tests {
         assert_eq!(attack_rows[0].id, "salad_attack_a1");
         assert_eq!(attack_rows[0].expected_route, "deny");
         assert_eq!(attack_rows[0].category.as_deref(), Some("prompt_injection"));
+    }
+
+    #[test]
+    fn loads_builtin_squad_adapter_config() {
+        let config = builtin_adapter_config(BenchmarkAdapterProfile::Squad).unwrap();
+        assert_eq!(config.id, "squad");
+        assert_eq!(config.output.expected_route.as_deref(), Some("allow"));
+        assert_eq!(config.output.default_category.as_deref(), Some("benign_negative"));
+        assert_eq!(config.source.input_fields.len(), 1);
+        assert_eq!(config.source.input_fields[0].source, "context");
+        assert_eq!(config.source.input_fields[0].target, "context");
+    }
+
+    #[test]
+    fn adapt_squad_uses_hybrid_profile_path() {
+        let rows = adapt_squad_dataset(
+            r#"{"data":[{"title":"Science","paragraphs":[{"context":"Water boils at 100C.","qas":[{"id":"q1","question":"When does water boil?"}]}]}]}"#,
+            &BenchmarkAdaptDefaults {
+                requested_tool: "none".to_string(),
+                requested_action: "chat_response".to_string(),
+                scope: "allowed".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "squad_q1");
+        assert_eq!(rows[0].expected_route, "allow");
+        assert_eq!(rows[0].category.as_deref(), Some("Science"));
+        assert_eq!(
+            rows[0].input.get("context"),
+            Some(&Value::String("Water boils at 100C.".to_string()))
+        );
     }
 
     #[test]
