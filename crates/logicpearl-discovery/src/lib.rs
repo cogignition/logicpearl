@@ -113,6 +113,12 @@ pub struct OutputFiles {
     pub wasm_module: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadedDecisionTraces {
+    pub rows: Vec<DecisionTraceRow>,
+    pub label_column: String,
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct PinnedRuleSet {
     #[serde(default = "default_rule_set_version")]
@@ -299,8 +305,16 @@ fn fingerprint_file(path: &Path) -> Result<String> {
 }
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
-    let rows = load_decision_traces(csv_path, &options.label_column)?;
-    build_pearl_from_rows(&rows, csv_path.display().to_string(), options)
+    let loaded = load_decision_traces_auto(csv_path, Some(&options.label_column))?;
+    let resolved_options = BuildOptions {
+        output_dir: options.output_dir.clone(),
+        gate_id: options.gate_id.clone(),
+        label_column: loaded.label_column,
+        residual_pass: options.residual_pass,
+        refine: options.refine,
+        pinned_rules: options.pinned_rules.clone(),
+    };
+    build_pearl_from_rows(&loaded.rows, csv_path.display().to_string(), &resolved_options)
 }
 
 pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<DiscoverResult> {
@@ -598,15 +612,52 @@ pub fn build_pearl_from_rows(
 pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<DecisionTraceRow>> {
     let mut reader = csv::Reader::from_path(csv_path)?;
     let headers = reader.headers()?.clone();
+    let records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
+    load_decision_traces_from_records(csv_path, &headers, &records, label_column)
+}
+
+pub fn load_decision_traces_auto(
+    csv_path: &Path,
+    label_column: Option<&str>,
+) -> Result<LoadedDecisionTraces> {
+    let mut reader = csv::Reader::from_path(csv_path)?;
+    let headers = reader.headers()?.clone();
+    let records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
+    let resolved_label = infer_label_column(csv_path, &headers, &records, label_column)?;
+    let rows = load_decision_traces_from_records(csv_path, &headers, &records, &resolved_label)?;
+    Ok(LoadedDecisionTraces {
+        rows,
+        label_column: resolved_label,
+    })
+}
+
+fn load_decision_traces_from_records(
+    csv_path: &Path,
+    headers: &csv::StringRecord,
+    records: &[csv::StringRecord],
+    label_column: &str,
+) -> Result<Vec<DecisionTraceRow>> {
     if !headers.iter().any(|header| header == label_column) {
+        let candidates = detect_label_candidates(headers, records);
+        let candidate_text = if candidates.is_empty() {
+            "none".to_string()
+        } else {
+            candidates.join(", ")
+        };
         return Err(LogicPearlError::message(format!(
-            "decision trace CSV is missing required label column: {label_column:?}"
+            "decision trace CSV {} is missing label column {:?}; candidate binary columns: {}",
+            csv_path.display(),
+            label_column,
+            candidate_text
         )));
     }
 
-    let mut rows = Vec::new();
-    for (index, record) in reader.records().enumerate() {
-        let record = record?;
+    let mut rows = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
         let mut features = HashMap::new();
         let mut allowed = None;
         for (header, value) in headers.iter().zip(record.iter()) {
@@ -633,6 +684,94 @@ pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<D
         });
     }
     Ok(rows)
+}
+
+fn infer_label_column(
+    csv_path: &Path,
+    headers: &csv::StringRecord,
+    records: &[csv::StringRecord],
+    explicit_label: Option<&str>,
+) -> Result<String> {
+    if let Some(label_column) = explicit_label {
+        if headers.iter().any(|header| header == label_column) {
+            return Ok(label_column.to_string());
+        }
+        let candidates = detect_label_candidates(headers, records);
+        let candidate_text = if candidates.is_empty() {
+            "none".to_string()
+        } else {
+            candidates.join(", ")
+        };
+        return Err(LogicPearlError::message(format!(
+            "decision trace CSV {} is missing label column {:?}; candidate binary columns: {}",
+            csv_path.display(),
+            label_column,
+            candidate_text
+        )));
+    }
+
+    let candidates = detect_label_candidates(headers, records);
+    if candidates.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "could not infer a binary label column from {}; pass --label-column explicitly",
+            csv_path.display()
+        )));
+    }
+    let strong_candidates: Vec<&str> = candidates
+        .iter()
+        .map(String::as_str)
+        .filter(|candidate| is_preferred_label_name(candidate))
+        .collect();
+    if strong_candidates.len() == 1 {
+        return Ok(strong_candidates[0].to_string());
+    }
+    if strong_candidates.len() > 1 {
+        return Err(LogicPearlError::message(format!(
+            "multiple likely label columns found in {}: {}; pass --label-column explicitly",
+            csv_path.display(),
+            strong_candidates.join(", ")
+        )));
+    }
+    if candidates.len() == 1 {
+        return Ok(candidates[0].clone());
+    }
+    Err(LogicPearlError::message(format!(
+        "multiple possible binary label columns found in {}: {}; pass --label-column explicitly",
+        csv_path.display(),
+        candidates.join(", ")
+    )))
+}
+
+fn detect_label_candidates(headers: &csv::StringRecord, records: &[csv::StringRecord]) -> Vec<String> {
+    headers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, header)| {
+            let mut saw_value = false;
+            let all_label_like = records.iter().all(|record| {
+                let Some(value) = record.get(index) else {
+                    return false;
+                };
+                if value.trim().is_empty() {
+                    return false;
+                }
+                saw_value = true;
+                parse_allowed_label(value, 0, header).is_ok()
+            });
+            if all_label_like && saw_value {
+                Some(header.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn is_preferred_label_name(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "allowed" | "label" | "target" | "decision" | "outcome"
+    )
 }
 
 fn build_gate(
@@ -1442,10 +1581,10 @@ impl CreateDirAllExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv,
-        discover_residual_rules, gate_from_rules, load_decision_traces,
-        merge_discovered_and_pinned_rules, rule_from_candidate, BuildOptions, CandidateRule,
-        ComparisonOperator, DecisionTraceRow, DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
+        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv, discover_residual_rules,
+        gate_from_rules, load_decision_traces, load_decision_traces_auto, merge_discovered_and_pinned_rules,
+        rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
+        DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
         ComparisonExpression, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
@@ -1471,6 +1610,37 @@ mod tests {
         assert_eq!(rows[0].features["is_member"], 1);
         assert!(rows[0].allowed);
         assert!(!rows[1].allowed);
+    }
+
+    #[test]
+    fn load_decision_traces_auto_prefers_allowed_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "age,is_member,allowed\n21,1,allowed\n15,0,denied\n",
+        )
+        .unwrap();
+
+        let loaded = load_decision_traces_auto(&csv_path, None).unwrap();
+        assert_eq!(loaded.label_column, "allowed");
+        assert_eq!(loaded.rows.len(), 2);
+    }
+
+    #[test]
+    fn load_decision_traces_auto_rejects_ambiguous_binary_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "is_member,is_urgent\n1,0\n0,1\n",
+        )
+        .unwrap();
+
+        let err = load_decision_traces_auto(&csv_path, None).unwrap_err();
+        assert!(err.to_string().contains("multiple possible binary label columns"));
+        assert!(err.to_string().contains("is_member"));
+        assert!(err.to_string().contains("is_urgent"));
     }
 
     #[test]

@@ -106,6 +106,8 @@ What you should see:
 - a named artifact directory at `examples/getting_started/output`
 - `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, and a `.wasm` module inside it
 
+By default, `build` infers the binary label column when there is one unambiguous candidate. If your CSV uses a different or ambiguous label, pass `--label-column <name>`.
+
 You can also ask the public builder to do a second pass:
 - `--residual-pass` adds solver-backed recovery for missed denied slices
 - `--refine` tightens uniquely over-broad rules

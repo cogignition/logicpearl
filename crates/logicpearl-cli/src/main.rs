@@ -8,7 +8,8 @@ use logicpearl_benchmark::{
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, discover_from_csv, BuildOptions, DecisionTraceRow, DiscoverOptions,
+    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildOptions, DecisionTraceRow,
+    DiscoverOptions,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -301,9 +302,9 @@ struct BuildArgs {
     /// Gate ID to embed in the emitted pearl.
     #[arg(long)]
     gate_id: Option<String>,
-    /// Column name for the decision label.
-    #[arg(long, default_value = "allowed")]
-    label_column: String,
+    /// Decision label column. If omitted, LogicPearl infers it when there is one unambiguous binary candidate.
+    #[arg(long)]
+    label_column: Option<String>,
     /// Plugin manifest for a trace-source plugin that emits decision traces over JSON.
     #[arg(long, help_heading = "Advanced")]
     trace_plugin_manifest: Option<PathBuf>,
@@ -1474,20 +1475,15 @@ fn run_build(args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     });
 
-    let build_options = BuildOptions {
-        output_dir,
-        gate_id,
-        label_column: args.label_column.clone(),
-        residual_pass: args.residual_pass,
-        refine: args.refine,
-        pinned_rules: args.pinned_rules.clone(),
-    };
-
-    let mut rows = match (&args.trace_plugin_manifest, &args.decision_traces) {
+    let (mut rows, resolved_label_column) = match (&args.trace_plugin_manifest, &args.decision_traces) {
         (Some(manifest_path), None) => {
             let manifest = PluginManifest::from_path(manifest_path)
                 .into_diagnostic()
                 .wrap_err("failed to load trace plugin manifest")?;
+            let plugin_label_column = args
+                .label_column
+                .clone()
+                .unwrap_or_else(|| "allowed".to_string());
             let source = args.trace_plugin_input.ok_or_else(|| {
                 guidance(
                     "--trace-plugin-manifest was provided without --trace-plugin-input",
@@ -1500,7 +1496,7 @@ fn run_build(args: BuildArgs) -> Result<()> {
                 payload: serde_json::json!({
                     "source": source,
                     "options": {
-                        "label_column": build_options.label_column,
+                        "label_column": plugin_label_column,
                     }
                 }),
             };
@@ -1520,12 +1516,13 @@ fn run_build(args: BuildArgs) -> Result<()> {
             let rows: Vec<DecisionTraceRow> = serde_json::from_value(traces_value)
                 .into_diagnostic()
                 .wrap_err("trace plugin decision_traces payload was invalid")?;
-            rows
+            (rows, plugin_label_column)
         }
         (None, Some(decision_traces)) => {
-            logicpearl_discovery::load_decision_traces(decision_traces, &build_options.label_column)
+            let loaded = load_decision_traces_auto(decision_traces, args.label_column.as_deref())
                 .into_diagnostic()
-                .wrap_err("failed to load decision traces")?
+                .wrap_err("failed to load decision traces")?;
+            (loaded.rows, loaded.label_column)
         }
         (Some(_), Some(_)) => {
             return Err(guidance(
@@ -1539,6 +1536,15 @@ fn run_build(args: BuildArgs) -> Result<()> {
                 "Provide a decision trace CSV path or use --trace-plugin-manifest with --trace-plugin-input.",
             ));
         }
+    };
+
+    let build_options = BuildOptions {
+        output_dir,
+        gate_id,
+        label_column: resolved_label_column,
+        residual_pass: args.residual_pass,
+        refine: args.refine,
+        pinned_rules: args.pinned_rules.clone(),
     };
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
