@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "Running LogicPearl pre-commit E2E check..."
+cargo test --manifest-path Cargo.toml -p logicpearl-cli --test e2e_getting_started
