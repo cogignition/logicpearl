@@ -13,6 +13,10 @@ These scripts keep a small public score ledger for LogicPearl.
   - computes per-commit suite deltas
   - aggregates a weighted improvement score per contributor using `score_model.json`
 
+- `build_contributor_summary.py`
+  - derives a small leaderboard-friendly summary from `contributor_points.json`
+  - intended as the default frontend endpoint for contributor ranking pages
+
 - `score_model.json`
   - defines the curated scoring model for contributor points
   - keeps total suite budgets fixed so adding more raw metrics later does not automatically distort the points system
@@ -53,8 +57,10 @@ python3 scripts/scoreboard/compute_contributor_points.py
 - `.github/workflows/scores.yml` publishes:
   - `latest/SCORES.json`
   - `latest/contributor_points.json`
+  - `latest/contributor_summary.json`
   - `latest/score_model.json`
   - plus per-commit snapshots under `history/<commit>/`
+  - to the repo's `gh-pages` branch, with prior history retained
 
 ## Contributor Attribution
 
