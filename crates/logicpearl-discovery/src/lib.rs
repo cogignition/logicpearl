@@ -164,6 +164,18 @@ struct UniqueCoverageRefinementOptions {
     min_true_positive_retention: f64,
 }
 
+#[derive(Debug, Clone)]
+struct NumericBound {
+    value: f64,
+    inclusive: bool,
+}
+
+#[derive(Debug, Clone)]
+struct NumericInterval {
+    lower: Option<NumericBound>,
+    upper: Option<NumericBound>,
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
 struct CacheManifest {
     cache_version: String,
@@ -815,6 +827,8 @@ fn build_gate(
     } else {
         rules = dedupe_rules_by_signature(rules);
     }
+    rules = canonicalize_rules(rules);
+    rules = dedupe_rules_by_signature(rules);
     if rules.is_empty() {
         return Err(LogicPearlError::message(
             "no deny rules could be discovered from decision traces",
@@ -971,6 +985,275 @@ fn rule_signature(rule: &RuleDefinition) -> String {
     normalized.bit = 0;
     normalized.verification_status = None;
     serde_json::to_string(&normalized).expect("rule signature serialization")
+}
+
+fn canonicalize_rules(rules: Vec<RuleDefinition>) -> Vec<RuleDefinition> {
+    let mut passthrough = Vec::new();
+    let mut grouped: BTreeMap<String, Vec<RuleDefinition>> = BTreeMap::new();
+
+    for rule in rules {
+        if let Some(key) = rule_canonicalization_key(&rule) {
+            grouped.entry(key).or_default().push(rule);
+        } else {
+            passthrough.push(rule);
+        }
+    }
+
+    let mut canonicalized = passthrough;
+    for group in grouped.into_values() {
+        canonicalized.extend(canonicalize_numeric_rule_group(group));
+    }
+
+    canonicalized
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut rule)| {
+            rule.bit = index as u32;
+            rule.id = format!("rule_{index:03}");
+            rule
+        })
+        .collect()
+}
+
+fn rule_canonicalization_key(rule: &RuleDefinition) -> Option<String> {
+    let Expression::Comparison(comparison) = &rule.deny_when else {
+        return None;
+    };
+    if comparison.value.literal().and_then(Value::as_f64).is_none() {
+        return None;
+    }
+    if !matches!(
+        comparison.op,
+        ComparisonOperator::Eq
+            | ComparisonOperator::Gt
+            | ComparisonOperator::Gte
+            | ComparisonOperator::Lt
+            | ComparisonOperator::Lte
+    ) {
+        return None;
+    }
+
+    let payload = serde_json::json!({
+        "kind": &rule.kind,
+        "feature": &comparison.feature,
+        "label": &rule.label,
+        "message": &rule.message,
+        "severity": &rule.severity,
+        "counterfactual_hint": &rule.counterfactual_hint,
+    });
+    Some(
+        serde_json::to_string(&payload).expect("rule canonicalization key serialization"),
+    )
+}
+
+fn canonicalize_numeric_rule_group(group: Vec<RuleDefinition>) -> Vec<RuleDefinition> {
+    if group.len() <= 1 {
+        return group;
+    }
+
+    let mut intervals = Vec::new();
+    let mut strongest_status = RuleVerificationStatus::HeuristicUnverified;
+    for rule in &group {
+        strongest_status = strongest_verification_status(strongest_status, verification_status(rule));
+        let Expression::Comparison(comparison) = &rule.deny_when else {
+            continue;
+        };
+        if let Some(interval) = comparison_interval(comparison) {
+            intervals.push(interval);
+        }
+    }
+
+    if intervals.len() <= 1 {
+        return group;
+    }
+
+    intervals.sort_by(compare_intervals);
+    let mut merged = Vec::new();
+    for interval in intervals {
+        match merged.last_mut() {
+            Some(current) if intervals_can_merge(current, &interval) => {
+                merge_interval_into(current, &interval);
+            }
+            _ => merged.push(interval),
+        }
+    }
+
+    let prototype = &group[0];
+    merged
+        .into_iter()
+        .enumerate()
+        .map(|(index, interval)| {
+            let mut rule = prototype.clone();
+            rule.bit = index as u32;
+            rule.id = format!("rule_{index:03}");
+            rule.deny_when = interval_expression(&prototype, interval);
+            rule.verification_status = Some(strongest_status.clone());
+            rule
+        })
+        .collect()
+}
+
+fn interval_expression(prototype: &RuleDefinition, interval: NumericInterval) -> Expression {
+    let Expression::Comparison(base) = &prototype.deny_when else {
+        return prototype.deny_when.clone();
+    };
+    let lower = interval.lower.as_ref().map(|bound| ComparisonExpression {
+        feature: base.feature.clone(),
+        op: if bound.inclusive {
+            ComparisonOperator::Gte
+        } else {
+            ComparisonOperator::Gt
+        },
+        value: ComparisonValue::Literal(number_value(bound.value)),
+    });
+    let upper = interval.upper.as_ref().map(|bound| ComparisonExpression {
+        feature: base.feature.clone(),
+        op: if bound.inclusive {
+            ComparisonOperator::Lte
+        } else {
+            ComparisonOperator::Lt
+        },
+        value: ComparisonValue::Literal(number_value(bound.value)),
+    });
+
+    match (lower, upper) {
+        (Some(lower), Some(upper))
+            if approx_eq(
+                lower.value.literal().and_then(Value::as_f64).unwrap(),
+                upper.value.literal().and_then(Value::as_f64).unwrap(),
+            ) && lower.op == ComparisonOperator::Gte
+                && upper.op == ComparisonOperator::Lte =>
+        {
+            Expression::Comparison(ComparisonExpression {
+                feature: base.feature.clone(),
+                op: ComparisonOperator::Eq,
+                value: lower.value,
+            })
+        }
+        (Some(lower), Some(upper)) => Expression::All {
+            all: vec![
+                Expression::Comparison(lower),
+                Expression::Comparison(upper),
+            ],
+        },
+        (Some(lower), None) => Expression::Comparison(lower),
+        (None, Some(upper)) => Expression::Comparison(upper),
+        (None, None) => prototype.deny_when.clone(),
+    }
+}
+
+fn comparison_interval(comparison: &ComparisonExpression) -> Option<NumericInterval> {
+    let value = comparison.value.literal().and_then(Value::as_f64)?;
+    let bound = NumericBound {
+        value,
+        inclusive: matches!(
+            comparison.op,
+            ComparisonOperator::Eq | ComparisonOperator::Gte | ComparisonOperator::Lte
+        ),
+    };
+    match comparison.op {
+        ComparisonOperator::Eq => Some(NumericInterval {
+            lower: Some(bound.clone()),
+            upper: Some(bound),
+        }),
+        ComparisonOperator::Gt => Some(NumericInterval {
+            lower: Some(bound),
+            upper: None,
+        }),
+        ComparisonOperator::Gte => Some(NumericInterval {
+            lower: Some(bound),
+            upper: None,
+        }),
+        ComparisonOperator::Lt => Some(NumericInterval {
+            lower: None,
+            upper: Some(bound),
+        }),
+        ComparisonOperator::Lte => Some(NumericInterval {
+            lower: None,
+            upper: Some(bound),
+        }),
+        _ => None,
+    }
+}
+
+fn compare_intervals(left: &NumericInterval, right: &NumericInterval) -> Ordering {
+    compare_lower_bounds(&left.lower, &right.lower)
+        .then_with(|| compare_upper_bounds(&left.upper, &right.upper))
+}
+
+fn compare_lower_bounds(left: &Option<NumericBound>, right: &Option<NumericBound>) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(left), Some(right)) => left
+            .value
+            .total_cmp(&right.value)
+            .then_with(|| right.inclusive.cmp(&left.inclusive)),
+    }
+}
+
+fn compare_upper_bounds(left: &Option<NumericBound>, right: &Option<NumericBound>) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(left), Some(right)) => left
+            .value
+            .total_cmp(&right.value)
+            .then_with(|| left.inclusive.cmp(&right.inclusive)),
+    }
+}
+
+fn intervals_can_merge(left: &NumericInterval, right: &NumericInterval) -> bool {
+    match (&left.upper, &right.lower) {
+        (None, _) | (_, None) => true,
+        (Some(upper), Some(lower)) => match upper.value.total_cmp(&lower.value) {
+            Ordering::Greater => true,
+            Ordering::Less => false,
+            Ordering::Equal => upper.inclusive || lower.inclusive,
+        },
+    }
+}
+
+fn merge_interval_into(left: &mut NumericInterval, right: &NumericInterval) {
+    if compare_upper_bounds(&left.upper, &right.upper) == Ordering::Less {
+        left.upper = right.upper.clone();
+    }
+}
+
+fn strongest_verification_status(
+    left: RuleVerificationStatus,
+    right: RuleVerificationStatus,
+) -> RuleVerificationStatus {
+    if verification_status_rank(&left) >= verification_status_rank(&right) {
+        left
+    } else {
+        right
+    }
+}
+
+fn verification_status(rule: &RuleDefinition) -> RuleVerificationStatus {
+    rule.verification_status
+        .clone()
+        .unwrap_or(RuleVerificationStatus::PipelineUnverified)
+}
+
+fn verification_status_rank(status: &RuleVerificationStatus) -> i32 {
+    match status {
+        RuleVerificationStatus::Z3Verified => 4,
+        RuleVerificationStatus::RefinedUnverified => 3,
+        RuleVerificationStatus::PipelineUnverified => 2,
+        RuleVerificationStatus::HeuristicUnverified => 1,
+    }
+}
+
+fn number_value(value: f64) -> Value {
+    Value::Number(Number::from_f64(value).expect("finite canonicalized numeric boundary"))
+}
+
+fn approx_eq(left: f64, right: f64) -> bool {
+    (left - right).abs() < 1e-9
 }
 
 fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
@@ -1634,10 +1917,10 @@ impl CreateDirAllExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pearl_from_csv, dedupe_rules_by_signature, discover_from_csv, discover_residual_rules,
-        gate_from_rules, load_decision_traces, load_decision_traces_auto, merge_discovered_and_pinned_rules,
-        rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
-        DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
+        build_pearl_from_csv, canonicalize_rules, dedupe_rules_by_signature, discover_from_csv,
+        discover_residual_rules, gate_from_rules, load_decision_traces, load_decision_traces_auto,
+        merge_discovered_and_pinned_rules, rule_from_candidate, BuildOptions, CandidateRule,
+        ComparisonOperator, DecisionTraceRow, DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
         ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
@@ -1725,6 +2008,96 @@ mod tests {
         assert_eq!(result.training_parity, 1.0);
         assert!(output_dir.join("pearl.ir.json").exists());
         assert!(output_dir.join("build_report.json").exists());
+    }
+
+    #[test]
+    fn canonicalize_rules_merges_adjacent_numeric_intervals() {
+        let rules = vec![
+            RuleDefinition {
+                id: "rule_a".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "toxicity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.71).unwrap())),
+                }),
+                label: Some("deny".to_string()),
+                message: Some("deny toxic content".to_string()),
+                severity: Some("high".to_string()),
+                counterfactual_hint: Some("lower toxicity".to_string()),
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            },
+            RuleDefinition {
+                id: "rule_b".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 1,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "toxicity".to_string(),
+                    op: ComparisonOperator::Gt,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.71).unwrap())),
+                }),
+                label: Some("deny".to_string()),
+                message: Some("deny toxic content".to_string()),
+                severity: Some("high".to_string()),
+                counterfactual_hint: Some("lower toxicity".to_string()),
+                verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+            },
+        ];
+
+        let canonicalized = canonicalize_rules(rules);
+        assert_eq!(canonicalized.len(), 1);
+        assert_eq!(
+            canonicalized[0].verification_status,
+            Some(RuleVerificationStatus::RefinedUnverified)
+        );
+        assert_eq!(
+            canonicalized[0].deny_when,
+            Expression::Comparison(ComparisonExpression {
+                feature: "toxicity".to_string(),
+                op: ComparisonOperator::Gte,
+                value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.71).unwrap())),
+            })
+        );
+    }
+
+    #[test]
+    fn canonicalize_rules_preserves_distinct_messages() {
+        let rules = vec![
+            RuleDefinition {
+                id: "rule_a".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "toxicity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.71).unwrap())),
+                }),
+                label: None,
+                message: Some("exact threshold".to_string()),
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            },
+            RuleDefinition {
+                id: "rule_b".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 1,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "toxicity".to_string(),
+                    op: ComparisonOperator::Gt,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.71).unwrap())),
+                }),
+                label: None,
+                message: Some("strictly above threshold".to_string()),
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            },
+        ];
+
+        let canonicalized = canonicalize_rules(rules);
+        assert_eq!(canonicalized.len(), 2);
     }
 
     #[test]

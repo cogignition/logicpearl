@@ -26,3 +26,7 @@ corpora/
 
 # Legacy workspace material stays out of the public repo source
 legacy/
+
+# Local agent memory / scratch notes
+MEMORY.md
+memory/
