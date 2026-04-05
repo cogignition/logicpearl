@@ -41,6 +41,7 @@ def main() -> int:
     summary = {
         "schema_version": "1.0",
         "generated_by": "scripts/scoreboard/build_contributor_summary.py",
+        "scoring_terms": contributor_points.get("scoring_terms", {}),
         "contributors": [],
     }
     for index, contributor in enumerate(contributors, start=1):
@@ -55,6 +56,9 @@ def main() -> int:
                 "participation_points": contributor.get("participation_points", 0.0),
                 "improvement_points": contributor.get("improvement_points", 0.0),
                 "total_points": contributor.get("total_points", contributor.get("points", 0.0)),
+                "shells": contributor.get("shells", contributor.get("participation_points", 0.0)),
+                "pearls": contributor.get("pearls", contributor.get("improvement_points", 0.0)),
+                "treasure": contributor.get("treasure", contributor.get("total_points", contributor.get("points", 0.0))),
                 "points": contributor.get("total_points", contributor.get("points", 0.0)),
                 "commit_count": len(commits),
                 "latest_commit": latest_commit,

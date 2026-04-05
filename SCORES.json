@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-05T20:20:50.876127+00:00",
+  "generated_at": "2026-04-05T20:31:19.475125+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
+    "head": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
     "dirty": true
   },
   "suites": {
@@ -44,13 +44,14 @@
           "csv": "examples/demos/access_control/traces.csv",
           "build": {
             "gate_id": "traces",
-            "rows": 26,
+            "rows": 30,
             "label_column": "access_verdict",
-            "rules_discovered": 2,
+            "rules_discovered": 4,
             "residual_rules_discovered": 0,
             "refined_rules_applied": 0,
             "pinned_rules_applied": 0,
             "selected_features": [
+              "access_hour",
               "clearance_level",
               "failed_login_attempts",
               "mfa_enabled",
@@ -68,12 +69,13 @@
             "gate_id": "traces",
             "rows": 26,
             "label_column": "verdict",
-            "rules_discovered": 2,
+            "rules_discovered": 5,
             "residual_rules_discovered": 0,
             "refined_rules_applied": 0,
             "pinned_rules_applied": 0,
             "selected_features": [
               "account_age_days",
+              "report_count_24h",
               "spam_likelihood",
               "toxicity_score",
               "verified"
@@ -90,7 +92,7 @@
             "gate_id": "traces",
             "rows": 26,
             "label_column": "approved",
-            "rules_discovered": 2,
+            "rules_discovered": 5,
             "residual_rules_discovered": 0,
             "refined_rules_applied": 0,
             "pinned_rules_applied": 0,
@@ -186,7 +188,7 @@
       "suite": "demos"
     },
     "demos.access_control.rules_discovered": {
-      "value": 2.0,
+      "value": 4.0,
       "goal": "max",
       "weight": 5.0,
       "suite": "demos"
@@ -198,7 +200,7 @@
       "suite": "demos"
     },
     "demos.content_moderation.rules_discovered": {
-      "value": 2.0,
+      "value": 5.0,
       "goal": "max",
       "weight": 5.0,
       "suite": "demos"
@@ -210,7 +212,7 @@
       "suite": "demos"
     },
     "demos.loan_approval.rules_discovered": {
-      "value": 2.0,
+      "value": 5.0,
       "goal": "max",
       "weight": 5.0,
       "suite": "demos"

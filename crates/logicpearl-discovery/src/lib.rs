@@ -1566,6 +1566,42 @@ fn best_candidate_rule(
                     consider_candidate(&mut best, candidate);
                 }
             }
+        } else if values.iter().all(|value| value.is_boolean()) {
+            let unique_values: BTreeSet<bool> = rows
+                .iter()
+                .filter_map(|row| row.features.get(&feature))
+                .filter_map(Value::as_bool)
+                .collect();
+            for boolean in unique_values {
+                let candidate = CandidateRule {
+                    feature: feature.clone(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Bool(boolean)),
+                    denied_coverage: candidate_coverage(
+                        rows,
+                        denied_indices,
+                        &CandidateRule {
+                            feature: feature.clone(),
+                            op: ComparisonOperator::Eq,
+                            value: ComparisonValue::Literal(Value::Bool(boolean)),
+                            denied_coverage: 0,
+                            false_positives: 0,
+                        },
+                    ),
+                    false_positives: candidate_coverage(
+                        rows,
+                        allowed_indices,
+                        &CandidateRule {
+                            feature: feature.clone(),
+                            op: ComparisonOperator::Eq,
+                            value: ComparisonValue::Literal(Value::Bool(boolean)),
+                            denied_coverage: 0,
+                            false_positives: 0,
+                        },
+                    ),
+                };
+                consider_candidate(&mut best, candidate);
+            }
         } else {
             let unique_values: BTreeSet<String> = rows
                 .iter()
@@ -2619,6 +2655,39 @@ mod tests {
         assert!(gate_json.contains("\"all\""));
         assert!(gate_json.contains("\"feature\": \"signal\""));
         assert!(gate_json.contains("\"feature\": \"guard\""));
+    }
+
+    #[test]
+    fn build_discovers_boolean_feature_predicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "mfa_enabled,approved\nYes,approved\nYes,approved\nYes,approved\nNo,denied\nNo,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &csv_path,
+            &BuildOptions {
+                output_dir: output_dir.clone(),
+                gate_id: "bool_gate".to_string(),
+                label_column: "approved".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.training_parity, 1.0);
+        let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+        let rendered = serde_json::to_string(&gate).unwrap();
+        assert!(rendered.contains("\"feature\":\"mfa_enabled\""));
+        assert!(rendered.contains("\"value\":false"));
     }
 
     #[test]

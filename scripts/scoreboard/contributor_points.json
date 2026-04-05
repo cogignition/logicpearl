@@ -1,0 +1,206 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "scripts/scoreboard/compute_contributor_points.py",
+  "participation_points_per_commit": 1.0,
+  "scoring_terms": {
+    "participation_points": {
+      "display_name": "shells",
+      "description": "Base credit for anything that lands on main."
+    },
+    "improvement_points": {
+      "display_name": "pearls",
+      "description": "Extra credit earned by improving measured scores."
+    },
+    "total_points": {
+      "display_name": "treasure",
+      "description": "Total score, combining shells and pearls."
+    }
+  },
+  "score_model": {
+    "version": "1.0",
+    "suites": [
+      {
+        "id": "onboarding",
+        "points_budget": 200.0,
+        "metrics": [
+          {
+            "id": "getting_started.training_parity",
+            "weight": 0.3
+          },
+          {
+            "id": "getting_started.run_passed",
+            "weight": 0.1
+          },
+          {
+            "id": "demos.access_control.training_parity",
+            "weight": 0.2
+          },
+          {
+            "id": "demos.content_moderation.training_parity",
+            "weight": 0.2
+          },
+          {
+            "id": "demos.loan_approval.training_parity",
+            "weight": 0.2
+          }
+        ]
+      },
+      {
+        "id": "guardrails",
+        "points_budget": 300.0,
+        "metrics": [
+          {
+            "id": "guardrails.jailbreakbench.exact_match_rate",
+            "weight": 0.3333333333
+          },
+          {
+            "id": "guardrails.promptshield.exact_match_rate",
+            "weight": 0.3333333333
+          },
+          {
+            "id": "guardrails.rogue-security-prompt-injections.exact_match_rate",
+            "weight": 0.3333333334
+          }
+        ]
+      }
+    ]
+  },
+  "commits": [
+    {
+      "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "authored_at": "2026-04-05T15:58:57-04:00",
+      "participation_points": 1.0,
+      "improvement_points": 0.0,
+      "total_points": 1.0,
+      "shells": 1.0,
+      "pearls": 0.0,
+      "treasure": 1.0,
+      "suite_changes": {}
+    },
+    {
+      "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "authored_at": "2026-04-05T16:02:41-04:00",
+      "participation_points": 1.0,
+      "improvement_points": 0.0,
+      "total_points": 1.0,
+      "shells": 1.0,
+      "pearls": 0.0,
+      "treasure": 1.0,
+      "suite_changes": {}
+    },
+    {
+      "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "authored_at": "2026-04-05T16:06:14-04:00",
+      "participation_points": 1.0,
+      "improvement_points": 0.0,
+      "total_points": 1.0,
+      "shells": 1.0,
+      "pearls": 0.0,
+      "treasure": 1.0,
+      "suite_changes": {}
+    },
+    {
+      "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "authored_at": "2026-04-05T16:17:18-04:00",
+      "participation_points": 1.0,
+      "improvement_points": 0.0,
+      "total_points": 1.0,
+      "shells": 1.0,
+      "pearls": 0.0,
+      "treasure": 1.0,
+      "suite_changes": {}
+    },
+    {
+      "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "authored_at": "2026-04-05T16:20:41-04:00",
+      "participation_points": 1.0,
+      "improvement_points": 0.0,
+      "total_points": 1.0,
+      "shells": 1.0,
+      "pearls": 0.0,
+      "treasure": 1.0,
+      "suite_changes": {}
+    }
+  ],
+  "contributors": [
+    {
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "participation_points": 5.0,
+      "improvement_points": 0.0,
+      "total_points": 5.0,
+      "commits": [
+        {
+          "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
+          "authored_at": "2026-04-05T15:58:57-04:00",
+          "participation_points": 1.0,
+          "improvement_points": 0.0,
+          "total_points": 1.0,
+          "shells": 1.0,
+          "pearls": 0.0,
+          "treasure": 1.0
+        },
+        {
+          "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
+          "authored_at": "2026-04-05T16:02:41-04:00",
+          "participation_points": 1.0,
+          "improvement_points": 0.0,
+          "total_points": 1.0,
+          "shells": 1.0,
+          "pearls": 0.0,
+          "treasure": 1.0
+        },
+        {
+          "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
+          "authored_at": "2026-04-05T16:06:14-04:00",
+          "participation_points": 1.0,
+          "improvement_points": 0.0,
+          "total_points": 1.0,
+          "shells": 1.0,
+          "pearls": 0.0,
+          "treasure": 1.0
+        },
+        {
+          "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
+          "authored_at": "2026-04-05T16:17:18-04:00",
+          "participation_points": 1.0,
+          "improvement_points": 0.0,
+          "total_points": 1.0,
+          "shells": 1.0,
+          "pearls": 0.0,
+          "treasure": 1.0
+        },
+        {
+          "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+          "authored_at": "2026-04-05T16:20:41-04:00",
+          "participation_points": 1.0,
+          "improvement_points": 0.0,
+          "total_points": 1.0,
+          "shells": 1.0,
+          "pearls": 0.0,
+          "treasure": 1.0
+        }
+      ],
+      "shells": 5.0,
+      "pearls": 0.0,
+      "treasure": 5.0,
+      "points": 5.0
+    }
+  ]
+}

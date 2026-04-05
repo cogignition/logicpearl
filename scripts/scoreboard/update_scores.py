@@ -80,13 +80,27 @@ def git_output(*args: str) -> str:
 
 
 def author_identity() -> dict[str, str]:
-    raw = run(["git", "-C", str(REPO_ROOT), "var", "GIT_AUTHOR_IDENT"]).stdout.strip()
+    completed = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "var", "GIT_AUTHOR_IDENT"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    raw = completed.stdout.strip() if completed.returncode == 0 else ""
     if "<" in raw and ">" in raw:
         name = raw.split("<", 1)[0].strip()
         email = raw.split("<", 1)[1].split(">", 1)[0].strip()
-    else:
-        name = git_output("config", "user.name")
-        email = git_output("config", "user.email")
+        return {"name": name, "email": email}
+
+    github_actor = os.environ.get("GITHUB_ACTOR", "").strip()
+    if github_actor:
+        return {
+            "name": github_actor,
+            "email": f"{github_actor}@users.noreply.github.com",
+        }
+
+    name = git_output("config", "--get", "user.name") or "unknown"
+    email = git_output("config", "--get", "user.email") or "unknown@local"
     return {"name": name, "email": email}
 
 

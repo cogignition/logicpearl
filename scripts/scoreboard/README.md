@@ -13,6 +13,10 @@ These scripts keep a small public score ledger for LogicPearl.
   - computes per-commit suite deltas
   - gives every scored `main` commit a base participation point
   - aggregates weighted improvement points per contributor using `score_model.json`
+  - publishes contributor-friendly scoring terms:
+    - `shells` = participation points
+    - `pearls` = improvement points
+    - `treasure` = total points
 
 - `build_contributor_summary.py`
   - derives a small leaderboard-friendly summary from `contributor_points.json`
@@ -58,6 +62,10 @@ python3 scripts/scoreboard/compute_contributor_points.py
   - `participation_points`
   - `improvement_points`
   - `total_points`
+- The published JSON also includes friendly labels:
+  - `shells`
+  - `pearls`
+  - `treasure`
 - That keeps correlated metrics from being double-counted and makes it easier to add new benchmarks without silently changing the total point budget.
 - `.github/workflows/scores.yml` publishes:
   - `latest/SCORES.json`

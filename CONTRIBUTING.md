@@ -1,77 +1,108 @@
 # Contributing
 
-LogicPearl is intentionally small and architecture-sensitive.
+LogicPearl is a small public product repo with a visible scoreboard.
 
-The goal of contributions should be:
-- make pearls easier to run, inspect, and validate
-- improve the public IR/runtime/observer story
-- keep the generic engine generic
-- avoid blending benchmark-specific behavior into shared engine code
+The goal is not just to land code. The goal is to make the public engine better:
+- easier to run
+- easier to inspect
+- more honest on parity and benchmarks
+- more generic, not more benchmark-shaped
 
-## Good Contribution Areas
+## The Scoreboard
 
-- runtime improvements
-- IR validation and tooling
-- observer-spec improvements
-- renderer improvements
-- docs and examples
-- public parity/import benchmarks
-- test coverage
+Every commit that lands on `main` earns at least **1 shell**.
 
-## Areas To Treat Carefully
+If that commit improves the measured public score suites, it also earns **pearls**.
 
-- anything that introduces domain-specific logic into the generic engine
-- benchmark-specific shortcuts presented as generic features
-- broad changes to the artifact format without schema/runtime coordination
-- public claims that overstate what a demo proves
+- `shells`
+  - base participation credit
+  - you get these for shipping real work to `main`
+- `pearls`
+  - improvement credit
+  - you get these when the measured repo scores improve
+- `treasure`
+  - total score
+  - `shells + pearls`
 
-## Development
+The scoreboard is generated from:
+- checked-in examples
+- demo datasets
+- the fast open guardrail regression sample
 
-### Python side
+Files:
+- [SCORES.json](/Users/missingno/Documents/LogicPearl/logicpearl/SCORES.json)
+- [scripts/scoreboard/README.md](/Users/missingno/Documents/LogicPearl/logicpearl/scripts/scoreboard/README.md)
+- [scripts/scoreboard/score_model.json](/Users/missingno/Documents/LogicPearl/logicpearl/scripts/scoreboard/score_model.json)
 
-```bash
-cd discovery
-uv run python -m pytest
-```
+## How To Earn More Pearls
 
-### Runtime side
+High-value contribution patterns:
+- improve the generic engine so more datasets build cleanly without special handling
+- improve runtime, IR, validation, or inspection tooling
+- improve observer synthesis or benchmark infrastructure in ways that stay generic
+- add honest examples, tests, and docs that strengthen the public first-run path
+- reduce regressions and keep benchmarks reproducible
 
-```bash
-cd runtime
-cargo test
-```
+Low-value or rejected patterns:
+- benchmark-specific hacks disguised as generic features
+- demo-only shortcuts in shared engine code
+- claims in docs that overstate what a benchmark proves
+- changes that make the public repo feel magical only because hidden assumptions were baked in
 
-### OPA demo
+The fastest way to lose the plot here is optimizing for score movement while making the engine less honest.
 
-Requires an `opa` binary on your path.
+## Design Rules
 
-```bash
-cd discovery
-uv run logicpearl-opa-inspect ../benchmarks/opa_rego/policy.rego
-uv run python ../benchmarks/opa_rego/run_benchmark.py
-```
+Keep the engine generic.
 
-## Design Expectations
+Good:
+- feature support that works across multiple datasets
+- discovery improvements that do not mention one benchmark by name
+- better simplification, validation, or runtime behavior
 
-Please preserve these boundaries:
+Bad:
+- hardcoded benchmark heuristics in shared discovery/runtime code
+- public UX shaped around one private workflow
+- synthetic demos that only work because the engine secretly special-cases them
 
-- `runtime/` is the deterministic evaluator
-- `schema/` defines the public artifact contracts
-- `discovery/` owns authoring, IR tooling, observer tooling, and public adapters
-- benchmark/demo-specific logic should stay outside the generic engine when possible
-
-## Before Opening A PR
+## Before You Open A PR
 
 Please make sure:
 - tests pass
 - new public docs are accurate and conservative
-- performance claims are scoped clearly
-- demo framing matches what the code actually does
+- benchmark framing matches what the code actually proves
+- score movement, if any, comes from a generic improvement
 
-## Commercial Boundary
+If your change is score-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution. You still earn shells for landing it.
 
-This repository is the public proof layer for LogicPearl. It is meant to be real, useful, and exciting on its own.
+## Local Development
 
-The bigger commercial story is not “the real thing is hidden elsewhere.” The point is that this repo proves the artifact model in public, while the hardest migrations, domain reconstructions, and high-consequence decision systems are where the model becomes even more valuable.
+Run the full public test suite:
 
-If you want help applying LogicPearl to a real rules or policy system, use the public contact path rather than expecting every private migration workflow to live in this repository.
+```bash
+cargo test --workspace
+```
+
+Refresh the public score ledger:
+
+```bash
+python3 scripts/scoreboard/update_scores.py
+```
+
+Rebuild contributor totals:
+
+```bash
+python3 scripts/scoreboard/compute_contributor_points.py
+python3 scripts/scoreboard/build_contributor_summary.py
+```
+
+## Attribution
+
+Contributor tracking is based on git history.
+
+For the cleanest attribution on `main`:
+- preserve the original author when merging
+- prefer merge strategies that keep contributor identity intact
+- if you use GitHub no-reply emails, the scoreboard will infer the GitHub login when possible
+
+If a maintainer rewrites authorship during squash merge, the scoreboard will attribute the shells and pearls to the squash author.

@@ -15,6 +15,20 @@ REPO_ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_OUTPUT = REPO_ROOT / "scripts" / "scoreboard" / "contributor_points.json"
 SCORE_MODEL_PATH = REPO_ROOT / "scripts" / "scoreboard" / "score_model.json"
 PARTICIPATION_POINTS_PER_COMMIT = 1.0
+SCORING_TERMS = {
+    "participation_points": {
+        "display_name": "shells",
+        "description": "Base credit for anything that lands on main.",
+    },
+    "improvement_points": {
+        "display_name": "pearls",
+        "description": "Extra credit earned by improving measured scores.",
+    },
+    "total_points": {
+        "display_name": "treasure",
+        "description": "Total score, combining shells and pearls.",
+    },
+}
 
 
 def parse_args() -> Path:
@@ -156,6 +170,9 @@ def main() -> int:
             "participation_points": participation_points,
             "improvement_points": improvement_points,
             "total_points": total_points,
+            "shells": participation_points,
+            "pearls": improvement_points,
+            "treasure": total_points,
             "suite_changes": suite_changes,
         }
         commits.append(commit_entry)
@@ -166,6 +183,9 @@ def main() -> int:
         contributor["participation_points"] += participation_points
         contributor["improvement_points"] += improvement_points
         contributor["total_points"] += total_points
+        contributor["shells"] = contributor["participation_points"]
+        contributor["pearls"] = contributor["improvement_points"]
+        contributor["treasure"] = contributor["total_points"]
         contributor["points"] = contributor["total_points"]
         contributor["commits"].append(
             {
@@ -174,6 +194,9 @@ def main() -> int:
                 "participation_points": participation_points,
                 "improvement_points": improvement_points,
                 "total_points": total_points,
+                "shells": participation_points,
+                "pearls": improvement_points,
+                "treasure": total_points,
             }
         )
         if current_scores is not None:
@@ -183,6 +206,7 @@ def main() -> int:
         "schema_version": "1.0",
         "generated_by": "scripts/scoreboard/compute_contributor_points.py",
         "participation_points_per_commit": PARTICIPATION_POINTS_PER_COMMIT,
+        "scoring_terms": SCORING_TERMS,
         "score_model": score_model,
         "commits": commits,
         "contributors": sorted(

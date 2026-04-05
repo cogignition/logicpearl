@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "scripts/scoreboard/build_contributor_summary.py",
+  "scoring_terms": {
+    "participation_points": {
+      "display_name": "shells",
+      "description": "Base credit for anything that lands on main."
+    },
+    "improvement_points": {
+      "display_name": "pearls",
+      "description": "Extra credit earned by improving measured scores."
+    },
+    "total_points": {
+      "display_name": "treasure",
+      "description": "Total score, combining shells and pearls."
+    }
+  },
+  "contributors": [
+    {
+      "rank": 1,
+      "author_name": "Ken Erwin",
+      "author_email": "ken@devopslibrary.com",
+      "github_login": null,
+      "participation_points": 5.0,
+      "improvement_points": 0.0,
+      "total_points": 5.0,
+      "shells": 5.0,
+      "pearls": 0.0,
+      "treasure": 5.0,
+      "points": 5.0,
+      "commit_count": 5,
+      "latest_commit": {
+        "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+        "authored_at": "2026-04-05T16:20:41-04:00",
+        "participation_points": 1.0,
+        "improvement_points": 0.0,
+        "total_points": 1.0,
+        "shells": 1.0,
+        "pearls": 0.0,
+        "treasure": 1.0
+      }
+    }
+  ]
+}
