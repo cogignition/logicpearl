@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,24 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def normalize_features_for_gate(gate: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]:
+    feature_types = {
+        feature["id"]: feature["type"]
+        for feature in gate["input_schema"]["features"]
+    }
+    normalized = dict(features)
+    for feature_id, feature_type in feature_types.items():
+        if feature_id not in normalized:
+            continue
+        value = normalized[feature_id]
+        if isinstance(value, bool):
+            if feature_type == "int":
+                normalized[feature_id] = 1 if value else 0
+            elif feature_type == "float":
+                normalized[feature_id] = 1.0 if value else 0.0
+    return normalized
+
+
 def values_equal(left: Any, right: Any) -> bool:
     try:
         left_number = float(left)
@@ -136,6 +155,40 @@ def evaluate_gate(gate: dict[str, Any], features: dict[str, Any]) -> tuple[int, 
     return bitmask, fired_rules
 
 
+def fired_rules_from_bitmask(gate: dict[str, Any], bitmask: int) -> list[dict[str, Any]]:
+    fired: list[dict[str, Any]] = []
+    for rule in gate["rules"]:
+        if bitmask & (1 << int(rule["bit"])):
+            fired.append(rule)
+    return fired
+
+
+def evaluate_with_compiled_pearl(compiled_pearl: Path, feature_rows: list[dict[str, Any]]) -> list[int]:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(feature_rows, handle)
+        handle.write("\n")
+        payload_path = Path(handle.name)
+    try:
+        completed = subprocess.run(
+            [str(compiled_pearl), str(payload_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        payload_path.unlink(missing_ok=True)
+
+    stdout = completed.stdout.strip()
+    if not stdout:
+        raise RuntimeError(f"compiled pearl produced no stdout: {compiled_pearl}")
+    parsed = json.loads(stdout)
+    if isinstance(parsed, int):
+        return [parsed]
+    if isinstance(parsed, list) and all(isinstance(item, int) for item in parsed):
+        return parsed
+    raise RuntimeError(f"compiled pearl returned unexpected payload: {stdout}")
+
+
 def derive_route(route_policy: dict[str, Any], fired_rules: list[dict[str, Any]]) -> str:
     labels = {rule.get("label") for rule in fired_rules}
     for route_rule in route_policy["rules"]:
@@ -159,6 +212,7 @@ def main() -> int:
 
     observer_artifact = bundle_dir / "freeze" / "guardrails_v1.observer.json"
     combined_pearl = read_json(bundle_dir / "freeze" / "guardrails_pre_pint_combined.pearl.ir.json")
+    compiled_pearl = bundle_dir / "freeze" / "guardrails_pre_pint_combined.pearl"
     route_policy = read_json(bundle_dir / "freeze" / "route_policy.json")
 
     cases_path = output_dir / "cases.jsonl"
@@ -217,6 +271,12 @@ def main() -> int:
 
     cases = {row["id"]: row for row in read_jsonl(cases_path)}
     observed_cases = read_jsonl(observed_path)
+    feature_rows = [normalize_features_for_gate(combined_pearl, row["features"]) for row in observed_cases]
+    compiled_used = compiled_pearl.exists()
+    if compiled_used:
+        bitmasks = evaluate_with_compiled_pearl(compiled_pearl, feature_rows)
+    else:
+        bitmasks = [evaluate_gate(combined_pearl, features)[0] for features in feature_rows]
 
     total_cases = 0
     matched_cases = 0
@@ -228,10 +288,9 @@ def main() -> int:
     route_distribution: Counter[str] = Counter()
     case_results: list[dict[str, Any]] = []
 
-    for observed in observed_cases:
+    for observed, bitmask in zip(observed_cases, bitmasks):
         case = cases[observed["id"]]
-        features = observed["features"]
-        bitmask, fired_rules = evaluate_gate(combined_pearl, features)
+        fired_rules = fired_rules_from_bitmask(combined_pearl, bitmask)
         route_status = derive_route(route_policy, fired_rules)
         actual_route = "allow" if route_status == "allow" else route_policy["collapse_non_allow_to"]
         expected_route = case["expected_route"]
@@ -277,6 +336,10 @@ def main() -> int:
         "adapt_report": adapt_report,
         "observe_report": observe_report,
         "emit_report": emit_report,
+        "compiled_pearl": {
+            "path": str(compiled_pearl),
+            "used": compiled_used,
+        },
         "summary": {
             "total_cases": total_cases,
             "matched_cases": matched_cases,
