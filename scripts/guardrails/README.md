@@ -7,7 +7,9 @@ These scripts make the public non-`PINT` and final-`PINT` guardrail workflow rep
 - `build_pre_pint_guardrail_bundle.py`
   - adapts the staged public non-`PINT` corpora
   - merges and splits them into deterministic train/dev sets
-  - freezes the observer artifact used for training
+  - scaffolds a native observer artifact
+  - synthesizes the guardrail signal families against the non-`PINT` train/dev split through the `logicpearl observer synthesize` CLI
+  - freezes the synthesized observer artifact used for training
   - runs train-only discovery
   - scores the frozen artifact set on held-out dev
   - emits a frozen bundle with:

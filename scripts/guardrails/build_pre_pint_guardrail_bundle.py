@@ -81,6 +81,12 @@ ROUTE_RULES: tuple[dict[str, str], ...] = (
     },
 )
 
+SYNTHESIS_SIGNALS: tuple[str, ...] = (
+    "instruction-override",
+    "secret-exfiltration",
+    "tool-misuse",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -315,7 +321,7 @@ def main() -> int:
         ]
     )
 
-    observer_artifact_path = freeze_dir / "guardrails_v1.observer.json"
+    observer_scaffold_path = freeze_dir / "guardrails_v1.observer.scaffold.json"
     observer_scaffold = run_json(
         [
             *cli,
@@ -324,10 +330,41 @@ def main() -> int:
             "--profile",
             "guardrails-v1",
             "--output",
-            str(observer_artifact_path),
+            str(observer_scaffold_path),
             "--json",
         ]
     )
+
+    synthesized_dir = freeze_dir / "observer_synthesis"
+    synthesized_dir.mkdir(parents=True, exist_ok=True)
+    current_observer_path = observer_scaffold_path
+    synthesis_reports: list[dict[str, Any]] = []
+    for index, signal in enumerate(SYNTHESIS_SIGNALS, start=1):
+        output_path = synthesized_dir / f"{index:02d}_{signal}.observer.json"
+        report = run_json(
+            [
+                *cli,
+                "observer",
+                "synthesize",
+                "--artifact",
+                str(current_observer_path),
+                "--benchmark-cases",
+                str(train_path),
+                "--dev-benchmark-cases",
+                str(dev_path),
+                "--signal",
+                signal,
+                "--output",
+                str(output_path),
+                "--json",
+            ]
+        )
+        report["input_artifact"] = str(current_observer_path)
+        synthesis_reports.append(report)
+        current_observer_path = output_path
+
+    observer_artifact_path = freeze_dir / "guardrails_v1.observer.json"
+    shutil.copyfile(current_observer_path, observer_artifact_path)
 
     prepare_report = run_json(
         [
@@ -438,6 +475,7 @@ def main() -> int:
         "git_clean": git_output("status", "--short") == "",
         "trace_projection_config": str(TRACE_PROJECTION_CONFIG),
         "observer_artifact": str(observer_artifact_path),
+        "observer_scaffold_artifact": str(observer_scaffold_path),
         "artifact_set": str(frozen_artifact_set_dir / "artifact_set.json"),
         "combined_pearl_ir": str(combined_pearl_path),
         "combined_native_binary": str(native_output),
@@ -447,6 +485,7 @@ def main() -> int:
         "merge_report": merge_report,
         "split_report": split_report,
         "observer_scaffold": observer_scaffold,
+        "observer_synthesis": synthesis_reports,
         "prepare_report": prepare_report,
         "dev_observe_report": observe_report,
         "dev_emit_report": emit_report,
