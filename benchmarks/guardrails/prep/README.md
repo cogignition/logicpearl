@@ -12,6 +12,29 @@ Use public development corpora here:
 
 Do not use `PINT` here.
 
+Recommended local staging path for full ALERT runs:
+
+```text
+~/Documents/LogicPearl/datasets/public/alert/
+```
+
+Recommended local filenames:
+- `ALERT.jsonl`
+- `ALERT_Adv.jsonl`
+
+Recommended source:
+- Official ALERT repository: `https://github.com/Babelscape/ALERT`
+
+Recommended local staging path for full SQuAD 2.0 runs:
+
+```text
+~/Documents/LogicPearl/datasets/public/squad/
+```
+
+Recommended local filenames:
+- `train-v2.0.json`
+- `dev-v2.0.json`
+
 ## Workflow
 
 The intended automated flow is:
@@ -49,8 +72,10 @@ This command is not implemented yet.
 Today, the public pieces already in place are:
 - `logicpearl discover`
 - `logicpearl benchmark run`
+- `logicpearl benchmark adapt`
 - `logicpearl benchmark adapt-salad`
 - `logicpearl benchmark adapt-alert`
+- `logicpearl benchmark adapt-squad`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
 - `logicpearl benchmark adapt-pint`
@@ -61,35 +86,63 @@ Today, the public pieces already in place are:
 Benign `Salad-Data base_set`:
 
 ```bash
-logicpearl benchmark adapt-salad \
+logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_salad_base_set.json \
-  --subset base-set \
+  --profile salad-base-set \
   --output /tmp/salad_base.jsonl
 ```
 
 Attack `Salad-Data attack_enhanced_set`:
 
 ```bash
-logicpearl benchmark adapt-salad \
+logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_salad_attack_enhanced_set.json \
-  --subset attack-enhanced-set \
+  --profile salad-attack-enhanced-set \
   --output /tmp/salad_attack.jsonl
 ```
 
 Attack `ALERT`:
 
 ```bash
-logicpearl benchmark adapt-alert \
-  benchmarks/guardrails/prep/example_alert_attack.json \
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl \
+  --profile alert \
   --output /tmp/alert_attack.jsonl
+```
+
+Benign `SQuAD 2.0`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json \
+  --profile squad \
+  --output /tmp/squad_benign.jsonl
+```
+
+Small checked-in benign sample:
+
+```bash
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_squad_v2.json \
+  --profile squad \
+  --output /tmp/squad_benign_sample.jsonl
+```
+
+Small checked-in sample:
+
+```bash
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_alert_attack.json \
+  --profile alert \
+  --output /tmp/alert_attack_sample.jsonl
 ```
 
 Merge benign and attack slices into one development set:
 
 ```bash
 logicpearl benchmark merge-cases \
-  /tmp/salad_base.jsonl \
-  /tmp/salad_attack.jsonl \
+  /tmp/squad_benign.jsonl \
+  /tmp/alert_attack.jsonl \
   --output /tmp/salad_dev.jsonl
 ```
 
@@ -98,9 +151,10 @@ Observe those adapted rows:
 ```bash
 logicpearl benchmark observe \
   /tmp/salad_dev.jsonl \
-  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
   --output /tmp/salad_dev_observed.jsonl
 ```
+
+If the input shape matches a built-in native observer profile, LogicPearl detects and uses it automatically. Use `--observer-artifact` to pin a scaffolded observer artifact, or `--plugin-manifest` only when you truly need an external observer.
 
 Then project them into discovery-ready traces:
 
@@ -116,7 +170,6 @@ Or run the generic middle stage in one shot:
 ```bash
 logicpearl benchmark prepare \
   /tmp/salad_dev.jsonl \
-  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
   --json

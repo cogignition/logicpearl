@@ -368,6 +368,8 @@ name = "logicpearl-observer"
 version = "0.1.0"
 dependencies = [
  "logicpearl-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

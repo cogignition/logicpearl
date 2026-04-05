@@ -92,7 +92,7 @@ Recommended additional outputs:
 
 ## What To Freeze Before Final Run
 
-- observer plugin version
+- observer profile or observer artifact version
 - feature contract
 - pearls
 - route policy

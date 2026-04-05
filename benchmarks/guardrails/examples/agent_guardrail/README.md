@@ -3,7 +3,7 @@
 This is the first public LogicPearl guardrail benchmark artifact set.
 
 It is intentionally simple, but it shows the full shape:
-- observer plugin extracts structured attack features from messy input
+- an observer extracts structured attack features from messy input
 - pearls enforce deterministic policy
 - a final route pearl combines stage results
 - a verify plugin emits an operator-facing route label

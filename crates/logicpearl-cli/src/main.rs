@@ -4,15 +4,19 @@ use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, BuildOptions, DecisionTraceRow, DiscoverOptions,
 };
 use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_observer::{
+    default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
+    observe_with_profile, status as observer_status, NativeObserverArtifact,
+    ObserverProfile as NativeObserverProfile,
+};
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
-use logicpearl_observer::status as observer_status;
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use serde_yaml;
 use std::collections::BTreeMap;
 use std::fs;
@@ -45,13 +49,17 @@ Examples:
   logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json";
 
 const BENCHMARK_AFTER_HELP: &str = "\
-Example:
+Examples:
+  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl
+  logicpearl benchmark observe /tmp/salad_dev.jsonl --output /tmp/salad_dev_observed.jsonl
+  logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
 
 const OBSERVER_AFTER_HELP: &str = "\
 Examples:
-  logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
-  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json";
+  logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl observer run --observer-profile guardrails-v1 --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json";
 
 const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
@@ -115,15 +123,19 @@ enum Commands {
 #[derive(Debug, Subcommand)]
 #[command(after_help = BENCHMARK_AFTER_HELP)]
 enum BenchmarkCommand {
+    /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
+    Adapt(BenchmarkAdaptArgs),
     /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
     AdaptSalad(BenchmarkAdaptSaladArgs),
     /// Convert a raw ALERT JSON file into LogicPearl benchmark-case JSONL.
     AdaptAlert(BenchmarkAdaptAlertArgs),
+    /// Convert a raw SQuAD-style JSON file into LogicPearl benchmark-case JSONL.
+    AdaptSquad(BenchmarkAdaptSquadArgs),
     /// Observe benchmark cases, emit traces, and discover artifacts in one run.
     Prepare(BenchmarkPrepareArgs),
     /// Merge multiple benchmark-case JSONL files into one dataset.
     MergeCases(BenchmarkMergeCasesArgs),
-    /// Run an observer plugin over benchmark cases and emit observed feature rows.
+    /// Run an observer over benchmark cases and emit observed feature rows.
     Observe(BenchmarkObserveArgs),
     /// Project observed benchmark rows into discovery-ready trace CSVs.
     EmitTraces(BenchmarkEmitTracesArgs),
@@ -138,6 +150,12 @@ enum QuickstartTopic {
     Build,
     Pipeline,
     Benchmark,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum ObserverProfileArg {
+    GuardrailsV1,
+    Auto,
 }
 
 #[derive(Debug, Args)]
@@ -213,6 +231,39 @@ struct BenchmarkRunArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_benign.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl")]
+struct BenchmarkAdaptArgs {
+    raw_dataset: PathBuf,
+    /// Built-in adapter profile to use for this dataset.
+    #[arg(long, value_enum)]
+    profile: BenchmarkAdapterProfile,
+    /// Output JSONL path in LogicPearl benchmark-case format.
+    #[arg(long)]
+    output: PathBuf,
+    /// Default requested tool when the source row does not provide one.
+    #[arg(long, default_value = "none")]
+    requested_tool: String,
+    /// Default requested action when the source row does not provide one.
+    #[arg(long, default_value = "chat_response")]
+    requested_action: String,
+    /// Default scope when the source row does not provide one.
+    #[arg(long, default_value = "allowed")]
+    scope: String,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum BenchmarkAdapterProfile {
+    SaladBaseSet,
+    SaladAttackEnhancedSet,
+    Alert,
+    Squad,
+    Pint,
+}
+
+#[derive(Debug, Args)]
 #[command(after_help = "Example:\n  logicpearl benchmark adapt-pint raw_pint.yaml --output /tmp/pint_cases.jsonl")]
 struct BenchmarkAdaptPintArgs {
     raw_pint_yaml: PathBuf,
@@ -285,6 +336,27 @@ struct BenchmarkAdaptAlertArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl benchmark adapt-squad train-v2.0.json --output /tmp/squad_benign.jsonl")]
+struct BenchmarkAdaptSquadArgs {
+    raw_squad_json: PathBuf,
+    /// Output JSONL path in LogicPearl benchmark-case format.
+    #[arg(long)]
+    output: PathBuf,
+    /// Default requested tool when the source row does not provide one.
+    #[arg(long, default_value = "none")]
+    requested_tool: String,
+    /// Default requested action when the source row does not provide one.
+    #[arg(long, default_value = "chat_response")]
+    requested_action: String,
+    /// Default scope when the source row does not provide one.
+    #[arg(long, default_value = "allowed")]
+    scope: String,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 #[command(after_help = "Example:\n  logicpearl benchmark merge-cases /tmp/salad_base.jsonl /tmp/salad_attack.jsonl --output /tmp/salad_dev.jsonl")]
 struct BenchmarkMergeCasesArgs {
     inputs: Vec<PathBuf>,
@@ -297,12 +369,18 @@ struct BenchmarkMergeCasesArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json")]
+#[command(after_help = "Examples:\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark prepare /tmp/salad_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep")]
 struct BenchmarkPrepareArgs {
     dataset_jsonl: PathBuf,
-    /// Observer plugin manifest used to normalize each benchmark case input.
+    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
+    #[arg(long, value_enum)]
+    observer_profile: Option<ObserverProfileArg>,
+    /// Observer artifact to run natively.
     #[arg(long)]
-    plugin_manifest: PathBuf,
+    observer_artifact: Option<PathBuf>,
+    /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
+    #[arg(long)]
+    plugin_manifest: Option<PathBuf>,
     /// Projection config that maps observed rows into discovery-ready trace tables.
     #[arg(long)]
     config: PathBuf,
@@ -315,12 +393,18 @@ struct BenchmarkPrepareArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json --output /tmp/salad_attack_observed.jsonl")]
+#[command(after_help = "Examples:\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --output /tmp/salad_attack_observed.jsonl\n  logicpearl benchmark observe /tmp/salad_attack.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/salad_attack_observed.jsonl")]
 struct BenchmarkObserveArgs {
     dataset_jsonl: PathBuf,
-    /// Observer plugin manifest used to normalize each benchmark case input.
+    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
+    #[arg(long, value_enum)]
+    observer_profile: Option<ObserverProfileArg>,
+    /// Observer artifact to run natively.
     #[arg(long)]
-    plugin_manifest: PathBuf,
+    observer_artifact: Option<PathBuf>,
+    /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
+    #[arg(long)]
+    plugin_manifest: Option<PathBuf>,
     /// Output JSONL path with benchmark metadata plus observer features.
     #[arg(long)]
     output: PathBuf,
@@ -457,14 +541,18 @@ struct PipelineTraceArgs {
 #[derive(Debug, Subcommand)]
 #[command(after_help = OBSERVER_AFTER_HELP)]
 enum ObserverCommand {
-    /// Check that an observer plugin or observer artifact is valid.
+    /// Check that an observer profile artifact or plugin manifest is valid.
     Validate(ObserverValidateArgs),
     /// Run an observer on raw input and emit normalized features.
     Run(ObserverRunArgs),
+    /// Detect which built-in observer profile fits the input shape.
+    Detect(ObserverDetectArgs),
+    /// Scaffold a native observer artifact from a built-in profile.
+    Scaffold(ObserverScaffoldArgs),
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest")]
+#[command(after_help = "Examples:\n  logicpearl observer validate /tmp/guardrails_observer.json\n  logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest")]
 struct ObserverValidateArgs {
     target: PathBuf,
     /// Validate a plugin manifest instead of a static observer artifact.
@@ -473,15 +561,41 @@ struct ObserverValidateArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(after_help = "Example:\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json")]
+#[command(after_help = "Examples:\n  logicpearl observer run --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json")]
 struct ObserverRunArgs {
-    /// Plugin manifest for the observer plugin to execute.
+    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects one from the raw input when possible.
     #[arg(long)]
-    plugin_manifest: PathBuf,
-    /// Raw input JSON to send to the plugin.
+    observer_profile: Option<ObserverProfileArg>,
+    /// Native observer artifact to execute.
+    #[arg(long)]
+    observer_artifact: Option<PathBuf>,
+    /// Plugin manifest for the observer plugin to execute when no native profile or artifact fits.
+    #[arg(long)]
+    plugin_manifest: Option<PathBuf>,
+    /// Raw input JSON to normalize.
     #[arg(long)]
     input: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json")]
+struct ObserverDetectArgs {
+    #[arg(long)]
+    input: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json")]
+struct ObserverScaffoldArgs {
+    #[arg(long, value_enum)]
+    profile: ObserverProfileArg,
+    #[arg(long)]
+    output: PathBuf,
     #[arg(long)]
     json: bool,
 }
@@ -563,6 +677,30 @@ struct SaladAttackCase {
     category_3: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SquadDataset {
+    data: Vec<SquadArticle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SquadArticle {
+    #[serde(default)]
+    title: Option<String>,
+    paragraphs: Vec<SquadParagraph>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SquadParagraph {
+    context: String,
+    qas: Vec<SquadQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SquadQuestion {
+    id: String,
+    question: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkCaseResult {
     id: String,
@@ -605,15 +743,36 @@ struct TraceEmitSummary {
     files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ObserverResolution {
+    NativeProfile { profile: String },
+    NativeArtifact { observer_id: String },
+    Plugin { name: String },
+}
+
+#[derive(Debug, Clone)]
+enum ResolvedObserver {
+    NativeProfile(NativeObserverProfile),
+    NativeArtifact(NativeObserverArtifact),
+    Plugin(PluginManifest),
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Benchmark {
+            command: BenchmarkCommand::Adapt(args),
+        } => run_benchmark_adapt(args),
         Commands::Benchmark {
             command: BenchmarkCommand::AdaptSalad(args),
         } => run_benchmark_adapt_salad(args),
         Commands::Benchmark {
             command: BenchmarkCommand::AdaptAlert(args),
         } => run_benchmark_adapt_alert(args),
+        Commands::Benchmark {
+            command: BenchmarkCommand::AdaptSquad(args),
+        } => run_benchmark_adapt_squad(args),
         Commands::Benchmark {
             command: BenchmarkCommand::Prepare(args),
         } => run_benchmark_prepare(args),
@@ -658,6 +817,12 @@ fn main() -> Result<()> {
         Commands::Observer {
             command: ObserverCommand::Run(args),
         } => run_observer_run(args),
+        Commands::Observer {
+            command: ObserverCommand::Detect(args),
+        } => run_observer_detect(args),
+        Commands::Observer {
+            command: ObserverCommand::Scaffold(args),
+        } => run_observer_scaffold(args),
     }
 }
 
@@ -724,18 +889,13 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
     let traces_dir = args.output_dir.join("traces");
     let discovered_dir = args.output_dir.join("discovered");
 
-    let manifest = PluginManifest::from_path(&args.plugin_manifest)
-        .into_diagnostic()
-        .wrap_err("failed to load observer plugin manifest")?;
-    if manifest.stage != PluginStage::Observer {
-        return Err(guidance(
-            format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
-            "Use an observer-stage manifest with `logicpearl benchmark prepare`.",
-        ));
-    }
-
-    let observed_rows =
-        observe_benchmark_cases(&args.dataset_jsonl, &manifest, &observed_path)?;
+    let observer = resolve_observer_for_cases(
+        &args.dataset_jsonl,
+        args.observer_profile.clone(),
+        args.observer_artifact.clone(),
+        args.plugin_manifest.clone(),
+    )?;
+    let observed_rows = observe_benchmark_cases(&args.dataset_jsonl, &observer, &observed_path)?;
     let trace_summary = emit_trace_tables(&observed_path, &args.config, &traces_dir)?;
     let config = load_trace_projection_config(&args.config)?;
 
@@ -772,7 +932,7 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "dataset": args.dataset_jsonl.display().to_string(),
-                "observer_plugin": manifest.name,
+                "observer": observer_resolution(&observer),
                 "observed_rows": observed_rows,
                 "observed_output": observed_path.display().to_string(),
                 "trace_summary": trace_summary,
@@ -783,6 +943,11 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
     } else {
         println!("{} {}", "Prepared".bold().bright_green(), "benchmark dataset".bold());
         println!("  {} {}", "Observed".bright_black(), observed_rows);
+        println!(
+            "  {} {}",
+            "Observer".bright_black(),
+            render_observer_resolution(&observer_resolution(&observer))
+        );
         println!("  {} {}", "Observed output".bright_black(), observed_path.display());
         println!("  {} {}", "Trace output".bright_black(), traces_dir.display());
         if let Some(discover_result) = discover_result {
@@ -798,22 +963,13 @@ fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
 }
 
 fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
-    let manifest = PluginManifest::from_path(&args.plugin_manifest)
-        .into_diagnostic()
-        .wrap_err("failed to load observer plugin manifest")?;
-    if manifest.stage != PluginStage::Observer {
-        return Err(guidance(
-            format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
-            "Use an observer-stage manifest with `logicpearl benchmark observe`.",
-        ));
-    }
-
-    if let Some(parent) = args.output.parent() {
-        fs::create_dir_all(parent)
-            .into_diagnostic()
-            .wrap_err("failed to create observed benchmark output directory")?;
-    }
-    let rows = observe_benchmark_cases(&args.dataset_jsonl, &manifest, &args.output)?;
+    let observer = resolve_observer_for_cases(
+        &args.dataset_jsonl,
+        args.observer_profile.clone(),
+        args.observer_artifact.clone(),
+        args.plugin_manifest.clone(),
+    )?;
+    let rows = observe_benchmark_cases(&args.dataset_jsonl, &observer, &args.output)?;
 
     if args.json {
         println!(
@@ -821,14 +977,18 @@ fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "rows": rows,
                 "output": args.output.display().to_string(),
-                "observer_plugin": manifest.name
+                "observer": observer_resolution(&observer)
             }))
             .into_diagnostic()?
         );
     } else {
         println!("{} {}", "Observed".bold().bright_green(), "benchmark cases".bold());
         println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Observer".bright_black(), manifest.name);
+        println!(
+            "  {} {}",
+            "Observer".bright_black(),
+            render_observer_resolution(&observer_resolution(&observer))
+        );
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
@@ -849,6 +1009,55 @@ fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result<()> {
         println!("  {} {}", "Output".bright_black(), summary.output_dir);
     }
     Ok(())
+}
+
+fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
+    match args.profile {
+        BenchmarkAdapterProfile::SaladBaseSet => run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
+            raw_salad_json: args.raw_dataset,
+            subset: SaladSubset::BaseSet,
+            output: args.output,
+            requested_tool: args.requested_tool,
+            requested_action: args.requested_action,
+            scope: args.scope,
+            json: args.json,
+        }),
+        BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
+            run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
+                raw_salad_json: args.raw_dataset,
+                subset: SaladSubset::AttackEnhancedSet,
+                output: args.output,
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+                json: args.json,
+            })
+        }
+        BenchmarkAdapterProfile::Alert => run_benchmark_adapt_alert(BenchmarkAdaptAlertArgs {
+            raw_alert_json: args.raw_dataset,
+            output: args.output,
+            requested_tool: args.requested_tool,
+            requested_action: args.requested_action,
+            scope: args.scope,
+            json: args.json,
+        }),
+        BenchmarkAdapterProfile::Squad => run_benchmark_adapt_squad(BenchmarkAdaptSquadArgs {
+            raw_squad_json: args.raw_dataset,
+            output: args.output,
+            requested_tool: args.requested_tool,
+            requested_action: args.requested_action,
+            scope: args.scope,
+            json: args.json,
+        }),
+        BenchmarkAdapterProfile::Pint => run_benchmark_adapt_pint(BenchmarkAdaptPintArgs {
+            raw_pint_yaml: args.raw_dataset,
+            output: args.output,
+            requested_tool: args.requested_tool,
+            requested_action: args.requested_action,
+            scope: args.scope,
+            json: args.json,
+        }),
+    }
 }
 
 fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
@@ -1043,6 +1252,83 @@ fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
     } else {
         println!("{} {}", "Adapted".bold().bright_green(), "ALERT dataset".bold());
         println!("  {} {}", "Rows".bright_black(), rows.len());
+        println!("  {} {}", "Output".bright_black(), args.output.display());
+    }
+    Ok(())
+}
+
+fn run_benchmark_adapt_squad(args: BenchmarkAdaptSquadArgs) -> Result<()> {
+    let raw_json = fs::read_to_string(&args.raw_squad_json)
+        .into_diagnostic()
+        .wrap_err("could not read raw SQuAD JSON")?;
+    let dataset: SquadDataset = serde_json::from_str(&raw_json)
+        .into_diagnostic()
+        .wrap_err("raw SQuAD JSON is not valid for the expected dataset format")?;
+    if dataset.data.is_empty() {
+        return Err(guidance(
+            "raw SQuAD dataset is empty",
+            "Provide a SQuAD-style JSON file with a top-level data array.",
+        ));
+    }
+
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create adapted benchmark output directory")?;
+    }
+
+    let mut out = String::new();
+    let mut rows = 0_usize;
+    for article in &dataset.data {
+        for paragraph in &article.paragraphs {
+            for question in &paragraph.qas {
+                let benchmark_case = BenchmarkCase {
+                    id: format!("squad_{}", question.id),
+                    input: serde_json::json!({
+                        "prompt": question.question,
+                        "context": paragraph.context,
+                        "requested_tool": args.requested_tool,
+                        "requested_action": args.requested_action,
+                        "scope": args.scope,
+                        "document_instructions_present": false
+                    }),
+                    expected_route: "allow".to_string(),
+                    category: article
+                        .title
+                        .clone()
+                        .or_else(|| Some("benign_negative".to_string())),
+                };
+                out.push_str(&serde_json::to_string(&benchmark_case).into_diagnostic()?);
+                out.push('\n');
+                rows += 1;
+            }
+        }
+    }
+
+    if rows == 0 {
+        return Err(guidance(
+            "raw SQuAD dataset contains no question rows",
+            "Make sure the JSON contains data[].paragraphs[].qas[] entries.",
+        ));
+    }
+
+    fs::write(&args.output, out)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted SQuAD JSONL")?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source_benchmark": "squad",
+                "rows": rows,
+                "output": args.output.display().to_string()
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Adapted".bold().bright_green(), "SQuAD dataset".bold());
+        println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
@@ -2038,9 +2324,175 @@ fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
     }
 }
 
+fn to_native_profile(profile: ObserverProfileArg) -> Result<NativeObserverProfile> {
+    match profile {
+        ObserverProfileArg::GuardrailsV1 => Ok(NativeObserverProfile::GuardrailsV1),
+        ObserverProfileArg::Auto => Err(guidance(
+            "`auto` is only valid when LogicPearl can inspect input examples",
+            "Use a concrete profile like --observer-profile guardrails-v1 or let benchmark observe/prepare auto-detect from dataset input.",
+        )),
+    }
+}
+
+fn observer_resolution(observer: &ResolvedObserver) -> ObserverResolution {
+    match observer {
+        ResolvedObserver::NativeProfile(profile) => ObserverResolution::NativeProfile {
+            profile: native_profile_name(*profile).to_string(),
+        },
+        ResolvedObserver::NativeArtifact(artifact) => ObserverResolution::NativeArtifact {
+            observer_id: artifact.observer_id.clone(),
+        },
+        ResolvedObserver::Plugin(manifest) => ObserverResolution::Plugin {
+            name: manifest.name.clone(),
+        },
+    }
+}
+
+fn native_profile_name(profile: NativeObserverProfile) -> &'static str {
+    match profile {
+        NativeObserverProfile::GuardrailsV1 => "guardrails_v1",
+    }
+}
+
+fn render_observer_resolution(resolution: &ObserverResolution) -> String {
+    match resolution {
+        ObserverResolution::NativeProfile { profile } => format!("native profile {profile}"),
+        ObserverResolution::NativeArtifact { observer_id } => format!("native artifact {observer_id}"),
+        ObserverResolution::Plugin { name } => format!("plugin {name}"),
+    }
+}
+
+fn resolve_observer_for_cases(
+    dataset_jsonl: &PathBuf,
+    observer_profile: Option<ObserverProfileArg>,
+    observer_artifact: Option<PathBuf>,
+    plugin_manifest: Option<PathBuf>,
+) -> Result<ResolvedObserver> {
+    let explicit_count = usize::from(observer_profile.is_some())
+        + usize::from(observer_artifact.is_some())
+        + usize::from(plugin_manifest.is_some());
+    if explicit_count > 1 {
+        return Err(guidance(
+            "choose only one observer source",
+            "Use one of --observer-profile, --observer-artifact, or --plugin-manifest.",
+        ));
+    }
+
+    if let Some(path) = plugin_manifest {
+        let manifest = PluginManifest::from_path(&path)
+            .into_diagnostic()
+            .wrap_err("failed to load observer plugin manifest")?;
+        if manifest.stage != PluginStage::Observer {
+            return Err(guidance(
+                format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+                "Use an observer-stage manifest.",
+            ));
+        }
+        return Ok(ResolvedObserver::Plugin(manifest));
+    }
+
+    if let Some(path) = observer_artifact {
+        let artifact = load_artifact(&path)
+            .into_diagnostic()
+            .wrap_err("failed to load native observer artifact")?;
+        return Ok(ResolvedObserver::NativeArtifact(artifact));
+    }
+
+    if let Some(profile) = observer_profile {
+        return match profile {
+            ObserverProfileArg::Auto => {
+                let cases = load_benchmark_cases(dataset_jsonl)?;
+                let sample = cases
+                    .first()
+                    .ok_or_else(|| guidance("benchmark dataset is empty", "Add at least one case before using --observer-profile auto."))?;
+                let detected = detect_profile_from_input(&sample.input).ok_or_else(|| {
+                    guidance(
+                        "could not auto-detect a built-in observer profile",
+                        "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
+                    )
+                })?;
+                Ok(ResolvedObserver::NativeProfile(detected))
+            }
+            other => Ok(ResolvedObserver::NativeProfile(to_native_profile(other)?)),
+        };
+    }
+
+    let cases = load_benchmark_cases(dataset_jsonl)?;
+    let sample = cases
+        .first()
+        .ok_or_else(|| guidance("benchmark dataset is empty", "Add at least one case before running benchmark observe."))?;
+    let detected = detect_profile_from_input(&sample.input).ok_or_else(|| {
+        guidance(
+            "no observer source was provided and no built-in profile could be auto-detected",
+            "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
+        )
+    })?;
+    Ok(ResolvedObserver::NativeProfile(detected))
+}
+
+fn resolve_observer_from_input(
+    raw_input: &Value,
+    observer_profile: Option<ObserverProfileArg>,
+    observer_artifact: Option<PathBuf>,
+    plugin_manifest: Option<PathBuf>,
+) -> Result<ResolvedObserver> {
+    let explicit_count = usize::from(observer_profile.is_some())
+        + usize::from(observer_artifact.is_some())
+        + usize::from(plugin_manifest.is_some());
+    if explicit_count > 1 {
+        return Err(guidance(
+            "choose only one observer source",
+            "Use one of --observer-profile, --observer-artifact, or --plugin-manifest.",
+        ));
+    }
+
+    if let Some(path) = plugin_manifest {
+        let manifest = PluginManifest::from_path(&path)
+            .into_diagnostic()
+            .wrap_err("failed to load observer plugin manifest")?;
+        if manifest.stage != PluginStage::Observer {
+            return Err(guidance(
+                format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+                "Use an observer-stage manifest.",
+            ));
+        }
+        return Ok(ResolvedObserver::Plugin(manifest));
+    }
+
+    if let Some(path) = observer_artifact {
+        let artifact = load_artifact(&path)
+            .into_diagnostic()
+            .wrap_err("failed to load native observer artifact")?;
+        return Ok(ResolvedObserver::NativeArtifact(artifact));
+    }
+
+    if let Some(profile) = observer_profile {
+        return match profile {
+            ObserverProfileArg::Auto => {
+                let detected = detect_profile_from_input(raw_input).ok_or_else(|| {
+                    guidance(
+                        "could not auto-detect a built-in observer profile",
+                        "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
+                    )
+                })?;
+                Ok(ResolvedObserver::NativeProfile(detected))
+            }
+            other => Ok(ResolvedObserver::NativeProfile(to_native_profile(other)?)),
+        };
+    }
+
+    let detected = detect_profile_from_input(raw_input).ok_or_else(|| {
+        guidance(
+            "no observer source was provided and no built-in profile could be auto-detected",
+            "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
+        )
+    })?;
+    Ok(ResolvedObserver::NativeProfile(detected))
+}
+
 fn observe_benchmark_cases(
     dataset_jsonl: &PathBuf,
-    manifest: &PluginManifest,
+    observer: &ResolvedObserver,
     output: &PathBuf,
 ) -> Result<usize> {
     if let Some(parent) = output.parent() {
@@ -2052,27 +2504,8 @@ fn observe_benchmark_cases(
     let mut rows = 0_usize;
     let mut out = String::new();
     for case in load_benchmark_cases(dataset_jsonl)? {
-        let request = PluginRequest {
-            protocol_version: "1".to_string(),
-            stage: PluginStage::Observer,
-            payload: serde_json::json!({
-                "raw_input": case.input,
-            }),
-        };
-        let response = run_plugin(manifest, &request)
-            .into_diagnostic()
-            .wrap_err(format!("observer plugin execution failed for case {}", case.id))?;
-        let features = response
-            .extra
-            .get("features")
-            .and_then(Value::as_object)
-            .cloned()
-            .ok_or_else(|| {
-                guidance(
-                    "observer plugin response is missing `features`",
-                    "An observer plugin used for benchmark observation must return a top-level features object.",
-                )
-            })?;
+        let features = observe_features(observer, &case.input)
+            .wrap_err(format!("observer execution failed for case {}", case.id))?;
         let observed = ObservedBenchmarkCase {
             id: case.id,
             input: case.input,
@@ -2096,6 +2529,40 @@ fn observe_benchmark_cases(
         .into_diagnostic()
         .wrap_err("failed to write observed benchmark JSONL")?;
     Ok(rows)
+}
+
+fn observe_features(observer: &ResolvedObserver, raw_input: &Value) -> Result<Map<String, Value>> {
+    match observer {
+        ResolvedObserver::NativeProfile(profile) => observe_with_profile(*profile, raw_input)
+            .into_diagnostic()
+            .wrap_err("native observer profile execution failed"),
+        ResolvedObserver::NativeArtifact(artifact) => observe_with_artifact(artifact, raw_input)
+            .into_diagnostic()
+            .wrap_err("native observer artifact execution failed"),
+        ResolvedObserver::Plugin(manifest) => {
+            let request = PluginRequest {
+                protocol_version: "1".to_string(),
+                stage: PluginStage::Observer,
+                payload: serde_json::json!({
+                    "raw_input": raw_input,
+                }),
+            };
+            let response = run_plugin(manifest, &request)
+                .into_diagnostic()
+                .wrap_err("observer plugin execution failed")?;
+            response
+                .extra
+                .get("features")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| {
+                    guidance(
+                        "observer plugin response is missing `features`",
+                        "An observer plugin used for benchmark observation must return a top-level features object.",
+                    )
+                })
+        }
+    }
 }
 
 fn load_trace_projection_config(config_path: &PathBuf) -> Result<TraceProjectionConfig> {
@@ -2437,29 +2904,24 @@ fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
             format!("manifest is valid ({})", manifest.name).bright_black()
         );
     } else {
-        let _payload = fs::read_to_string(&args.target)
+        let artifact = load_artifact(&args.target)
             .into_diagnostic()
-            .wrap_err("failed to read observer JSON")?;
+            .wrap_err("failed to read native observer artifact")?;
         let status = observer_status().into_diagnostic()?;
         println!(
             "{} {}",
             "Observer".bold().bright_magenta(),
-            format!("validation entrypoint ready ({status})").bright_black()
+            format!(
+                "artifact is valid ({}, id={})",
+                status, artifact.observer_id
+            )
+            .bright_black()
         );
     }
     Ok(())
 }
 
 fn run_observer_run(args: ObserverRunArgs) -> Result<()> {
-    let manifest = PluginManifest::from_path(&args.plugin_manifest)
-        .into_diagnostic()
-        .wrap_err("failed to load observer plugin manifest")?;
-    if manifest.stage != PluginStage::Observer {
-        return Err(guidance(
-            format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
-            "Use an observer-stage manifest with `logicpearl observer run`.",
-        ));
-    }
     let raw_input: Value = serde_json::from_str(
         &fs::read_to_string(&args.input)
             .into_diagnostic()
@@ -2467,32 +2929,88 @@ fn run_observer_run(args: ObserverRunArgs) -> Result<()> {
     )
     .into_diagnostic()
     .wrap_err("observer input JSON is not valid JSON")?;
-
-    let request = PluginRequest {
-        protocol_version: "1".to_string(),
-        stage: PluginStage::Observer,
-        payload: serde_json::json!({
-            "raw_input": raw_input,
-        }),
-    };
-    let response = run_plugin(&manifest, &request)
-        .into_diagnostic()
-        .wrap_err("observer plugin execution failed")?;
+    let observer = resolve_observer_from_input(
+        &raw_input,
+        args.observer_profile.clone(),
+        args.observer_artifact.clone(),
+        args.plugin_manifest.clone(),
+    )?;
+    let features = observe_features(&observer, &raw_input)?;
+    let response = serde_json::json!({
+        "features": features,
+        "observer": observer_resolution(&observer)
+    });
     if args.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&response.extra).into_diagnostic()?
-        );
+        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
     } else {
         println!(
             "{} {}",
-            "Observer plugin".bold().bright_magenta(),
-            manifest.name.bold()
+            "Observer".bold().bright_magenta(),
+            render_observer_resolution(&observer_resolution(&observer)).bold()
         );
+        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+    }
+    Ok(())
+}
+
+fn run_observer_detect(args: ObserverDetectArgs) -> Result<()> {
+    let raw_input: Value = serde_json::from_str(
+        &fs::read_to_string(&args.input)
+            .into_diagnostic()
+            .wrap_err("failed to read observer input JSON")?,
+    )
+    .into_diagnostic()
+    .wrap_err("observer input JSON is not valid JSON")?;
+    let detected = detect_profile_from_input(&raw_input)
+        .map(|profile| ObserverResolution::NativeProfile {
+            profile: native_profile_name(profile).to_string(),
+        });
+    if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&response.extra).into_diagnostic()?
+            serde_json::to_string_pretty(&serde_json::json!({
+                "detected": detected
+            }))
+            .into_diagnostic()?
         );
+    } else if let Some(resolution) = detected {
+        println!(
+            "{} {}",
+            "Detected".bold().bright_green(),
+            render_observer_resolution(&resolution)
+        );
+    } else {
+        println!("{}", "No built-in observer profile detected".bright_yellow());
+    }
+    Ok(())
+}
+
+fn run_observer_scaffold(args: ObserverScaffoldArgs) -> Result<()> {
+    let profile = to_native_profile(args.profile)?;
+    let artifact = default_artifact_for_profile(profile);
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create observer scaffold output directory")?;
+    }
+    fs::write(
+        &args.output,
+        serde_json::to_string_pretty(&artifact).into_diagnostic()? + "\n",
+    )
+    .into_diagnostic()
+    .wrap_err("failed to write observer artifact")?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "output": args.output.display().to_string(),
+                "observer": artifact
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!("{} {}", "Scaffolded".bold().bright_green(), artifact.observer_id.bold());
+        println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
 }

@@ -42,40 +42,93 @@ This is the boundary between:
 
 ## Phase 1: Adapt Non-PINT Data
 
-The first public non-`PINT` adapters are `Salad-Data` and `ALERT`.
+The first public non-`PINT` adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.
+
+For full local runs, stage public corpora outside the public repo under the workspace dataset tree.
+
+For ALERT, use:
+
+```text
+~/Documents/LogicPearl/datasets/public/alert/
+```
+
+Recommended local filenames:
+- `ALERT.jsonl`
+- `ALERT_Adv.jsonl`
+
+Download source:
+- Official ALERT repository: `https://github.com/Babelscape/ALERT`
+
+For SQuAD 2.0, use:
+
+```text
+~/Documents/LogicPearl/datasets/public/squad/
+```
+
+Recommended local filenames:
+- `train-v2.0.json`
+- `dev-v2.0.json`
 
 Benign `base_set`:
 
 ```bash
-logicpearl benchmark adapt-salad \
+logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_salad_base_set.json \
-  --subset base-set \
+  --profile salad-base-set \
   --output /tmp/salad_base.jsonl
 ```
 
 Attack `attack_enhanced_set`:
 
 ```bash
-logicpearl benchmark adapt-salad \
+logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_salad_attack_enhanced_set.json \
-  --subset attack-enhanced-set \
+  --profile salad-attack-enhanced-set \
   --output /tmp/salad_attack.jsonl
 ```
 
 Attack `ALERT`:
 
 ```bash
-logicpearl benchmark adapt-alert \
-  benchmarks/guardrails/prep/example_alert_attack.json \
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl \
+  --profile alert \
   --output /tmp/alert_attack.jsonl
+```
+
+Benign `SQuAD 2.0`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json \
+  --profile squad \
+  --output /tmp/squad_benign.jsonl
+```
+
+Small checked-in sample for schema verification:
+
+```bash
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_squad_v2.json \
+  --profile squad \
+  --output /tmp/squad_benign_sample.jsonl
+```
+
+Small checked-in sample for schema verification:
+
+```bash
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_alert_attack.json \
+  --profile alert \
+  --output /tmp/alert_attack_sample.jsonl
 ```
 
 Merge those slices into one development corpus:
 
 ```bash
 logicpearl benchmark merge-cases \
-  /tmp/salad_base.jsonl \
-  /tmp/salad_attack.jsonl \
+  /tmp/squad_benign.jsonl \
+  /tmp/alert_attack.jsonl \
   --output /tmp/salad_dev.jsonl
 ```
 
@@ -92,9 +145,10 @@ Run the guardrail observer over the adapted cases:
 ```bash
 logicpearl benchmark observe \
   /tmp/salad_dev.jsonl \
-  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
   --output /tmp/salad_dev_observed.jsonl
 ```
+
+For common prompt-shaped benchmark cases, LogicPearl will auto-detect the built-in native observer profile. If you need a frozen observer definition, scaffold one first and pass `--observer-artifact` instead.
 
 This emits rows that keep:
 - benchmark metadata
@@ -134,7 +188,6 @@ If you want the middle of the workflow as one command, use:
 ```bash
 logicpearl benchmark prepare \
   /tmp/salad_dev.jsonl \
-  --plugin-manifest benchmarks/guardrails/examples/agent_guardrail/plugins/observer/manifest.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
   --json
