@@ -111,7 +111,14 @@ pub enum Expression {
 pub struct ComparisonExpression {
     pub feature: String,
     pub op: ComparisonOperator,
-    pub value: Value,
+    pub value: ComparisonValue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ComparisonValue {
+    FeatureRef { feature_ref: String },
+    Literal(Value),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,7 +240,7 @@ impl LogicPearlGateIr {
                             constraint.feature
                         ))
                     })?;
-                    validate_comparison(constraint, feature)?;
+                    validate_comparison(constraint, feature, &known_features)?;
                 }
             }
         }
@@ -278,7 +285,7 @@ fn validate_expression(
             let feature = known_features.get(&comparison.feature).ok_or_else(|| {
                 LogicPearlError::message(format!("unknown features referenced: {}", comparison.feature))
             })?;
-            validate_comparison(comparison, feature)
+            validate_comparison(comparison, feature, known_features)
         }
         Expression::All { all } => {
             if all.is_empty() {
@@ -306,11 +313,28 @@ fn validate_expression(
     }
 }
 
-fn validate_comparison(expression: &ComparisonExpression, feature: &FeatureDefinition) -> Result<()> {
+fn validate_comparison(
+    expression: &ComparisonExpression,
+    feature: &FeatureDefinition,
+    known_features: &HashMap<String, &FeatureDefinition>,
+) -> Result<()> {
+    if let Some(feature_ref) = expression.value.feature_ref() {
+        let rhs_feature = known_features.get(feature_ref).ok_or_else(|| {
+            LogicPearlError::message(format!("unknown features referenced: {}", feature_ref))
+        })?;
+        ensure_feature_reference_comparison(feature, rhs_feature, &expression.op)?;
+        return Ok(());
+    }
+
+    let literal = expression
+        .value
+        .literal()
+        .ok_or_else(|| LogicPearlError::message("comparison value must be a literal or feature reference"))?;
+
     match feature.feature_type {
         FeatureType::Bool => {
             ensure_op(&expression.op, &[ComparisonOperator::Eq, ComparisonOperator::Ne], "bool")?;
-            if !expression.value.is_boolean() {
+            if !literal.is_boolean() {
                 return Err(LogicPearlError::message(format!(
                     "requires bool value for feature {}",
                     feature.id
@@ -321,7 +345,7 @@ fn validate_comparison(expression: &ComparisonExpression, feature: &FeatureDefin
             let allowed = feature.values.as_ref().expect("enum values validated");
             match expression.op {
                 ComparisonOperator::In | ComparisonOperator::NotIn => {
-                    let items = expression.value.as_array().ok_or_else(|| {
+                    let items = literal.as_array().ok_or_else(|| {
                         LogicPearlError::message(format!(
                             "requires array value for enum feature {}",
                             feature.id
@@ -337,10 +361,10 @@ fn validate_comparison(expression: &ComparisonExpression, feature: &FeatureDefin
                     }
                 }
                 _ => {
-                    if !allowed.contains(&expression.value) {
+                    if !allowed.contains(literal) {
                         return Err(LogicPearlError::message(format!(
                             "unsupported enum value {} for feature {}",
-                            expression.value, feature.id
+                            literal, feature.id
                         )));
                     }
                 }
@@ -378,6 +402,47 @@ fn validate_comparison(expression: &ComparisonExpression, feature: &FeatureDefin
     Ok(())
 }
 
+fn ensure_feature_reference_comparison(
+    feature: &FeatureDefinition,
+    rhs_feature: &FeatureDefinition,
+    op: &ComparisonOperator,
+) -> Result<()> {
+    match (&feature.feature_type, &rhs_feature.feature_type) {
+        (FeatureType::Bool, FeatureType::Bool) => {
+            ensure_op(op, &[ComparisonOperator::Eq, ComparisonOperator::Ne], "bool")?;
+        }
+        (FeatureType::String, FeatureType::String) | (FeatureType::Enum, FeatureType::Enum) => {
+            ensure_op(op, &[ComparisonOperator::Eq, ComparisonOperator::Ne], "feature_ref")?;
+        }
+        (FeatureType::Int | FeatureType::Float, FeatureType::Int | FeatureType::Float) => {
+            ensure_op(
+                op,
+                &[
+                    ComparisonOperator::Eq,
+                    ComparisonOperator::Ne,
+                    ComparisonOperator::Gt,
+                    ComparisonOperator::Gte,
+                    ComparisonOperator::Lt,
+                    ComparisonOperator::Lte,
+                ],
+                "numeric feature_ref",
+            )?;
+        }
+        _ => {
+            return Err(LogicPearlError::message(format!(
+                "feature reference comparison requires compatible feature types: {} vs {}",
+                feature.id, rhs_feature.id
+            )));
+        }
+    }
+    if matches!(op, ComparisonOperator::In | ComparisonOperator::NotIn) {
+        return Err(LogicPearlError::message(
+            "feature reference comparisons do not support in/not_in",
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_op(actual: &ComparisonOperator, allowed: &[ComparisonOperator], kind: &str) -> Result<()> {
     if allowed.contains(actual) {
         return Ok(());
@@ -400,5 +465,133 @@ impl ComparisonOperator {
             ComparisonOperator::In => "in",
             ComparisonOperator::NotIn => "not_in",
         }
+    }
+}
+
+impl ComparisonValue {
+    pub fn literal(&self) -> Option<&Value> {
+        match self {
+            ComparisonValue::Literal(value) => Some(value),
+            ComparisonValue::FeatureRef { .. } => None,
+        }
+    }
+
+    pub fn feature_ref(&self) -> Option<&str> {
+        match self {
+            ComparisonValue::Literal(_) => None,
+            ComparisonValue::FeatureRef { feature_ref } => Some(feature_ref.as_str()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn simple_gate(expression: ComparisonExpression, rhs_feature_type: FeatureType) -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "test_gate".to_string(),
+            gate_type: "bitmask_gate".to_string(),
+            input_schema: InputSchema {
+                features: vec![
+                    FeatureDefinition {
+                        id: "left".to_string(),
+                        feature_type: FeatureType::Int,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                    },
+                    FeatureDefinition {
+                        id: "right".to_string(),
+                        feature_type: rhs_feature_type,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                    },
+                ],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_000".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(expression),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: None,
+            }],
+            evaluation: EvaluationConfig {
+                combine: "bitwise_or".to_string(),
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn validates_numeric_feature_reference_comparison() {
+        let gate = simple_gate(
+            ComparisonExpression {
+                feature: "left".to_string(),
+                op: ComparisonOperator::Lt,
+                value: ComparisonValue::FeatureRef {
+                    feature_ref: "right".to_string(),
+                },
+            },
+            FeatureType::Int,
+        );
+        gate.validate().expect("numeric feature references should validate");
+    }
+
+    #[test]
+    fn rejects_incompatible_feature_reference_comparison() {
+        let gate = simple_gate(
+            ComparisonExpression {
+                feature: "left".to_string(),
+                op: ComparisonOperator::Lt,
+                value: ComparisonValue::FeatureRef {
+                    feature_ref: "right".to_string(),
+                },
+            },
+            FeatureType::String,
+        );
+        let err = gate.validate().expect_err("mixed numeric/string feature refs should fail");
+        assert!(err.to_string().contains("compatible feature types"));
+    }
+
+    #[test]
+    fn parses_legacy_literal_comparison_shape() {
+        let gate = LogicPearlGateIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "gate_id": "legacy",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "flag", "type": "int", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {"id": "rule_000", "kind": "predicate", "bit": 0, "deny_when": {"feature": "flag", "op": "==", "value": 1}}
+                ],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect("legacy literal shape should still parse");
+        let Expression::Comparison(comparison) = &gate.rules[0].deny_when else {
+            panic!("expected comparison expression");
+        };
+        assert_eq!(comparison.value, ComparisonValue::Literal(json!(1)));
     }
 }

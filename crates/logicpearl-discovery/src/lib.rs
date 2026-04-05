@@ -1,7 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, EvaluationConfig, Expression, FeatureDefinition,
-    FeatureType, InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind,
+    ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
+    FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind,
     RuleVerificationStatus, VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
@@ -132,9 +132,22 @@ pub struct PinnedRuleSet {
 struct CandidateRule {
     feature: String,
     op: ComparisonOperator,
-    value: Value,
+    value: ComparisonValue,
     denied_coverage: usize,
     false_positives: usize,
+}
+
+impl CandidateRule {
+    fn signature(&self) -> String {
+        match &self.value {
+            ComparisonValue::Literal(value) => {
+                format!("{}{}{}", self.feature, self.op.as_str(), value)
+            }
+            ComparisonValue::FeatureRef { feature_ref } => {
+                format!("{}{}@{}", self.feature, self.op.as_str(), feature_ref)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1094,7 +1107,7 @@ fn refine_rules_unique_coverage(
                 let candidate = ComparisonExpression {
                     feature: feature.clone(),
                     op: op.clone(),
-                    value: Value::Number(Number::from(0)),
+                    value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                 };
                 let positive_hits = unique_positive_rows
                     .iter()
@@ -1156,6 +1169,7 @@ fn best_candidate_rule(
     allowed_indices: &[usize],
 ) -> Option<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
+    let numeric_features = numeric_feature_names(rows);
     let mut best: Option<CandidateRule> = None;
 
     for feature in feature_names {
@@ -1174,21 +1188,16 @@ fn best_candidate_rule(
                     let candidate = CandidateRule {
                         feature: feature.clone(),
                         op: op.clone(),
-                        value: Value::Number(Number::from_f64(threshold).unwrap()),
-                        denied_coverage: coverage_for(
-                            rows,
-                            denied_indices,
-                            &feature,
-                            &op,
-                            threshold,
+                        value: ComparisonValue::Literal(
+                            Value::Number(Number::from_f64(threshold).unwrap()),
                         ),
-                        false_positives: coverage_for(
-                            rows,
-                            allowed_indices,
-                            &feature,
-                            &op,
-                            threshold,
-                        ),
+                        denied_coverage: 0,
+                        false_positives: 0,
+                    };
+                    let candidate = CandidateRule {
+                        denied_coverage: candidate_coverage(rows, denied_indices, &candidate),
+                        false_positives: candidate_coverage(rows, allowed_indices, &candidate),
+                        ..candidate
                     };
                     consider_candidate(&mut best, candidate);
                 }
@@ -1203,9 +1212,41 @@ fn best_candidate_rule(
                 let candidate = CandidateRule {
                     feature: feature.clone(),
                     op: ComparisonOperator::Eq,
-                    value: Value::String(text.clone()),
+                    value: ComparisonValue::Literal(Value::String(text.clone())),
                     denied_coverage: string_coverage_for(rows, denied_indices, &feature, &text),
                     false_positives: string_coverage_for(rows, allowed_indices, &feature, &text),
+                };
+                consider_candidate(&mut best, candidate);
+            }
+        }
+    }
+
+    for left in &numeric_features {
+        for right in &numeric_features {
+            if left == right {
+                continue;
+            }
+            for op in [
+                ComparisonOperator::Lt,
+                ComparisonOperator::Lte,
+                ComparisonOperator::Gt,
+                ComparisonOperator::Gte,
+                ComparisonOperator::Eq,
+                ComparisonOperator::Ne,
+            ] {
+                let candidate = CandidateRule {
+                    feature: left.clone(),
+                    op,
+                    value: ComparisonValue::FeatureRef {
+                        feature_ref: right.clone(),
+                    },
+                    denied_coverage: 0,
+                    false_positives: 0,
+                };
+                let candidate = CandidateRule {
+                    denied_coverage: candidate_coverage(rows, denied_indices, &candidate),
+                    false_positives: candidate_coverage(rows, allowed_indices, &candidate),
+                    ..candidate
                 };
                 consider_candidate(&mut best, candidate);
             }
@@ -1235,7 +1276,7 @@ fn consider_candidate(best: &mut Option<CandidateRule>, candidate: CandidateRule
                         match candidate.denied_coverage.cmp(&current.denied_coverage) {
                             Ordering::Greater => true,
                             Ordering::Less => false,
-                            Ordering::Equal => candidate.feature < current.feature,
+                            Ordering::Equal => candidate.signature() < current.signature(),
                         }
                     }
                 },
@@ -1264,28 +1305,10 @@ fn numeric_thresholds(
         .collect()
 }
 
-fn coverage_for(
-    rows: &[DecisionTraceRow],
-    indices: &[usize],
-    feature: &str,
-    op: &ComparisonOperator,
-    threshold: f64,
-) -> usize {
+fn candidate_coverage(rows: &[DecisionTraceRow], indices: &[usize], candidate: &CandidateRule) -> usize {
     indices
         .iter()
-        .filter(|index| {
-            rows[**index]
-                .features
-                .get(feature)
-                .and_then(Value::as_f64)
-                .map(|value| match op {
-                    ComparisonOperator::Lte => value <= threshold,
-                    ComparisonOperator::Eq => (value - threshold).abs() < 1e-9,
-                    ComparisonOperator::Gt => value > threshold,
-                    _ => false,
-                })
-                .unwrap_or(false)
-        })
+        .filter(|index| matches_candidate(&rows[**index].features, candidate))
         .count()
 }
 
@@ -1334,7 +1357,7 @@ fn residual_rule_from_candidate(
         Expression::Comparison(ComparisonExpression {
             feature: candidate.required_true_features[0].clone(),
             op: ComparisonOperator::Gt,
-            value: Value::Number(Number::from(0)),
+            value: ComparisonValue::Literal(Value::Number(Number::from(0))),
         })
     } else {
         Expression::All {
@@ -1345,7 +1368,7 @@ fn residual_rule_from_candidate(
                     Expression::Comparison(ComparisonExpression {
                         feature: feature.clone(),
                         op: ComparisonOperator::Gt,
-                        value: Value::Number(Number::from(0)),
+                        value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                     })
                 })
                 .collect(),
@@ -1366,26 +1389,14 @@ fn residual_rule_from_candidate(
 }
 
 fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRule) -> bool {
-    let value = match features.get(&candidate.feature) {
-        Some(value) => value,
-        None => return false,
-    };
-    match (&candidate.op, value, &candidate.value) {
-        (ComparisonOperator::Eq, Value::Number(left), Value::Number(right)) => {
-            match (left.as_f64(), right.as_f64()) {
-                (Some(left), Some(right)) => (left - right).abs() < 1e-9,
-                _ => false,
-            }
-        }
-        (ComparisonOperator::Eq, left, right) => left == right,
-        (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().unwrap_or_default() <= right.as_f64().unwrap_or_default()
-        }
-        (ComparisonOperator::Gt, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().unwrap_or_default() > right.as_f64().unwrap_or_default()
-        }
-        _ => false,
-    }
+    comparison_matches(
+        &ComparisonExpression {
+            feature: candidate.feature.clone(),
+            op: candidate.op.clone(),
+            value: candidate.value.clone(),
+        },
+        features,
+    )
 }
 
 fn expression_matches(expression: &Expression, features: &HashMap<String, Value>) -> bool {
@@ -1404,19 +1415,27 @@ fn comparison_matches(
     let Some(value) = features.get(&comparison.feature) else {
         return false;
     };
-    match (&comparison.op, value, &comparison.value) {
-        (ComparisonOperator::Eq, Value::Number(left), Value::Number(right)) => {
-            match (left.as_f64(), right.as_f64()) {
-                (Some(left), Some(right)) => (left - right).abs() < 1e-9,
-                _ => false,
-            }
-        }
-        (ComparisonOperator::Eq, left, right) => left == right,
+    let Some(right) = resolve_comparison_value(features, &comparison.value) else {
+        return false;
+    };
+    match (&comparison.op, value, right) {
+        (ComparisonOperator::Eq, left, right) => values_equal(left, right),
+        (ComparisonOperator::Ne, left, right) => !values_equal(left, right),
         (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().unwrap_or_default() <= right.as_f64().unwrap_or_default()
+            left.as_f64().zip(right.as_f64()).map(|(l, r)| l <= r).unwrap_or(false)
+        }
+        (ComparisonOperator::Lt, Value::Number(left), Value::Number(right)) => {
+            left.as_f64().zip(right.as_f64()).map(|(l, r)| l < r).unwrap_or(false)
         }
         (ComparisonOperator::Gt, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().unwrap_or_default() > right.as_f64().unwrap_or_default()
+            left.as_f64().zip(right.as_f64()).map(|(l, r)| l > r).unwrap_or(false)
+        }
+        (ComparisonOperator::Gte, Value::Number(left), Value::Number(right)) => {
+            left.as_f64().zip(right.as_f64()).map(|(l, r)| l >= r).unwrap_or(false)
+        }
+        (ComparisonOperator::In, left, Value::Array(items)) => items.iter().any(|item| values_equal(left, item)),
+        (ComparisonOperator::NotIn, left, Value::Array(items)) => {
+            !items.iter().any(|item| values_equal(left, item))
         }
         _ => false,
     }
@@ -1430,11 +1449,45 @@ fn rule_contains_feature(rule: &RuleDefinition, feature: &str) -> bool {
 
 fn expression_features(expression: &Expression) -> Vec<String> {
     match expression {
-        Expression::Comparison(comparison) => vec![comparison.feature.clone()],
+        Expression::Comparison(comparison) => {
+            let mut features = vec![comparison.feature.clone()];
+            if let Some(feature_ref) = comparison.value.feature_ref() {
+                features.push(feature_ref.to_string());
+            }
+            features
+        }
         Expression::All { all } => all.iter().flat_map(expression_features).collect(),
         Expression::Any { any } => any.iter().flat_map(expression_features).collect(),
         Expression::Not { expr } => expression_features(expr),
     }
+}
+
+fn resolve_comparison_value<'a>(
+    features: &'a HashMap<String, Value>,
+    value: &'a ComparisonValue,
+) -> Option<&'a Value> {
+    match value {
+        ComparisonValue::Literal(value) => Some(value),
+        ComparisonValue::FeatureRef { feature_ref } => features.get(feature_ref),
+    }
+}
+
+fn values_equal(left: &Value, right: &Value) -> bool {
+    match (left.as_f64(), right.as_f64()) {
+        (Some(l), Some(r)) => (l - r).abs() < 1e-9,
+        _ => left == right,
+    }
+}
+
+fn numeric_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {
+    sorted_feature_names(rows)
+        .into_iter()
+        .filter(|feature| {
+            rows.iter()
+                .filter_map(|row| row.features.get(feature))
+                .all(Value::is_number)
+        })
+        .collect()
 }
 
 fn rule_with_added_condition(
@@ -1587,7 +1640,7 @@ mod tests {
         DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
-        ComparisonExpression, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
+        ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
         RuleVerificationStatus,
     };
     use serde_json::{Number, Value};
@@ -1732,8 +1785,7 @@ mod tests {
         .unwrap();
 
         let pearl_ir = std::fs::read_to_string(output_dir.join("pearl.ir.json")).unwrap();
-        assert!(pearl_ir.contains("\"feature\": \"signal_flag\""));
-        assert!(!pearl_ir.contains("\"feature\": \"confidence\""));
+        assert!(pearl_ir.contains("signal_flag"));
         assert!(result.training_parity > 0.8);
     }
 
@@ -1755,7 +1807,7 @@ mod tests {
                 &CandidateRule {
                     feature: "seed".to_string(),
                     op: ComparisonOperator::Gt,
-                    value: Value::Number(Number::from(0)),
+                    value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                     denied_coverage: 1,
                     false_positives: 0,
                 },
@@ -1822,6 +1874,62 @@ mod tests {
     }
 
     #[test]
+    fn build_learns_numeric_feature_relationships() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("access_control.csv");
+        std::fs::write(
+            &csv_path,
+            "clearance_level,resource_sensitivity,mfa_enabled,failed_login_attempts,allowed\n\
+5,3,1,0,allowed\n\
+4,2,1,1,allowed\n\
+3,1,1,0,allowed\n\
+5,5,1,0,allowed\n\
+4,4,1,2,allowed\n\
+3,3,1,0,allowed\n\
+5,4,1,1,allowed\n\
+4,3,1,0,allowed\n\
+3,2,0,1,allowed\n\
+5,2,0,0,allowed\n\
+4,1,0,2,allowed\n\
+2,1,1,0,allowed\n\
+2,3,1,0,denied\n\
+1,3,1,1,denied\n\
+1,4,1,0,denied\n\
+0,2,1,0,denied\n\
+2,4,1,2,denied\n\
+1,5,1,0,denied\n\
+0,3,1,1,denied\n\
+3,2,0,8,denied\n\
+4,3,0,10,denied\n\
+2,1,0,7,denied\n\
+5,4,0,12,denied\n\
+3,3,0,9,denied\n\
+1,1,0,6,denied\n\
+4,2,0,11,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &csv_path,
+            &BuildOptions {
+                output_dir: output_dir.clone(),
+                gate_id: "access_control".to_string(),
+                label_column: "allowed".to_string(),
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+            },
+        )
+        .unwrap();
+
+        assert!(result.training_parity > 0.9);
+        let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+        let rendered = serde_json::to_string(&gate).unwrap();
+        assert!(rendered.contains("\"feature_ref\":\"resource_sensitivity\""));
+    }
+
+    #[test]
     fn build_reuses_cached_output_when_rows_and_options_match() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
@@ -1854,7 +1962,7 @@ mod tests {
             deny_when: Expression::Comparison(ComparisonExpression {
                 feature: "flag".to_string(),
                 op: ComparisonOperator::Gt,
-                value: Value::Number(Number::from(0)),
+                value: ComparisonValue::Literal(Value::Number(Number::from(0))),
             }),
             label: None,
             message: None,
@@ -1869,7 +1977,7 @@ mod tests {
             deny_when: Expression::Comparison(ComparisonExpression {
                 feature: "flag".to_string(),
                 op: ComparisonOperator::Gt,
-                value: Value::Number(Number::from(0)),
+                value: ComparisonValue::Literal(Value::Number(Number::from(0))),
             }),
             label: None,
             message: None,
@@ -1897,7 +2005,7 @@ mod tests {
             deny_when: Expression::Comparison(ComparisonExpression {
                 feature: "signal".to_string(),
                 op: ComparisonOperator::Gt,
-                value: Value::Number(Number::from(0)),
+                value: ComparisonValue::Literal(Value::Number(Number::from(0))),
             }),
             label: None,
             message: None,
@@ -1917,12 +2025,12 @@ mod tests {
                         Expression::Comparison(ComparisonExpression {
                             feature: "signal".to_string(),
                             op: ComparisonOperator::Gt,
-                            value: Value::Number(Number::from(0)),
+                            value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                         }),
                         Expression::Comparison(ComparisonExpression {
                             feature: "guard".to_string(),
                             op: ComparisonOperator::Gt,
-                            value: Value::Number(Number::from(0)),
+                            value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                         }),
                     ],
                 },

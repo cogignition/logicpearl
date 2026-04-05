@@ -1,5 +1,5 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{ComparisonExpression, ComparisonOperator, Expression, LogicPearlGateIr};
+use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -59,7 +59,7 @@ fn evaluate_comparison(expression: &ComparisonExpression, features: &HashMap<Str
     let left = features.get(&expression.feature).ok_or_else(|| {
         LogicPearlError::message(format!("missing runtime feature: {}", expression.feature))
     })?;
-    let right = &expression.value;
+    let right = resolve_comparison_value(&expression.value, features)?;
 
     match expression.op {
         ComparisonOperator::Eq => Ok(values_equal(left, right)),
@@ -70,6 +70,18 @@ fn evaluate_comparison(expression: &ComparisonExpression, features: &HashMap<Str
         ComparisonOperator::Lte => compare_numbers(left, right, |l, r| l <= r),
         ComparisonOperator::In => value_in(left, right),
         ComparisonOperator::NotIn => Ok(!value_in(left, right)?),
+    }
+}
+
+fn resolve_comparison_value<'a>(
+    value: &'a ComparisonValue,
+    features: &'a HashMap<String, Value>,
+) -> Result<&'a Value> {
+    match value {
+        ComparisonValue::Literal(literal) => Ok(literal),
+        ComparisonValue::FeatureRef { feature_ref } => features.get(feature_ref).ok_or_else(|| {
+            LogicPearlError::message(format!("missing runtime feature: {}", feature_ref))
+        }),
     }
 }
 
@@ -129,7 +141,7 @@ mod tests {
                 deny_when: Expression::Comparison(ComparisonExpression {
                     feature: "flag".to_string(),
                     op: ComparisonOperator::Eq,
-                    value,
+                    value: ComparisonValue::Literal(value),
                 }),
                 label: None,
                 message: None,
@@ -170,8 +182,24 @@ mod tests {
         let expression = ComparisonExpression {
             feature: "flag".to_string(),
             op: ComparisonOperator::In,
-            value: json!([1.0, 2.0]),
+            value: ComparisonValue::Literal(json!([1.0, 2.0])),
         };
         assert!(evaluate_comparison(&expression, &features).expect("membership should evaluate"));
+    }
+
+    #[test]
+    fn numeric_feature_reference_comparison_evaluates() {
+        let expression = ComparisonExpression {
+            feature: "clearance".to_string(),
+            op: ComparisonOperator::Lt,
+            value: ComparisonValue::FeatureRef {
+                feature_ref: "sensitivity".to_string(),
+            },
+        };
+        let features = HashMap::from([
+            ("clearance".to_string(), json!(2)),
+            ("sensitivity".to_string(), json!(4)),
+        ]);
+        assert!(evaluate_comparison(&expression, &features).expect("feature ref comparison should evaluate"));
     }
 }

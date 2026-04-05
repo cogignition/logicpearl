@@ -560,7 +560,7 @@ fn generate_boundary_scenarios(
         let Expression::Comparison(comparison) = &rule.deny_when else {
             continue;
         };
-        let Some(threshold) = comparison.value.as_f64() else {
+        let Some(threshold) = comparison.value.literal().and_then(Value::as_f64) else {
             continue;
         };
         if !matches!(
