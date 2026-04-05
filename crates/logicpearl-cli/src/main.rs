@@ -327,6 +327,12 @@ struct BuildArgs {
     /// Decision label column. If omitted, LogicPearl infers it when there is one unambiguous binary candidate.
     #[arg(long)]
     label_column: Option<String>,
+    /// Explicit value in the label column that means allow/pass/approved.
+    #[arg(long, help_heading = "Advanced")]
+    positive_label: Option<String>,
+    /// Explicit value in the label column that means deny/fail/blocked.
+    #[arg(long, help_heading = "Advanced")]
+    negative_label: Option<String>,
     /// Plugin manifest for a trace-source plugin that emits decision traces over JSON.
     #[arg(long, help_heading = "Advanced")]
     trace_plugin_manifest: Option<PathBuf>,
@@ -430,8 +436,12 @@ struct ConformanceRuntimeParityArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
     pearl_ir: PathBuf,
     decision_traces_csv: PathBuf,
-    #[arg(long, default_value = "allowed")]
-    label_column: String,
+    #[arg(long)]
+    label_column: Option<String>,
+    #[arg(long, help_heading = "Advanced")]
+    positive_label: Option<String>,
+    #[arg(long, help_heading = "Advanced")]
+    negative_label: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -1590,7 +1600,12 @@ fn run_build(args: BuildArgs) -> Result<()> {
             (rows, plugin_label_column)
         }
         (None, Some(decision_traces)) => {
-            let loaded = load_decision_traces_auto(decision_traces, args.label_column.as_deref())
+            let loaded = load_decision_traces_auto(
+                decision_traces,
+                args.label_column.as_deref(),
+                args.positive_label.as_deref(),
+                args.negative_label.as_deref(),
+            )
                 .into_diagnostic()
                 .wrap_err("failed to load decision traces")?;
             (loaded.rows, loaded.label_column)
@@ -1613,6 +1628,8 @@ fn run_build(args: BuildArgs) -> Result<()> {
         output_dir,
         gate_id,
         label_column: resolved_label_column,
+        positive_label: args.positive_label.clone(),
+        negative_label: args.negative_label.clone(),
         residual_pass: args.residual_pass,
         refine: args.refine,
         pinned_rules: args.pinned_rules.clone(),

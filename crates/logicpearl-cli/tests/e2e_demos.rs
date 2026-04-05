@@ -1,4 +1,4 @@
-use logicpearl_discovery::BuildResult;
+use logicpearl_discovery::{load_decision_traces_auto, BuildResult};
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,35 +17,18 @@ fn repo_root() -> PathBuf {
 struct DemoCase {
     name: &'static str,
     csv: &'static str,
+    allowed: bool,
 }
 
-fn parse_input_row(csv_path: &Path, expected_label: &str) -> Map<String, Value> {
-    let mut reader = csv::Reader::from_path(csv_path).expect("demo CSV should load");
-    let headers = reader.headers().expect("headers should load").clone();
-    for record in reader.records() {
-        let record = record.expect("record should parse");
-        let label = record
-            .get(headers.len() - 1)
-            .expect("label column should exist");
-        if label != expected_label {
-            continue;
-        }
-        let mut object = Map::new();
-        for (header, value) in headers.iter().zip(record.iter()) {
-            if header == "allowed" {
-                continue;
-            }
-            if let Ok(integer) = value.parse::<i64>() {
-                object.insert(header.to_string(), Value::from(integer));
-            } else if let Ok(float_value) = value.parse::<f64>() {
-                object.insert(header.to_string(), Value::from(float_value));
-            } else {
-                object.insert(header.to_string(), Value::from(value.to_string()));
-            }
-        }
-        return object;
-    }
-    panic!("expected to find row with label {expected_label}");
+fn parse_input_row(csv_path: &Path, expected_allowed: bool) -> Map<String, Value> {
+    let loaded =
+        load_decision_traces_auto(csv_path, None, None, None).expect("demo CSV should normalize");
+    let row = loaded
+        .rows
+        .into_iter()
+        .find(|row| row.allowed == expected_allowed)
+        .expect("expected to find row with matching label polarity");
+    row.features.into_iter().collect()
 }
 
 fn run_compiled_binary(binary: &Path, payload: &Value, workdir: &Path) -> String {
@@ -77,14 +60,17 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
         DemoCase {
             name: "access_control",
             csv: "examples/demos/access_control/traces.csv",
+            allowed: true,
         },
         DemoCase {
             name: "content_moderation",
             csv: "examples/demos/content_moderation/traces.csv",
+            allowed: true,
         },
         DemoCase {
             name: "loan_approval",
             csv: "examples/demos/loan_approval/traces.csv",
+            allowed: true,
         },
     ];
 
@@ -122,8 +108,8 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
         );
         assert!(native_binary.exists(), "native binary should exist for {}", demo.name);
 
-        let allowed_payload = Value::Object(parse_input_row(&csv_path, "allowed"));
-        let denied_payload = Value::Object(parse_input_row(&csv_path, "denied"));
+        let allowed_payload = Value::Object(parse_input_row(&csv_path, demo.allowed));
+        let denied_payload = Value::Object(parse_input_row(&csv_path, !demo.allowed));
 
         let allowed_output = run_compiled_binary(native_binary, &allowed_payload, temp.path());
         assert_eq!(allowed_output, "0", "{} should allow known-allowed row", demo.name);

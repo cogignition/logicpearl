@@ -21,6 +21,8 @@ pub struct BuildOptions {
     pub output_dir: PathBuf,
     pub gate_id: String,
     pub label_column: String,
+    pub positive_label: Option<String>,
+    pub negative_label: Option<String>,
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
@@ -176,6 +178,12 @@ struct NumericInterval {
     upper: Option<NumericBound>,
 }
 
+#[derive(Debug, Clone)]
+struct BinaryLabelDomain {
+    positive_value: Option<String>,
+    negative_value: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
 struct CacheManifest {
     cache_version: String,
@@ -245,6 +253,8 @@ fn build_cache_manifest(
         source_name: &'a str,
         gate_id: &'a str,
         label_column: &'a str,
+        positive_label: Option<&'a str>,
+        negative_label: Option<&'a str>,
         residual_pass: bool,
         refine: bool,
         pinned_rules_path: Option<String>,
@@ -276,6 +286,8 @@ fn build_cache_manifest(
             source_name,
             gate_id: &options.gate_id,
             label_column: &options.label_column,
+            positive_label: options.positive_label.as_deref(),
+            negative_label: options.negative_label.as_deref(),
             residual_pass: options.residual_pass,
             refine: options.refine,
             pinned_rules_path: options
@@ -330,11 +342,18 @@ fn fingerprint_file(path: &Path) -> Result<String> {
 }
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
-    let loaded = load_decision_traces_auto(csv_path, Some(&options.label_column))?;
+    let loaded = load_decision_traces_auto(
+        csv_path,
+        Some(&options.label_column),
+        options.positive_label.as_deref(),
+        options.negative_label.as_deref(),
+    )?;
     let resolved_options = BuildOptions {
         output_dir: options.output_dir.clone(),
         gate_id: options.gate_id.clone(),
         label_column: loaded.label_column,
+        positive_label: options.positive_label.clone(),
+        negative_label: options.negative_label.clone(),
         residual_pass: options.residual_pass,
         refine: options.refine,
         pinned_rules: options.pinned_rules.clone(),
@@ -369,6 +388,9 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
     let mut reader = csv::Reader::from_path(csv_path)?;
     let headers = reader.headers()?.clone();
+    let records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
     for target in &options.target_columns {
         if !headers.iter().any(|header| header == target) {
             return Err(LogicPearlError::message(format!(
@@ -395,6 +417,14 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
     let artifacts_dir = options.output_dir.join("artifacts");
     artifacts_dir.mkdir_all()?;
+    let target_domains: HashMap<String, BinaryLabelDomain> = options
+        .target_columns
+        .iter()
+        .map(|target| {
+            infer_binary_label_domain(&records, &headers, target, None, None)
+                .map(|domain| (target.clone(), domain))
+        })
+        .collect::<Result<_>>()?;
 
     let mut per_target_rows: HashMap<String, Vec<DecisionTraceRow>> = options
         .target_columns
@@ -402,16 +432,20 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         .map(|target| (target.clone(), Vec::new()))
         .collect();
 
-    for (index, record) in reader.records().enumerate() {
-        let record = record?;
+    for (index, record) in records.iter().enumerate() {
         let mut features = HashMap::new();
         let mut target_values = HashMap::new();
 
         for (header, value) in headers.iter().zip(record.iter()) {
             if options.target_columns.iter().any(|target| target == header) {
+                let domain = target_domains.get(header).ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "missing inferred binary domain for target column {header:?}"
+                    ))
+                })?;
                 target_values.insert(
                     header.to_string(),
-                    parse_allowed_label(value, index + 2, header)?,
+                    parse_allowed_label(value, index + 2, header, domain)?,
                 );
                 continue;
             }
@@ -478,6 +512,8 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 output_dir: target_dir.clone(),
                 gate_id: target.clone(),
                 label_column: target.clone(),
+                positive_label: None,
+                negative_label: None,
                 residual_pass: options.residual_pass,
                 refine: options.refine,
                 pinned_rules: options.pinned_rules.clone(),
@@ -635,17 +671,35 @@ pub fn build_pearl_from_rows(
 }
 
 pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<DecisionTraceRow>> {
+    load_decision_traces_with_labels(csv_path, label_column, None, None)
+}
+
+pub fn load_decision_traces_with_labels(
+    csv_path: &Path,
+    label_column: &str,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
+) -> Result<Vec<DecisionTraceRow>> {
     let mut reader = csv::Reader::from_path(csv_path)?;
     let headers = reader.headers()?.clone();
     let records = reader
         .records()
         .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
-    load_decision_traces_from_records(csv_path, &headers, &records, label_column)
+    load_decision_traces_from_records(
+        csv_path,
+        &headers,
+        &records,
+        label_column,
+        positive_label,
+        negative_label,
+    )
 }
 
 pub fn load_decision_traces_auto(
     csv_path: &Path,
     label_column: Option<&str>,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
 ) -> Result<LoadedDecisionTraces> {
     let mut reader = csv::Reader::from_path(csv_path)?;
     let headers = reader.headers()?.clone();
@@ -653,7 +707,14 @@ pub fn load_decision_traces_auto(
         .records()
         .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
     let resolved_label = infer_label_column(csv_path, &headers, &records, label_column)?;
-    let rows = load_decision_traces_from_records(csv_path, &headers, &records, &resolved_label)?;
+    let rows = load_decision_traces_from_records(
+        csv_path,
+        &headers,
+        &records,
+        &resolved_label,
+        positive_label,
+        negative_label,
+    )?;
     Ok(LoadedDecisionTraces {
         rows,
         label_column: resolved_label,
@@ -665,6 +726,8 @@ fn load_decision_traces_from_records(
     headers: &csv::StringRecord,
     records: &[csv::StringRecord],
     label_column: &str,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
 ) -> Result<Vec<DecisionTraceRow>> {
     if !headers.iter().any(|header| header == label_column) {
         let candidates = detect_label_candidates(headers, records);
@@ -680,6 +743,8 @@ fn load_decision_traces_from_records(
             candidate_text
         )));
     }
+    let label_domain =
+        infer_binary_label_domain(records, headers, label_column, positive_label, negative_label)?;
 
     let mut rows = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
@@ -687,7 +752,7 @@ fn load_decision_traces_from_records(
         let mut allowed = None;
         for (header, value) in headers.iter().zip(record.iter()) {
             if header == label_column {
-                allowed = Some(parse_allowed_label(value, index + 2, label_column)?);
+                allowed = Some(parse_allowed_label(value, index + 2, label_column, &label_domain)?);
                 continue;
             }
             if value.trim().is_empty() {
@@ -773,7 +838,7 @@ fn detect_label_candidates(headers: &csv::StringRecord, records: &[csv::StringRe
         .enumerate()
         .filter_map(|(index, header)| {
             let mut saw_value = false;
-            let all_label_like = records.iter().all(|record| {
+            let all_non_empty = records.iter().all(|record| {
                 let Some(value) = record.get(index) else {
                     return false;
                 };
@@ -781,9 +846,12 @@ fn detect_label_candidates(headers: &csv::StringRecord, records: &[csv::StringRe
                     return false;
                 }
                 saw_value = true;
-                parse_allowed_label(value, 0, header).is_ok()
+                true
             });
-            if all_label_like && saw_value {
+            if all_non_empty
+                && saw_value
+                && infer_binary_label_domain(records, headers, header, None, None).is_ok()
+            {
                 Some(header.to_string())
             } else {
                 None
@@ -793,10 +861,23 @@ fn detect_label_candidates(headers: &csv::StringRecord, records: &[csv::StringRe
 }
 
 fn is_preferred_label_name(name: &str) -> bool {
+    let lowered = name.trim().to_ascii_lowercase();
     matches!(
-        name.trim().to_ascii_lowercase().as_str(),
-        "allowed" | "label" | "target" | "decision" | "outcome"
-    )
+        lowered.as_str(),
+        "allowed"
+            | "approved"
+            | "label"
+            | "target"
+            | "decision"
+            | "outcome"
+            | "verdict"
+            | "result"
+    ) || lowered.ends_with("_label")
+        || lowered.ends_with("_target")
+        || lowered.ends_with("_decision")
+        || lowered.ends_with("_outcome")
+        || lowered.ends_with("_verdict")
+        || lowered.ends_with("_result")
 }
 
 fn build_gate(
@@ -1873,34 +1954,269 @@ fn infer_feature_type(value: &Value) -> FeatureType {
     }
 }
 
-fn parse_allowed_label(raw: &str, row_number: usize, label_column: &str) -> Result<bool> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "y" | "allow" | "allowed" => Ok(true),
-        "0" | "false" | "no" | "n" | "deny" | "denied" => Ok(false),
-        _ => Err(LogicPearlError::message(format!(
-            "row {row_number} has unsupported label value {raw:?} in column {label_column:?}; use allowed/denied or 1/0"
-        ))),
+fn infer_binary_label_domain(
+    records: &[csv::StringRecord],
+    headers: &csv::StringRecord,
+    label_column: &str,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
+) -> Result<BinaryLabelDomain> {
+    let label_index = headers
+        .iter()
+        .position(|header| header == label_column)
+        .ok_or_else(|| LogicPearlError::message(format!("missing label column {label_column:?}")))?;
+    let mut unique_values = BTreeMap::<String, String>::new();
+    for (row_index, record) in records.iter().enumerate() {
+        let raw = record.get(label_index).ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "row {} is missing label column {label_column:?}",
+                row_index + 2
+            ))
+        })?;
+        let normalized = normalize_binary_token(raw);
+        if normalized.is_empty() {
+            return Err(LogicPearlError::message(format!(
+                "row {} has an empty label value in column {label_column:?}",
+                row_index + 2
+            )));
+        }
+        unique_values
+            .entry(normalized)
+            .or_insert_with(|| raw.trim().to_string());
+    }
+    if unique_values.is_empty() || unique_values.len() > 2 {
+        let distinct = if unique_values.is_empty() {
+            "none".to_string()
+        } else {
+            unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+        };
+        return Err(LogicPearlError::message(format!(
+            "label column {label_column:?} must contain one or two distinct non-empty values; found {}: {}",
+            unique_values.len(),
+            distinct
+        )));
+    }
+
+    let explicit_positive = positive_label.map(normalize_binary_token);
+    let explicit_negative = negative_label.map(normalize_binary_token);
+    if let Some(label) = explicit_positive.as_ref() {
+        if !unique_values.contains_key(label) {
+            return Err(LogicPearlError::message(format!(
+                "--positive-label {:?} was not found in column {label_column:?}; distinct values: {}",
+                positive_label.unwrap_or_default(),
+                unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+    }
+    if let Some(label) = explicit_negative.as_ref() {
+        if !unique_values.contains_key(label) {
+            return Err(LogicPearlError::message(format!(
+                "--negative-label {:?} was not found in column {label_column:?}; distinct values: {}",
+                negative_label.unwrap_or_default(),
+                unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+    }
+    if explicit_positive.is_some() && explicit_positive == explicit_negative {
+        return Err(LogicPearlError::message(
+            "--positive-label and --negative-label must be different",
+        ));
+    }
+
+    let keys: Vec<String> = unique_values.keys().cloned().collect();
+    if let (Some(positive), Some(negative)) = (explicit_positive.clone(), explicit_negative.clone()) {
+        return Ok(BinaryLabelDomain {
+            positive_value: Some(positive),
+            negative_value: Some(negative),
+        });
+    }
+    if let Some(positive) = explicit_positive {
+        return Ok(BinaryLabelDomain {
+            positive_value: Some(positive.clone()),
+            negative_value: keys.iter().find(|value| **value != positive).cloned(),
+        });
+    }
+    if let Some(negative) = explicit_negative {
+        return Ok(BinaryLabelDomain {
+            positive_value: keys.iter().find(|value| **value != negative).cloned(),
+            negative_value: Some(negative),
+        });
+    }
+
+    let positive_candidates: Vec<String> = keys
+        .iter()
+        .filter(|value| is_positive_label_token(value))
+        .cloned()
+        .collect();
+    let negative_candidates: Vec<String> = keys
+        .iter()
+        .filter(|value| is_negative_label_token(value))
+        .cloned()
+        .collect();
+    if positive_candidates.len() == 1 && negative_candidates.len() == 1 {
+        return Ok(BinaryLabelDomain {
+            positive_value: Some(positive_candidates[0].clone()),
+            negative_value: Some(negative_candidates[0].clone()),
+        });
+    }
+    if positive_candidates.len() == 1 {
+        return Ok(BinaryLabelDomain {
+            positive_value: Some(positive_candidates[0].clone()),
+            negative_value: keys
+                .iter()
+                .find(|value| **value != positive_candidates[0])
+                .cloned(),
+        });
+    }
+    if negative_candidates.len() == 1 {
+        return Ok(BinaryLabelDomain {
+            positive_value: keys
+                .iter()
+                .find(|value| **value != negative_candidates[0])
+                .cloned(),
+            negative_value: Some(negative_candidates[0].clone()),
+        });
+    }
+    Err(LogicPearlError::message(format!(
+        "could not infer which value in label column {label_column:?} means allow/pass from binary values {}; pass --positive-label or --negative-label explicitly",
+        unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+    )))
+}
+
+fn normalize_binary_token(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
+fn is_positive_label_token(value: &str) -> bool {
+    matches!(
+        value,
+        "1"
+            | "true"
+            | "yes"
+            | "y"
+            | "allow"
+            | "allowed"
+            | "approve"
+            | "approved"
+            | "grant"
+            | "granted"
+            | "pass"
+            | "passed"
+            | "ok"
+            | "safe"
+            | "benign"
+    )
+}
+
+fn is_negative_label_token(value: &str) -> bool {
+    matches!(
+        value,
+        "0"
+            | "false"
+            | "no"
+            | "n"
+            | "deny"
+            | "denied"
+            | "reject"
+            | "rejected"
+            | "block"
+            | "blocked"
+            | "flag"
+            | "flagged"
+            | "fail"
+            | "failed"
+            | "unsafe"
+            | "malicious"
+    )
+}
+
+fn parse_allowed_label(
+    raw: &str,
+    row_number: usize,
+    label_column: &str,
+    domain: &BinaryLabelDomain,
+) -> Result<bool> {
+    let normalized = normalize_binary_token(raw);
+    if domain.positive_value.as_deref() == Some(normalized.as_str()) {
+        Ok(true)
+    } else if domain.negative_value.as_deref() == Some(normalized.as_str()) {
+        Ok(false)
+    } else {
+        let mut expected = Vec::new();
+        if let Some(positive) = domain.positive_value.as_deref() {
+            expected.push(positive.to_string());
+        }
+        if let Some(negative) = domain.negative_value.as_deref() {
+            expected.push(negative.to_string());
+        }
+        Err(LogicPearlError::message(format!(
+            "row {row_number} has unsupported label value {raw:?} in column {label_column:?}; expected one of {}",
+            expected.join(", ")
+        )))
     }
 }
 
 fn parse_scalar(raw: &str) -> Result<Value> {
     let value = raw.trim();
     let lowered = value.to_ascii_lowercase();
-    if lowered == "true" {
-        return Ok(Value::Bool(true));
+    if let Some(boolean) = parse_boolean_scalar(&lowered) {
+        return Ok(Value::Bool(boolean));
     }
-    if lowered == "false" {
-        return Ok(Value::Bool(false));
-    }
-    if let Ok(parsed) = value.parse::<i64>() {
-        return Ok(Value::Number(Number::from(parsed)));
-    }
-    if let Ok(parsed) = value.parse::<f64>() {
-        return Ok(Value::Number(Number::from_f64(parsed).ok_or_else(
-            || LogicPearlError::message("encountered non-finite float"),
-        )?));
+    if let Some(parsed) = parse_numeric_scalar(value)? {
+        return Ok(parsed);
     }
     Ok(Value::String(value.to_string()))
+}
+
+fn parse_boolean_scalar(lowered: &str) -> Option<bool> {
+    match lowered {
+        "true" | "yes" | "y" | "on" => Some(true),
+        "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_numeric_scalar(raw: &str) -> Result<Option<Value>> {
+    let mut candidate = raw.trim();
+    let mut is_percent = false;
+    if let Some(stripped) = candidate.strip_suffix('%') {
+        candidate = stripped.trim();
+        is_percent = true;
+    }
+    candidate = candidate
+        .strip_prefix('$')
+        .or_else(|| candidate.strip_prefix('€'))
+        .or_else(|| candidate.strip_prefix('£'))
+        .or_else(|| candidate.strip_prefix('¥'))
+        .unwrap_or(candidate)
+        .trim();
+    let negative_wrapped = candidate.starts_with('(') && candidate.ends_with(')');
+    if negative_wrapped {
+        candidate = candidate
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+            .unwrap_or(candidate)
+            .trim();
+    }
+    let mut normalized = candidate.replace(',', "");
+    if negative_wrapped {
+        normalized = format!("-{normalized}");
+    }
+
+    if !is_percent {
+        if let Ok(parsed) = normalized.parse::<i64>() {
+            return Ok(Some(Value::Number(Number::from(parsed))));
+        }
+    }
+    if let Ok(mut parsed) = normalized.parse::<f64>() {
+        if is_percent {
+            parsed /= 100.0;
+        }
+        return Ok(Some(Value::Number(Number::from_f64(parsed).ok_or_else(
+            || LogicPearlError::message("encountered non-finite float"),
+        )?)));
+    }
+    Ok(None)
 }
 
 trait CreateDirAllExt {
@@ -1958,9 +2274,62 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = load_decision_traces_auto(&csv_path, None).unwrap();
+        let loaded = load_decision_traces_auto(&csv_path, None, None, None).unwrap();
         assert_eq!(loaded.label_column, "allowed");
         assert_eq!(loaded.rows.len(), 2);
+    }
+
+    #[test]
+    fn load_decision_traces_auto_supports_realistic_binary_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "credit_score,approved\n780,approved\n570,denied\n",
+        )
+        .unwrap();
+
+        let loaded = load_decision_traces_auto(&csv_path, None, None, None).unwrap();
+        assert_eq!(loaded.label_column, "approved");
+        assert!(loaded.rows[0].allowed);
+        assert!(!loaded.rows[1].allowed);
+    }
+
+    #[test]
+    fn load_decision_traces_normalizes_formatted_scalars() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "annual_income,debt_ratio,mfa_enabled,approved\n\"$95,000\",22%,Yes,approved\n\"$31,000\",61%,No,denied\n",
+        )
+        .unwrap();
+
+        let loaded = load_decision_traces_auto(&csv_path, None, None, None).unwrap();
+        assert_eq!(loaded.rows[0].features["annual_income"], 95_000);
+        assert_eq!(
+            loaded.rows[0].features["debt_ratio"],
+            Value::Number(Number::from_f64(0.22).unwrap())
+        );
+        assert_eq!(loaded.rows[0].features["mfa_enabled"], Value::Bool(true));
+        assert_eq!(loaded.rows[1].features["mfa_enabled"], Value::Bool(false));
+    }
+
+    #[test]
+    fn load_decision_traces_requires_explicit_mapping_for_unknown_binary_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(&csv_path, "score,status\n1,alpha\n0,beta\n").unwrap();
+
+        let err = load_decision_traces_auto(&csv_path, Some("status"), None, None).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("pass --positive-label or --negative-label explicitly"));
+
+        let loaded =
+            load_decision_traces_auto(&csv_path, Some("status"), Some("alpha"), None).unwrap();
+        assert!(loaded.rows[0].allowed);
+        assert!(!loaded.rows[1].allowed);
     }
 
     #[test]
@@ -1973,7 +2342,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = load_decision_traces_auto(&csv_path, None).unwrap_err();
+        let err = load_decision_traces_auto(&csv_path, None, None, None).unwrap_err();
         assert!(err.to_string().contains("multiple possible binary label columns"));
         assert!(err.to_string().contains("is_member"));
         assert!(err.to_string().contains("is_urgent"));
@@ -1996,6 +2365,8 @@ mod tests {
                 output_dir: PathBuf::from(&output_dir),
                 gate_id: "age_gate".to_string(),
                 label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
@@ -2150,6 +2521,8 @@ mod tests {
                 output_dir: PathBuf::from(&output_dir),
                 gate_id: "approximate_gate".to_string(),
                 label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
@@ -2229,6 +2602,8 @@ mod tests {
                 output_dir: PathBuf::from(&output_dir),
                 gate_id: "refined_gate".to_string(),
                 label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
                 residual_pass: false,
                 refine: true,
                 pinned_rules: None,
@@ -2289,6 +2664,8 @@ mod tests {
                 output_dir: output_dir.clone(),
                 gate_id: "access_control".to_string(),
                 label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
@@ -2312,6 +2689,8 @@ mod tests {
             output_dir: output_dir.clone(),
             gate_id: "cached_gate".to_string(),
             label_column: "allowed".to_string(),
+            positive_label: None,
+            negative_label: None,
             residual_pass: false,
             refine: false,
             pinned_rules: None,

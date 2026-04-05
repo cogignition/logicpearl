@@ -79,10 +79,15 @@ pub(crate) fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs)
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
-    let rows =
-        logicpearl_discovery::load_decision_traces(&args.decision_traces_csv, &args.label_column)
-            .into_diagnostic()
-            .wrap_err("could not load labeled decision traces")?;
+    let loaded = logicpearl_discovery::load_decision_traces_auto(
+        &args.decision_traces_csv,
+        args.label_column.as_deref(),
+        args.positive_label.as_deref(),
+        args.negative_label.as_deref(),
+    )
+    .into_diagnostic()
+    .wrap_err("could not load labeled decision traces")?;
+    let rows = loaded.rows;
     let conformance_rows: Vec<ConformanceDecisionTraceRow> = rows
         .into_iter()
         .map(|row| ConformanceDecisionTraceRow {
