@@ -40,6 +40,33 @@ This is the boundary between:
 - messy benchmark text
 - deterministic LogicPearl artifacts
 
+## Native Observer Workflow
+
+List the built-in native observer profiles:
+
+```bash
+logicpearl observer list
+```
+
+Scaffold a native observer artifact from a built-in profile:
+
+```bash
+logicpearl observer scaffold \
+  --profile guardrails-v1 \
+  --output /tmp/guardrails_observer.json
+```
+
+Repair one signal family with Z3 while preserving current denied-case coverage:
+
+```bash
+logicpearl observer repair \
+  --artifact /tmp/guardrails_observer.json \
+  --benchmark-cases /tmp/squad_alert_full_dev.jsonl \
+  --signal secret-exfiltration \
+  --output /tmp/guardrails_observer.repaired.json \
+  --json
+```
+
 ## Phase 1: Adapt Non-PINT Data
 
 The first public non-`PINT` adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.

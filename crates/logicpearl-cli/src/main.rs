@@ -5,9 +5,11 @@ use logicpearl_discovery::{
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
-    default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
-    observe_with_profile, status as observer_status, NativeObserverArtifact,
-    ObserverProfile as NativeObserverProfile,
+    default_artifact_for_profile, detect_profile_from_input, guardrails_signal_label,
+    guardrails_signal_phrases, load_artifact, observe_with_artifact, observe_with_profile,
+    profile_id as native_profile_id, profile_registry, prompt_matches_phrase,
+    set_guardrails_signal_phrases, status as observer_status, GuardrailsSignal,
+    NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
@@ -22,6 +24,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::process::Command;
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -57,9 +60,11 @@ Examples:
 
 const OBSERVER_AFTER_HELP: &str = "\
 Examples:
+  logicpearl observer list
   logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json
   logicpearl observer run --observer-profile guardrails-v1 --input examples/plugins/python_observer/raw_input.json --json
-  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json";
+  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json
+  logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
 
 const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
@@ -156,6 +161,17 @@ enum QuickstartTopic {
 enum ObserverProfileArg {
     GuardrailsV1,
     Auto,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum ObserverSignalArg {
+    InstructionOverride,
+    SystemPrompt,
+    SecretExfiltration,
+    ToolMisuse,
+    DataAccessOutsideScope,
+    IndirectDocumentAuthority,
+    BenignQuestion,
 }
 
 #[derive(Debug, Args)]
@@ -541,6 +557,8 @@ struct PipelineTraceArgs {
 #[derive(Debug, Subcommand)]
 #[command(after_help = OBSERVER_AFTER_HELP)]
 enum ObserverCommand {
+    /// List the built-in native observer profiles.
+    List(ObserverListArgs),
     /// Check that an observer profile artifact or plugin manifest is valid.
     Validate(ObserverValidateArgs),
     /// Run an observer on raw input and emit normalized features.
@@ -549,6 +567,14 @@ enum ObserverCommand {
     Detect(ObserverDetectArgs),
     /// Scaffold a native observer artifact from a built-in profile.
     Scaffold(ObserverScaffoldArgs),
+    /// Use Z3 to prune ambiguous cue phrases while preserving current positive coverage.
+    Repair(ObserverRepairArgs),
+}
+
+#[derive(Debug, Args)]
+struct ObserverListArgs {
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -594,6 +620,25 @@ struct ObserverDetectArgs {
 struct ObserverScaffoldArgs {
     #[arg(long, value_enum)]
     profile: ObserverProfileArg,
+    #[arg(long)]
+    output: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = "Example:\n  logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json --json")]
+struct ObserverRepairArgs {
+    /// Existing native observer artifact to repair.
+    #[arg(long)]
+    artifact: PathBuf,
+    /// Benchmark-case JSONL with id, input, expected_route, and optional category.
+    #[arg(long)]
+    benchmark_cases: PathBuf,
+    /// Which guardrail signal to repair.
+    #[arg(long, value_enum)]
+    signal: ObserverSignalArg,
+    /// Where to write the repaired observer artifact.
     #[arg(long)]
     output: PathBuf,
     #[arg(long)]
@@ -812,6 +857,9 @@ fn main() -> Result<()> {
             command: PipelineCommand::Trace(args),
         } => run_pipeline_trace(args),
         Commands::Observer {
+            command: ObserverCommand::List(args),
+        } => run_observer_list(args),
+        Commands::Observer {
             command: ObserverCommand::Validate(args),
         } => run_observer_validate(args),
         Commands::Observer {
@@ -823,6 +871,9 @@ fn main() -> Result<()> {
         Commands::Observer {
             command: ObserverCommand::Scaffold(args),
         } => run_observer_scaffold(args),
+        Commands::Observer {
+            command: ObserverCommand::Repair(args),
+        } => run_observer_repair(args),
     }
 }
 
@@ -2334,6 +2385,18 @@ fn to_native_profile(profile: ObserverProfileArg) -> Result<NativeObserverProfil
     }
 }
 
+fn to_guardrails_signal(signal: ObserverSignalArg) -> GuardrailsSignal {
+    match signal {
+        ObserverSignalArg::InstructionOverride => GuardrailsSignal::InstructionOverride,
+        ObserverSignalArg::SystemPrompt => GuardrailsSignal::SystemPrompt,
+        ObserverSignalArg::SecretExfiltration => GuardrailsSignal::SecretExfiltration,
+        ObserverSignalArg::ToolMisuse => GuardrailsSignal::ToolMisuse,
+        ObserverSignalArg::DataAccessOutsideScope => GuardrailsSignal::DataAccessOutsideScope,
+        ObserverSignalArg::IndirectDocumentAuthority => GuardrailsSignal::IndirectDocumentAuthority,
+        ObserverSignalArg::BenignQuestion => GuardrailsSignal::BenignQuestion,
+    }
+}
+
 fn observer_resolution(observer: &ResolvedObserver) -> ObserverResolution {
     match observer {
         ResolvedObserver::NativeProfile(profile) => ObserverResolution::NativeProfile {
@@ -2349,9 +2412,7 @@ fn observer_resolution(observer: &ResolvedObserver) -> ObserverResolution {
 }
 
 fn native_profile_name(profile: NativeObserverProfile) -> &'static str {
-    match profile {
-        NativeObserverProfile::GuardrailsV1 => "guardrails_v1",
-    }
+    native_profile_id(profile)
 }
 
 fn render_observer_resolution(resolution: &ObserverResolution) -> String {
@@ -2921,6 +2982,23 @@ fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_observer_list(args: ObserverListArgs) -> Result<()> {
+    let profiles = profile_registry();
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "profiles": profiles }))
+                .into_diagnostic()?
+        );
+    } else {
+        println!("{}", "Native Observer Profiles".bold().bright_blue());
+        for profile in profiles {
+            println!("  {} {}", profile.id.bold(), profile.description.bright_black());
+        }
+    }
+    Ok(())
+}
+
 fn run_observer_run(args: ObserverRunArgs) -> Result<()> {
     let raw_input: Value = serde_json::from_str(
         &fs::read_to_string(&args.input)
@@ -3013,4 +3091,265 @@ fn run_observer_scaffold(args: ObserverScaffoldArgs) -> Result<()> {
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
+}
+
+fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
+    let mut artifact = load_artifact(&args.artifact)
+        .into_diagnostic()
+        .wrap_err("failed to read native observer artifact")?;
+    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
+        return Err(guidance(
+            "observer repair currently supports guardrails_v1 artifacts only",
+            "Use a guardrails_v1 scaffolded artifact for this first Z3-backed repair flow.",
+        ));
+    }
+    let signal = to_guardrails_signal(args.signal);
+    let signal_label = guardrails_signal_label(signal);
+    let config = artifact.guardrails.as_mut().ok_or_else(|| {
+        guidance(
+            "guardrails_v1 artifact is missing its cue configuration",
+            "Scaffold a fresh guardrails_v1 artifact or add the guardrails config block back.",
+        )
+    })?;
+    let phrases = guardrails_signal_phrases(config, signal).to_vec();
+    if phrases.is_empty() {
+        return Err(guidance(
+            format!("observer artifact has no phrases for {signal_label}"),
+            "Choose another signal or scaffold a fresh observer artifact first.",
+        ));
+    }
+
+    let cases = load_benchmark_cases(&args.benchmark_cases)?;
+    if cases.is_empty() {
+        return Err(guidance(
+            "benchmark dataset is empty",
+            "Add one benchmark case JSON object per line before running observer repair.",
+        ));
+    }
+
+    let lower_prompts: Vec<Option<String>> = cases
+        .iter()
+        .map(|case| {
+            case.input
+                .get("prompt")
+                .and_then(Value::as_str)
+                .map(|prompt| prompt.to_ascii_lowercase())
+        })
+        .collect();
+
+    let mut positive_constraints: Vec<Vec<usize>> = Vec::new();
+    let mut negative_constraints: Vec<Vec<usize>> = Vec::new();
+    let mut positives_seen = 0usize;
+    let mut negatives_seen = 0usize;
+
+    for (case, prompt) in cases.iter().zip(lower_prompts.iter()) {
+        let prompt = match prompt {
+            Some(prompt) => prompt,
+            None => continue,
+        };
+        let matched: Vec<usize> = phrases
+            .iter()
+            .enumerate()
+            .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        if case.expected_route == "allow" {
+            negatives_seen += 1;
+            negative_constraints.push(matched);
+        } else {
+            positives_seen += 1;
+            positive_constraints.push(matched);
+        }
+    }
+
+    if positive_constraints.is_empty() {
+        return Err(guidance(
+            format!("no denied benchmark cases currently match {signal_label} phrases"),
+            "Choose a signal that actually fires on denied cases or provide a more representative benchmark dataset.",
+        ));
+    }
+
+    let selected = solve_phrase_subset_with_z3(&phrases, &positive_constraints, &negative_constraints)?;
+    let repaired_phrases: Vec<String> = selected.iter().map(|index| phrases[*index].clone()).collect();
+    if repaired_phrases.is_empty() {
+        return Err(guidance(
+            "Z3 removed every phrase for the selected signal",
+            "Use a broader benchmark dataset or repair a different signal first.",
+        ));
+    }
+
+    let before_negatives = count_phrase_hits(&phrases, &negative_constraints);
+    let after_negatives = count_selected_hits(&selected, &negative_constraints);
+    let before_positives = count_phrase_hits(&phrases, &positive_constraints);
+    let after_positives = count_selected_hits(&selected, &positive_constraints);
+    let removed_phrases: Vec<String> = phrases
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !selected.contains(index))
+        .map(|(_, phrase)| phrase.clone())
+        .collect();
+
+    set_guardrails_signal_phrases(config, signal, repaired_phrases.clone());
+    if let Some(parent) = args.output.parent() {
+        fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err("failed to create observer repair output directory")?;
+    }
+    fs::write(
+        &args.output,
+        serde_json::to_string_pretty(&artifact).into_diagnostic()? + "\n",
+    )
+    .into_diagnostic()
+    .wrap_err("failed to write repaired observer artifact")?;
+
+    let response = serde_json::json!({
+        "signal": signal_label,
+        "input_artifact": args.artifact.display().to_string(),
+        "output": args.output.display().to_string(),
+        "phrases_before": phrases,
+        "phrases_after": repaired_phrases,
+        "removed_phrases": removed_phrases,
+        "positives_preserved": {
+            "before": before_positives,
+            "after": after_positives
+        },
+        "negative_hits": {
+            "before": before_negatives,
+            "after": after_negatives
+        },
+        "matched_case_counts": {
+            "denied": positives_seen,
+            "allowed": negatives_seen
+        }
+    });
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+    } else {
+        println!("{} {}", "Repaired".bold().bright_green(), signal_label.bold());
+        println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {} -> {}", "Negative hits".bright_black(), before_negatives, after_negatives);
+        println!("  {} {} -> {}", "Preserved denied coverage".bright_black(), before_positives, after_positives);
+    }
+    Ok(())
+}
+
+fn count_phrase_hits(_phrases: &[String], constraints: &[Vec<usize>]) -> usize {
+    constraints.len()
+}
+
+fn count_selected_hits(selected: &[usize], constraints: &[Vec<usize>]) -> usize {
+    constraints
+        .iter()
+        .filter(|matched| matched.iter().any(|index| selected.contains(index)))
+        .count()
+}
+
+fn solve_phrase_subset_with_z3(
+    phrases: &[String],
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+) -> Result<Vec<usize>> {
+    let mut smt = String::from("(set-option :opt.priority lex)\n");
+    for index in 0..phrases.len() {
+        smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
+    }
+    for matches in positive_constraints {
+        smt.push_str(&format!("(assert {})\n", z3_or(matches)));
+    }
+    for (index, matches) in negative_constraints.iter().enumerate() {
+        smt.push_str(&format!("(declare-fun neg_{index} () Bool)\n"));
+        smt.push_str(&format!("(assert (= neg_{index} {}))\n", z3_or(matches)));
+    }
+    let negative_terms = if negative_constraints.is_empty() {
+        "0".to_string()
+    } else {
+        format!(
+            "(+ {})",
+            negative_constraints
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+    let keep_terms = if phrases.is_empty() {
+        "0".to_string()
+    } else {
+        format!(
+            "(+ {})",
+            phrases
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
+    smt.push_str(&format!("(minimize {negative_terms})\n"));
+    smt.push_str(&format!("(minimize {keep_terms})\n"));
+    smt.push_str("(check-sat)\n(get-model)\n");
+
+    let smt_path = std::env::temp_dir().join(format!(
+        "logicpearl-observer-repair-{}.smt2",
+        std::process::id()
+    ));
+    fs::write(&smt_path, smt)
+        .into_diagnostic()
+        .wrap_err("failed to write temporary Z3 program")?;
+
+    let output = Command::new("z3")
+        .arg("-smt2")
+        .arg(&smt_path)
+        .output()
+        .into_diagnostic()
+        .wrap_err("failed to launch z3; make sure Z3 is installed and on PATH")?;
+    let _ = fs::remove_file(&smt_path);
+    if !output.status.success() {
+        return Err(guidance(
+            "z3 failed while repairing the observer artifact",
+            String::from_utf8_lossy(&output.stderr).trim(),
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .into_diagnostic()
+        .wrap_err("z3 output was not valid UTF-8")?;
+    if !stdout.lines().next().unwrap_or_default().contains("sat") {
+        return Err(guidance(
+            "z3 could not find a satisfying repaired observer",
+            "Try a larger benchmark dataset or repair a different signal family.",
+        ));
+    }
+    let mut selected = Vec::new();
+    for index in 0..phrases.len() {
+        let needle = format!("(define-fun keep_{index} () Bool");
+        if let Some(position) = stdout.find(&needle) {
+            let remainder = &stdout[position + needle.len()..];
+            let value = remainder.trim_start();
+            if value.starts_with("true") {
+                selected.push(index);
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn z3_or(indices: &[usize]) -> String {
+    if indices.is_empty() {
+        "false".to_string()
+    } else if indices.len() == 1 {
+        format!("keep_{}", indices[0])
+    } else {
+        format!(
+            "(or {})",
+            indices
+                .iter()
+                .map(|index| format!("keep_{index}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    }
 }

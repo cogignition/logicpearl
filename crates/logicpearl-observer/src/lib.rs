@@ -10,12 +10,31 @@ pub enum ObserverProfile {
     GuardrailsV1,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverProfileMetadata {
+    pub profile: ObserverProfile,
+    pub id: &'static str,
+    pub description: &'static str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeObserverArtifact {
     pub artifact_version: String,
     pub observer_id: String,
     pub profile: ObserverProfile,
     pub guardrails: Option<GuardrailsCueConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardrailsSignal {
+    InstructionOverride,
+    SystemPrompt,
+    SecretExfiltration,
+    ToolMisuse,
+    DataAccessOutsideScope,
+    IndirectDocumentAuthority,
+    BenignQuestion,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,11 +52,31 @@ pub fn status() -> Result<&'static str> {
     Ok("native observer profiles available")
 }
 
+pub fn profile_registry() -> &'static [ObserverProfileMetadata] {
+    const REGISTRY: &[ObserverProfileMetadata] = &[ObserverProfileMetadata {
+        profile: ObserverProfile::GuardrailsV1,
+        id: "guardrails_v1",
+        description: "Prompt and agent guardrail observer for instruction overrides, secret exfiltration, and tool misuse.",
+    }];
+    REGISTRY
+}
+
+pub fn profile_metadata(profile: ObserverProfile) -> &'static ObserverProfileMetadata {
+    profile_registry()
+        .iter()
+        .find(|metadata| metadata.profile == profile)
+        .expect("registered observer profile")
+}
+
+pub fn profile_id(profile: ObserverProfile) -> &'static str {
+    profile_metadata(profile).id
+}
+
 pub fn default_artifact_for_profile(profile: ObserverProfile) -> NativeObserverArtifact {
     match profile {
         ObserverProfile::GuardrailsV1 => NativeObserverArtifact {
             artifact_version: "1.0".to_string(),
-            observer_id: "guardrails_v1".to_string(),
+            observer_id: profile_id(profile).to_string(),
             profile,
             guardrails: Some(default_guardrails_config()),
         },
@@ -52,16 +91,22 @@ pub fn load_artifact(path: &Path) -> Result<NativeObserverArtifact> {
 
 pub fn detect_profile_from_input(raw_input: &Value) -> Option<ObserverProfile> {
     let object = raw_input.as_object()?;
-    if object.get("prompt").and_then(Value::as_str).is_some() {
-        return Some(ObserverProfile::GuardrailsV1);
-    }
-    if object.get("requested_tool").and_then(Value::as_str).is_some()
-        || object
-            .get("document_instructions_present")
-            .and_then(Value::as_bool)
-            .is_some()
-    {
-        return Some(ObserverProfile::GuardrailsV1);
+    for metadata in profile_registry() {
+        match metadata.profile {
+            ObserverProfile::GuardrailsV1 => {
+                if object.get("prompt").and_then(Value::as_str).is_some() {
+                    return Some(ObserverProfile::GuardrailsV1);
+                }
+                if object.get("requested_tool").and_then(Value::as_str).is_some()
+                    || object
+                        .get("document_instructions_present")
+                        .and_then(Value::as_bool)
+                        .is_some()
+                {
+                    return Some(ObserverProfile::GuardrailsV1);
+                }
+            }
+        }
     }
     None
 }
@@ -83,6 +128,80 @@ pub fn observe_with_artifact(
             })?,
         ),
     }
+}
+
+pub fn guardrails_signal_from_feature(feature: &str) -> Option<GuardrailsSignal> {
+    match feature {
+        "requests_instruction_override" => Some(GuardrailsSignal::InstructionOverride),
+        "targets_system_prompt" => Some(GuardrailsSignal::SystemPrompt),
+        "requests_secret_exfiltration" => Some(GuardrailsSignal::SecretExfiltration),
+        "requests_tool_misuse" => Some(GuardrailsSignal::ToolMisuse),
+        "requests_data_access_outside_scope" => Some(GuardrailsSignal::DataAccessOutsideScope),
+        "contains_indirect_document_authority" => Some(GuardrailsSignal::IndirectDocumentAuthority),
+        "is_likely_benign_question" => Some(GuardrailsSignal::BenignQuestion),
+        _ => None,
+    }
+}
+
+pub fn guardrails_signal_feature(signal: GuardrailsSignal) -> &'static str {
+    match signal {
+        GuardrailsSignal::InstructionOverride => "requests_instruction_override",
+        GuardrailsSignal::SystemPrompt => "targets_system_prompt",
+        GuardrailsSignal::SecretExfiltration => "requests_secret_exfiltration",
+        GuardrailsSignal::ToolMisuse => "requests_tool_misuse",
+        GuardrailsSignal::DataAccessOutsideScope => "requests_data_access_outside_scope",
+        GuardrailsSignal::IndirectDocumentAuthority => "contains_indirect_document_authority",
+        GuardrailsSignal::BenignQuestion => "is_likely_benign_question",
+    }
+}
+
+pub fn guardrails_signal_label(signal: GuardrailsSignal) -> &'static str {
+    match signal {
+        GuardrailsSignal::InstructionOverride => "instruction-override",
+        GuardrailsSignal::SystemPrompt => "system-prompt",
+        GuardrailsSignal::SecretExfiltration => "secret-exfiltration",
+        GuardrailsSignal::ToolMisuse => "tool-misuse",
+        GuardrailsSignal::DataAccessOutsideScope => "data-access-outside-scope",
+        GuardrailsSignal::IndirectDocumentAuthority => "indirect-document-authority",
+        GuardrailsSignal::BenignQuestion => "benign-question",
+    }
+}
+
+pub fn guardrails_signal_phrases<'a>(
+    config: &'a GuardrailsCueConfig,
+    signal: GuardrailsSignal,
+) -> &'a [String] {
+    match signal {
+        GuardrailsSignal::InstructionOverride => &config.instruction_override_phrases,
+        GuardrailsSignal::SystemPrompt => &config.system_prompt_phrases,
+        GuardrailsSignal::SecretExfiltration => &config.secret_exfiltration_phrases,
+        GuardrailsSignal::ToolMisuse => &config.tool_misuse_phrases,
+        GuardrailsSignal::DataAccessOutsideScope => &config.data_access_outside_scope_phrases,
+        GuardrailsSignal::IndirectDocumentAuthority => &config.indirect_document_authority_phrases,
+        GuardrailsSignal::BenignQuestion => &config.benign_question_phrases,
+    }
+}
+
+pub fn set_guardrails_signal_phrases(
+    config: &mut GuardrailsCueConfig,
+    signal: GuardrailsSignal,
+    phrases: Vec<String>,
+) {
+    match signal {
+        GuardrailsSignal::InstructionOverride => config.instruction_override_phrases = phrases,
+        GuardrailsSignal::SystemPrompt => config.system_prompt_phrases = phrases,
+        GuardrailsSignal::SecretExfiltration => config.secret_exfiltration_phrases = phrases,
+        GuardrailsSignal::ToolMisuse => config.tool_misuse_phrases = phrases,
+        GuardrailsSignal::DataAccessOutsideScope => config.data_access_outside_scope_phrases = phrases,
+        GuardrailsSignal::IndirectDocumentAuthority => {
+            config.indirect_document_authority_phrases = phrases
+        }
+        GuardrailsSignal::BenignQuestion => config.benign_question_phrases = phrases,
+    }
+}
+
+pub fn prompt_matches_phrase(prompt: &str, phrase: &str) -> bool {
+    contains_phrase(prompt, phrase)
 }
 
 fn observe_guardrails_v1(raw_input: &Value, config: &GuardrailsCueConfig) -> Result<Map<String, Value>> {

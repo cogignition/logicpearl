@@ -81,6 +81,11 @@ Today, the public pieces already in place are:
 - `logicpearl benchmark adapt-pint`
 - the public guardrail observer/pipeline examples
 
+Useful native observer commands:
+- `logicpearl observer list`
+- `logicpearl observer scaffold`
+- `logicpearl observer repair`
+
 ## Current Public Adapter Path
 
 Benign `Salad-Data base_set`:
