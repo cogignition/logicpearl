@@ -1,0 +1,67 @@
+use logicpearl_discovery::BuildResult;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::tempdir;
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("logicpearl-cli crate should live under workspace/crates/logicpearl-cli")
+        .to_path_buf()
+}
+
+#[test]
+fn sample_dataset_builds_artifact_bundle_and_runs_compiled_binary() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let output_dir = tempdir().expect("temp output dir should be created");
+    let output_path = output_dir.path().join("artifact_bundle");
+    let sample_csv = repo_root.join("examples/getting_started/decision_traces.csv");
+    let sample_input = repo_root.join("examples/getting_started/new_input.json");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&sample_csv)
+        .arg("--output-dir")
+        .arg(&output_path)
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build_output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let build_result: BuildResult =
+        serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
+    assert_eq!(build_result.label_column, "allowed");
+    assert!(Path::new(&build_result.output_files.artifact_manifest).exists());
+    assert!(Path::new(&build_result.output_files.pearl_ir).exists());
+    assert!(Path::new(&build_result.output_files.build_report).exists());
+
+    let native_binary = build_result
+        .output_files
+        .native_binary
+        .as_ref()
+        .expect("build should emit a native binary");
+    assert!(Path::new(native_binary).exists());
+
+    let compiled_output = Command::new(native_binary)
+        .arg(&sample_input)
+        .output()
+        .expect("compiled pearl binary should run");
+    assert!(
+        compiled_output.status.success(),
+        "compiled pearl binary failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compiled_output.stdout),
+        String::from_utf8_lossy(&compiled_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&compiled_output.stdout).trim(),
+        "0",
+        "compiled pearl binary should return the expected bitmask"
+    );
+}
