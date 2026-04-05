@@ -1740,6 +1740,11 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
             .iter()
             .map(|artifact| artifact.pinned_rules_applied)
             .sum();
+        if result.cache_hit {
+            println!("  {} {}", "Cache".bright_black(), "reused full discover output".bold());
+        } else if result.cached_artifacts > 0 {
+            println!("  {} {}", "Cached artifacts".bright_black(), result.cached_artifacts);
+        }
         if residual_rules > 0 {
             println!("  {} {}", "Residual rules".bright_black(), residual_rules);
         }
@@ -2205,6 +2210,9 @@ fn run_build(args: BuildArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&result).into_diagnostic()?);
     } else {
         println!("{} {}", "Built".bold().bright_green(), result.gate_id.bold());
+        if result.cache_hit {
+            println!("  {} {}", "Cache".bright_black(), "reused prior build output".bold());
+        }
         println!("  {} {}", "Rows".bright_black(), result.rows);
         println!("  {} {}", "Rules".bright_black(), result.rules_discovered);
         if result.residual_rules_discovered > 0 {

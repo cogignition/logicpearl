@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -31,7 +32,7 @@ pub struct DecisionTraceRow {
     pub allowed: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct BuildResult {
     pub source_csv: String,
     pub gate_id: String,
@@ -43,6 +44,8 @@ pub struct BuildResult {
     pub pinned_rules_applied: usize,
     pub selected_features: Vec<String>,
     pub training_parity: f64,
+    #[serde(default)]
+    pub cache_hit: bool,
     pub output_files: OutputFiles,
 }
 
@@ -56,13 +59,13 @@ pub struct DiscoverOptions {
     pub pinned_rules: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ArtifactDescriptor {
     pub name: String,
     pub artifact: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ArtifactSet {
     pub artifact_set_version: String,
     pub artifact_set_id: String,
@@ -70,7 +73,7 @@ pub struct ArtifactSet {
     pub binary_targets: Vec<ArtifactDescriptor>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct DiscoverResult {
     pub source_csv: String,
     pub artifact_set_id: String,
@@ -78,23 +81,27 @@ pub struct DiscoverResult {
     pub features: Vec<String>,
     pub targets: Vec<String>,
     pub artifacts: Vec<BuildResult>,
+    #[serde(default)]
+    pub cached_artifacts: usize,
+    #[serde(default)]
+    pub cache_hit: bool,
     pub skipped_targets: Vec<SkippedTarget>,
     pub output_files: DiscoverOutputFiles,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct SkippedTarget {
     pub name: String,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct DiscoverOutputFiles {
     pub artifact_set: String,
     pub discover_report: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct OutputFiles {
     pub pearl_ir: String,
 }
@@ -131,6 +138,14 @@ struct UniqueCoverageRefinementOptions {
     min_true_positive_retention: f64,
 }
 
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+struct CacheManifest {
+    cache_version: String,
+    operation: String,
+    input_fingerprint: String,
+    options_fingerprint: String,
+}
+
 const DEFAULT_RESIDUAL_PASS_OPTIONS: ResidualPassOptions = ResidualPassOptions {
     max_conditions: 3,
     min_positive_support: 2,
@@ -152,6 +167,126 @@ fn default_rule_set_id() -> String {
     "pinned_rules".to_string()
 }
 
+fn cache_manifest_path(output_dir: &Path) -> PathBuf {
+    output_dir.join(".logicpearl-cache.json")
+}
+
+fn cache_fingerprint<T: Serialize>(value: &T) -> Result<String> {
+    let payload = serde_json::to_string(value)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    payload.hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
+fn load_cache_manifest(path: &Path) -> Result<Option<CacheManifest>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let payload = std::fs::read_to_string(path)?;
+    Ok(Some(serde_json::from_str(&payload)?))
+}
+
+fn write_cache_manifest(path: &Path, manifest: &CacheManifest) -> Result<()> {
+    std::fs::write(path, serde_json::to_string_pretty(manifest)? + "\n")?;
+    Ok(())
+}
+
+fn build_cache_manifest(
+    rows: &[DecisionTraceRow],
+    source_name: &str,
+    options: &BuildOptions,
+) -> Result<CacheManifest> {
+    #[derive(Serialize)]
+    struct BuildFingerprintRow<'a> {
+        allowed: bool,
+        features: BTreeMap<&'a str, &'a Value>,
+    }
+
+    #[derive(Serialize)]
+    struct BuildFingerprintOptions<'a> {
+        source_name: &'a str,
+        gate_id: &'a str,
+        label_column: &'a str,
+        residual_pass: bool,
+        refine: bool,
+        pinned_rules_path: Option<String>,
+        pinned_rules_fingerprint: Option<String>,
+    }
+
+    let rows_fingerprint: Vec<BuildFingerprintRow<'_>> = rows
+        .iter()
+        .map(|row| BuildFingerprintRow {
+            allowed: row.allowed,
+            features: row.features.iter().map(|(key, value)| (key.as_str(), value)).collect(),
+        })
+        .collect();
+    let pinned_rules_fingerprint = options
+        .pinned_rules
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
+
+    Ok(CacheManifest {
+        cache_version: "1".to_string(),
+        operation: "build".to_string(),
+        input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
+        options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
+            source_name,
+            gate_id: &options.gate_id,
+            label_column: &options.label_column,
+            residual_pass: options.residual_pass,
+            refine: options.refine,
+            pinned_rules_path: options
+                .pinned_rules
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            pinned_rules_fingerprint,
+        })?,
+    })
+}
+
+fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result<CacheManifest> {
+    #[derive(Serialize)]
+    struct DiscoverFingerprintOptions<'a> {
+        artifact_set_id: &'a str,
+        target_columns: &'a [String],
+        residual_pass: bool,
+        refine: bool,
+        pinned_rules_path: Option<String>,
+        pinned_rules_fingerprint: Option<String>,
+    }
+
+    let pinned_rules_fingerprint = options
+        .pinned_rules
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
+
+    Ok(CacheManifest {
+        cache_version: "1".to_string(),
+        operation: "discover".to_string(),
+        input_fingerprint: fingerprint_file(csv_path)?,
+        options_fingerprint: cache_fingerprint(&DiscoverFingerprintOptions {
+            artifact_set_id: &options.artifact_set_id,
+            target_columns: &options.target_columns,
+            residual_pass: options.residual_pass,
+            refine: options.refine,
+            pinned_rules_path: options
+                .pinned_rules
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            pinned_rules_fingerprint,
+        })?,
+    })
+}
+
+fn fingerprint_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
     let rows = load_decision_traces(csv_path, &options.label_column)?;
     build_pearl_from_rows(&rows, csv_path.display().to_string(), options)
@@ -162,6 +297,23 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         return Err(LogicPearlError::message(
             "discover requires at least one target column",
         ));
+    }
+
+    options.output_dir.mkdir_all()?;
+    let discover_manifest = discover_cache_manifest(csv_path, options)?;
+    let discover_cache_path = cache_manifest_path(&options.output_dir);
+    let discover_report_path = options.output_dir.join("discover_report.json");
+    let artifact_set_path = options.output_dir.join("artifact_set.json");
+    if artifact_set_path.exists() && discover_report_path.exists() {
+        if load_cache_manifest(&discover_cache_path)?.as_ref() == Some(&discover_manifest) {
+            let mut cached: DiscoverResult = serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
+            cached.cache_hit = true;
+            for artifact in &mut cached.artifacts {
+                artifact.cache_hit = true;
+            }
+            cached.cached_artifacts = cached.artifacts.len();
+            return Ok(cached);
+        }
     }
 
     let mut reader = csv::Reader::from_path(csv_path)?;
@@ -185,7 +337,6 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         ));
     }
 
-    options.output_dir.mkdir_all()?;
     let artifacts_dir = options.output_dir.join("artifacts");
     artifacts_dir.mkdir_all()?;
 
@@ -316,23 +467,21 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         rows: row_count,
         features: feature_columns,
         targets: options.target_columns.clone(),
+        cached_artifacts: artifacts.iter().filter(|artifact| artifact.cache_hit).count(),
+        cache_hit: false,
         artifacts,
         skipped_targets,
         output_files: DiscoverOutputFiles {
             artifact_set: artifact_set_path.display().to_string(),
-            discover_report: options
-                .output_dir
-                .join("discover_report.json")
-                .display()
-                .to_string(),
+            discover_report: discover_report_path.display().to_string(),
         },
     };
 
-    let discover_report_path = options.output_dir.join("discover_report.json");
     std::fs::write(
         &discover_report_path,
         serde_json::to_string_pretty(&discover)? + "\n",
     )?;
+    write_cache_manifest(&discover_cache_path, &discover_manifest)?;
 
     Ok(discover)
 }
@@ -344,6 +493,19 @@ pub fn build_pearl_from_rows(
 ) -> Result<BuildResult> {
     if rows.is_empty() {
         return Err(LogicPearlError::message("decision trace CSV is empty"));
+    }
+
+    options.output_dir.mkdir_all()?;
+    let build_manifest = build_cache_manifest(rows, &source_name, options)?;
+    let build_cache_path = cache_manifest_path(&options.output_dir);
+    let build_report_path = options.output_dir.join("build_report.json");
+    let pearl_ir_path = options.output_dir.join("pearl.ir.json");
+    if pearl_ir_path.exists() && build_report_path.exists() {
+        if load_cache_manifest(&build_cache_path)?.as_ref() == Some(&build_manifest) {
+            let mut cached: BuildResult = serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
+            cached.cache_hit = true;
+            return Ok(cached);
+        }
     }
 
     let residual_options = options
@@ -365,8 +527,6 @@ pub fn build_pearl_from_rows(
             refinement_options.as_ref(),
             pinned_rules.as_ref(),
         )?;
-    options.output_dir.mkdir_all()?;
-    let pearl_ir_path = options.output_dir.join("pearl.ir.json");
     gate.write_pretty(&pearl_ir_path)?;
 
     let mut correct = 0;
@@ -390,16 +550,17 @@ pub fn build_pearl_from_rows(
         pinned_rules_applied,
         selected_features: sorted_feature_names(&rows),
         training_parity,
+        cache_hit: false,
         output_files: OutputFiles {
             pearl_ir: pearl_ir_path.display().to_string(),
         },
     };
 
-    let build_report_path = options.output_dir.join("build_report.json");
     std::fs::write(
         &build_report_path,
         serde_json::to_string_pretty(&build_report)? + "\n",
     )?;
+    write_cache_manifest(&build_cache_path, &build_manifest)?;
 
     Ok(build_report)
 }
@@ -1404,6 +1565,34 @@ mod tests {
     }
 
     #[test]
+    fn build_reuses_cached_output_when_rows_and_options_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("decision_traces.csv");
+        std::fs::write(
+            &csv_path,
+            "flag,allowed\n0,allowed\n1,denied\n1,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+        let options = BuildOptions {
+            output_dir: output_dir.clone(),
+            gate_id: "cached_gate".to_string(),
+            label_column: "allowed".to_string(),
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+        };
+
+        let first = build_pearl_from_csv(&csv_path, &options).unwrap();
+        let second = build_pearl_from_csv(&csv_path, &options).unwrap();
+
+        assert!(!first.cache_hit);
+        assert!(second.cache_hit);
+        assert_eq!(second.rules_discovered, first.rules_discovered);
+        assert!(output_dir.join(".logicpearl-cache.json").exists());
+    }
+
+    #[test]
     fn dedupe_prefers_stronger_verification_for_same_rule() {
         let pipeline_rule = RuleDefinition {
             id: "rule_a".to_string(),
@@ -1496,6 +1685,36 @@ mod tests {
         assert_eq!(merged.len(), 2);
         let rendered = serde_json::to_string(&merged).unwrap();
         assert!(rendered.contains("\"feature\":\"guard\""));
+    }
+
+    #[test]
+    fn discover_reuses_cached_output_when_dataset_and_options_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("multi_target.csv");
+        std::fs::write(
+            &csv_path,
+            "signal_a,signal_b,target_a,target_b\n0,0,allowed,allowed\n1,0,denied,allowed\n0,1,allowed,denied\n1,1,denied,denied\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("discovered");
+        let options = DiscoverOptions {
+            output_dir: output_dir.clone(),
+            artifact_set_id: "multi_target_demo".to_string(),
+            target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+        };
+
+        let first = discover_from_csv(&csv_path, &options).unwrap();
+        let second = discover_from_csv(&csv_path, &options).unwrap();
+
+        assert!(!first.cache_hit);
+        assert!(!first.artifacts.iter().any(|artifact| artifact.cache_hit));
+        assert!(second.cache_hit);
+        assert_eq!(second.cached_artifacts, 2);
+        assert!(second.artifacts.iter().all(|artifact| artifact.cache_hit));
+        assert!(output_dir.join(".logicpearl-cache.json").exists());
     }
 
     fn row(features: &[(&str, i64)], allowed: bool) -> DecisionTraceRow {
