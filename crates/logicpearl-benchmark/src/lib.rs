@@ -6,6 +6,10 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+mod parsers;
+
+use parsers::{parse_json_object_rows, parse_rows_for_parser};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkCase {
     pub id: String,
@@ -181,7 +185,7 @@ pub struct BenchmarkAdapterSourceConfig {
     pub input_fields: Vec<BenchmarkAdapterInputField>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BenchmarkAdapterParser {
     JsonObjectRows,
@@ -433,56 +437,6 @@ pub fn load_synthesis_cases(path: &Path) -> Result<Vec<SynthesisCase>> {
     Ok(cases)
 }
 
-pub fn parse_json_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
-    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) {
-        let mut rows = Vec::with_capacity(items.len());
-        for (index, item) in items.into_iter().enumerate() {
-            let object = item.as_object().cloned().ok_or_else(|| {
-                LogicPearlError::message(format!("row {} is not a JSON object", index + 1))
-            })?;
-            rows.push(object);
-        }
-        return Ok(rows);
-    }
-
-    let mut rows = Vec::new();
-    for (line_no, line) in raw.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(trimmed).map_err(|error| {
-            LogicPearlError::message(format!("invalid JSON on line {}: {}", line_no + 1, error))
-        })?;
-        let object = value.as_object().cloned().ok_or_else(|| {
-            LogicPearlError::message(format!("line {} is not a JSON object", line_no + 1))
-        })?;
-        rows.push(object);
-    }
-    Ok(rows)
-}
-
-pub fn parse_yaml_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
-    let yaml_value: serde_yaml::Value = serde_yaml::from_str(raw).map_err(|error| {
-        LogicPearlError::message(format!("invalid YAML: {error}"))
-    })?;
-    let json_value = serde_json::to_value(yaml_value).map_err(|error| {
-        LogicPearlError::message(format!("could not convert YAML to JSON value ({error})"))
-    })?;
-    let items = json_value.as_array().cloned().ok_or_else(|| {
-        LogicPearlError::message("YAML benchmark dataset must be a top-level list of objects")
-    })?;
-
-    let mut rows = Vec::with_capacity(items.len());
-    for (index, item) in items.into_iter().enumerate() {
-        let object = item.as_object().cloned().ok_or_else(|| {
-            LogicPearlError::message(format!("row {} is not a YAML object", index + 1))
-        })?;
-        rows.push(object);
-    }
-    Ok(rows)
-}
-
 pub fn first_string_field(
     object: &serde_json::Map<String, Value>,
     keys: &[&str],
@@ -710,19 +664,7 @@ fn adapt_dataset_with_config(
     defaults: &BenchmarkAdaptDefaults,
     config: &BenchmarkAdapterConfig,
 ) -> Result<Vec<BenchmarkCase>> {
-    match config.source.parser {
-        BenchmarkAdapterParser::JsonObjectRows => adapt_json_object_rows_with_config(raw, defaults, config),
-        BenchmarkAdapterParser::YamlObjectRows => adapt_yaml_object_rows_with_config(raw, defaults, config),
-        BenchmarkAdapterParser::SquadQuestions => adapt_squad_questions_with_config(raw, defaults, config),
-    }
-}
-
-fn adapt_json_object_rows_with_config(
-    raw: &str,
-    defaults: &BenchmarkAdaptDefaults,
-    config: &BenchmarkAdapterConfig,
-) -> Result<Vec<BenchmarkCase>> {
-    let rows = parse_json_object_rows(raw)?;
+    let rows = parse_rows_for_parser(raw, config.source.parser)?;
     if rows.is_empty() {
         return Err(LogicPearlError::message(format!(
             "raw {} dataset is empty",
@@ -742,93 +684,6 @@ fn adapt_json_object_rows_with_config(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| build_case_from_row(row, index, defaults, config, &prompt_keys, &category_keys))
-        .collect()
-}
-
-fn adapt_yaml_object_rows_with_config(
-    raw: &str,
-    defaults: &BenchmarkAdaptDefaults,
-    config: &BenchmarkAdapterConfig,
-) -> Result<Vec<BenchmarkCase>> {
-    let rows = parse_yaml_object_rows(raw)?;
-    if rows.is_empty() {
-        return Err(LogicPearlError::message(format!(
-            "raw {} dataset is empty",
-            config.id
-        )));
-    }
-
-    let prompt_keys = config
-        .source
-        .prompt_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let category_keys = config
-        .source
-        .category_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| build_case_from_row(row, index, defaults, config, &prompt_keys, &category_keys))
-        .collect()
-}
-
-fn adapt_squad_questions_with_config(
-    raw: &str,
-    defaults: &BenchmarkAdaptDefaults,
-    config: &BenchmarkAdapterConfig,
-) -> Result<Vec<BenchmarkCase>> {
-    let dataset: SquadDataset = serde_json::from_str(raw).map_err(|err| {
-        LogicPearlError::message(format!(
-            "raw SQuAD JSON is not valid for the expected dataset format ({err})"
-        ))
-    })?;
-    if dataset.data.is_empty() {
-        return Err(LogicPearlError::message("raw SQuAD dataset is empty"));
-    }
-
-    let prompt_keys = config
-        .source
-        .prompt_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let category_keys = config
-        .source
-        .category_fields
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-
-    let mut rows = Vec::new();
-    for article in &dataset.data {
-        for paragraph in &article.paragraphs {
-            for question in &paragraph.qas {
-                let mut row = serde_json::Map::new();
-                row.insert("id".to_string(), Value::String(question.id.clone()));
-                row.insert("question".to_string(), Value::String(question.question.clone()));
-                row.insert("context".to_string(), Value::String(paragraph.context.clone()));
-                if let Some(title) = &article.title {
-                    row.insert("title".to_string(), Value::String(title.clone()));
-                }
-                rows.push(row);
-            }
-        }
-    }
-
-    if rows.is_empty() {
-        return Err(LogicPearlError::message(
-            "raw SQuAD dataset contains no question rows",
-        ));
-    }
 
     rows.iter()
         .enumerate()
