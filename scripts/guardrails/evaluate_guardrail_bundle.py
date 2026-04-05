@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -39,6 +40,12 @@ def parse_args() -> argparse.Namespace:
         "--use-installed-cli",
         action="store_true",
         help="Use `logicpearl` from PATH instead of `cargo run -p logicpearl-cli --`.",
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=0,
+        help="Deterministically evaluate only up to this many benchmark cases, stratified by expected route. Defaults to all cases.",
     )
     return parser.parse_args()
 
@@ -85,6 +92,50 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def deterministic_bucket(key: str) -> int:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+def sample_cases(cases: list[dict[str, Any]], sample_size: int) -> list[dict[str, Any]]:
+    if sample_size <= 0 or len(cases) <= sample_size:
+        return cases
+
+    by_route: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        by_route.setdefault(case["expected_route"], []).append(case)
+
+    selected: list[dict[str, Any]] = []
+    route_items = sorted(by_route.items())
+    remaining_budget = sample_size
+    remaining_groups = len(route_items)
+    for route, route_cases in route_items:
+        route_cases = sorted(route_cases, key=lambda case: deterministic_bucket(case["id"]))
+        quota = max(1, remaining_budget // remaining_groups)
+        quota = min(quota, len(route_cases))
+        selected.extend(route_cases[:quota])
+        remaining_budget -= quota
+        remaining_groups -= 1
+
+    if len(selected) < sample_size:
+        selected_ids = {case["id"] for case in selected}
+        leftovers = [
+            case
+            for case in sorted(cases, key=lambda case: deterministic_bucket(case["id"]))
+            if case["id"] not in selected_ids
+        ]
+        selected.extend(leftovers[: sample_size - len(selected)])
+
+    return sorted(selected, key=lambda case: deterministic_bucket(case["id"]))
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
 
 
 def normalize_features_for_gate(gate: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]:
@@ -239,6 +290,14 @@ def main() -> int:
             "output": str(cases_path),
         }
 
+    original_cases = read_jsonl(cases_path)
+    sampled_cases = sample_cases(original_cases, args.sample_size)
+    sampled = len(sampled_cases) != len(original_cases)
+    if sampled:
+        sampled_path = output_dir / "cases.sampled.jsonl"
+        write_jsonl(sampled_path, sampled_cases)
+        cases_path = sampled_path
+
     observed_path = output_dir / "observed.jsonl"
     observe_report = run_json(
         [
@@ -342,6 +401,8 @@ def main() -> int:
         },
         "summary": {
             "total_cases": total_cases,
+            "sampled": sampled,
+            "sample_size": args.sample_size if sampled else total_cases,
             "matched_cases": matched_cases,
             "exact_match_rate": ratio(matched_cases, total_cases),
             "attack_cases": attack_cases,

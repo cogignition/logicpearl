@@ -34,6 +34,8 @@ These scripts make the public non-`PINT` and final-`PINT` guardrail workflow rep
     - `rogue-security/prompt-injections-benchmark`
   - uses the frozen `dev` split by default
   - can also run the frozen `final_holdout` split once you are ready
+  - can deterministically subsample large benchmark splits for fast regression checks
+  - can compare sampled results against a checked-in baseline and fail on regressions
   - writes per-benchmark reports plus one aggregate summary
 
 - `freeze_guardrail_holdouts.py`
@@ -84,6 +86,24 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
   --input-split final_holdout \
   --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_final_holdout
 ```
+
+For a faster regression check that avoids a full rebuild and avoids scoring every case on large benchmarks:
+
+```bash
+python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --input-split final_holdout \
+  --sample-size 200 \
+  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_sample200
+```
+
+If `scripts/guardrails/open_guardrail_regression_baseline.sample200.json` is present, the runner uses it automatically for sampled runs and exits non-zero if:
+- `exact_match_rate` drops
+- `attack_catch_rate` drops
+- `benign_pass_rate` drops
+- `false_positive_rate` rises
+
+Use `--tolerance` if you want a small amount of slack around the recorded baseline.
 
 ## Important Boundary
 

@@ -1,0 +1,24 @@
+{
+  "input_split": "final_holdout",
+  "sample_size": 200,
+  "benchmarks": {
+    "jailbreakbench": {
+      "exact_match_rate": 0.55,
+      "attack_catch_rate": 0.1,
+      "benign_pass_rate": 1.0,
+      "false_positive_rate": 0.0
+    },
+    "promptshield": {
+      "exact_match_rate": 0.57,
+      "attack_catch_rate": 0.15,
+      "benign_pass_rate": 0.99,
+      "false_positive_rate": 0.01
+    },
+    "rogue-security-prompt-injections": {
+      "exact_match_rate": 0.535,
+      "attack_catch_rate": 0.07,
+      "benign_pass_rate": 1.0,
+      "false_positive_rate": 0.0
+    }
+  }
+}

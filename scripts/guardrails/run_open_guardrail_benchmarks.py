@@ -13,6 +13,7 @@ from typing import Any
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_BUNDLE_DIR = Path("/tmp/guardrails_pre_pint_bundle")
+DEFAULT_BASELINE_PATH = REPO_ROOT / "scripts" / "guardrails" / "open_guardrail_regression_baseline.sample200.json"
 
 BENCHMARKS = [
     {
@@ -72,6 +73,23 @@ def parse_args() -> argparse.Namespace:
         default="dev",
         help="Which frozen external split to evaluate. Defaults to the dev split; use raw only for legacy full-dataset runs.",
     )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=0,
+        help="Deterministically evaluate only up to this many cases per benchmark. Defaults to the full selected split.",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="",
+        help="Optional JSON file with minimum acceptable benchmark metrics for regression checks.",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.0,
+        help="Allowed metric slack when comparing against a regression baseline.",
+    )
     return parser.parse_args()
 
 
@@ -88,6 +106,7 @@ def run_benchmark(
     output_dir: Path,
     use_installed_cli: bool,
     input_split: str,
+    sample_size: int,
 ) -> dict[str, Any]:
     benchmark_output_dir = output_dir / benchmark["id"]
     benchmark_input, input_format = benchmark_input_for_split(benchmark, input_split)
@@ -105,6 +124,8 @@ def run_benchmark(
         "--output-dir",
         str(benchmark_output_dir),
     ]
+    if sample_size > 0:
+        cmd.extend(["--sample-size", str(sample_size)])
     if use_installed_cli:
         cmd.append("--use-installed-cli")
     print("+", " ".join(cmd), flush=True)
@@ -119,6 +140,40 @@ def run_benchmark(
         "report_path": str(report_path),
         "summary": report["summary"],
     }
+
+
+def load_baseline(path_text: str) -> dict[str, Any]:
+    if not path_text:
+        return {}
+    path = Path(path_text).resolve()
+    if not path.exists():
+        raise SystemExit(f"baseline file does not exist: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def compare_against_baseline(
+    aggregate: list[dict[str, Any]],
+    baseline: dict[str, Any],
+    tolerance: float,
+) -> list[str]:
+    failures: list[str] = []
+    expected = baseline.get("benchmarks", {})
+    for item in aggregate:
+        benchmark_id = item["benchmark"]
+        if benchmark_id not in expected:
+            continue
+        summary = item["summary"]
+        baseline_summary = expected[benchmark_id]
+        for metric in ("exact_match_rate", "attack_catch_rate", "benign_pass_rate"):
+            if summary[metric] + tolerance < baseline_summary[metric]:
+                failures.append(
+                    f"{benchmark_id} {metric} regressed: {summary[metric]:.6f} < {baseline_summary[metric]:.6f}"
+                )
+        if summary["false_positive_rate"] - tolerance > baseline_summary["false_positive_rate"]:
+            failures.append(
+                f"{benchmark_id} false_positive_rate regressed: {summary['false_positive_rate']:.6f} > {baseline_summary['false_positive_rate']:.6f}"
+            )
+    return failures
 
 
 def main() -> int:
@@ -149,12 +204,35 @@ def main() -> int:
             skipped.append(entry)
             continue
         aggregate.append(
-            run_benchmark(bundle_dir, benchmark, output_dir, args.use_installed_cli, args.input_split)
+            run_benchmark(
+                bundle_dir,
+                benchmark,
+                output_dir,
+                args.use_installed_cli,
+                args.input_split,
+                args.sample_size,
+            )
         )
 
-    payload = {"input_split": args.input_split, "benchmarks": aggregate, "skipped": skipped}
+    payload = {
+        "input_split": args.input_split,
+        "sample_size": args.sample_size,
+        "benchmarks": aggregate,
+        "skipped": skipped,
+    }
     (output_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2))
+
+    default_baseline = (
+        str(DEFAULT_BASELINE_PATH)
+        if args.sample_size > 0 and DEFAULT_BASELINE_PATH.exists()
+        else ""
+    )
+    baseline_path = args.baseline or default_baseline
+    baseline = load_baseline(baseline_path) if baseline_path else {}
+    failures = compare_against_baseline(aggregate, baseline, args.tolerance) if baseline else []
+    if failures:
+        raise SystemExit("\n".join(failures))
     return 0
 
 
