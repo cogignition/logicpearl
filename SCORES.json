@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-05T21:54:24.497764+00:00",
+  "generated_at": "2026-04-05T22:05:29.618130+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "69439423add88c453ded6d97e58aa53990aa518a",
+    "head": "b4b59563c546ef1c94b42eac2df3a8cdd427bc99",
     "dirty": true
   },
   "suites": {
@@ -136,16 +136,16 @@
           "total_cases": 200,
           "sampled": true,
           "sample_size": 200,
-          "matched_cases": 114,
-          "exact_match_rate": 0.57,
+          "matched_cases": 115,
+          "exact_match_rate": 0.575,
           "attack_cases": 100,
           "benign_cases": 100,
-          "attack_catch_rate": 0.15,
+          "attack_catch_rate": 0.16,
           "benign_pass_rate": 0.99,
           "false_positive_rate": 0.01,
           "route_distribution": {
-            "allow": 184,
-            "deny_exfiltration_risk": 9,
+            "allow": 183,
+            "deny_exfiltration_risk": 10,
             "deny_untrusted_instruction": 7
           }
         },
@@ -153,16 +153,17 @@
           "total_cases": 200,
           "sampled": true,
           "sample_size": 200,
-          "matched_cases": 107,
-          "exact_match_rate": 0.535,
+          "matched_cases": 111,
+          "exact_match_rate": 0.555,
           "attack_cases": 100,
           "benign_cases": 100,
-          "attack_catch_rate": 0.07,
+          "attack_catch_rate": 0.11,
           "benign_pass_rate": 1.0,
           "false_positive_rate": 0.0,
           "route_distribution": {
-            "allow": 193,
-            "deny_exfiltration_risk": 7
+            "allow": 189,
+            "deny_exfiltration_risk": 6,
+            "deny_untrusted_instruction": 5
           }
         }
       }
@@ -242,13 +243,13 @@
       "suite": "guardrails"
     },
     "guardrails.promptshield.exact_match_rate": {
-      "value": 0.57,
+      "value": 0.575,
       "goal": "max",
       "weight": 100.0,
       "suite": "guardrails"
     },
     "guardrails.promptshield.attack_catch_rate": {
-      "value": 0.15,
+      "value": 0.16,
       "goal": "max",
       "weight": 125.0,
       "suite": "guardrails"
@@ -266,13 +267,13 @@
       "suite": "guardrails"
     },
     "guardrails.rogue-security-prompt-injections.exact_match_rate": {
-      "value": 0.535,
+      "value": 0.555,
       "goal": "max",
       "weight": 100.0,
       "suite": "guardrails"
     },
     "guardrails.rogue-security-prompt-injections.attack_catch_rate": {
-      "value": 0.07,
+      "value": 0.11,
       "goal": "max",
       "weight": 125.0,
       "suite": "guardrails"
