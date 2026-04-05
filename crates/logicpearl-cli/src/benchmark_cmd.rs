@@ -425,6 +425,30 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
                 json: args.json,
             })
         }
+        BenchmarkAdapterProfile::SafearenaSafe => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "SafeArena safe",
+            |raw, defaults| adapt_safearena_dataset(raw, true, defaults),
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::SafearenaHarm => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "SafeArena harm",
+            |raw, defaults| adapt_safearena_dataset(raw, false, defaults),
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
         BenchmarkAdapterProfile::Alert => run_benchmark_adapt_alert(BenchmarkAdaptAlertArgs {
             raw_alert_json: args.raw_dataset,
             output: args.output,
@@ -438,6 +462,30 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "ChatGPT-Jailbreak-Prompts",
             adapt_chatgpt_jailbreak_prompts_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::OpenAgentSafetyS26 => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "OpenAgentSafety S26",
+            adapt_openagentsafety_s26_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::McpMark => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "MCPMark",
+            adapt_mcpmark_dataset,
             &BenchmarkAdaptDefaults {
                 requested_tool: args.requested_tool,
                 requested_action: args.requested_action,

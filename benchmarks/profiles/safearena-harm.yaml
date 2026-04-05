@@ -1,0 +1,28 @@
+version: "1"
+id: "safearena-harm"
+description: "Adapt SafeArena harm task rows into deny benchmark cases."
+source_format: "SafeArena harm.json task array"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "intent"
+  id_fields:
+    - "task_id"
+  category_fields:
+    - "category"
+  input_fields:
+    - source: "start_url"
+      target: "start_url"
+    - source: "sites"
+      target: "sites"
+    - source: "intent_template"
+      target: "intent_template"
+
+output:
+  expected_route: "deny"
+  id_prefix: "safearena"
+  default_category: "agent_web_risk"
+  static_input:
+    document_instructions_present: false

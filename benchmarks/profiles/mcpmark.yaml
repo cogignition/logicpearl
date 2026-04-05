@@ -1,0 +1,35 @@
+version: "1"
+id: "mcpmark"
+description: "Adapt MCPMark task rows into allow benchmark cases."
+source_format: "JSON array of extracted MCPMark task objects"
+default_route: "allow"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "instruction"
+    - "description"
+  id_fields:
+    - "task_id"
+  category_fields:
+    - "category_name"
+    - "category_id"
+  input_fields:
+    - source: "mcp"
+      target: "requested_tool"
+      mode: "first-string"
+    - source: "task_suite"
+      target: "task_suite"
+    - source: "difficulty"
+      target: "difficulty"
+    - source: "task_path"
+      target: "task_path"
+    - source: "task_name"
+      target: "task_name"
+
+output:
+  expected_route: "allow"
+  id_prefix: "mcpmark"
+  default_category: "tool_use_benign"
+  static_input:
+    document_instructions_present: false

@@ -7,6 +7,8 @@ Current state:
 - `salad-base-set.yaml` and `salad-attack-enhanced-set.yaml` are loaded by the Rust benchmark crate
 - `alert.yaml` is a real built-in adapter profile loaded by the Rust benchmark crate
 - `chatgpt-jailbreak-prompts.yaml`, `vigil.yaml`, and `noeti-toxicqa.yaml` are built-in adapter profiles too
+- `openagentsafety-s26.yaml` and `mcpmark.yaml` are built-in adapter profiles too
+- `safearena-safe.yaml` and `safearena-harm.yaml` are built-in adapter profiles too
 - `pint.yaml` is also loaded by the Rust benchmark crate
 - all current built-in benchmark adapters are now profile-backed
 
@@ -59,6 +61,9 @@ Top-level fields:
   - each entry contains:
     - `source`
     - `target`
+    - optional `mode`
+      - `raw` (default)
+      - `first-string` for list-valued fields where the first string should become the emitted value
 
 `output` fields:
 

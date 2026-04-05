@@ -5,6 +5,9 @@ This is the non-`PINT` preparation path for LogicPearl guardrail work.
 Use public development corpora here:
 - `Salad-Data`
 - `ALERT`
+- `OpenAgentSafety`
+- `MCPMark`
+- `SafeArena`
 - `Vigil`
 - `ChatGPT-Jailbreak-Prompts`
 - `NOETI ToxicQAFinal`
@@ -41,7 +44,20 @@ Recommended local staging paths for the remaining public development corpora:
 ~/Documents/LogicPearl/datasets/public/chatgpt_jailbreak/
 ~/Documents/LogicPearl/datasets/public/vigil/
 ~/Documents/LogicPearl/datasets/public/noeti_toxicqa/
+~/Documents/LogicPearl/datasets/public/openagentsafety/
+~/Documents/LogicPearl/datasets/public/mcpmark/
 ```
+
+Additional staged corpora for agent tool-use evaluation:
+
+```text
+~/Documents/LogicPearl/datasets/public/mt_agentrisk/
+~/Documents/LogicPearl/datasets/public/safearena/
+```
+
+Current access note:
+- `MT-AgentRisk` is still gated on Hugging Face
+- `SafeArena` is available locally and wired into the public non-`PINT` workflow
 
 ## Workflow
 
@@ -158,6 +174,42 @@ logicpearl benchmark adapt \
   --output /tmp/noeti_attack.jsonl
 ```
 
+Attack `OpenAgentSafety`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/openagentsafety/openagentsafety_s26.json \
+  --profile openagentsafety-s26 \
+  --output /tmp/openagentsafety_attack.jsonl
+```
+
+Benign `MCPMark`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/mcpmark/mcpmark_tasks.json \
+  --profile mcpmark \
+  --output /tmp/mcpmark_benign.jsonl
+```
+
+Benign `SafeArena`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/safearena/safe.json \
+  --profile safearena-safe \
+  --output /tmp/safearena_safe.jsonl
+```
+
+Attack `SafeArena`:
+
+```bash
+logicpearl benchmark adapt \
+  ~/Documents/LogicPearl/datasets/public/safearena/harm.json \
+  --profile safearena-harm \
+  --output /tmp/safearena_harm.jsonl
+```
+
 Benign `SQuAD 2.0`:
 
 ```bash
@@ -202,6 +254,26 @@ logicpearl benchmark adapt \
   benchmarks/guardrails/prep/example_noeti_toxicqa.json \
   --profile noeti-toxicqa \
   --output /tmp/noeti_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_openagentsafety_s26.json \
+  --profile openagentsafety-s26 \
+  --output /tmp/openagentsafety_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_mcpmark_tasks.json \
+  --profile mcpmark \
+  --output /tmp/mcpmark_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_safearena_safe.json \
+  --profile safearena-safe \
+  --output /tmp/safearena_safe_sample.jsonl
+
+logicpearl benchmark adapt \
+  benchmarks/guardrails/prep/example_safearena_harm.json \
+  --profile safearena-harm \
+  --output /tmp/safearena_harm_sample.jsonl
 ```
 
 Merge benign and attack slices into one development set:
@@ -286,3 +358,28 @@ logicpearl benchmark score-artifacts \
 
 The internal workflow design is documented in:
 - [/Users/missingno/Documents/LogicPearl/internal_docs/logicpearl/guardrail-prep-workflow.md](/Users/missingno/Documents/LogicPearl/internal_docs/logicpearl/guardrail-prep-workflow.md)
+
+## Frozen Pre-PINT Bundle
+
+For the public proof flow, the preferred source-of-truth is still a string of pearls:
+- one frozen observer artifact
+- one frozen discovered artifact set
+- an explicit route policy over the specialized target pearls
+
+To make that easy to rerun and audit, the repo also ships a higher-level builder:
+
+```bash
+python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_pre_pint_bundle
+```
+
+That script:
+- adapts every staged non-`PINT` public corpus
+- merges them into one train/dev benchmark set
+- freezes the observer artifact used for training
+- discovers the target pearls on train only
+- scores them on held-out dev
+- copies the frozen artifact set into one bundle
+- derives one combined pearl with route labels, messages, and counterfactual hints
+
+The frozen bundle is what should be committed before any final `PINT` run.

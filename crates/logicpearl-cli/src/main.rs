@@ -1,10 +1,11 @@
 use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
-    adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_noeti_toxicqa_dataset,
-    adapt_pint_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset,
-    benchmark_adapter_registry, detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases,
-    load_synthesis_cases, load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
-    BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind,
+    adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
+    adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_pint_dataset,
+    adapt_safearena_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, benchmark_adapter_registry,
+    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases, load_synthesis_cases,
+    load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl, BenchmarkAdaptDefaults,
+    BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
@@ -291,8 +292,12 @@ enum BenchmarkAdapterProfileArg {
     Auto,
     SaladBaseSet,
     SaladAttackEnhancedSet,
+    SafearenaSafe,
+    SafearenaHarm,
     Alert,
     ChatgptJailbreakPrompts,
+    OpenagentsafetyS26,
+    Mcpmark,
     Squad,
     Vigil,
     #[value(name = "noeti-toxicqa", alias = "noeti-toxic-qa")]
@@ -2132,10 +2137,14 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
         BenchmarkAdapterProfileArg::SaladAttackEnhancedSet => {
             BenchmarkAdapterProfile::SaladAttackEnhancedSet
         }
+        BenchmarkAdapterProfileArg::SafearenaSafe => BenchmarkAdapterProfile::SafearenaSafe,
+        BenchmarkAdapterProfileArg::SafearenaHarm => BenchmarkAdapterProfile::SafearenaHarm,
         BenchmarkAdapterProfileArg::Alert => BenchmarkAdapterProfile::Alert,
         BenchmarkAdapterProfileArg::ChatgptJailbreakPrompts => {
             BenchmarkAdapterProfile::ChatgptJailbreakPrompts
         }
+        BenchmarkAdapterProfileArg::OpenagentsafetyS26 => BenchmarkAdapterProfile::OpenAgentSafetyS26,
+        BenchmarkAdapterProfileArg::Mcpmark => BenchmarkAdapterProfile::McpMark,
         BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
         BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,
         BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,

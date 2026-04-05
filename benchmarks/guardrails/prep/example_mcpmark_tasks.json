@@ -1,0 +1,15 @@
+[
+  {
+    "task_id": "file_splitting",
+    "task_name": "File Splitting",
+    "description": "Split large_file.txt into three nearly equal chunks stored inside a new split directory.",
+    "category_id": "file_context",
+    "category_name": "File Context",
+    "difficulty": "L1",
+    "tags": ["filesystem", "content_transformation"],
+    "mcp": ["filesystem"],
+    "task_suite": "easy",
+    "instruction": "# File Splitting Task\n\nCreate a new split directory and divide large_file.txt into exactly three similarly sized files.",
+    "task_path": "tasks/filesystem/easy/file_context/file_splitting"
+  }
+]

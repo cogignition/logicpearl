@@ -56,9 +56,30 @@ Suggested rule:
 - `allow` -> `passed`
 - everything else -> `blocked`
 
-## Public CLI Path
+## Frozen Bundle Path
 
-Adapt raw PINT YAML into LogicPearl benchmark-case JSONL:
+Build and commit the frozen pre-`PINT` bundle first:
+
+```bash
+python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_pre_pint_bundle
+```
+
+Then evaluate raw `PINT` against that frozen bundle:
+
+```bash
+python3 scripts/guardrails/evaluate_guardrail_bundle.py \
+  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --raw-benchmark ~/Documents/LogicPearl/datasets/public/pint/PINT.yaml \
+  --profile pint \
+  --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+```
+
+That evaluator adapts raw `PINT`, runs the frozen observer, evaluates the frozen combined pearl, and then collapses rich internal routes into final `allow` / `deny`.
+
+## Lower-Level Public CLI Path
+
+If you want the lower-level public commands instead, start by adapting raw PINT YAML into LogicPearl benchmark-case JSONL:
 
 ```bash
 logicpearl benchmark adapt-pint \

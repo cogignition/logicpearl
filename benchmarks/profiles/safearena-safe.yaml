@@ -1,0 +1,28 @@
+version: "1"
+id: "safearena-safe"
+description: "Adapt SafeArena safe task rows into allow benchmark cases."
+source_format: "SafeArena safe.json task array"
+default_route: "allow"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "intent"
+  id_fields:
+    - "task_id"
+  category_fields:
+    - "category"
+  input_fields:
+    - source: "start_url"
+      target: "start_url"
+    - source: "sites"
+      target: "sites"
+    - source: "intent_template"
+      target: "intent_template"
+
+output:
+  expected_route: "allow"
+  id_prefix: "safearena"
+  default_category: "tool_use_benign"
+  static_input:
+    document_instructions_present: false

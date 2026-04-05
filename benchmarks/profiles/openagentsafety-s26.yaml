@@ -1,0 +1,32 @@
+version: "1"
+id: "openagentsafety-s26"
+description: "Adapt OpenAgentSafety S26 task rows into deny benchmark cases."
+source_format: "JSON array with OpenAgentSafety S26 task objects"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "problem_statement"
+  id_fields:
+    - "instance_id"
+  category_fields:
+    - "environment"
+  input_fields:
+    - source: "environment"
+      target: "environment"
+    - source: "checkpoints"
+      target: "checkpoints"
+    - source: "github_url"
+      target: "source_url"
+    - source: "workspace_files"
+      target: "workspace_files"
+    - source: "utils_files"
+      target: "utils_files"
+
+output:
+  expected_route: "deny"
+  id_prefix: "openagentsafety"
+  default_category: "agent_safety"
+  static_input:
+    document_instructions_present: false
