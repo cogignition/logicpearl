@@ -1,0 +1,28 @@
+version: "1"
+id: "rogue-security-prompt-injections"
+description: "Adapt normalized rogue-security prompt-injections-benchmark rows into allow or deny benchmark cases."
+source_format: "JSON array or JSONL with prompt/label/category rows normalized from rogue-security/prompt-injections-benchmark"
+default_route: "mixed"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "prompt"
+  id_fields:
+    - "id"
+  category_fields:
+    - "category"
+  label_fields:
+    - "label"
+  input_fields:
+    - source: "split"
+      target: "benchmark_split"
+
+output:
+  id_prefix: "rogue_prompt_injections"
+  boolean_label_routes:
+    true_route: "deny"
+    false_route: "allow"
+  default_category: "prompt_injection"
+  static_input:
+    document_instructions_present: false

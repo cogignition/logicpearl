@@ -2,9 +2,11 @@ use logicpearl_benchmark::SynthesisCase;
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_observer::{
     guardrails_signal_feature, guardrails_signal_label, guardrails_signal_phrases, prompt_matches_phrase,
-    set_guardrails_signal_phrases, GuardrailsSignal, NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
+    observe_with_artifact, set_guardrails_signal_phrases, GuardrailsSignal, NativeObserverArtifact,
+    ObserverProfile as NativeObserverProfile,
 };
 use serde::Serialize;
+use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::process::Command;
@@ -36,6 +38,10 @@ pub struct ObserverSynthesisReport {
     pub phrases_after: Vec<String>,
     pub matched_positives_after: usize,
     pub matched_negatives_after: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_max_candidates: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_selection: Option<ObserverAutoSelectionReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +59,34 @@ pub struct ObserverRepairReport {
     pub matched_negative_cases: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverSignalScoreReport {
+    pub bootstrap_mode: ObserverBootstrapMode,
+    pub positive_case_count: usize,
+    pub negative_case_count: usize,
+    pub true_positive_count: usize,
+    pub false_negative_count: usize,
+    pub true_negative_count: usize,
+    pub false_positive_count: usize,
+    pub exact_match_rate: f64,
+    pub positive_recall: f64,
+    pub negative_pass_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverSynthesisTrialReport {
+    pub max_candidates: usize,
+    pub train_report: ObserverSynthesisReport,
+    pub dev_score: ObserverSignalScoreReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObserverAutoSelectionReport {
+    pub selection_metric: String,
+    pub tolerance: f64,
+    pub tried: Vec<ObserverSynthesisTrialReport>,
+}
+
 pub fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static [&'static str] {
     match signal {
         GuardrailsSignal::InstructionOverride => &["deny_untrusted_instruction", "deny_instruction_boundary"],
@@ -67,33 +101,26 @@ pub fn default_positive_routes_for_signal(signal: GuardrailsSignal) -> &'static 
     }
 }
 
-pub fn infer_bootstrap_examples(
+pub fn infer_bootstrap_case_labels(
     cases: &[SynthesisCase],
     signal: GuardrailsSignal,
     bootstrap: ObserverBootstrapStrategy,
     positive_routes: &[String],
     seed_phrases: &[String],
-) -> Result<(ObserverBootstrapMode, Vec<String>, Vec<String>)> {
+) -> Result<(ObserverBootstrapMode, Vec<Option<bool>>)> {
     let signal_feature = guardrails_signal_feature(signal);
 
     if matches!(bootstrap, ObserverBootstrapStrategy::Auto | ObserverBootstrapStrategy::ObservedFeature) {
-        let positives: Vec<String> = cases
+        let labels: Vec<Option<bool>> = cases
             .iter()
-            .filter(|case| case.features.as_ref().map(|features| boolish(features.get(signal_feature))).unwrap_or(false))
-            .map(|case| case.prompt.clone())
+            .map(|case| {
+                case.features
+                    .as_ref()
+                    .map(|features| boolish(features.get(signal_feature)))
+            })
             .collect();
-        if !positives.is_empty() {
-            let negatives: Vec<String> = cases
-                .iter()
-                .filter(|case| {
-                    case.features
-                        .as_ref()
-                        .map(|features| !boolish(features.get(signal_feature)))
-                        .unwrap_or(false)
-                })
-                .map(|case| case.prompt.clone())
-                .collect();
-            return Ok((ObserverBootstrapMode::ObservedFeature, positives, negatives));
+        if labels.iter().any(|label| matches!(label, Some(true))) {
+            return Ok((ObserverBootstrapMode::ObservedFeature, labels));
         }
         if matches!(bootstrap, ObserverBootstrapStrategy::ObservedFeature) {
             return Err(LogicPearlError::message(format!(
@@ -111,18 +138,20 @@ pub fn infer_bootstrap_examples(
         } else {
             positive_routes.to_vec()
         };
-        let positives: Vec<String> = cases
+        let labels: Vec<Option<bool>> = cases
             .iter()
-            .filter(|case| route_hints.iter().any(|route| route == &case.expected_route))
-            .map(|case| case.prompt.clone())
+            .map(|case| {
+                if route_hints.iter().any(|route| route == &case.expected_route) {
+                    Some(true)
+                } else if case.expected_route == "allow" {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
             .collect();
-        if !positives.is_empty() {
-            let negatives: Vec<String> = cases
-                .iter()
-                .filter(|case| case.expected_route == "allow")
-                .map(|case| case.prompt.clone())
-                .collect();
-            return Ok((ObserverBootstrapMode::Route, positives, negatives));
+        if labels.iter().any(|label| matches!(label, Some(true))) {
+            return Ok((ObserverBootstrapMode::Route, labels));
         }
         if matches!(bootstrap, ObserverBootstrapStrategy::Route) {
             return Err(LogicPearlError::message(
@@ -131,24 +160,50 @@ pub fn infer_bootstrap_examples(
         }
     }
 
-    let positives: Vec<String> = cases
+    let labels: Vec<Option<bool>> = cases
         .iter()
-        .filter(|case| case.expected_route != "allow")
-        .filter(|case| seed_phrases.iter().any(|phrase| prompt_matches_phrase(&case.prompt, phrase)))
-        .map(|case| case.prompt.clone())
+        .map(|case| {
+            if case.expected_route == "allow" {
+                Some(false)
+            } else if seed_phrases
+                .iter()
+                .any(|phrase| prompt_matches_phrase(&case.prompt, phrase))
+            {
+                Some(true)
+            } else {
+                None
+            }
+        })
         .collect();
-    if positives.is_empty() {
+    if !labels.iter().any(|label| matches!(label, Some(true))) {
         return Err(LogicPearlError::message(format!(
             "could not find positive examples for {} with the current bootstrap strategy",
             guardrails_signal_label(signal)
         )));
     }
-    let negatives: Vec<String> = cases
+    Ok((ObserverBootstrapMode::Seed, labels))
+}
+
+pub fn infer_bootstrap_examples(
+    cases: &[SynthesisCase],
+    signal: GuardrailsSignal,
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+    seed_phrases: &[String],
+) -> Result<(ObserverBootstrapMode, Vec<String>, Vec<String>)> {
+    let (mode, labels) =
+        infer_bootstrap_case_labels(cases, signal, bootstrap, positive_routes, seed_phrases)?;
+    let positives = cases
         .iter()
-        .filter(|case| case.expected_route == "allow")
-        .map(|case| case.prompt.clone())
+        .zip(labels.iter())
+        .filter_map(|(case, label)| (*label == Some(true)).then_some(case.prompt.clone()))
         .collect();
-    Ok((ObserverBootstrapMode::Seed, positives, negatives))
+    let negatives = cases
+        .iter()
+        .zip(labels.iter())
+        .filter_map(|(case, label)| (*label == Some(false)).then_some(case.prompt.clone()))
+        .collect();
+    Ok((mode, positives, negatives))
 }
 
 pub fn generate_phrase_candidates(
@@ -422,8 +477,173 @@ pub fn synthesize_guardrails_artifact(
             matched_positives_after: count_selected_hits(&selected, &positive_constraints),
             matched_negatives_after: count_selected_hits(&selected, &negative_constraints),
             phrases_after,
+            selected_max_candidates: Some(max_candidates),
+            auto_selection: None,
         },
     ))
+}
+
+pub fn evaluate_guardrails_artifact_signal(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    cases: &[SynthesisCase],
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+) -> Result<ObserverSignalScoreReport> {
+    if artifact.profile != NativeObserverProfile::GuardrailsV1 {
+        return Err(LogicPearlError::message(
+            "observer evaluation currently supports guardrails_v1 artifacts only",
+        ));
+    }
+    let config = artifact
+        .guardrails
+        .as_ref()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    let seed_phrases = guardrails_signal_phrases(config, signal).to_vec();
+    let signal_feature = guardrails_signal_feature(signal);
+    let (bootstrap_mode, labels) =
+        infer_bootstrap_case_labels(cases, signal, bootstrap, positive_routes, &seed_phrases)?;
+
+    let mut tp = 0_usize;
+    let mut fn_count = 0_usize;
+    let mut tn = 0_usize;
+    let mut fp = 0_usize;
+
+    for (case, label) in cases.iter().zip(labels.iter()) {
+        let Some(is_positive) = label else {
+            continue;
+        };
+        let features = observe_with_artifact(
+            artifact,
+            &json!({
+                "prompt": case.prompt,
+                "requested_tool": "none",
+                "requested_action": "chat_response",
+                "scope": "allowed",
+                "document_instructions_present": false
+            }),
+        )?;
+        let predicted = boolish(features.get(signal_feature));
+        match (*is_positive, predicted) {
+            (true, true) => tp += 1,
+            (true, false) => fn_count += 1,
+            (false, false) => tn += 1,
+            (false, true) => fp += 1,
+        }
+    }
+
+    let positive_case_count = tp + fn_count;
+    let negative_case_count = tn + fp;
+    let total = positive_case_count + negative_case_count;
+    Ok(ObserverSignalScoreReport {
+        bootstrap_mode,
+        positive_case_count,
+        negative_case_count,
+        true_positive_count: tp,
+        false_negative_count: fn_count,
+        true_negative_count: tn,
+        false_positive_count: fp,
+        exact_match_rate: ratio(tp + tn, total),
+        positive_recall: ratio(tp, positive_case_count),
+        negative_pass_rate: ratio(tn, negative_case_count),
+    })
+}
+
+pub fn synthesize_guardrails_artifact_auto(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    train_cases: &[SynthesisCase],
+    dev_cases: &[SynthesisCase],
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+    candidate_frontier: &[usize],
+    tolerance: f64,
+) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
+    if candidate_frontier.is_empty() {
+        return Err(LogicPearlError::message(
+            "auto candidate search requires at least one candidate cap",
+        ));
+    }
+
+    let mut trials: Vec<(usize, NativeObserverArtifact, ObserverSynthesisReport, ObserverSignalScoreReport)> =
+        Vec::new();
+    for &cap in candidate_frontier {
+        let (candidate_artifact, train_report) = synthesize_guardrails_artifact(
+            artifact,
+            signal,
+            train_cases,
+            bootstrap,
+            positive_routes,
+            cap,
+        )?;
+        let dev_score = evaluate_guardrails_artifact_signal(
+            &candidate_artifact,
+            signal,
+            dev_cases,
+            bootstrap,
+            positive_routes,
+        )?;
+        trials.push((cap, candidate_artifact, train_report, dev_score));
+    }
+
+    let best_macro = trials
+        .iter()
+        .map(|(_, _, _, score)| (score.positive_recall + score.negative_pass_rate) / 2.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    let mut chosen_index = None;
+    for (index, (cap, _, train_report, score)) in trials.iter().enumerate() {
+        let macro_score = (score.positive_recall + score.negative_pass_rate) / 2.0;
+        if macro_score + tolerance < best_macro {
+            continue;
+        }
+        match chosen_index {
+            None => chosen_index = Some(index),
+            Some(current) => {
+                let (current_cap, _, _, current_score) = &trials[current];
+                let better = cap < current_cap
+                    || (cap == current_cap
+                        && score.exact_match_rate > current_score.exact_match_rate)
+                    || (cap == current_cap
+                        && score.exact_match_rate == current_score.exact_match_rate
+                        && train_report.matched_negatives_after
+                            < trials[current].2.matched_negatives_after);
+                if better {
+                    chosen_index = Some(index);
+                }
+            }
+        }
+    }
+
+    let chosen_index = chosen_index.ok_or_else(|| {
+        LogicPearlError::message("auto candidate search could not select a synthesized observer")
+    })?;
+    let (_, chosen_artifact, mut chosen_report, _) = trials.remove(chosen_index);
+    chosen_report.auto_selection = Some(ObserverAutoSelectionReport {
+        selection_metric: "macro(positive_recall,negative_pass_rate)".to_string(),
+        tolerance,
+        tried: trials
+            .into_iter()
+            .chain(std::iter::once((
+                chosen_report.selected_max_candidates.unwrap_or(candidate_frontier[0]),
+                chosen_artifact.clone(),
+                chosen_report.clone(),
+                evaluate_guardrails_artifact_signal(
+                    &chosen_artifact,
+                    signal,
+                    dev_cases,
+                    bootstrap,
+                    positive_routes,
+                )?,
+            )))
+            .map(|(cap, _, train_report, dev_score)| ObserverSynthesisTrialReport {
+                max_candidates: cap,
+                train_report,
+                dev_score,
+            })
+            .collect(),
+    });
+    Ok((chosen_artifact, chosen_report))
 }
 
 pub fn repair_guardrails_artifact(
@@ -530,6 +750,14 @@ fn boolish(value: Option<&serde_json::Value>) -> bool {
             matches!(text.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y")
         }
         _ => false,
+    }
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
     }
 }
 

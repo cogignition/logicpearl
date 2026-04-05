@@ -9,6 +9,7 @@ Current state:
 - `chatgpt-jailbreak-prompts.yaml`, `vigil.yaml`, and `noeti-toxicqa.yaml` are built-in adapter profiles too
 - `openagentsafety-s26.yaml` and `mcpmark.yaml` are built-in adapter profiles too
 - `safearena-safe.yaml` and `safearena-harm.yaml` are built-in adapter profiles too
+- `jailbreakbench.yaml`, `promptshield.yaml`, and `rogue-security-prompt-injections.yaml` are built-in adapter profiles too
 - `pint.yaml` is also loaded by the Rust benchmark crate
 - all current built-in benchmark adapters are now profile-backed
 

@@ -2,6 +2,10 @@ use super::*;
 use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution, resolve_observer_for_cases,
 };
+use logicpearl_benchmark::{
+    adapt_jailbreakbench_dataset, adapt_promptshield_dataset,
+    adapt_rogue_security_prompt_injections_dataset,
+};
 use logicpearl_discovery::ArtifactSet;
 use logicpearl_core::LogicPearlError;
 use logicpearl_ir::LogicPearlGateIr;
@@ -457,6 +461,42 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             scope: args.scope,
             json: args.json,
         }),
+        BenchmarkAdapterProfile::JailbreakBench => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "JailbreakBench",
+            adapt_jailbreakbench_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::PromptShield => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "PromptShield",
+            adapt_promptshield_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::RogueSecurityPromptInjections => run_benchmark_adapt_prompt_json_rows(
+            &args.raw_dataset,
+            &args.output,
+            "rogue-security/prompt-injections-benchmark",
+            adapt_rogue_security_prompt_injections_dataset,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
         BenchmarkAdapterProfile::ChatgptJailbreakPrompts => run_benchmark_adapt_prompt_json_rows(
             &args.raw_dataset,
             &args.output,

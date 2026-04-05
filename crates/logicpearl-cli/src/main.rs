@@ -3,9 +3,10 @@ use logicpearl_benchmark::{
     adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
     adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_pint_dataset,
     adapt_safearena_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, benchmark_adapter_registry,
-    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases, load_synthesis_cases,
-    load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl, BenchmarkAdaptDefaults,
-    BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind,
+    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases, load_synthesis_case_rows,
+    load_synthesis_cases, load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
+    BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase,
+    SaladSubsetKind, SynthesisCase, SynthesisCaseRow,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
@@ -20,7 +21,8 @@ use logicpearl_observer::{
     ObserverProfile as NativeObserverProfile,
 };
 use logicpearl_observer_synthesis::{
-    repair_guardrails_artifact, synthesize_guardrails_artifact, ObserverBootstrapStrategy,
+    repair_guardrails_artifact, synthesize_guardrails_artifact,
+    synthesize_guardrails_artifact_auto, ObserverBootstrapStrategy,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
@@ -295,6 +297,10 @@ enum BenchmarkAdapterProfileArg {
     SafearenaSafe,
     SafearenaHarm,
     Alert,
+    Jailbreakbench,
+    Promptshield,
+    #[value(name = "rogue-security-prompt-injections")]
+    RogueSecurityPromptInjections,
     ChatgptJailbreakPrompts,
     OpenagentsafetyS26,
     Mcpmark,
@@ -928,13 +934,27 @@ struct ObserverSynthesizeArgs {
     /// Where to write the synthesized observer artifact.
     #[arg(long)]
     output: PathBuf,
-    /// Cap the number of candidate phrases sent to Z3.
+    /// Cap the number of candidate phrases sent to Z3 when LogicPearl falls back to single-pass synthesis on very small datasets.
     #[arg(
         long,
         default_value_t = 64,
         help_heading = "Advanced Observer Synthesis"
     )]
     max_candidates: usize,
+    /// Optional held-out dev benchmark cases. When omitted, LogicPearl deterministically splits benchmark cases and auto-selects the candidate cap on the held-out slice.
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
+    dev_benchmark_cases: Option<PathBuf>,
+    /// Candidate frontier to search during automatic capacity selection.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_values_t = [32_usize, 64, 128, 256],
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    candidate_frontier: Vec<usize>,
+    /// Tolerance from the best dev macro score when choosing the smallest near-best artifact.
+    #[arg(long, default_value_t = 0.001, help_heading = "Advanced Observer Synthesis")]
+    selection_tolerance: f64,
     #[arg(long)]
     json: bool,
 }
@@ -2140,6 +2160,11 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
         BenchmarkAdapterProfileArg::SafearenaSafe => BenchmarkAdapterProfile::SafearenaSafe,
         BenchmarkAdapterProfileArg::SafearenaHarm => BenchmarkAdapterProfile::SafearenaHarm,
         BenchmarkAdapterProfileArg::Alert => BenchmarkAdapterProfile::Alert,
+        BenchmarkAdapterProfileArg::Jailbreakbench => BenchmarkAdapterProfile::JailbreakBench,
+        BenchmarkAdapterProfileArg::Promptshield => BenchmarkAdapterProfile::PromptShield,
+        BenchmarkAdapterProfileArg::RogueSecurityPromptInjections => {
+            BenchmarkAdapterProfile::RogueSecurityPromptInjections
+        }
         BenchmarkAdapterProfileArg::ChatgptJailbreakPrompts => {
             BenchmarkAdapterProfile::ChatgptJailbreakPrompts
         }

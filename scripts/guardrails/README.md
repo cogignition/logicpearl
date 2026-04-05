@@ -24,6 +24,14 @@ These scripts make the public non-`PINT` and final-`PINT` guardrail workflow rep
   - evaluates the frozen combined pearl
   - emits case-by-case decisions, route labels, and counterfactual hints
 
+- `run_open_guardrail_benchmarks.py`
+  - runs the frozen bundle against staged open post-freeze benchmarks
+  - currently supports:
+    - `JailbreakBench`
+    - `PromptShield`
+    - `rogue-security/prompt-injections-benchmark`
+  - writes per-benchmark reports plus one aggregate summary
+
 ## Usage
 
 Build the frozen pre-`PINT` bundle:
@@ -41,6 +49,14 @@ python3 scripts/guardrails/evaluate_guardrail_bundle.py \
   --raw-benchmark ~/Documents/LogicPearl/datasets/public/pint/PINT.yaml \
   --profile pint \
   --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+```
+
+Run the same frozen bundle against the staged open post-freeze benchmarks:
+
+```bash
+python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks
 ```
 
 ## Important Boundary

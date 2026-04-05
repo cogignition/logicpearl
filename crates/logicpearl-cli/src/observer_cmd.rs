@@ -1,5 +1,8 @@
 use super::*;
 
+const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
+const MIN_AUTO_SYNTHESIS_CASES: usize = 40;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ObserverResolution {
@@ -279,6 +282,78 @@ pub(crate) fn observe_features(observer: &ResolvedObserver, raw_input: &Value) -
     }
 }
 
+fn stable_bucket(key: &str) -> u64 {
+    let mut hash = 1469598103934665603_u64;
+    for byte in key.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211_u64);
+    }
+    hash
+}
+
+fn split_synthesis_case_rows(rows: Vec<SynthesisCaseRow>, train_fraction: f64) -> (Vec<SynthesisCase>, Vec<SynthesisCase>) {
+    let threshold = (train_fraction.clamp(0.0, 1.0) * 10_000.0).round() as u64;
+    let mut grouped: std::collections::BTreeMap<String, Vec<SynthesisCaseRow>> = std::collections::BTreeMap::new();
+    for row in rows {
+        grouped
+            .entry(row.case.expected_route.clone())
+            .or_default()
+            .push(row);
+    }
+
+    let mut train = Vec::new();
+    let mut dev = Vec::new();
+    for (_route, mut group) in grouped {
+        group.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut group_train = Vec::new();
+        let mut group_dev = Vec::new();
+        for row in group {
+            let bucket = stable_bucket(&row.id) % 10_000;
+            if bucket < threshold {
+                group_train.push(row.case);
+            } else {
+                group_dev.push(row.case);
+            }
+        }
+        if group_train.is_empty() && !group_dev.is_empty() {
+            group_train.push(group_dev.remove(0));
+        } else if group_dev.is_empty() && !group_train.is_empty() {
+            group_dev.push(group_train.remove(0));
+        }
+        train.extend(group_train);
+        dev.extend(group_dev);
+    }
+    (train, dev)
+}
+
+fn choose_synthesis_train_and_dev(
+    case_rows: Vec<SynthesisCaseRow>,
+    dev_cases_path: Option<&PathBuf>,
+) -> Result<Option<(Vec<SynthesisCase>, Vec<SynthesisCase>)>> {
+    if let Some(dev_cases_path) = dev_cases_path {
+        let train_cases = case_rows.into_iter().map(|row| row.case).collect::<Vec<_>>();
+        let dev_cases = load_synthesis_cases(dev_cases_path)
+            .into_diagnostic()
+            .wrap_err("failed to load held-out dev benchmark cases for observer synthesize")?;
+        if dev_cases.is_empty() {
+            return Err(guidance(
+                "held-out dev benchmark dataset is empty",
+                "Add one benchmark case JSON object per line before using automatic candidate selection.",
+            ));
+        }
+        return Ok(Some((train_cases, dev_cases)));
+    }
+
+    if case_rows.len() < MIN_AUTO_SYNTHESIS_CASES {
+        return Ok(None);
+    }
+
+    Ok(Some(split_synthesis_case_rows(
+        case_rows,
+        AUTO_SYNTHESIZE_TRAIN_FRACTION,
+    )))
+}
+
 pub(crate) fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
     if args.plugin_manifest {
         let manifest = PluginManifest::from_path(&args.target)
@@ -422,25 +497,50 @@ pub(crate) fn run_observer_scaffold(args: ObserverScaffoldArgs) -> Result<()> {
 pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()> {
     let artifact = resolve_synthesis_artifact(args.profile, args.artifact.as_ref())?;
     let signal = to_guardrails_signal(args.signal);
-    let cases = load_synthesis_cases(&args.benchmark_cases)
+    let case_rows = load_synthesis_case_rows(&args.benchmark_cases)
         .into_diagnostic()
         .wrap_err("failed to load synthesis benchmark cases")?;
-    if cases.is_empty() {
+    if case_rows.is_empty() {
         return Err(guidance(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running observer synthesize.",
         ));
     }
-    let (synthesized, report) = synthesize_guardrails_artifact(
-        &artifact,
-        signal,
-        &cases,
-        to_observer_bootstrap_strategy(args.bootstrap),
-        &args.positive_routes,
-        args.max_candidates,
-    )
-    .into_diagnostic()
-    .wrap_err("failed to synthesize observer artifact")?;
+    let bootstrap = to_observer_bootstrap_strategy(args.bootstrap);
+    let (synthesized, report) = if let Some((train_cases, dev_cases)) =
+        choose_synthesis_train_and_dev(case_rows.clone(), args.dev_benchmark_cases.as_ref())?
+    {
+        if train_cases.is_empty() || dev_cases.is_empty() {
+            return Err(guidance(
+                "automatic candidate selection needs non-empty train and dev splits",
+                "Pass --dev-benchmark-cases explicitly or provide a larger benchmark-case JSONL file.",
+            ));
+        }
+        synthesize_guardrails_artifact_auto(
+            &artifact,
+            signal,
+            &train_cases,
+            &dev_cases,
+            bootstrap,
+            &args.positive_routes,
+            &args.candidate_frontier,
+            args.selection_tolerance,
+        )
+        .into_diagnostic()
+        .wrap_err("failed to auto-select observer candidate capacity")?
+    } else {
+        let cases = case_rows.into_iter().map(|row| row.case).collect::<Vec<_>>();
+        synthesize_guardrails_artifact(
+            &artifact,
+            signal,
+            &cases,
+            bootstrap,
+            &args.positive_routes,
+            args.max_candidates,
+        )
+        .into_diagnostic()
+        .wrap_err("failed to synthesize observer artifact")?
+    };
 
     if let Some(parent) = args.output.parent() {
         fs::create_dir_all(parent)
@@ -460,11 +560,13 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         "positive_case_count": report.positive_case_count,
         "negative_case_count": report.negative_case_count,
         "candidate_count": report.candidate_count,
+        "selected_max_candidates": report.selected_max_candidates,
         "phrases_before": report.phrases_before,
         "phrases_after": report.phrases_after,
         "output": args.output.display().to_string(),
         "matched_positives_after": report.matched_positives_after,
         "matched_negatives_after": report.matched_negatives_after,
+        "auto_selection": report.auto_selection,
     });
 
     if args.json {
@@ -473,9 +575,58 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         println!("{} {}", "Synthesized".bold().bright_green(), report.signal.bold());
         println!("  {} {}", "Output".bright_black(), args.output.display());
         println!("  {} {}", "Candidates".bright_black(), report.candidate_count);
+        if let Some(selected) = report.selected_max_candidates {
+            println!("  {} {}", "Selected cap".bright_black(), selected);
+        }
         println!("  {} {}", "Selected".bright_black(), report.phrases_after.join(", "));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synthesis_row(id: &str, route: &str) -> SynthesisCaseRow {
+        SynthesisCaseRow {
+            id: id.to_string(),
+            case: SynthesisCase {
+                prompt: format!("prompt {id}"),
+                expected_route: route.to_string(),
+                features: None,
+            },
+        }
+    }
+
+    #[test]
+    fn auto_synthesis_defaults_to_deterministic_holdout_when_large_enough() {
+        let rows = (0..50)
+            .map(|idx| {
+                let route = if idx % 2 == 0 { "allow" } else { "deny" };
+                synthesis_row(&format!("case-{idx}"), route)
+            })
+            .collect::<Vec<_>>();
+
+        let splits = choose_synthesis_train_and_dev(rows, None)
+            .expect("should choose auto train/dev split")
+            .expect("should auto split when dataset is large enough");
+        let (train, dev) = splits;
+
+        assert!(!train.is_empty());
+        assert!(!dev.is_empty());
+        assert_eq!(train.len() + dev.len(), 50);
+    }
+
+    #[test]
+    fn auto_synthesis_falls_back_to_single_pass_when_dataset_is_small() {
+        let rows = (0..10)
+            .map(|idx| synthesis_row(&format!("case-{idx}"), "allow"))
+            .collect::<Vec<_>>();
+
+        let splits = choose_synthesis_train_and_dev(rows, None)
+            .expect("small datasets should not error");
+        assert!(splits.is_none());
+    }
 }
 
 pub(crate) fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {

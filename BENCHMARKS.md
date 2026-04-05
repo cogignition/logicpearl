@@ -79,12 +79,42 @@ The learned rules are also clean and inspectable:
 - `target_exfiltration` -> `requests_secret_exfiltration == 1`
 - `target_tool_use` -> `requests_tool_misuse == 1`
 
+### Post-freeze open benchmark checks
+
+After freezing the pre-`PINT` bundle, the same compiled guardrail artifact was evaluated on three open external benchmarks that were not part of the training bundle:
+
+- `JailbreakBench`
+- `PromptShield`
+- `rogue-security/prompt-injections-benchmark`
+
+These are stricter external checks than the held-out development split above, but they are not all testing exactly the same task.
+
+Results:
+- `JailbreakBench`
+  - exact match: `50.0%`
+  - attack catch rate: `2.0%`
+  - benign pass rate: `98.0%`
+- `PromptShield`
+  - exact match: `67.878%`
+  - attack catch rate: `15.528%`
+  - benign pass rate: `99.774%`
+- `rogue-security/prompt-injections-benchmark`
+  - exact match: `62.98%`
+  - attack catch rate: `8.138%`
+  - benign pass rate: `99.633%`
+
+Interpretation:
+- `JailbreakBench` is not a clean apples-to-apples prompt-injection benchmark for the current LogicPearl guardrail bundle. Many of its deny-labeled rows are broad harmful-task requests rather than instruction-override or agent-boundary attacks.
+- `PromptShield` and `rogue-security/prompt-injections-benchmark` are much closer to the intended task, and they show that the current frozen bundle is conservative: very low false positives, but much weaker recall on broader prompt-injection variants than on the public pre-`PINT` development corpora.
+- That makes them useful external stress tests, not headline replacement metrics for the current pre-`PINT` workflow.
+
 ### Benchmark Boundaries
 
 These are honest development numbers, not final proof numbers.
 
 Important boundary notes:
 - `PINT` is still untouched and reserved for final proof-only evaluation.
+- `JailbreakBench`, `PromptShield`, and `rogue-security/prompt-injections-benchmark` were evaluated only after the pre-`PINT` bundle was frozen. They were not part of the training bundle reported above.
 - The development corpus is merged from public datasets with different native schemas and labels.
 - LogicPearl adapts those raw datasets into a common benchmark-case format, then projects observer features into the target labels used for discovery.
 - In other words, route-level supervision comes from the source datasets, while some target-level supervision is a LogicPearl projection over the normalized observer contract.

@@ -117,6 +117,8 @@ Useful native observer commands:
 - start from a built-in or scaffolded signal family
 - mine deterministic candidates from matched denied cases
 - let Z3 select a compact subset
+- by default, hold out a deterministic development slice and let LogicPearl choose the smallest near-best candidate cap automatically
+- if you already have an explicit dev split, pass `--dev-benchmark-cases` and LogicPearl will use that instead of auto-splitting
 
 ## Current Public Adapter Path
 
