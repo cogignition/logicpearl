@@ -9,8 +9,10 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -148,10 +150,18 @@ def logicpearl_base_command(use_installed_cli: bool) -> list[str]:
 
 
 def run_json(cmd: list[str]) -> dict[str, Any]:
-    print("+", " ".join(cmd), flush=True)
-    completed = subprocess.run(cmd, cwd=REPO_ROOT, check=True, capture_output=True, text=True)
-    if completed.stderr:
-        sys.stderr.write(completed.stderr)
+    started = time.monotonic()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] + {' '.join(cmd)}", flush=True)
+    completed = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=None,
+        text=True,
+    )
+    elapsed = time.monotonic() - started
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ completed in {elapsed:.1f}s", flush=True)
     payload = completed.stdout.strip()
     if not payload:
         raise RuntimeError(f"command returned no stdout: {' '.join(cmd)}")
@@ -159,8 +169,11 @@ def run_json(cmd: list[str]) -> dict[str, Any]:
 
 
 def run_plain(cmd: list[str]) -> None:
-    print("+", " ".join(cmd), flush=True)
+    started = time.monotonic()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] + {' '.join(cmd)}", flush=True)
     subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+    elapsed = time.monotonic() - started
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ completed in {elapsed:.1f}s", flush=True)
 
 
 def ensure_exists(path: Path) -> None:

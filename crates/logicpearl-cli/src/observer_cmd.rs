@@ -508,6 +508,14 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
     }
     let bootstrap = to_observer_bootstrap_strategy(args.bootstrap);
     let target_goal = to_observer_target_goal(args.target_goal);
+    eprintln!(
+        "[logicpearl observer synthesize] loaded {} cases for signal={} target_goal={}",
+        case_rows.len(),
+        logicpearl_observer::guardrails_signal_label(signal),
+        serde_json::to_string(&target_goal)
+            .into_diagnostic()?
+            .trim_matches('"')
+    );
     let (synthesized, report) = if let Some((train_cases, dev_cases)) =
         choose_synthesis_train_and_dev(case_rows.clone(), args.dev_benchmark_cases.as_ref())?
     {
@@ -517,6 +525,12 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
                 "Pass --dev-benchmark-cases explicitly or provide a larger benchmark-case JSONL file.",
             ));
         }
+        eprintln!(
+            "[logicpearl observer synthesize] using auto selection with train_cases={} dev_cases={} frontier={:?}",
+            train_cases.len(),
+            dev_cases.len(),
+            args.candidate_frontier
+        );
         synthesize_guardrails_artifact_auto(
             &artifact,
             signal,
@@ -532,6 +546,10 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         .wrap_err("failed to auto-select observer candidate capacity")?
     } else {
         let cases = case_rows.into_iter().map(|row| row.case).collect::<Vec<_>>();
+        eprintln!(
+            "[logicpearl observer synthesize] dataset too small for auto holdout; using single pass with max_candidates={}",
+            args.max_candidates
+        );
         synthesize_guardrails_artifact(
             &artifact,
             signal,

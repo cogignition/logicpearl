@@ -11,6 +11,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::process::Command;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObserverBootstrapStrategy {
@@ -114,6 +115,10 @@ const OBSERVED_FEATURE_BOOTSTRAP_STRATEGY: [ObserverBootstrapStrategy; 1] =
     [ObserverBootstrapStrategy::ObservedFeature];
 const ROUTE_BOOTSTRAP_STRATEGY: [ObserverBootstrapStrategy; 1] = [ObserverBootstrapStrategy::Route];
 const SEED_BOOTSTRAP_STRATEGY: [ObserverBootstrapStrategy; 1] = [ObserverBootstrapStrategy::Seed];
+
+fn log_synthesis_progress(message: impl AsRef<str>) {
+    eprintln!("[logicpearl observer synthesize] {}", message.as_ref());
+}
 
 fn auto_bootstrap_strategies(bootstrap: ObserverBootstrapStrategy) -> &'static [ObserverBootstrapStrategy] {
     match bootstrap {
@@ -761,6 +766,7 @@ pub fn synthesize_guardrails_artifact(
     positive_routes: &[String],
     max_candidates: usize,
 ) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
+    let started = Instant::now();
     if artifact.profile != NativeObserverProfile::GuardrailsV1 {
         return Err(LogicPearlError::message(
             "observer synthesize currently supports guardrails_v1 artifacts only",
@@ -773,6 +779,12 @@ pub fn synthesize_guardrails_artifact(
     let phrases_before = guardrails_signal_phrases(config, signal).to_vec();
     let (bootstrap_mode, positive_prompts, negative_prompts) =
         infer_bootstrap_examples(cases, signal, bootstrap, positive_routes, &phrases_before)?;
+    log_synthesis_progress(format!(
+        "signal={} mode={bootstrap_mode:?} positives={} negatives={} max_candidates={max_candidates}",
+        guardrails_signal_label(signal),
+        positive_prompts.len(),
+        negative_prompts.len(),
+    ));
     let pool = build_candidate_pool(signal, &positive_prompts, &negative_prompts, max_candidates);
     let (synthesized, mut report) = synthesize_from_candidate_pool(
         artifact,
@@ -784,6 +796,14 @@ pub fn synthesize_guardrails_artifact(
         max_candidates,
     )?;
     report.phrases_before = phrases_before;
+    log_synthesis_progress(format!(
+        "signal={} complete in {:.1}s selected={} matched_pos={} matched_neg={}",
+        guardrails_signal_label(signal),
+        started.elapsed().as_secs_f32(),
+        report.phrases_after.len(),
+        report.matched_positives_after,
+        report.matched_negatives_after,
+    ));
     Ok((synthesized, report))
 }
 
@@ -864,6 +884,7 @@ pub fn synthesize_guardrails_artifact_auto(
     candidate_frontier: &[usize],
     tolerance: f64,
 ) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
+    let started = Instant::now();
     if candidate_frontier.is_empty() {
         return Err(LogicPearlError::message(
             "auto candidate search requires at least one candidate cap",
@@ -891,6 +912,12 @@ pub fn synthesize_guardrails_artifact_auto(
         else {
             continue;
         };
+        log_synthesis_progress(format!(
+            "signal={} mode={bootstrap_mode:?} train_pos={} train_neg={} frontier={candidate_frontier:?}",
+            guardrails_signal_label(signal),
+            positive_prompts.len(),
+            negative_prompts.len(),
+        ));
         let pool = build_candidate_pool(
             signal,
             &positive_prompts,
@@ -898,9 +925,23 @@ pub fn synthesize_guardrails_artifact_auto(
             *candidate_frontier.iter().max().unwrap_or(&0),
         );
         if pool.candidates.is_empty() {
+            log_synthesis_progress(format!(
+                "signal={} mode={bootstrap_mode:?} produced no candidates",
+                guardrails_signal_label(signal),
+            ));
             continue;
         }
+        log_synthesis_progress(format!(
+            "signal={} mode={bootstrap_mode:?} mined {} candidates",
+            guardrails_signal_label(signal),
+            pool.candidates.len(),
+        ));
         for &cap in candidate_frontier {
+            let trial_started = Instant::now();
+            log_synthesis_progress(format!(
+                "signal={} mode={bootstrap_mode:?} trying cap={cap}",
+                guardrails_signal_label(signal),
+            ));
             let Ok((candidate_artifact, train_report)) = synthesize_from_candidate_pool(
                 artifact,
                 signal,
@@ -921,6 +962,14 @@ pub fn synthesize_guardrails_artifact_auto(
             ) else {
                 continue;
             };
+            log_synthesis_progress(format!(
+                "signal={} mode={bootstrap_mode:?} cap={cap} dev_exact={:.4} dev_recall={:.4} dev_pass={:.4} elapsed={:.1}s",
+                guardrails_signal_label(signal),
+                dev_score.exact_match_rate,
+                dev_score.positive_recall,
+                dev_score.negative_pass_rate,
+                trial_started.elapsed().as_secs_f32(),
+            ));
             trials.push((cap, candidate_artifact, train_report, dev_score));
         }
     }
@@ -965,6 +1014,12 @@ pub fn synthesize_guardrails_artifact_auto(
         LogicPearlError::message("auto candidate search could not select a synthesized observer")
     })?;
     let (_, chosen_artifact, mut chosen_report, _) = trials.remove(chosen_index);
+    log_synthesis_progress(format!(
+        "signal={} selected cap={} after {:.1}s",
+        guardrails_signal_label(signal),
+        chosen_report.selected_max_candidates.unwrap_or(candidate_frontier[0]),
+        started.elapsed().as_secs_f32(),
+    ));
     chosen_report.auto_selection = Some(ObserverAutoSelectionReport {
         target_goal,
         selection_metric: selection_metric_name(target_goal).to_string(),
