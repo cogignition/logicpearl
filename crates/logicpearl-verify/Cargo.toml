@@ -9,4 +9,6 @@ description = "Solver-backed verification helpers for LogicPearl discovery and c
 
 [dependencies]
 logicpearl-core.workspace = true
+logicpearl-ir.workspace = true
 serde.workspace = true
+serde_json.workspace = true

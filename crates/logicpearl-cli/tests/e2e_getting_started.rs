@@ -85,3 +85,49 @@ fn sample_dataset_builds_artifact_bundle_and_runs_compiled_binary() {
         "compiled pearl binary should return the expected bitmask"
     );
 }
+
+#[test]
+fn sample_dataset_passes_formal_spec_verification() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let output_dir = tempdir().expect("temp output dir should be created");
+    let output_path = output_dir.path().join("artifact_bundle");
+    let sample_csv = repo_root.join("examples/getting_started/decision_traces.csv");
+    let sample_spec = repo_root.join("examples/getting_started/access_policy.spec.json");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&sample_csv)
+        .arg("--output-dir")
+        .arg(&output_path)
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build_output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let verify_output = Command::new(cli_bin)
+        .arg("conformance")
+        .arg("spec-verify")
+        .arg(&output_path)
+        .arg(&sample_spec)
+        .arg("--json")
+        .output()
+        .expect("logicpearl conformance spec-verify should run");
+    assert!(
+        verify_output.status.success(),
+        "logicpearl conformance spec-verify failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&verify_output.stdout),
+        String::from_utf8_lossy(&verify_output.stderr)
+    );
+
+    let report: Value = serde_json::from_slice(&verify_output.stdout)
+        .expect("spec-verify output should be valid JSON");
+    assert_eq!(report["spec_rule_count"].as_u64(), Some(1));
+    assert!(report["complete"].as_bool().unwrap_or(false));
+    assert!(report["no_spurious_rules"].as_bool().unwrap_or(false));
+    assert!(report["fully_verified"].as_bool().unwrap_or(false));
+}

@@ -274,6 +274,18 @@ impl LogicPearlGateIr {
     }
 }
 
+pub fn validate_expression_against_schema(
+    expression: &Expression,
+    input_schema: &InputSchema,
+) -> Result<()> {
+    let known_features = input_schema
+        .features
+        .iter()
+        .map(|feature| (feature.id.clone(), feature))
+        .collect::<HashMap<_, _>>();
+    validate_expression(expression, &known_features)
+}
+
 impl FeatureDefinition {
     fn validate(&self) -> Result<()> {
         if self.derived.is_some() && !matches!(self.feature_type, FeatureType::Float) {

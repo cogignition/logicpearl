@@ -3,6 +3,7 @@ use logicpearl_conformance::{
     build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest,
     write_artifact_manifest, DecisionTraceRow as ConformanceDecisionTraceRow,
 };
+use logicpearl_verify::{load_formal_spec, verify_gate_against_formal_spec};
 use std::collections::BTreeMap;
 
 pub(crate) fn run_conformance_write_manifest(args: ConformanceWriteManifestArgs) -> Result<()> {
@@ -121,6 +122,63 @@ pub(crate) fn run_conformance_runtime_parity(args: ConformanceRuntimeParityArgs)
             "Runtime parity".bright_black(),
             format!("{:.1}%", report.parity * 100.0).bold()
         );
+    }
+    Ok(())
+}
+
+pub(crate) fn run_conformance_spec_verify(args: ConformanceSpecVerifyArgs) -> Result<()> {
+    let resolved = resolve_artifact_input(&args.pearl_ir)?;
+    let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
+        .into_diagnostic()
+        .wrap_err("could not load pearl IR")?;
+    let spec = load_formal_spec(&args.spec_json)
+        .into_diagnostic()
+        .wrap_err("could not load formal spec")?;
+    let report = verify_gate_against_formal_spec(&gate, &spec)
+        .into_diagnostic()
+        .wrap_err("could not verify pearl against formal spec")?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Spec verify".bold().bright_green(),
+            resolved.artifact_dir.display()
+        );
+        println!(
+            "  {} {}",
+            "Spec rules".bright_black(),
+            report.spec_rule_count
+        );
+        println!(
+            "  {} {}",
+            "Gate rules".bright_black(),
+            report.gate_rule_count
+        );
+        println!(
+            "  {} {}",
+            "Complete".bright_black(),
+            if report.complete { "yes" } else { "no" }
+        );
+        println!(
+            "  {} {}",
+            "No spurious rules".bright_black(),
+            if report.no_spurious_rules {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        if let Some(witness) = &report.overall_spec_gap_witness {
+            println!("  {} {}", "Spec gap witness".bright_black(), witness);
+        }
+        if let Some(witness) = &report.overall_spurious_witness {
+            println!("  {} {}", "Spurious witness".bright_black(), witness);
+        }
     }
     Ok(())
 }

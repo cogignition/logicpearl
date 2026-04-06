@@ -232,12 +232,24 @@ logicpearl conformance write-manifest \
 
 logicpearl conformance validate-artifacts /tmp/authz_manifest.json
 logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed
+logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json
 ```
 
 That gives you:
 - a reproducible artifact manifest
 - a freshness check for saved outputs
 - a direct runtime-vs-traces parity report
+- a formal check that the pearl satisfies the deny rules you state explicitly
+
+The formal spec path is intentionally stronger than trace-only verification. You can provide explicit deny requirements such as:
+- `age < 18 -> deny`
+- `role == "viewer" AND action == "write" -> deny`
+- `clearance_level < resource_sensitivity -> deny`
+
+`logicpearl conformance spec-verify` then proves:
+- whether every spec rule is satisfied by the pearl
+- whether every pearl deny rule is implied by or at least consistent with the spec
+- witness assignments when there is a spec gap or a spurious pearl rule
 
 You can also scaffold a starter string-of-pearls artifact from existing pearls:
 

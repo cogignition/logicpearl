@@ -62,8 +62,8 @@ use benchmark_cmd::{
     run_benchmark_split_cases,
 };
 use conformance_cmd::{
-    run_conformance_runtime_parity, run_conformance_validate_artifacts,
-    run_conformance_write_manifest,
+    run_conformance_runtime_parity, run_conformance_spec_verify,
+    run_conformance_validate_artifacts, run_conformance_write_manifest,
 };
 use observer_cmd::{
     run_observer_detect, run_observer_list, run_observer_repair, run_observer_run,
@@ -143,7 +143,8 @@ Examples:
 const CONFORMANCE_AFTER_HELP: &str = "\
 Examples:
   logicpearl conformance validate-artifacts output/artifact_manifest.json
-  logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json";
+  logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json
+  logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json";
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
@@ -216,6 +217,8 @@ enum ConformanceCommand {
     ValidateArtifacts(ConformanceValidateArtifactsArgs),
     /// Compare a pearl's runtime behavior against labeled decision traces.
     RuntimeParity(ConformanceRuntimeParityArgs),
+    /// Prove a pearl is complete and non-spurious relative to a formal deny spec.
+    SpecVerify(ConformanceSpecVerifyArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -470,6 +473,19 @@ struct ConformanceRuntimeParityArgs {
     positive_label: Option<String>,
     #[arg(long, help_heading = "Advanced")]
     negative_label: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json\n  logicpearl conformance spec-verify examples/getting_started/output/pearl.ir.json examples/getting_started/access_policy.spec.json --json"
+)]
+struct ConformanceSpecVerifyArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    pearl_ir: PathBuf,
+    /// Formal spec JSON using LogicPearl expressions under rules[].deny_when.
+    spec_json: PathBuf,
     #[arg(long)]
     json: bool,
 }
@@ -1097,6 +1113,9 @@ fn main() -> Result<()> {
         Commands::Conformance {
             command: ConformanceCommand::RuntimeParity(args),
         } => run_conformance_runtime_parity(args),
+        Commands::Conformance {
+            command: ConformanceCommand::SpecVerify(args),
+        } => run_conformance_spec_verify(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),

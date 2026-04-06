@@ -21,6 +21,7 @@ logicpearl-plugin.workspace = true
 logicpearl-pipeline.workspace = true
 logicpearl-render.workspace = true
 logicpearl-runtime.workspace = true
+logicpearl-verify.workspace = true
 miette.workspace = true
 owo-colors.workspace = true
 serde.workspace = true

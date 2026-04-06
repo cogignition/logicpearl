@@ -1,0 +1,15 @@
+{
+  "spec_version": "1.0",
+  "rules": [
+    {
+      "id": "minor_denied",
+      "deny_when": {
+        "feature": "age",
+        "op": "<",
+        "value": 18
+      },
+      "label": "Underage access is denied",
+      "message": "Any request from a user younger than 18 must be denied."
+    }
+  ]
+}
