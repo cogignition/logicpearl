@@ -790,7 +790,7 @@ pub(super) fn discover_residual_rules(
 
     let mut examples = Vec::new();
     for row in rows {
-        let predicted_deny = evaluate_gate(gate, &row.features)? != 0;
+        let predicted_deny = !evaluate_gate(gate, &row.features)?.is_zero();
         if !row.allowed && !predicted_deny {
             examples.push(BooleanSearchExample {
                 features: boolean_feature_map(&row.features, &binary_features),

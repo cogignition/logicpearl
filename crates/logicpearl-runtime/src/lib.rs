@@ -1,4 +1,4 @@
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
     LogicPearlGateIr,
@@ -6,12 +6,15 @@ use logicpearl_ir::{
 use serde_json::{Number, Value};
 use std::collections::HashMap;
 
-pub fn evaluate_gate(gate: &LogicPearlGateIr, features: &HashMap<String, Value>) -> Result<u64> {
+pub fn evaluate_gate(
+    gate: &LogicPearlGateIr,
+    features: &HashMap<String, Value>,
+) -> Result<RuleMask> {
     let features = with_derived_features(gate, features)?;
-    let mut bitmask = 0_u64;
+    let mut bitmask = RuleMask::zero();
     for rule in &gate.rules {
         if evaluate_expression(&rule.deny_when, &features)? {
-            bitmask |= 1_u64 << rule.bit;
+            bitmask.set_bit(rule.bit);
         }
     }
     Ok(bitmask)
@@ -229,7 +232,7 @@ mod tests {
         let gate = gate_for_eq_test(json!(1.0));
         let features = HashMap::from([("flag".to_string(), json!(1))]);
         let bitmask = evaluate_gate(&gate, &features).expect("runtime evaluation should succeed");
-        assert_eq!(bitmask, 1);
+        assert_eq!(bitmask.as_u64(), Some(1));
     }
 
     #[test]
@@ -341,6 +344,6 @@ mod tests {
             ("income".to_string(), json!(100.0)),
         ]);
         let bitmask = evaluate_gate(&gate, &features).expect("derived ratio should evaluate");
-        assert_eq!(bitmask, 1);
+        assert_eq!(bitmask.as_u64(), Some(1));
     }
 }

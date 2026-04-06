@@ -628,11 +628,8 @@ fn run_prepared_stage(
             let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
             Ok(Value::Object(Map::from_iter([
                 ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                ("bitmask".to_string(), Value::Number(bitmask.into())),
-                (
-                    "allow".to_string(),
-                    Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
-                ),
+                ("bitmask".to_string(), bitmask.to_json_value()),
+                ("allow".to_string(), Value::Bool(bitmask.is_zero())),
             ])))
         }
         PreparedStageExecutable::Plugin {
@@ -686,11 +683,8 @@ fn run_prepared_stage_batch(
                 let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
                 Ok(Value::Object(Map::from_iter([
                     ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                    ("bitmask".to_string(), Value::Number(bitmask.into())),
-                    (
-                        "allow".to_string(),
-                        Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
-                    ),
+                    ("bitmask".to_string(), bitmask.to_json_value()),
+                    ("allow".to_string(), Value::Bool(bitmask.is_zero())),
                 ])))
             })
             .collect(),

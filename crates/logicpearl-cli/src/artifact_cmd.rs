@@ -462,6 +462,14 @@ pub(crate) fn compile_wasm_module(
     let gate = LogicPearlGateIr::from_path(pearl_ir)
         .into_diagnostic()
         .wrap_err("failed to load pearl IR for wasm compilation")?;
+    if let Some(rule) = gate.rules.iter().find(|rule| rule.bit >= 64) {
+        return Err(miette::miette!(
+            "wasm compilation currently supports only rule bits 0-63; gate `{}` includes rule `{}` at bit {}\n\nHint: Use the native compile target for wider gates, or keep wasm-targeted gates at 64 rules or fewer for now.",
+            gate.gate_id,
+            rule.id,
+            rule.bit
+        ));
+    }
     let build_dir = generated_root.join(&crate_name);
     let src_dir = build_dir.join("src");
     fs::create_dir_all(&src_dir)

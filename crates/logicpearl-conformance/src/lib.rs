@@ -1,5 +1,5 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{ComparisonOperator, Expression, LogicPearlGateIr};
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use rand_core::OsRng;
@@ -68,7 +68,7 @@ pub struct DecisionReceipt {
     pub gate_id: String,
     pub pearl_ir_sha256: String,
     pub input_sha256: String,
-    pub bitmasks: Vec<u64>,
+    pub bitmasks: Vec<RuleMask>,
     pub all_allowed: bool,
     #[serde(default)]
     pub native_cross_check: Option<ReceiptNativeCrossCheck>,
@@ -91,8 +91,8 @@ pub struct ReceiptVerificationReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeCrossCheckRow {
     pub row_index: usize,
-    pub runtime_bitmask: u64,
-    pub native_bitmask: u64,
+    pub runtime_bitmask: RuleMask,
+    pub native_bitmask: RuleMask,
     pub expected_allowed: bool,
     pub features: BTreeMap<String, Value>,
 }
@@ -122,7 +122,7 @@ pub struct ReviewPack {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewMismatch {
     pub row_index: usize,
-    pub runtime_bitmask: u64,
+    pub runtime_bitmask: RuleMask,
     pub expected_allowed: bool,
     pub predicted_allowed: bool,
     pub triggered_rule_ids: Vec<String>,
@@ -136,7 +136,7 @@ pub struct BoundaryScenario {
     pub feature: String,
     pub rationale: String,
     pub features: BTreeMap<String, Value>,
-    pub runtime_bitmask: u64,
+    pub runtime_bitmask: RuleMask,
     pub triggered_rule_ids: Vec<String>,
 }
 
@@ -208,7 +208,7 @@ pub fn compare_runtime_parity(
     let matching_rows = runtime_bitmasks
         .iter()
         .zip(rows)
-        .filter(|(bitmask, row)| (**bitmask == 0) == row.allowed)
+        .filter(|(bitmask, row)| bitmask.is_zero() == row.allowed)
         .count();
     let parity = matching_rows as f64 / rows.len() as f64;
     Ok(RuntimeParityReport {
@@ -250,8 +250,8 @@ pub fn cross_check_runtime_with_native_binary(
         .zip(rows.iter())
         .enumerate()
     {
-        let runtime_allowed = *runtime_bitmask == 0;
-        let native_allowed = *native_bitmask == 0;
+        let runtime_allowed = runtime_bitmask.is_zero();
+        let native_allowed = native_bitmask.is_zero();
         if runtime_allowed == row.allowed {
             runtime_matching_rows += 1;
         }
@@ -263,8 +263,8 @@ pub fn cross_check_runtime_with_native_binary(
         } else {
             disagreements.push(RuntimeCrossCheckRow {
                 row_index: index,
-                runtime_bitmask: *runtime_bitmask,
-                native_bitmask: *native_bitmask,
+                runtime_bitmask: runtime_bitmask.clone(),
+                native_bitmask: native_bitmask.clone(),
                 expected_allowed: row.allowed,
                 features: row.features.clone(),
             });
@@ -298,7 +298,7 @@ pub fn build_review_pack(
     let matching_rows = runtime_bitmasks
         .iter()
         .zip(rows)
-        .filter(|(bitmask, row)| (**bitmask == 0) == row.allowed)
+        .filter(|(bitmask, row)| bitmask.is_zero() == row.allowed)
         .count();
 
     let mismatches: Vec<ReviewMismatch> = runtime_bitmasks
@@ -306,16 +306,16 @@ pub fn build_review_pack(
         .zip(rows.iter())
         .enumerate()
         .filter_map(|(index, (bitmask, row))| {
-            let predicted_allowed = *bitmask == 0;
+            let predicted_allowed = bitmask.is_zero();
             if predicted_allowed == row.allowed {
                 return None;
             }
             Some(ReviewMismatch {
                 row_index: index,
-                runtime_bitmask: *bitmask,
+                runtime_bitmask: bitmask.clone(),
                 expected_allowed: row.allowed,
                 predicted_allowed,
-                triggered_rule_ids: triggered_rule_ids(gate, *bitmask),
+                triggered_rule_ids: triggered_rule_ids(gate, bitmask),
                 features: row.features.clone(),
             })
         })
@@ -396,7 +396,7 @@ pub fn create_signed_decision_receipt(
         signer_public_key_hex: hex::encode(signing_key.verifying_key().to_bytes()),
     };
     let unsigned = UnsignedDecisionReceipt {
-        all_allowed: unsigned.bitmasks.iter().all(|bitmask| *bitmask == 0),
+        all_allowed: unsigned.bitmasks.iter().all(RuleMask::is_zero),
         ..unsigned
     };
     let signature = signing_key.sign(&serde_json::to_vec(&unsigned)?);
@@ -475,7 +475,7 @@ pub fn write_review_pack(review_pack: &ReviewPack, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn evaluate_rows(gate: &LogicPearlGateIr, rows: &[DecisionTraceRow]) -> Result<Vec<u64>> {
+fn evaluate_rows(gate: &LogicPearlGateIr, rows: &[DecisionTraceRow]) -> Result<Vec<RuleMask>> {
     rows.iter()
         .map(|row| {
             evaluate_gate(
@@ -489,14 +489,17 @@ fn evaluate_rows(gate: &LogicPearlGateIr, rows: &[DecisionTraceRow]) -> Result<V
 fn evaluate_payloads(
     gate: &LogicPearlGateIr,
     inputs: &[HashMap<String, Value>],
-) -> Result<Vec<u64>> {
+) -> Result<Vec<RuleMask>> {
     inputs
         .iter()
         .map(|input| evaluate_gate(gate, input))
         .collect()
 }
 
-fn evaluate_native_binary(native_binary: &Path, rows: &[DecisionTraceRow]) -> Result<Vec<u64>> {
+fn evaluate_native_binary(
+    native_binary: &Path,
+    rows: &[DecisionTraceRow],
+) -> Result<Vec<RuleMask>> {
     let payload = Value::Array(
         rows.iter()
             .map(|row| {
@@ -511,7 +514,7 @@ fn evaluate_native_binary(native_binary: &Path, rows: &[DecisionTraceRow]) -> Re
     evaluate_native_binary_payload(native_binary, &payload)
 }
 
-fn evaluate_native_binary_payload(native_binary: &Path, payload: &Value) -> Result<Vec<u64>> {
+fn evaluate_native_binary_payload(native_binary: &Path, payload: &Value) -> Result<Vec<RuleMask>> {
     let mut temp = NamedTempFile::new()?;
     serde_json::to_writer_pretty(temp.as_file_mut(), payload)?;
     let output = Command::new(native_binary)
@@ -532,25 +535,32 @@ fn evaluate_native_binary_payload(native_binary: &Path, payload: &Value) -> Resu
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_native_bitmask_output(stdout.trim())
+    let expected_outputs = match payload {
+        Value::Array(items) => items.len(),
+        _ => 1,
+    };
+    parse_native_bitmask_output(stdout.trim(), expected_outputs)
 }
 
-fn parse_native_bitmask_output(raw: &str) -> Result<Vec<u64>> {
+fn parse_native_bitmask_output(raw: &str, expected_outputs: usize) -> Result<Vec<RuleMask>> {
     if raw.is_empty() {
         return Err(LogicPearlError::message(
             "native binary produced empty output",
         ));
     }
-    if raw.starts_with('[') {
-        let parsed: Vec<u64> = serde_json::from_str(raw)?;
-        return Ok(parsed);
+    let value: Value = serde_json::from_str(raw)?;
+    if expected_outputs <= 1 {
+        return Ok(vec![RuleMask::from_json_value(&value)?]);
     }
-    let bitmask = raw.parse::<u64>().map_err(|err| {
-        LogicPearlError::message(format!(
-            "native binary did not return a valid bitmask: {err}"
-        ))
-    })?;
-    Ok(vec![bitmask])
+    let Value::Array(items) = value else {
+        return Err(LogicPearlError::message(
+            "native binary did not return a JSON array for batched evaluation",
+        ));
+    };
+    items
+        .iter()
+        .map(RuleMask::from_json_value)
+        .collect::<Result<Vec<_>>>()
 }
 
 fn baseline_features(rows: &[DecisionTraceRow]) -> BTreeMap<String, Value> {
@@ -608,7 +618,7 @@ fn generate_boundary_scenarios(
                     "Review {} around threshold {} ({})",
                     comparison.feature, threshold, rationale_suffix
                 ),
-                triggered_rule_ids: triggered_rule_ids(gate, bitmask),
+                triggered_rule_ids: triggered_rule_ids(gate, &bitmask),
                 runtime_bitmask: bitmask,
                 features,
             });
@@ -629,10 +639,10 @@ fn numeric_boundary_candidates(threshold: f64) -> Vec<(f64, &'static str)> {
     ]
 }
 
-fn triggered_rule_ids(gate: &LogicPearlGateIr, bitmask: u64) -> Vec<String> {
+fn triggered_rule_ids(gate: &LogicPearlGateIr, bitmask: &RuleMask) -> Vec<String> {
     gate.rules
         .iter()
-        .filter(|rule| bitmask & (1_u64 << rule.bit) != 0)
+        .filter(|rule| bitmask.test_bit(rule.bit))
         .map(|rule| rule.id.clone())
         .collect()
 }
@@ -731,7 +741,7 @@ struct UnsignedDecisionReceipt {
     gate_id: String,
     pearl_ir_sha256: String,
     input_sha256: String,
-    bitmasks: Vec<u64>,
+    bitmasks: Vec<RuleMask>,
     all_allowed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     native_cross_check: Option<ReceiptNativeCrossCheck>,

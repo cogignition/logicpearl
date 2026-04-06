@@ -642,7 +642,7 @@ pub fn build_pearl_from_rows(
     let mut correct = 0;
     for row in rows {
         let bitmask = evaluate_gate(&gate, &row.features)?;
-        let allowed = bitmask == 0;
+        let allowed = bitmask.is_zero();
         if allowed == row.allowed {
             correct += 1;
         }

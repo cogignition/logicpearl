@@ -1392,7 +1392,7 @@ fn score_target_against_records(
             }
             features.insert(header.to_string(), parse_scalar(value)?);
         }
-        let predicted_positive = evaluate_gate(gate, &features)? != 0;
+        let predicted_positive = !evaluate_gate(gate, &features)?.is_zero();
         rows += 1;
         if expected_positive {
             positive_rows += 1;
