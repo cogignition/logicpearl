@@ -1,0 +1,11 @@
+[package]
+name = "logicpearl-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Placeholder crate reserved for future LogicPearl WebAssembly packaging and bindings."
+homepage = "https://logicpearl.com"
+repository = "https://github.com/LogicPearlHQ/logicpearl"
+
+[lib]
+path = "src/lib.rs"

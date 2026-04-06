@@ -15,6 +15,12 @@ members = [
   "crates/logicpearl-conformance",
 ]
 default-members = ["crates/logicpearl-cli"]
+exclude = [
+  "reserved-crates/logicpearl-explain",
+  "reserved-crates/logicpearl-policy",
+  "reserved-crates/logicpearl-schema",
+  "reserved-crates/logicpearl-wasm",
+]
 resolver = "2"
 
 [workspace.package]
