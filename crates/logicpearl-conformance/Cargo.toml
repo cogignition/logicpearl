@@ -3,13 +3,16 @@ name = "logicpearl-conformance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Conformance receipts, manifests, and runtime parity checks for LogicPearl."
 
 [dependencies]
 ed25519-dalek.workspace = true
 hex.workspace = true
-logicpearl-core = { path = "../logicpearl-core" }
-logicpearl-ir = { path = "../logicpearl-ir" }
-logicpearl-runtime = { path = "../logicpearl-runtime" }
+logicpearl-core.workspace = true
+logicpearl-ir.workspace = true
+logicpearl-runtime.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -3,8 +3,11 @@ name = "logicpearl-ir"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Inspectable intermediate representation for LogicPearl artifacts."
 
 [dependencies]
-logicpearl-core = { path = "../logicpearl-core" }
+logicpearl-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -3,13 +3,16 @@ name = "logicpearl-observer-synthesis"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Observer phrase mining and solver-backed signal synthesis for LogicPearl."
 
 [dependencies]
-logicpearl-benchmark = { path = "../logicpearl-benchmark" }
-logicpearl-core = { path = "../logicpearl-core" }
-logicpearl-observer = { path = "../logicpearl-observer" }
+logicpearl-benchmark.workspace = true
+logicpearl-core.workspace = true
+logicpearl-observer.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

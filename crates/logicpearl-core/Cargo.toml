@@ -3,6 +3,9 @@ name = "logicpearl-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Core types, errors, and shared primitives for LogicPearl."
 
 [dependencies]
 csv.workspace = true

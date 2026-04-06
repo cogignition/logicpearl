@@ -3,7 +3,10 @@ name = "logicpearl-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Rendering helpers for LogicPearl artifacts and verification status."
 
 [dependencies]
-logicpearl-core = { path = "../logicpearl-core" }
-logicpearl-ir = { path = "../logicpearl-ir" }
+logicpearl-core.workspace = true
+logicpearl-ir.workspace = true

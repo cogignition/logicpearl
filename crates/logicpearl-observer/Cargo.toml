@@ -3,8 +3,11 @@ name = "logicpearl-observer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Native observer profiles and feature extraction helpers for LogicPearl."
 
 [dependencies]
-logicpearl-core = { path = "../logicpearl-core" }
+logicpearl-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

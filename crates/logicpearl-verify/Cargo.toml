@@ -3,7 +3,10 @@ name = "logicpearl-verify"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Solver-backed verification helpers for LogicPearl discovery and conformance."
 
 [dependencies]
-logicpearl-core = { path = "../logicpearl-core" }
+logicpearl-core.workspace = true
 serde.workspace = true

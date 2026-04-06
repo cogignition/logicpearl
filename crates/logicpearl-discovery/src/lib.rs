@@ -1009,6 +1009,10 @@ mod tests {
 
     #[test]
     fn build_residual_pass_recovers_missed_boolean_slice() {
+        if std::process::Command::new("z3").arg("-version").output().is_err() {
+            return;
+        }
+
         let rows = vec![
             row(&[("seed", 1), ("a", 1), ("b", 1)], false),
             row(&[("seed", 0), ("a", 1), ("b", 1)], false),

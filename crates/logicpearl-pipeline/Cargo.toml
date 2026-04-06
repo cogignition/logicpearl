@@ -3,11 +3,14 @@ name = "logicpearl-pipeline"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "String-of-pearls pipeline artifacts and execution for LogicPearl."
 
 [dependencies]
-logicpearl-core = { path = "../logicpearl-core" }
-logicpearl-ir = { path = "../logicpearl-ir" }
-logicpearl-plugin = { path = "../logicpearl-plugin" }
-logicpearl-runtime = { path = "../logicpearl-runtime" }
+logicpearl-core.workspace = true
+logicpearl-ir.workspace = true
+logicpearl-plugin.workspace = true
+logicpearl-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
