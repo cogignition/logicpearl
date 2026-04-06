@@ -6,7 +6,7 @@
     {
       "id": "auth_demo_v1",
       "kind": "pearl",
-      "artifact": "/Users/missingno/Documents/LogicPearl/logicpearl/fixtures/ir/valid/auth-demo-v1.json",
+      "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
       "plugin_manifest": null,
       "input": {
         "user_role": "$.TODO_user_role",

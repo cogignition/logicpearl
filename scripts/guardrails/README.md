@@ -5,6 +5,8 @@ These scripts make the public non-`PINT` and final-`PINT` guardrail workflow rep
 Dataset sources, expected local staging paths, and the full split/build/eval flow are documented in:
 - [DATASETS.md](../../DATASETS.md)
 
+These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is unset, they fall back to `../datasets/public` relative to the cloned `logicpearl/` repo.
+
 ## Scripts
 
 - `build_pre_pint_guardrail_bundle.py`
@@ -70,7 +72,7 @@ Evaluate untouched `PINT` against that bundle:
 ```bash
 python3 scripts/guardrails/evaluate_guardrail_bundle.py \
   --bundle-dir /tmp/guardrails_pre_pint_bundle \
-  --raw-benchmark ~/Documents/LogicPearl/datasets/public/pint/PINT.yaml \
+  --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
   --profile pint \
   --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
 ```

@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-06T01:50:28.041955+00:00",
+  "generated_at": "2026-04-06T02:30:44.859410+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "0e1e3b1084adae3c393560f1f8c3caef5b398791",
+    "head": "9f87d6cda484978db6c76c5b8d3aa8eb1ada7ecd",
     "dirty": true
   },
   "suites": {
@@ -111,8 +111,8 @@
     },
     "guardrails_open_sample200": {
       "status": "ok",
-      "bundle_dir": "/private/tmp/guardrails_pre_pint_bundle_all_dev_final",
-      "baseline": "/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/open_guardrail_regression_baseline.sample200.json",
+      "bundle_dir": "<tmp>/guardrails_pre_pint_bundle_all_dev_final",
+      "baseline": "scripts/guardrails/open_guardrail_regression_baseline.sample200.json",
       "input_split": "final_holdout",
       "sample_size": 200,
       "benchmarks": {

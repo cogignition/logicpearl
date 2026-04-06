@@ -18,4 +18,4 @@ What this example does not include:
 - private audit workflows
 - customer or domain deployment logic
 
-If you want a public-first walkthrough, prefer the getting-started example and the small demo CSVs under [examples/demos](/Users/missingno/Documents/LogicPearl/logicpearl/examples/demos).
+If you want a public-first walkthrough, prefer the getting-started example and the small demo datasets under [examples/demos](../demos).

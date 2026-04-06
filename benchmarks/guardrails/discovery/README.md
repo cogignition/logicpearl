@@ -42,6 +42,3 @@ logicpearl build \
 ```
 
 That is the public discovery loop we want to scale up onto Salad-Data, ALERT, SQuAD, and later PINT.
-
-The generic builder direction behind this is documented in:
-- [internal `logicpearl discover` design](/Users/missingno/Documents/LogicPearl/internal_docs/logicpearl/discover-cli-design.md)

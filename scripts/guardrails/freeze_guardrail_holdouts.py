@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from typing import Any
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
 WORKSPACE_ROOT = REPO_ROOT.parent
-DEFAULT_DATASETS_ROOT = WORKSPACE_ROOT / "datasets" / "public"
+DEFAULT_DATASETS_ROOT = Path(
+    os.environ.get("LOGICPEARL_DATASETS", str(WORKSPACE_ROOT / "datasets" / "public"))
+).expanduser()
 
 
 @dataclass(frozen=True)

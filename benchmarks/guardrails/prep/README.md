@@ -15,10 +15,24 @@ Use public development corpora here:
 
 Do not use `PINT` here.
 
+Recommended staged dataset root:
+
+```text
+$LOGICPEARL_DATASETS
+```
+
+Recommended:
+
+```bash
+export LOGICPEARL_DATASETS="$HOME/logicpearl-datasets/public"
+```
+
+If unset, the checked-in guardrail scripts fall back to `../datasets/public` relative to the cloned `logicpearl/` repo.
+
 Recommended local staging path for full ALERT runs:
 
 ```text
-~/Documents/LogicPearl/datasets/public/alert/
+$LOGICPEARL_DATASETS/alert/
 ```
 
 Recommended local filenames:
@@ -31,7 +45,7 @@ Recommended source:
 Recommended local staging path for full SQuAD 2.0 runs:
 
 ```text
-~/Documents/LogicPearl/datasets/public/squad/
+$LOGICPEARL_DATASETS/squad/
 ```
 
 Recommended local filenames:
@@ -41,18 +55,18 @@ Recommended local filenames:
 Recommended local staging paths for the remaining public development corpora:
 
 ```text
-~/Documents/LogicPearl/datasets/public/chatgpt_jailbreak/
-~/Documents/LogicPearl/datasets/public/vigil/
-~/Documents/LogicPearl/datasets/public/noeti_toxicqa/
-~/Documents/LogicPearl/datasets/public/openagentsafety/
-~/Documents/LogicPearl/datasets/public/mcpmark/
+$LOGICPEARL_DATASETS/chatgpt_jailbreak/
+$LOGICPEARL_DATASETS/vigil/
+$LOGICPEARL_DATASETS/noeti_toxicqa/
+$LOGICPEARL_DATASETS/openagentsafety/
+$LOGICPEARL_DATASETS/mcpmark/
 ```
 
 Additional staged corpora for agent tool-use evaluation:
 
 ```text
-~/Documents/LogicPearl/datasets/public/mt_agentrisk/
-~/Documents/LogicPearl/datasets/public/safearena/
+$LOGICPEARL_DATASETS/mt_agentrisk/
+$LOGICPEARL_DATASETS/safearena/
 ```
 
 Current access note:
@@ -144,7 +158,7 @@ Attack `ALERT`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl \
+  "$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl" \
   --profile alert \
   --output /tmp/alert_attack.jsonl
 ```
@@ -153,7 +167,7 @@ Attack `ChatGPT-Jailbreak-Prompts`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/chatgpt_jailbreak/chatgpt_jailbreak_prompts.json \
+  "$LOGICPEARL_DATASETS/chatgpt_jailbreak/chatgpt_jailbreak_prompts.json" \
   --profile chatgpt-jailbreak-prompts \
   --output /tmp/chatgpt_jailbreak_attack.jsonl
 ```
@@ -162,7 +176,7 @@ Attack `Vigil`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/vigil/vigil.json \
+  "$LOGICPEARL_DATASETS/vigil/vigil.json" \
   --profile vigil \
   --output /tmp/vigil_attack.jsonl
 ```
@@ -171,7 +185,7 @@ Attack `NOETI ToxicQAFinal`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/noeti_toxicqa/noeti_toxicqa.json \
+  "$LOGICPEARL_DATASETS/noeti_toxicqa/noeti_toxicqa.json" \
   --profile noeti-toxicqa \
   --output /tmp/noeti_attack.jsonl
 ```
@@ -180,7 +194,7 @@ Attack `OpenAgentSafety`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/openagentsafety/openagentsafety_s26.json \
+  "$LOGICPEARL_DATASETS/openagentsafety/openagentsafety_s26.json" \
   --profile openagentsafety-s26 \
   --output /tmp/openagentsafety_attack.jsonl
 ```
@@ -189,7 +203,7 @@ Benign `MCPMark`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/mcpmark/mcpmark_tasks.json \
+  "$LOGICPEARL_DATASETS/mcpmark/mcpmark_tasks.json" \
   --profile mcpmark \
   --output /tmp/mcpmark_benign.jsonl
 ```
@@ -198,7 +212,7 @@ Benign `SafeArena`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/safearena/safe.json \
+  "$LOGICPEARL_DATASETS/safearena/safe.json" \
   --profile safearena-safe \
   --output /tmp/safearena_safe.jsonl
 ```
@@ -207,7 +221,7 @@ Attack `SafeArena`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/safearena/harm.json \
+  "$LOGICPEARL_DATASETS/safearena/harm.json" \
   --profile safearena-harm \
   --output /tmp/safearena_harm.jsonl
 ```
@@ -216,7 +230,7 @@ Benign `SQuAD 2.0`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json \
+  "$LOGICPEARL_DATASETS/squad/train-v2.0.json" \
   --profile squad \
   --output /tmp/squad_benign.jsonl
 ```
@@ -357,9 +371,6 @@ logicpearl benchmark score-artifacts \
   /tmp/guardrail_dev_holdout_traces/multi_target.csv \
   --json
 ```
-
-The internal workflow design is documented in:
-- [/Users/missingno/Documents/LogicPearl/internal_docs/logicpearl/guardrail-prep-workflow.md](/Users/missingno/Documents/LogicPearl/internal_docs/logicpearl/guardrail-prep-workflow.md)
 
 ## Frozen Pre-PINT Bundle
 

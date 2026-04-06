@@ -6,7 +6,7 @@ These scripts keep a small public score ledger for LogicPearl.
 
 - `update_scores.py`
   - measures the current public repo against checked-in examples and the fast guardrail regression sample
-  - writes the root [`SCORES.json`](/Users/missingno/Documents/LogicPearl/logicpearl/SCORES.json)
+  - writes the root [`SCORES.json`](../../SCORES.json)
 
 - `compute_contributor_points.py`
   - walks git history for `SCORES.json`

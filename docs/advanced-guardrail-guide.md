@@ -90,12 +90,18 @@ logicpearl observer repair \
 
 The first public non-`PINT` adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.
 
-For full local runs, stage public corpora outside the public repo under the workspace dataset tree.
+For full local runs, stage public corpora outside the public repo under `$LOGICPEARL_DATASETS`.
+
+Recommended:
+
+```bash
+export LOGICPEARL_DATASETS="$HOME/logicpearl-datasets/public"
+```
 
 For ALERT, use:
 
 ```text
-~/Documents/LogicPearl/datasets/public/alert/
+$LOGICPEARL_DATASETS/alert/
 ```
 
 Recommended local filenames:
@@ -108,7 +114,7 @@ Download source:
 For SQuAD 2.0, use:
 
 ```text
-~/Documents/LogicPearl/datasets/public/squad/
+$LOGICPEARL_DATASETS/squad/
 ```
 
 Recommended local filenames:
@@ -137,7 +143,7 @@ Attack `ALERT`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl \
+  "$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl" \
   --profile alert \
   --output /tmp/alert_attack.jsonl
 ```
@@ -146,7 +152,7 @@ Benign `SQuAD 2.0`:
 
 ```bash
 logicpearl benchmark adapt \
-  ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json \
+  "$LOGICPEARL_DATASETS/squad/train-v2.0.json" \
   --profile squad \
   --output /tmp/squad_benign.jsonl
 ```

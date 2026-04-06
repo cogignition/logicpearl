@@ -126,7 +126,9 @@ def stable_path(path: Path) -> str:
     try:
         return str(resolved.relative_to(REPO_ROOT))
     except ValueError:
-        return str(resolved)
+        if str(resolved).startswith(("/tmp/", "/private/tmp/")):
+            return f"<tmp>/{resolved.name}"
+        return resolved.name or str(resolved)
 
 
 def summarize_build(build: dict[str, Any]) -> dict[str, Any]:
@@ -247,8 +249,8 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
             )
         suite = {
             "status": "ok",
-            "bundle_dir": str(DEFAULT_GUARDRAIL_BUNDLE),
-            "baseline": str(GUARDRAIL_BASELINE),
+            "bundle_dir": stable_path(DEFAULT_GUARDRAIL_BUNDLE),
+            "baseline": stable_path(GUARDRAIL_BASELINE),
             "input_split": summary["input_split"],
             "sample_size": summary["sample_size"],
             "benchmarks": benchmarks,

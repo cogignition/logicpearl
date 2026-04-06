@@ -111,10 +111,10 @@ Examples:
 const BENCHMARK_AFTER_HELP: &str = "\
 Examples:
   logicpearl benchmark list-profiles
-  logicpearl benchmark detect-profile ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --json
-  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl
+  logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --json
+  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl
   logicpearl benchmark split-cases /tmp/guardrail_dev.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev_holdout.jsonl --train-fraction 0.8 --json
-  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl
+  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl
   logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl
   logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
   logicpearl benchmark score-artifacts /tmp/guardrail_train_prep/discovered/artifact_set.json /tmp/guardrail_dev_holdout_traces/multi_target.csv --json
@@ -260,7 +260,7 @@ struct BenchmarkListProfilesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl benchmark detect-profile ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --json"
+    after_help = "Example:\n  logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --json"
 )]
 struct BenchmarkDetectProfileArgs {
     raw_dataset: PathBuf,
@@ -486,7 +486,7 @@ struct BenchmarkRunArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/alert/ALERT_Adv.jsonl --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt ~/Documents/LogicPearl/datasets/public/squad/train-v2.0.json --profile squad --output /tmp/squad_benign.jsonl"
+    after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --profile squad --output /tmp/squad_benign.jsonl"
 )]
 struct BenchmarkAdaptArgs {
     raw_dataset: PathBuf,

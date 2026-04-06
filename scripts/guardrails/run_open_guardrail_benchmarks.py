@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,10 @@ from typing import Any
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
+WORKSPACE_ROOT = REPO_ROOT.parent
+DEFAULT_DATASETS_ROOT = Path(
+    os.environ.get("LOGICPEARL_DATASETS", str(WORKSPACE_ROOT / "datasets" / "public"))
+).expanduser()
 DEFAULT_BUNDLE_DIR = Path("/tmp/guardrails_pre_pint_bundle")
 DEFAULT_BASELINE_PATH = REPO_ROOT / "scripts" / "guardrails" / "open_guardrail_regression_baseline.sample200.json"
 
@@ -19,20 +24,20 @@ BENCHMARKS = [
     {
         "id": "jailbreakbench",
         "profile": "jailbreakbench",
-        "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/jbb_behaviors.json"),
-        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/logicpearl_splits/jailbreakbench"),
+        "path": DEFAULT_DATASETS_ROOT / "jailbreakbench" / "jbb_behaviors.json",
+        "splits_dir": DEFAULT_DATASETS_ROOT / "jailbreakbench" / "logicpearl_splits" / "jailbreakbench",
     },
     {
         "id": "promptshield",
         "profile": "promptshield",
-        "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/promptshield/promptshield.json"),
-        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/promptshield/logicpearl_splits/promptshield"),
+        "path": DEFAULT_DATASETS_ROOT / "promptshield" / "promptshield.json",
+        "splits_dir": DEFAULT_DATASETS_ROOT / "promptshield" / "logicpearl_splits" / "promptshield",
     },
     {
         "id": "rogue-security-prompt-injections",
         "profile": "rogue-security-prompt-injections",
-        "path": Path("/Users/missingno/Documents/LogicPearl/datasets/public/rogue_security/prompt_injections_benchmark.json"),
-        "splits_dir": Path("/Users/missingno/Documents/LogicPearl/datasets/public/rogue_security/logicpearl_splits/rogue_security_prompt_injections"),
+        "path": DEFAULT_DATASETS_ROOT / "rogue_security" / "prompt_injections_benchmark.json",
+        "splits_dir": DEFAULT_DATASETS_ROOT / "rogue_security" / "logicpearl_splits" / "rogue_security_prompt_injections",
     },
 ]
 

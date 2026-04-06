@@ -20,7 +20,9 @@ from typing import Any
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
 WORKSPACE_ROOT = REPO_ROOT.parent
-DEFAULT_DATASETS_ROOT = WORKSPACE_ROOT / "datasets" / "public"
+DEFAULT_DATASETS_ROOT = Path(
+    os.environ.get("LOGICPEARL_DATASETS", str(WORKSPACE_ROOT / "datasets" / "public"))
+).expanduser()
 TRACE_PROJECTION_CONFIG = REPO_ROOT / "benchmarks" / "guardrails" / "prep" / "trace_projection.guardrails_v1.json"
 
 

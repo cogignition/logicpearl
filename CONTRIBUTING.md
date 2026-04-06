@@ -30,9 +30,9 @@ The scoreboard is generated from:
 - the fast open guardrail regression sample
 
 Files:
-- [SCORES.json](/Users/missingno/Documents/LogicPearl/logicpearl/SCORES.json)
-- [scripts/scoreboard/README.md](/Users/missingno/Documents/LogicPearl/logicpearl/scripts/scoreboard/README.md)
-- [scripts/scoreboard/score_model.json](/Users/missingno/Documents/LogicPearl/logicpearl/scripts/scoreboard/score_model.json)
+- [SCORES.json](./SCORES.json)
+- [scripts/scoreboard/README.md](./scripts/scoreboard/README.md)
+- [scripts/scoreboard/score_model.json](./scripts/scoreboard/score_model.json)
 
 ## How To Earn More Pearls
 
