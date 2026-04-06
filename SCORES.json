@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-06T16:31:28.508864+00:00",
+  "generated_at": "2026-04-06T16:59:40.717212+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "94c49caba493a6f568774ffb958ea96629b81815",
+    "head": "a0765523b7e29b747214a511c359b1b7c51c0ecd",
     "dirty": true
   },
   "suites": {
@@ -112,9 +112,10 @@
     "guardrails_open_sample200": {
       "status": "ok",
       "bundle_dir": "<tmp>/guardrails_pre_pint_bundle_all_dev_final",
-      "baseline": "scripts/guardrails/open_guardrail_regression_baseline.sample200.json",
+      "baseline": "scripts/guardrails/open_guardrail_regression_baseline.sample200.parity-first.json",
       "input_split": "final_holdout",
       "sample_size": 200,
+      "target_goal": "parity-first",
       "benchmarks": {
         "jailbreakbench": {
           "total_cases": 20,
@@ -164,6 +165,69 @@
             "allow": 189,
             "deny_exfiltration_risk": 6,
             "deny_untrusted_instruction": 5
+          }
+        }
+      },
+      "default_target_goal": "parity-first",
+      "by_target_goal": {
+        "parity-first": {
+          "status": "ok",
+          "bundle_dir": "<tmp>/guardrails_pre_pint_bundle_all_dev_final",
+          "baseline": "scripts/guardrails/open_guardrail_regression_baseline.sample200.parity-first.json",
+          "input_split": "final_holdout",
+          "sample_size": 200,
+          "target_goal": "parity-first",
+          "benchmarks": {
+            "jailbreakbench": {
+              "total_cases": 20,
+              "sampled": false,
+              "sample_size": 20,
+              "matched_cases": 11,
+              "exact_match_rate": 0.55,
+              "attack_cases": 10,
+              "benign_cases": 10,
+              "attack_catch_rate": 0.1,
+              "benign_pass_rate": 1.0,
+              "false_positive_rate": 0.0,
+              "route_distribution": {
+                "allow": 19,
+                "deny_exfiltration_risk": 1
+              }
+            },
+            "promptshield": {
+              "total_cases": 200,
+              "sampled": true,
+              "sample_size": 200,
+              "matched_cases": 115,
+              "exact_match_rate": 0.575,
+              "attack_cases": 100,
+              "benign_cases": 100,
+              "attack_catch_rate": 0.16,
+              "benign_pass_rate": 0.99,
+              "false_positive_rate": 0.01,
+              "route_distribution": {
+                "allow": 183,
+                "deny_exfiltration_risk": 10,
+                "deny_untrusted_instruction": 7
+              }
+            },
+            "rogue-security-prompt-injections": {
+              "total_cases": 200,
+              "sampled": true,
+              "sample_size": 200,
+              "matched_cases": 111,
+              "exact_match_rate": 0.555,
+              "attack_cases": 100,
+              "benign_cases": 100,
+              "attack_catch_rate": 0.11,
+              "benign_pass_rate": 1.0,
+              "false_positive_rate": 0.0,
+              "route_distribution": {
+                "allow": 189,
+                "deny_exfiltration_risk": 6,
+                "deny_untrusted_instruction": 5
+              }
+            }
           }
         }
       }
@@ -222,73 +286,85 @@
       "value": 0.55,
       "goal": "max",
       "weight": 100.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.jailbreakbench.attack_catch_rate": {
       "value": 0.1,
       "goal": "max",
       "weight": 125.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.jailbreakbench.benign_pass_rate": {
       "value": 1.0,
       "goal": "max",
       "weight": 60.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.jailbreakbench.false_positive_rate": {
       "value": 0.0,
       "goal": "min",
       "weight": 80.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.promptshield.exact_match_rate": {
       "value": 0.575,
       "goal": "max",
       "weight": 100.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.promptshield.attack_catch_rate": {
       "value": 0.16,
       "goal": "max",
       "weight": 125.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.promptshield.benign_pass_rate": {
       "value": 0.99,
       "goal": "max",
       "weight": 60.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.promptshield.false_positive_rate": {
       "value": 0.01,
       "goal": "min",
       "weight": 80.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.rogue-security-prompt-injections.exact_match_rate": {
       "value": 0.555,
       "goal": "max",
       "weight": 100.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.rogue-security-prompt-injections.attack_catch_rate": {
       "value": 0.11,
       "goal": "max",
       "weight": 125.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.rogue-security-prompt-injections.benign_pass_rate": {
       "value": 1.0,
       "goal": "max",
       "weight": 60.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     },
     "guardrails.rogue-security-prompt-injections.false_positive_rate": {
       "value": 0.0,
       "goal": "min",
       "weight": 80.0,
-      "suite": "guardrails"
+      "suite": "guardrails",
+      "target_goal": "parity-first"
     }
   },
   "summary": {

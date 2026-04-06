@@ -6,6 +6,7 @@ These scripts keep a small public score ledger for LogicPearl.
 
 - `update_scores.py`
   - measures the current public repo against checked-in examples and the fast guardrail regression sample
+  - records guardrail scores under the active `target_goal` lane from the frozen bundle manifest
   - writes the root [`SCORES.json`](../../SCORES.json)
 
 - `compute_contributor_points.py`
@@ -55,6 +56,9 @@ python3 scripts/scoreboard/compute_contributor_points.py
 ## Notes
 
 - The guardrail sample uses the frozen bundle pointed to by `LOGICPEARL_GUARDRAIL_BUNDLE_DIR`.
+- Guardrail sampled baselines are lane-aware:
+  - the runner prefers `open_guardrail_regression_baseline.sample200.<target-goal>.json`
+  - `SCORES.json` keeps the active lane under `guardrails_open_sample200.by_target_goal`
 - If that bundle is unavailable, the score ledger records the guardrail suite as unavailable instead of failing.
 - Raw metrics live in `SCORES.json`.
 - Contributor points are intentionally computed from curated suite-level scores instead of summing every numeric metric.

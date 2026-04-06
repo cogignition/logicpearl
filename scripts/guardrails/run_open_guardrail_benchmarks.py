@@ -19,6 +19,7 @@ DEFAULT_DATASETS_ROOT = Path(
 ).expanduser()
 DEFAULT_BUNDLE_DIR = Path("/tmp/guardrails_pre_pint_bundle")
 DEFAULT_BASELINE_PATH = REPO_ROOT / "scripts" / "guardrails" / "open_guardrail_regression_baseline.sample200.json"
+BASELINE_DIR = DEFAULT_BASELINE_PATH.parent
 
 BENCHMARKS = [
     {
@@ -95,6 +96,11 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Allowed metric slack when comparing against a regression baseline.",
     )
+    parser.add_argument(
+        "--target-goal",
+        default="",
+        help="Optional target goal lane for sampled regression baselines. Defaults to the bundle manifest goal when available.",
+    )
     return parser.parse_args()
 
 
@@ -154,6 +160,25 @@ def load_baseline(path_text: str) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit(f"baseline file does not exist: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def canonical_target_goal(goal: str) -> str:
+    return goal.strip().lower().replace("_", "-")
+
+
+def detect_bundle_target_goal(bundle_dir: Path) -> str:
+    manifest_path = bundle_dir / "bundle_manifest.json"
+    if not manifest_path.exists():
+        return "parity-first"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw_goal = str(payload.get("observer_target_goal", "parity-first"))
+    return canonical_target_goal(raw_goal) or "parity-first"
+
+
+def baseline_path_for_goal(sample_size: int, target_goal: str) -> Path:
+    return BASELINE_DIR / (
+        f"open_guardrail_regression_baseline.sample{sample_size}.{canonical_target_goal(target_goal)}.json"
+    )
 
 
 def compare_against_baseline(
@@ -219,22 +244,30 @@ def main() -> int:
             )
         )
 
+    target_goal = canonical_target_goal(args.target_goal) if args.target_goal else detect_bundle_target_goal(bundle_dir)
+    default_baseline_path = baseline_path_for_goal(args.sample_size, target_goal)
+    if args.sample_size <= 0:
+        default_baseline = ""
+    elif default_baseline_path.exists():
+        default_baseline = str(default_baseline_path)
+    elif DEFAULT_BASELINE_PATH.exists():
+        default_baseline = str(DEFAULT_BASELINE_PATH)
+    else:
+        default_baseline = ""
+
+    baseline_path = args.baseline or default_baseline
+    baseline = load_baseline(baseline_path) if baseline_path else {}
+
     payload = {
         "input_split": args.input_split,
         "sample_size": args.sample_size,
+        "target_goal": target_goal,
+        "baseline": str(Path(baseline_path).resolve()) if baseline_path else "",
         "benchmarks": aggregate,
         "skipped": skipped,
     }
     (output_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2))
-
-    default_baseline = (
-        str(DEFAULT_BASELINE_PATH)
-        if args.sample_size > 0 and DEFAULT_BASELINE_PATH.exists()
-        else ""
-    )
-    baseline_path = args.baseline or default_baseline
-    baseline = load_baseline(baseline_path) if baseline_path else {}
     failures = compare_against_baseline(aggregate, baseline, args.tolerance) if baseline else []
     if failures:
         raise SystemExit("\n".join(failures))

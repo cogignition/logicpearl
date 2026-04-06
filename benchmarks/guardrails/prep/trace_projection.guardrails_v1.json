@@ -16,7 +16,8 @@
       "trace_features": [
         "requests_instruction_override",
         "targets_system_prompt",
-        "contains_indirect_document_authority"
+        "contains_indirect_document_authority",
+        "attack_confidence"
       ],
       "positive_when": {
         "expected_routes": ["deny"],
@@ -31,7 +32,8 @@
       "name": "target_exfiltration",
       "trace_features": [
         "requests_secret_exfiltration",
-        "requests_data_access_outside_scope"
+        "requests_data_access_outside_scope",
+        "attack_confidence"
       ],
       "positive_when": {
         "expected_routes": ["deny"],
@@ -42,7 +44,8 @@
       "name": "target_tool_use",
       "trace_features": [
         "requests_tool_misuse",
-        "requests_data_access_outside_scope"
+        "requests_data_access_outside_scope",
+        "attack_confidence"
       ],
       "positive_when": {
         "expected_routes": ["deny"],

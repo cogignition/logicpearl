@@ -30,6 +30,7 @@ DEMO_CASES: tuple[tuple[str, Path], ...] = (
     ("loan_approval", REPO_ROOT / "examples" / "demos" / "loan_approval" / "traces.csv"),
 )
 GUARDRAIL_BASELINE = REPO_ROOT / "scripts" / "guardrails" / "open_guardrail_regression_baseline.sample200.json"
+GUARDRAIL_BASELINE_DIR = GUARDRAIL_BASELINE.parent
 
 
 def parse_args() -> tuple[Path, bool]:
@@ -112,13 +113,23 @@ def get_revision() -> dict[str, Any]:
     }
 
 
-def metric(value: float, goal: str, weight: float, suite: str) -> dict[str, Any]:
-    return {
+def metric(
+    value: float,
+    goal: str,
+    weight: float,
+    suite: str,
+    *,
+    target_goal: str | None = None,
+) -> dict[str, Any]:
+    payload = {
         "value": value,
         "goal": goal,
         "weight": weight,
         "suite": suite,
     }
+    if target_goal:
+        payload["target_goal"] = target_goal
+    return payload
 
 
 def stable_path(path: Path) -> str:
@@ -129,6 +140,31 @@ def stable_path(path: Path) -> str:
         if str(resolved).startswith(("/tmp/", "/private/tmp/")):
             return f"<tmp>/{resolved.name}"
         return resolved.name or str(resolved)
+
+
+def canonical_target_goal(goal: str) -> str:
+    return goal.strip().lower().replace("_", "-")
+
+
+def read_bundle_manifest(bundle_dir: Path) -> dict[str, Any]:
+    manifest_path = bundle_dir / "bundle_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def guardrail_target_goal(bundle_dir: Path) -> str:
+    manifest = read_bundle_manifest(bundle_dir)
+    return canonical_target_goal(str(manifest.get("observer_target_goal", "parity-first"))) or "parity-first"
+
+
+def guardrail_baseline_for_goal(sample_size: int, target_goal: str) -> Path:
+    lane_path = GUARDRAIL_BASELINE_DIR / (
+        f"open_guardrail_regression_baseline.sample{sample_size}.{canonical_target_goal(target_goal)}.json"
+    )
+    if lane_path.exists():
+        return lane_path
+    return GUARDRAIL_BASELINE
 
 
 def summarize_build(build: dict[str, Any]) -> dict[str, Any]:
@@ -213,6 +249,9 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
             "bundle_dir": str(DEFAULT_GUARDRAIL_BUNDLE),
         }, {}
 
+    target_goal = guardrail_target_goal(DEFAULT_GUARDRAIL_BUNDLE)
+    baseline_path = guardrail_baseline_for_goal(200, target_goal)
+
     with tempfile.TemporaryDirectory(prefix="logicpearl_scores_guardrails_") as temp_dir:
         output_dir = Path(temp_dir) / "guardrails"
         cmd = [
@@ -224,6 +263,8 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
             "final_holdout",
             "--sample-size",
             "200",
+            "--target-goal",
+            target_goal,
             "--output-dir",
             str(output_dir),
         ]
@@ -236,24 +277,46 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         for benchmark_id, benchmark_summary in benchmarks.items():
             prefix = f"guardrails.{benchmark_id}"
             metrics[f"{prefix}.exact_match_rate"] = metric(
-                float(benchmark_summary["exact_match_rate"]), "max", 100.0, "guardrails"
+                float(benchmark_summary["exact_match_rate"]),
+                "max",
+                100.0,
+                "guardrails",
+                target_goal=target_goal,
             )
             metrics[f"{prefix}.attack_catch_rate"] = metric(
-                float(benchmark_summary["attack_catch_rate"]), "max", 125.0, "guardrails"
+                float(benchmark_summary["attack_catch_rate"]),
+                "max",
+                125.0,
+                "guardrails",
+                target_goal=target_goal,
             )
             metrics[f"{prefix}.benign_pass_rate"] = metric(
-                float(benchmark_summary["benign_pass_rate"]), "max", 60.0, "guardrails"
+                float(benchmark_summary["benign_pass_rate"]),
+                "max",
+                60.0,
+                "guardrails",
+                target_goal=target_goal,
             )
             metrics[f"{prefix}.false_positive_rate"] = metric(
-                float(benchmark_summary["false_positive_rate"]), "min", 80.0, "guardrails"
+                float(benchmark_summary["false_positive_rate"]),
+                "min",
+                80.0,
+                "guardrails",
+                target_goal=target_goal,
             )
-        suite = {
+        lane = {
             "status": "ok",
             "bundle_dir": stable_path(DEFAULT_GUARDRAIL_BUNDLE),
-            "baseline": stable_path(GUARDRAIL_BASELINE),
+            "baseline": stable_path(baseline_path),
             "input_split": summary["input_split"],
             "sample_size": summary["sample_size"],
+            "target_goal": target_goal,
             "benchmarks": benchmarks,
+        }
+        suite = {
+            **lane,
+            "default_target_goal": target_goal,
+            "by_target_goal": {target_goal: lane},
         }
         return suite, metrics
 

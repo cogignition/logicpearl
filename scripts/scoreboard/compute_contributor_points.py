@@ -84,10 +84,18 @@ def infer_github_login(email: str) -> str | None:
 
 def suite_score(scores: dict[str, Any], suite_model: dict[str, Any]) -> float:
     metrics = scores.get("metrics", {})
+    target_goal = suite_model.get("target_goal")
     total = 0.0
     for metric_spec in suite_model["metrics"]:
         metric = metrics.get(metric_spec["id"])
         if metric is None:
+            continue
+        metric_target_goal = metric.get("target_goal")
+        if (
+            target_goal
+            and metric_target_goal is not None
+            and str(metric_target_goal) != str(target_goal)
+        ):
             continue
         total += float(metric["value"]) * float(metric_spec["weight"])
     return total
@@ -154,6 +162,7 @@ def main() -> int:
                     "current_score": current_suite_score,
                     "delta": delta,
                     "points_budget": suite_model["points_budget"],
+                    "target_goal": suite_model.get("target_goal"),
                     "weighted_points": weighted_points,
                     "metrics": suite_model["metrics"],
                 }

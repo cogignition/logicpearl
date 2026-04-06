@@ -194,6 +194,34 @@ The same stage model is available to plugins:
 - `enricher` plugins transform records before artifact emission
 - `verify` plugins annotate proof or audit status
 
+### Custom plugins and observer profiles
+
+The intended boundary is:
+- the generic core provides the predicate engine, discovery/runtime plumbing, artifact formats, validation, and compilation
+- plugins and observer profiles provide domain meaning
+
+That means LogicPearl should stay generic about things like:
+- boolean and numeric features
+- text predicates and normalization primitives
+- deterministic rule execution
+- parity and mismatch reporting
+
+And domain-shaped adapters should own things like:
+- what raw fields matter for a use case
+- how to normalize domain input into features
+- what a feature should be called in that domain
+- route labels and domain-specific explanation wording
+
+Guardrails are a good example:
+- the core can provide generic text matching primitives such as phrase, gap, proximity, and delimiter-aware predicates
+- a guardrail observer profile or plugin can decide that those primitives map to features like `requests_secret_exfiltration` or `targets_system_prompt`
+
+That keeps the public core honest and reusable:
+- generic predicate engine in core
+- domain semantics in plugins/profiles
+
+If you are building for a domain with its own raw input shape, that is a first-class LogicPearl use case. Prefer a custom observer plugin or profile over forcing that domain vocabulary into the generic core.
+
 You can also validate artifact freshness and runtime parity directly:
 
 ```bash

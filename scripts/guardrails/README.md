@@ -41,6 +41,7 @@ These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is u
   - can also run the frozen `final_holdout` split once you are ready
   - can deterministically subsample large benchmark splits for fast regression checks
   - can compare sampled results against a checked-in baseline and fail on regressions
+  - automatically selects a goal-specific sampled baseline from the bundle manifest when available
   - writes per-benchmark reports plus one aggregate summary
 
 - `freeze_guardrail_holdouts.py`
@@ -110,7 +111,14 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
   --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_sample200
 ```
 
-If `scripts/guardrails/open_guardrail_regression_baseline.sample200.json` is present, the runner uses it automatically for sampled runs and exits non-zero if:
+If a checked-in sampled baseline is present, the runner uses it automatically for sampled runs. It prefers a goal-specific file such as:
+- `scripts/guardrails/open_guardrail_regression_baseline.sample200.protective-gate.json`
+- `scripts/guardrails/open_guardrail_regression_baseline.sample200.parity-first.json`
+
+If no goal-specific file exists, it falls back to:
+- `scripts/guardrails/open_guardrail_regression_baseline.sample200.json`
+
+The runner exits non-zero if:
 - `exact_match_rate` drops
 - `attack_catch_rate` drops
 - `benign_pass_rate` drops
