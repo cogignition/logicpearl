@@ -29,6 +29,8 @@ use super::{
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
 const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
+const RARE_RULE_RECOVERY_FRONTIER_LIMIT: usize = 24;
+const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
 
 #[derive(Debug, Clone, PartialEq)]
 struct CandidatePlanScore {
@@ -280,12 +282,91 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
             }
             _ => greedy_plan,
         };
+    let selected_candidates =
+        recover_rare_rules(rows, &denied_indices, &allowed_indices, selected_candidates);
 
     Ok(selected_candidates
         .iter()
         .enumerate()
         .map(|(index, candidate)| rule_from_candidate(index as u32, candidate))
         .collect())
+}
+
+fn recover_rare_rules(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+    selected_candidates: Vec<CandidateRule>,
+) -> Vec<CandidateRule> {
+    let mut recovered = selected_candidates;
+    for _ in 0..RARE_RULE_RECOVERY_MAX_PASSES {
+        let uncovered_denied = denied_indices
+            .iter()
+            .copied()
+            .filter(|index| {
+                !recovered
+                    .iter()
+                    .any(|candidate| matches_candidate(&rows[*index].features, candidate))
+            })
+            .collect::<Vec<_>>();
+        if uncovered_denied.is_empty() {
+            break;
+        }
+
+        let existing_signatures = recovered
+            .iter()
+            .map(CandidateRule::signature)
+            .collect::<BTreeSet<_>>();
+        let rescue_shortlist = candidate_rules(rows, &uncovered_denied, allowed_indices)
+            .into_iter()
+            .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
+            .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
+            .collect::<Vec<_>>();
+        if rescue_shortlist.is_empty() {
+            break;
+        }
+
+        let Some(rescue_plan) = select_candidate_rules_exact(
+            rows,
+            &uncovered_denied,
+            allowed_indices,
+            &rescue_shortlist,
+        ) else {
+            break;
+        };
+        if rescue_plan.is_empty() {
+            break;
+        }
+
+        let mut candidate_combined = recovered.clone();
+        candidate_combined.extend(rescue_plan);
+        candidate_combined = dedupe_candidate_rules_by_signature(candidate_combined);
+
+        let current_score = score_candidate_set(rows, &recovered);
+        let combined_score = score_candidate_set(rows, &candidate_combined);
+        let improved = compare_candidate_set_score(&combined_score, &current_score)
+            == Ordering::Less
+            || (combined_score.false_negatives < current_score.false_negatives
+                && combined_score.false_positives <= current_score.false_positives);
+        if !improved {
+            break;
+        }
+
+        recovered = candidate_combined;
+    }
+    recovered
+}
+
+fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<CandidateRule> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if seen.insert(candidate.signature()) {
+            deduped.push(candidate);
+        }
+    }
+    deduped.sort_by(compare_candidate_priority);
+    deduped
 }
 
 fn discover_rules_greedy(
@@ -1169,7 +1250,7 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_rules, compare_candidate_set_score, score_candidate_set,
+        candidate_rules, compare_candidate_set_score, recover_rare_rules, score_candidate_set,
         select_candidate_rules_exact, CandidateRule, CandidateSetScore,
     };
     use crate::DecisionTraceRow;
@@ -1295,6 +1376,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rare_rule_recovery_adds_uncovered_zero_fp_rule() {
+        let rows = vec![
+            triad_row(1.0, 0.0, 0.0, false),
+            triad_row(2.0, 0.0, 0.0, false),
+            triad_row(3.0, 0.0, 0.0, false),
+            triad_row(9.0, 1.0, 0.0, false),
+            triad_row(3.0, 0.0, 0.0, true),
+            triad_row(7.0, 0.0, 0.0, true),
+            triad_row(8.0, 0.0, 0.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize, 2usize, 3usize];
+        let allowed_indices = vec![4usize, 5usize, 6usize];
+        let selected = vec![CandidateRule {
+            feature: "score".to_string(),
+            op: ComparisonOperator::Lte,
+            value: ComparisonValue::Literal(Value::Number(Number::from_f64(3.0).unwrap())),
+            denied_coverage: 3,
+            false_positives: 1,
+        }];
+
+        let recovered = recover_rare_rules(&rows, &denied_indices, &allowed_indices, selected);
+        assert_eq!(recovered.len(), 2);
+        let score = score_candidate_set(&rows, &recovered);
+        assert_eq!(score.false_negatives, 0);
+        assert_eq!(score.false_positives, 1);
+    }
+
+    #[test]
+    fn rare_rule_recovery_skips_rules_that_only_add_false_positives() {
+        let rows = vec![
+            triad_row(1.0, 0.0, 0.0, false),
+            triad_row(2.0, 0.0, 0.0, false),
+            triad_row(3.0, 0.0, 0.0, false),
+            triad_row(8.0, 1.0, 1.0, false),
+            triad_row(3.0, 0.0, 0.0, true),
+            triad_row(8.0, 1.0, 1.0, true),
+            triad_row(8.0, 0.0, 0.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize, 2usize, 3usize];
+        let allowed_indices = vec![4usize, 5usize, 6usize];
+        let selected = vec![CandidateRule {
+            feature: "score".to_string(),
+            op: ComparisonOperator::Lte,
+            value: ComparisonValue::Literal(Value::Number(Number::from_f64(3.0).unwrap())),
+            denied_coverage: 3,
+            false_positives: 1,
+        }];
+
+        let recovered = recover_rare_rules(&rows, &denied_indices, &allowed_indices, selected);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].feature, "score");
+        let score = score_candidate_set(&rows, &recovered);
+        assert_eq!(score.false_negatives, 1);
+        assert_eq!(score.false_positives, 1);
+    }
+
     fn row(score: f64, allowed: bool) -> DecisionTraceRow {
         let mut features = HashMap::new();
         features.insert(
@@ -1323,6 +1461,23 @@ mod tests {
         features.insert(
             "right".to_string(),
             Value::Number(Number::from_f64(right).unwrap()),
+        );
+        DecisionTraceRow { features, allowed }
+    }
+
+    fn triad_row(score: f64, rare_flag: f64, noisy_flag: f64, allowed: bool) -> DecisionTraceRow {
+        let mut features = HashMap::new();
+        features.insert(
+            "score".to_string(),
+            Value::Number(Number::from_f64(score).unwrap()),
+        );
+        features.insert(
+            "rare_flag".to_string(),
+            Value::Number(Number::from_f64(rare_flag).unwrap()),
+        );
+        features.insert(
+            "noisy_flag".to_string(),
+            Value::Number(Number::from_f64(noisy_flag).unwrap()),
         );
         DecisionTraceRow { features, allowed }
     }
