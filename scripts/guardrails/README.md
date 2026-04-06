@@ -57,6 +57,14 @@ python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
   --output-dir /tmp/guardrails_pre_pint_bundle
 ```
 
+Build the same bundle with a guardrail-specific synthesis goal:
+
+```bash
+python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_pre_pint_bundle \
+  --target-goal protective-gate
+```
+
 Evaluate untouched `PINT` against that bundle:
 
 ```bash

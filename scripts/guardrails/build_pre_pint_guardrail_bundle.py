@@ -94,6 +94,14 @@ SYNTHESIS_SIGNALS: tuple[str, ...] = (
     "tool-misuse",
 )
 
+TARGET_GOALS: tuple[str, ...] = (
+    "parity-first",
+    "protective-gate",
+    "customer-safe",
+    "balanced",
+    "review-queue",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -115,6 +123,12 @@ def parse_args() -> argparse.Namespace:
         "--use-installed-cli",
         action="store_true",
         help="Use `logicpearl` from PATH instead of `cargo run -p logicpearl-cli --`.",
+    )
+    parser.add_argument(
+        "--target-goal",
+        choices=TARGET_GOALS,
+        default="parity-first",
+        help="Observer synthesis goal to use while freezing the guardrail bundle.",
     )
     return parser.parse_args()
 
@@ -358,6 +372,8 @@ def main() -> int:
                 str(merged_dev_path),
                 "--signal",
                 signal,
+                "--target-goal",
+                args.target_goal,
                 "--output",
                 str(output_path),
                 "--json",
@@ -478,6 +494,7 @@ def main() -> int:
         "created_from_commit": git_output("rev-parse", "HEAD"),
         "git_clean": git_output("status", "--short") == "",
         "trace_projection_config": str(TRACE_PROJECTION_CONFIG),
+        "observer_target_goal": args.target_goal,
         "observer_artifact": str(observer_artifact_path),
         "observer_scaffold_artifact": str(observer_scaffold_path),
         "artifact_set": str(frozen_artifact_set_dir / "artifact_set.json"),
