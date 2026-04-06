@@ -13,7 +13,9 @@ use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::canonicalize::{canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules};
+use super::canonicalize::{
+    canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules,
+};
 use super::features::{
     boolean_feature_map, infer_binary_feature_names, infer_feature_type, numeric_feature_names,
     rule_contains_feature, rule_with_added_condition, sorted_feature_names,
@@ -187,7 +189,9 @@ pub(super) fn dedupe_rules_by_signature(rules: Vec<RuleDefinition>) -> Vec<RuleD
 fn prefer_rule(left: &RuleDefinition, right: &RuleDefinition) -> Ordering {
     verification_rank(left)
         .cmp(&verification_rank(right))
-        .then_with(|| expression_complexity(&right.deny_when).cmp(&expression_complexity(&left.deny_when)))
+        .then_with(|| {
+            expression_complexity(&right.deny_when).cmp(&expression_complexity(&left.deny_when))
+        })
 }
 
 fn verification_rank(rule: &RuleDefinition) -> i32 {
@@ -315,12 +319,18 @@ fn simulate_candidate_plan(
 
     let total_false_positives = allowed_indices
         .iter()
-        .filter(|index| rules.iter().any(|rule| matches_candidate(&rows[**index].features, rule)))
+        .filter(|index| {
+            rules
+                .iter()
+                .any(|rule| matches_candidate(&rows[**index].features, rule))
+        })
         .count();
     let correct = rows
         .iter()
         .filter(|row| {
-            let predicted_deny = rules.iter().any(|rule| matches_candidate(&row.features, rule));
+            let predicted_deny = rules
+                .iter()
+                .any(|rule| matches_candidate(&row.features, rule));
             predicted_deny != row.allowed
         })
         .count();
@@ -342,7 +352,11 @@ fn compare_candidate_plan(
     current_score
         .training_parity
         .total_cmp(&score.training_parity)
-        .then_with(|| score.total_false_positives.cmp(&current_score.total_false_positives))
+        .then_with(|| {
+            score
+                .total_false_positives
+                .cmp(&current_score.total_false_positives)
+        })
         .then_with(|| score.uncovered_denied.cmp(&current_score.uncovered_denied))
         .then_with(|| score.rule_count.cmp(&current_score.rule_count))
         .then_with(|| compare_candidate_priority(candidate, current_candidate))
@@ -533,9 +547,9 @@ fn candidate_rules(
                     let candidate = CandidateRule {
                         feature: feature.clone(),
                         op: op.clone(),
-                        value: ComparisonValue::Literal(
-                            Value::Number(Number::from_f64(threshold).unwrap()),
-                        ),
+                        value: ComparisonValue::Literal(Value::Number(
+                            Number::from_f64(threshold).unwrap(),
+                        )),
                         denied_coverage: 0,
                         false_positives: 0,
                     };
@@ -673,11 +687,7 @@ fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
 
 fn candidate_memorization_penalty(candidate: &CandidateRule) -> usize {
     if candidate.op == ComparisonOperator::Eq
-        && candidate
-            .value
-            .literal()
-            .and_then(Value::as_f64)
-            .is_some()
+        && candidate.value.literal().and_then(Value::as_f64).is_some()
     {
         1_000_000usize.saturating_sub(candidate.denied_coverage)
     } else {
@@ -702,7 +712,11 @@ fn numeric_thresholds(
         .collect()
 }
 
-fn candidate_coverage(rows: &[DecisionTraceRow], indices: &[usize], candidate: &CandidateRule) -> usize {
+fn candidate_coverage(
+    rows: &[DecisionTraceRow],
+    indices: &[usize],
+    candidate: &CandidateRule,
+) -> usize {
     indices
         .iter()
         .filter(|index| matches_candidate(&rows[**index].features, candidate))

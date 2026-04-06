@@ -344,7 +344,9 @@ pub fn generate_receipt_keypair() -> ReceiptSigningKeyFile {
     }
 }
 
-pub fn public_key_from_signing_key(keypair: &ReceiptSigningKeyFile) -> Result<ReceiptPublicKeyFile> {
+pub fn public_key_from_signing_key(
+    keypair: &ReceiptSigningKeyFile,
+) -> Result<ReceiptPublicKeyFile> {
     validate_key_algorithm(&keypair.algorithm)?;
     let signing_key = signing_key_from_file(keypair)?;
     Ok(ReceiptPublicKeyFile {
@@ -389,7 +391,7 @@ pub fn create_signed_decision_receipt(
         pearl_ir_sha256,
         input_sha256,
         bitmasks,
-        all_allowed: inputs.is_empty() || true,
+        all_allowed: true,
         native_cross_check,
         signer_public_key_hex: hex::encode(signing_key.verifying_key().to_bytes()),
     };
@@ -419,7 +421,8 @@ pub fn verify_decision_receipt(
     validate_key_algorithm(&public_key.algorithm)?;
     let mut problems = Vec::new();
     if receipt.signer_public_key_hex != public_key.public_key_hex {
-        problems.push("receipt signer public key did not match the provided public key".to_string());
+        problems
+            .push("receipt signer public key did not match the provided public key".to_string());
     }
 
     let verifying_key = verifying_key_from_file(public_key)?;
@@ -474,7 +477,12 @@ pub fn write_review_pack(review_pack: &ReviewPack, path: &Path) -> Result<()> {
 
 fn evaluate_rows(gate: &LogicPearlGateIr, rows: &[DecisionTraceRow]) -> Result<Vec<u64>> {
     rows.iter()
-        .map(|row| evaluate_gate(gate, &row.features.clone().into_iter().collect::<HashMap<_, _>>()))
+        .map(|row| {
+            evaluate_gate(
+                gate,
+                &row.features.clone().into_iter().collect::<HashMap<_, _>>(),
+            )
+        })
         .collect()
 }
 
@@ -482,7 +490,10 @@ fn evaluate_payloads(
     gate: &LogicPearlGateIr,
     inputs: &[HashMap<String, Value>],
 ) -> Result<Vec<u64>> {
-    inputs.iter().map(|input| evaluate_gate(gate, input)).collect()
+    inputs
+        .iter()
+        .map(|input| evaluate_gate(gate, input))
+        .collect()
 }
 
 fn evaluate_native_binary(native_binary: &Path, rows: &[DecisionTraceRow]) -> Result<Vec<u64>> {
@@ -526,14 +537,18 @@ fn evaluate_native_binary_payload(native_binary: &Path, payload: &Value) -> Resu
 
 fn parse_native_bitmask_output(raw: &str) -> Result<Vec<u64>> {
     if raw.is_empty() {
-        return Err(LogicPearlError::message("native binary produced empty output"));
+        return Err(LogicPearlError::message(
+            "native binary produced empty output",
+        ));
     }
     if raw.starts_with('[') {
         let parsed: Vec<u64> = serde_json::from_str(raw)?;
         return Ok(parsed);
     }
     let bitmask = raw.parse::<u64>().map_err(|err| {
-        LogicPearlError::message(format!("native binary did not return a valid bitmask: {err}"))
+        LogicPearlError::message(format!(
+            "native binary did not return a valid bitmask: {err}"
+        ))
     })?;
     Ok(vec![bitmask])
 }
@@ -581,7 +596,10 @@ fn generate_boundary_scenarios(
             }
             let mut features = baseline.clone();
             features.insert(comparison.feature.clone(), Value::from(candidate));
-            let bitmask = evaluate_gate(gate, &features.clone().into_iter().collect::<HashMap<_, _>>())?;
+            let bitmask = evaluate_gate(
+                gate,
+                &features.clone().into_iter().collect::<HashMap<_, _>>(),
+            )?;
             scenarios.push(BoundaryScenario {
                 scenario_id: format!("{}-{}", rule.id, scenarios.len()),
                 rule_id: rule.id.clone(),
@@ -619,7 +637,11 @@ fn triggered_rule_ids(gate: &LogicPearlGateIr, bitmask: u64) -> Vec<String> {
         .collect()
 }
 
-fn validate_group(group_name: &str, fingerprints: &BTreeMap<String, FileFingerprint>, problems: &mut Vec<String>) {
+fn validate_group(
+    group_name: &str,
+    fingerprints: &BTreeMap<String, FileFingerprint>,
+    problems: &mut Vec<String>,
+) {
     for (label, fingerprint) in fingerprints {
         let path = Path::new(&fingerprint.path);
         if !path.exists() {
@@ -628,7 +650,9 @@ fn validate_group(group_name: &str, fingerprints: &BTreeMap<String, FileFingerpr
         }
         match fingerprint_path(path) {
             Ok(actual) => {
-                if actual.size_bytes != fingerprint.size_bytes || actual.mtime_ns != fingerprint.mtime_ns {
+                if actual.size_bytes != fingerprint.size_bytes
+                    || actual.mtime_ns != fingerprint.mtime_ns
+                {
                     problems.push(format!(
                         "{group_name}:{label} changed: {} (expected size={}, mtime_ns={}; found size={}, mtime_ns={})",
                         path.display(),
@@ -649,7 +673,9 @@ fn validate_group(group_name: &str, fingerprints: &BTreeMap<String, FileFingerpr
     }
 }
 
-fn fingerprint_group(entries: BTreeMap<String, String>) -> Result<BTreeMap<String, FileFingerprint>> {
+fn fingerprint_group(
+    entries: BTreeMap<String, String>,
+) -> Result<BTreeMap<String, FileFingerprint>> {
     entries
         .into_iter()
         .map(|(label, path)| {
@@ -772,7 +798,11 @@ mod tests {
             data_files: BTreeMap::new(),
             artifacts: BTreeMap::new(),
         };
-        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
 
         let report = validate_artifact_manifest(&manifest_path).unwrap();
         assert!(report.fresh);

@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
 const MIN_AUTO_SYNTHESIS_CASES: usize = 40;
@@ -61,13 +62,15 @@ pub(crate) fn native_profile_name(profile: NativeObserverProfile) -> &'static st
 pub(crate) fn render_observer_resolution(resolution: &ObserverResolution) -> String {
     match resolution {
         ObserverResolution::NativeProfile { profile } => format!("native profile {profile}"),
-        ObserverResolution::NativeArtifact { observer_id } => format!("native artifact {observer_id}"),
+        ObserverResolution::NativeArtifact { observer_id } => {
+            format!("native artifact {observer_id}")
+        }
         ObserverResolution::Plugin { name } => format!("plugin {name}"),
     }
 }
 
 pub(crate) fn resolve_observer_for_cases(
-    dataset_jsonl: &PathBuf,
+    dataset_jsonl: &Path,
     observer_profile: Option<ObserverProfileArg>,
     observer_artifact: Option<PathBuf>,
     plugin_manifest: Option<PathBuf>,
@@ -88,7 +91,10 @@ pub(crate) fn resolve_observer_for_cases(
             .wrap_err("failed to load observer plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
             return Err(guidance(
-                format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+                format!(
+                    "plugin manifest stage mismatch: expected observer, got {:?}",
+                    manifest.stage
+                ),
                 "Use an observer-stage manifest.",
             ));
         }
@@ -166,7 +172,10 @@ pub(crate) fn resolve_observer_from_input(
             .wrap_err("failed to load observer plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
             return Err(guidance(
-                format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+                format!(
+                    "plugin manifest stage mismatch: expected observer, got {:?}",
+                    manifest.stage
+                ),
                 "Use an observer-stage manifest.",
             ));
         }
@@ -205,7 +214,7 @@ pub(crate) fn resolve_observer_from_input(
 }
 
 pub(crate) fn observe_benchmark_cases(
-    dataset_jsonl: &PathBuf,
+    dataset_jsonl: &Path,
     observer: &ResolvedObserver,
     output: &PathBuf,
 ) -> Result<usize> {
@@ -248,7 +257,10 @@ pub(crate) fn observe_benchmark_cases(
     Ok(rows)
 }
 
-pub(crate) fn observe_features(observer: &ResolvedObserver, raw_input: &Value) -> Result<Map<String, Value>> {
+pub(crate) fn observe_features(
+    observer: &ResolvedObserver,
+    raw_input: &Value,
+) -> Result<Map<String, Value>> {
     match observer {
         ResolvedObserver::NativeProfile(profile) => observe_with_profile(*profile, raw_input)
             .into_diagnostic()
@@ -291,9 +303,13 @@ fn stable_bucket(key: &str) -> u64 {
     hash
 }
 
-fn split_synthesis_case_rows(rows: Vec<SynthesisCaseRow>, train_fraction: f64) -> (Vec<SynthesisCase>, Vec<SynthesisCase>) {
+fn split_synthesis_case_rows(
+    rows: Vec<SynthesisCaseRow>,
+    train_fraction: f64,
+) -> (Vec<SynthesisCase>, Vec<SynthesisCase>) {
     let threshold = (train_fraction.clamp(0.0, 1.0) * 10_000.0).round() as u64;
-    let mut grouped: std::collections::BTreeMap<String, Vec<SynthesisCaseRow>> = std::collections::BTreeMap::new();
+    let mut grouped: std::collections::BTreeMap<String, Vec<SynthesisCaseRow>> =
+        std::collections::BTreeMap::new();
     for row in rows {
         grouped
             .entry(row.case.expected_route.clone())
@@ -331,7 +347,10 @@ fn choose_synthesis_train_and_dev(
     dev_cases_path: Option<&PathBuf>,
 ) -> Result<Option<(Vec<SynthesisCase>, Vec<SynthesisCase>)>> {
     if let Some(dev_cases_path) = dev_cases_path {
-        let train_cases = case_rows.into_iter().map(|row| row.case).collect::<Vec<_>>();
+        let train_cases = case_rows
+            .into_iter()
+            .map(|row| row.case)
+            .collect::<Vec<_>>();
         let dev_cases = load_synthesis_cases(dev_cases_path)
             .into_diagnostic()
             .wrap_err("failed to load held-out dev benchmark cases for observer synthesize")?;
@@ -361,7 +380,10 @@ pub(crate) fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
             .wrap_err("failed to load plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
             return Err(guidance(
-                format!("plugin manifest stage mismatch: expected observer, got {:?}", manifest.stage),
+                format!(
+                    "plugin manifest stage mismatch: expected observer, got {:?}",
+                    manifest.stage
+                ),
                 "Use an observer-stage manifest with --plugin-manifest.",
             ));
         }
@@ -378,7 +400,11 @@ pub(crate) fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
         println!(
             "{} {}",
             "Observer".bold().bright_magenta(),
-            format!("artifact is valid ({}, id={})", status, artifact.observer_id).bright_black()
+            format!(
+                "artifact is valid ({}, id={})",
+                status, artifact.observer_id
+            )
+            .bright_black()
         );
     }
     Ok(())
@@ -395,7 +421,11 @@ pub(crate) fn run_observer_list(args: ObserverListArgs) -> Result<()> {
     } else {
         println!("{}", "Native Observer Profiles".bold().bright_blue());
         for profile in profiles {
-            println!("  {} {}", profile.id.bold(), profile.description.bright_black());
+            println!(
+                "  {} {}",
+                profile.id.bold(),
+                profile.description.bright_black()
+            );
         }
     }
     Ok(())
@@ -421,14 +451,20 @@ pub(crate) fn run_observer_run(args: ObserverRunArgs) -> Result<()> {
         "observer": observer_resolution(&observer)
     });
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response).into_diagnostic()?
+        );
     } else {
         println!(
             "{} {}",
             "Observer".bold().bright_magenta(),
             render_observer_resolution(&observer_resolution(&observer)).bold()
         );
-        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response).into_diagnostic()?
+        );
     }
     Ok(())
 }
@@ -441,9 +477,10 @@ pub(crate) fn run_observer_detect(args: ObserverDetectArgs) -> Result<()> {
     )
     .into_diagnostic()
     .wrap_err("observer input JSON is not valid JSON")?;
-    let detected = detect_profile_from_input(&raw_input).map(|profile| ObserverResolution::NativeProfile {
-        profile: native_profile_name(profile).to_string(),
-    });
+    let detected =
+        detect_profile_from_input(&raw_input).map(|profile| ObserverResolution::NativeProfile {
+            profile: native_profile_name(profile).to_string(),
+        });
     if args.json {
         println!(
             "{}",
@@ -459,7 +496,10 @@ pub(crate) fn run_observer_detect(args: ObserverDetectArgs) -> Result<()> {
             render_observer_resolution(&resolution)
         );
     } else {
-        println!("{}", "No built-in observer profile detected".bright_yellow());
+        println!(
+            "{}",
+            "No built-in observer profile detected".bright_yellow()
+        );
     }
     Ok(())
 }
@@ -488,7 +528,11 @@ pub(crate) fn run_observer_scaffold(args: ObserverScaffoldArgs) -> Result<()> {
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Scaffolded".bold().bright_green(), artifact.observer_id.bold());
+        println!(
+            "{} {}",
+            "Scaffolded".bold().bright_green(),
+            artifact.observer_id.bold()
+        );
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
     Ok(())
@@ -534,18 +578,23 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         synthesize_guardrails_artifact_auto(
             &artifact,
             signal,
-            &train_cases,
-            &dev_cases,
-            bootstrap,
-            target_goal,
-            &args.positive_routes,
-            &args.candidate_frontier,
-            args.selection_tolerance,
+            ObserverAutoSynthesisOptions {
+                train_cases: &train_cases,
+                dev_cases: &dev_cases,
+                bootstrap,
+                target_goal,
+                positive_routes: &args.positive_routes,
+                candidate_frontier: &args.candidate_frontier,
+                tolerance: args.selection_tolerance,
+            },
         )
         .into_diagnostic()
         .wrap_err("failed to auto-select observer candidate capacity")?
     } else {
-        let cases = case_rows.into_iter().map(|row| row.case).collect::<Vec<_>>();
+        let cases = case_rows
+            .into_iter()
+            .map(|row| row.case)
+            .collect::<Vec<_>>();
         eprintln!(
             "[logicpearl observer synthesize] dataset too small for auto holdout; using single pass with max_candidates={}",
             args.max_candidates
@@ -591,64 +640,39 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
     });
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Synthesized".bold().bright_green(), report.signal.bold());
+        println!(
+            "{} {}",
+            "Synthesized".bold().bright_green(),
+            report.signal.bold()
+        );
         println!("  {} {}", "Output".bright_black(), args.output.display());
-        println!("  {} {}", "Target goal".bright_black(), serde_json::to_string(&target_goal).into_diagnostic()?.trim_matches('"'));
-        println!("  {} {}", "Candidates".bright_black(), report.candidate_count);
+        println!(
+            "  {} {}",
+            "Target goal".bright_black(),
+            serde_json::to_string(&target_goal)
+                .into_diagnostic()?
+                .trim_matches('"')
+        );
+        println!(
+            "  {} {}",
+            "Candidates".bright_black(),
+            report.candidate_count
+        );
         if let Some(selected) = report.selected_max_candidates {
             println!("  {} {}", "Selected cap".bright_black(), selected);
         }
-        println!("  {} {}", "Selected".bright_black(), report.phrases_after.join(", "));
+        println!(
+            "  {} {}",
+            "Selected".bright_black(),
+            report.phrases_after.join(", ")
+        );
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn synthesis_row(id: &str, route: &str) -> SynthesisCaseRow {
-        SynthesisCaseRow {
-            id: id.to_string(),
-            case: SynthesisCase {
-                prompt: format!("prompt {id}"),
-                expected_route: route.to_string(),
-                features: None,
-            },
-        }
-    }
-
-    #[test]
-    fn auto_synthesis_defaults_to_deterministic_holdout_when_large_enough() {
-        let rows = (0..50)
-            .map(|idx| {
-                let route = if idx % 2 == 0 { "allow" } else { "deny" };
-                synthesis_row(&format!("case-{idx}"), route)
-            })
-            .collect::<Vec<_>>();
-
-        let splits = choose_synthesis_train_and_dev(rows, None)
-            .expect("should choose auto train/dev split")
-            .expect("should auto split when dataset is large enough");
-        let (train, dev) = splits;
-
-        assert!(!train.is_empty());
-        assert!(!dev.is_empty());
-        assert_eq!(train.len() + dev.len(), 50);
-    }
-
-    #[test]
-    fn auto_synthesis_falls_back_to_single_pass_when_dataset_is_small() {
-        let rows = (0..10)
-            .map(|idx| synthesis_row(&format!("case-{idx}"), "allow"))
-            .collect::<Vec<_>>();
-
-        let splits = choose_synthesis_train_and_dev(rows, None)
-            .expect("small datasets should not error");
-        assert!(splits.is_none());
-    }
 }
 
 pub(crate) fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
@@ -709,9 +733,16 @@ pub(crate) fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
     });
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Repaired".bold().bright_green(), report.signal.bold());
+        println!(
+            "{} {}",
+            "Repaired".bold().bright_green(),
+            report.signal.bold()
+        );
         println!("  {} {}", "Output".bright_black(), args.output.display());
         println!(
             "  {} {} -> {}",
@@ -749,4 +780,50 @@ pub(crate) fn resolve_synthesis_artifact(
         None => NativeObserverProfile::GuardrailsV1,
     };
     Ok(default_artifact_for_profile(profile))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn synthesis_row(id: &str, route: &str) -> SynthesisCaseRow {
+        SynthesisCaseRow {
+            id: id.to_string(),
+            case: SynthesisCase {
+                prompt: format!("prompt {id}"),
+                expected_route: route.to_string(),
+                features: None,
+            },
+        }
+    }
+
+    #[test]
+    fn auto_synthesis_defaults_to_deterministic_holdout_when_large_enough() {
+        let rows = (0..50)
+            .map(|idx| {
+                let route = if idx % 2 == 0 { "allow" } else { "deny" };
+                synthesis_row(&format!("case-{idx}"), route)
+            })
+            .collect::<Vec<_>>();
+
+        let splits = choose_synthesis_train_and_dev(rows, None)
+            .expect("should choose auto train/dev split")
+            .expect("should auto split when dataset is large enough");
+        let (train, dev) = splits;
+
+        assert!(!train.is_empty());
+        assert!(!dev.is_empty());
+        assert_eq!(train.len() + dev.len(), 50);
+    }
+
+    #[test]
+    fn auto_synthesis_falls_back_to_single_pass_when_dataset_is_small() {
+        let rows = (0..10)
+            .map(|idx| synthesis_row(&format!("case-{idx}"), "allow"))
+            .collect::<Vec<_>>();
+
+        let splits =
+            choose_synthesis_train_and_dev(rows, None).expect("small datasets should not error");
+        assert!(splits.is_none());
+    }
 }

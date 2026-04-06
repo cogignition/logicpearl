@@ -23,7 +23,8 @@ use logicpearl_observer::{
 };
 use logicpearl_observer_synthesis::{
     repair_guardrails_artifact, synthesize_guardrails_artifact,
-    synthesize_guardrails_artifact_auto, ObserverBootstrapStrategy, ObserverTargetGoal,
+    synthesize_guardrails_artifact_auto, ObserverAutoSynthesisOptions, ObserverBootstrapStrategy,
+    ObserverTargetGoal,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};

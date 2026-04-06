@@ -45,7 +45,8 @@ pub fn load_decision_traces_auto(
     negative_label: Option<&str>,
 ) -> Result<LoadedDecisionTraces> {
     let loaded = load_flat_records(path)?;
-    let resolved_label = infer_label_column(path, &loaded.field_names, &loaded.records, label_column)?;
+    let resolved_label =
+        infer_label_column(path, &loaded.field_names, &loaded.records, label_column)?;
     let rows = load_decision_traces_from_records(
         path,
         &loaded.field_names,
@@ -110,8 +111,9 @@ fn load_csv_records(path: &Path) -> Result<LoadedFlatRecords> {
 
 fn load_json_records(path: &Path) -> Result<LoadedFlatRecords> {
     let payload = fs::read_to_string(path)?;
-    let value: Value = serde_json::from_str(&payload)
-        .map_err(|err| LogicPearlError::message(format!("failed to parse JSON decision traces: {err}")))?;
+    let value: Value = serde_json::from_str(&payload).map_err(|err| {
+        LogicPearlError::message(format!("failed to parse JSON decision traces: {err}"))
+    })?;
     let rows = match value {
         Value::Array(rows) => rows,
         Value::Object(mut object) => match object.remove("decision_traces") {
@@ -236,19 +238,25 @@ fn flatten_json_object(
         }
         Value::String(raw) => {
             let key = prefix.ok_or_else(|| {
-                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+                LogicPearlError::message(format!(
+                    "row {row_number} contains a bare scalar at the root"
+                ))
             })?;
             out.insert(key.to_string(), parse_scalar(raw)?);
         }
         Value::Bool(boolean) => {
             let key = prefix.ok_or_else(|| {
-                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+                LogicPearlError::message(format!(
+                    "row {row_number} contains a bare scalar at the root"
+                ))
             })?;
             out.insert(key.to_string(), Value::Bool(*boolean));
         }
         Value::Number(number) => {
             let key = prefix.ok_or_else(|| {
-                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+                LogicPearlError::message(format!(
+                    "row {row_number} contains a bare scalar at the root"
+                ))
             })?;
             out.insert(key.to_string(), Value::Number(number.clone()));
         }
@@ -324,7 +332,12 @@ fn load_decision_traces_from_records(
                 ))
             })?;
             if field_name == label_column {
-                allowed = Some(parse_allowed_label_value(value, index + 1, label_column, &label_domain)?);
+                allowed = Some(parse_allowed_label_value(
+                    value,
+                    index + 1,
+                    label_column,
+                    &label_domain,
+                )?);
             } else {
                 features.insert(field_name.to_string(), value.clone());
             }
@@ -398,7 +411,10 @@ fn infer_label_column(
     )))
 }
 
-fn detect_label_candidates(field_names: &[String], records: &[BTreeMap<String, Value>]) -> Vec<String> {
+fn detect_label_candidates(
+    field_names: &[String],
+    records: &[BTreeMap<String, Value>],
+) -> Vec<String> {
     field_names
         .iter()
         .filter_map(|field_name| {
@@ -418,14 +434,7 @@ fn is_preferred_label_name(name: &str) -> bool {
         .to_ascii_lowercase();
     matches!(
         lowered.as_str(),
-        "allowed"
-            | "approved"
-            | "label"
-            | "target"
-            | "decision"
-            | "outcome"
-            | "verdict"
-            | "result"
+        "allowed" | "approved" | "label" | "target" | "decision" | "outcome" | "verdict" | "result"
     ) || lowered.ends_with("_label")
         || lowered.ends_with("_target")
         || lowered.ends_with("_decision")
@@ -463,7 +472,11 @@ pub(crate) fn infer_binary_label_domain(
         let distinct = if unique_values.is_empty() {
             "none".to_string()
         } else {
-            unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+            unique_values
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         return Err(LogicPearlError::message(format!(
             "label field {label_column:?} must contain one or two distinct non-empty values; found {}: {}",
@@ -499,7 +512,8 @@ pub(crate) fn infer_binary_label_domain(
     }
 
     let keys: Vec<String> = unique_values.keys().cloned().collect();
-    if let (Some(positive), Some(negative)) = (explicit_positive.clone(), explicit_negative.clone()) {
+    if let (Some(positive), Some(negative)) = (explicit_positive.clone(), explicit_negative.clone())
+    {
         return Ok(BinaryLabelDomain {
             positive_value: Some(positive),
             negative_value: Some(negative),
@@ -587,8 +601,7 @@ fn render_label_value(raw: &Value) -> String {
 fn is_positive_label_token(value: &str) -> bool {
     matches!(
         value,
-        "1"
-            | "true"
+        "1" | "true"
             | "yes"
             | "y"
             | "allow"
@@ -608,8 +621,7 @@ fn is_positive_label_token(value: &str) -> bool {
 fn is_negative_label_token(value: &str) -> bool {
     matches!(
         value,
-        "0"
-            | "false"
+        "0" | "false"
             | "no"
             | "n"
             | "deny"

@@ -1,7 +1,5 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{
-    ComparisonOperator, ComparisonValue, RuleDefinition, RuleVerificationStatus,
-};
+use logicpearl_ir::{ComparisonOperator, ComparisonValue, RuleDefinition, RuleVerificationStatus};
 use logicpearl_runtime::evaluate_gate;
 use serde::Serialize;
 use serde_json::Value;
@@ -16,9 +14,11 @@ mod trace_loading;
 
 use engine::{build_gate, load_pinned_rule_set};
 use features::sorted_feature_names;
-pub use trace_loading::{load_decision_traces, load_decision_traces_auto, load_decision_traces_with_labels};
 use trace_loading::{
     infer_binary_label_domain, load_flat_records, parse_allowed_label_value, BinaryLabelDomain,
+};
+pub use trace_loading::{
+    load_decision_traces, load_decision_traces_auto, load_decision_traces_with_labels,
 };
 
 #[cfg(test)]
@@ -367,7 +367,11 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         refine: options.refine,
         pinned_rules: options.pinned_rules.clone(),
     };
-    build_pearl_from_rows(&loaded.rows, csv_path.display().to_string(), &resolved_options)
+    build_pearl_from_rows(
+        &loaded.rows,
+        csv_path.display().to_string(),
+        &resolved_options,
+    )
 }
 
 pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<DiscoverResult> {
@@ -382,17 +386,18 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
     let discover_cache_path = cache_manifest_path(&options.output_dir);
     let discover_report_path = options.output_dir.join("discover_report.json");
     let artifact_set_path = options.output_dir.join("artifact_set.json");
-    if artifact_set_path.exists() && discover_report_path.exists() {
-        if load_cache_manifest(&discover_cache_path)?.as_ref() == Some(&discover_manifest) {
-            let mut cached: DiscoverResult =
-                serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
-            cached.cache_hit = true;
-            for artifact in &mut cached.artifacts {
-                artifact.cache_hit = true;
-            }
-            cached.cached_artifacts = cached.artifacts.len();
-            return Ok(cached);
+    if artifact_set_path.exists()
+        && discover_report_path.exists()
+        && load_cache_manifest(&discover_cache_path)?.as_ref() == Some(&discover_manifest)
+    {
+        let mut cached: DiscoverResult =
+            serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
+        cached.cache_hit = true;
+        for artifact in &mut cached.artifacts {
+            artifact.cache_hit = true;
         }
+        cached.cached_artifacts = cached.artifacts.len();
+        return Ok(cached);
     }
 
     let loaded = load_flat_records(csv_path)?;
@@ -445,10 +450,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
         for header in &headers {
             let value = record.get(header).ok_or_else(|| {
-                LogicPearlError::message(format!(
-                    "row {} is missing field {header:?}",
-                    index + 1
-                ))
+                LogicPearlError::message(format!("row {} is missing field {header:?}", index + 1))
             })?;
             if options.target_columns.iter().any(|target| target == header) {
                 let domain = target_domains.get(header).ok_or_else(|| {
@@ -602,13 +604,14 @@ pub fn build_pearl_from_rows(
     let build_cache_path = cache_manifest_path(&options.output_dir);
     let build_report_path = options.output_dir.join("build_report.json");
     let pearl_ir_path = options.output_dir.join("pearl.ir.json");
-    if pearl_ir_path.exists() && build_report_path.exists() {
-        if load_cache_manifest(&build_cache_path)?.as_ref() == Some(&build_manifest) {
-            let mut cached: BuildResult =
-                serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
-            cached.cache_hit = true;
-            return Ok(cached);
-        }
+    if pearl_ir_path.exists()
+        && build_report_path.exists()
+        && load_cache_manifest(&build_cache_path)?.as_ref() == Some(&build_manifest)
+    {
+        let mut cached: BuildResult =
+            serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
+        cached.cache_hit = true;
+        return Ok(cached);
     }
 
     let residual_options = options
@@ -624,7 +627,7 @@ pub fn build_pearl_from_rows(
         .transpose()?;
     let (gate, residual_rules_discovered, refined_rules_applied, pinned_rules_applied) =
         build_gate(
-            &rows,
+            rows,
             &options.gate_id,
             residual_options.as_ref(),
             refinement_options.as_ref(),
@@ -651,7 +654,7 @@ pub fn build_pearl_from_rows(
         residual_rules_discovered,
         refined_rules_applied,
         pinned_rules_applied,
-        selected_features: sorted_feature_names(&rows),
+        selected_features: sorted_feature_names(rows),
         training_parity,
         cache_hit: false,
         output_files: OutputFiles {
@@ -714,8 +717,8 @@ mod tests {
         PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
-        ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition, RuleKind,
-        RuleVerificationStatus,
+        ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition,
+        RuleKind, RuleVerificationStatus,
     };
     use serde_json::{Number, Value};
     use std::collections::HashMap;
@@ -831,8 +834,14 @@ mod tests {
         let loaded = load_decision_traces_auto(&json_path, None, None, None).unwrap();
         assert_eq!(loaded.label_column, "result.verdict");
         assert_eq!(loaded.rows[0].features["account.age_days"], 730);
-        assert_eq!(loaded.rows[0].features["account.verified"], Value::Bool(true));
-        assert_eq!(loaded.rows[1].features["signals.spam_likelihood"], Value::Number(Number::from_f64(0.91).unwrap()));
+        assert_eq!(
+            loaded.rows[0].features["account.verified"],
+            Value::Bool(true)
+        );
+        assert_eq!(
+            loaded.rows[1].features["signals.spam_likelihood"],
+            Value::Number(Number::from_f64(0.91).unwrap())
+        );
         assert!(loaded.rows[0].allowed);
         assert!(!loaded.rows[1].allowed);
     }
@@ -858,14 +867,12 @@ mod tests {
     fn load_decision_traces_auto_rejects_ambiguous_binary_columns() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
-        std::fs::write(
-            &csv_path,
-            "is_member,is_urgent\n1,0\n0,1\n",
-        )
-        .unwrap();
+        std::fs::write(&csv_path, "is_member,is_urgent\n1,0\n0,1\n").unwrap();
 
         let err = load_decision_traces_auto(&csv_path, None, None, None).unwrap_err();
-        assert!(err.to_string().contains("multiple possible binary label fields"));
+        assert!(err
+            .to_string()
+            .contains("multiple possible binary label fields"));
         assert!(err.to_string().contains("is_member"));
         assert!(err.to_string().contains("is_urgent"));
     }
@@ -1090,7 +1097,11 @@ mod tests {
 
     #[test]
     fn build_residual_pass_recovers_missed_boolean_slice() {
-        if std::process::Command::new("z3").arg("-version").output().is_err() {
+        if std::process::Command::new("z3")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
             return;
         }
 
@@ -1382,9 +1393,7 @@ mod tests {
                 &CandidateRule {
                     feature: "debt_ratio".to_string(),
                     op: ComparisonOperator::Gte,
-                    value: ComparisonValue::Literal(
-                        Value::Number(Number::from_f64(0.55).unwrap()),
-                    ),
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.55).unwrap())),
                     denied_coverage: 3,
                     false_positives: 0,
                 },

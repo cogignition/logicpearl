@@ -1,13 +1,14 @@
 use super::*;
 use crate::observer_cmd::{
-    observe_benchmark_cases, observer_resolution, render_observer_resolution, resolve_observer_for_cases,
+    observe_benchmark_cases, observer_resolution, render_observer_resolution,
+    resolve_observer_for_cases,
 };
 use logicpearl_benchmark::{
     adapt_jailbreakbench_dataset, adapt_promptshield_dataset,
     adapt_rogue_security_prompt_injections_dataset,
 };
-use logicpearl_discovery::ArtifactSet;
 use logicpearl_core::LogicPearlError;
+use logicpearl_discovery::ArtifactSet;
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_runtime::evaluate_gate;
 use sha2::{Digest, Sha256};
@@ -144,7 +145,11 @@ pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Merged".bold().bright_green(), "benchmark cases".bold());
+        println!(
+            "{} {}",
+            "Merged".bold().bright_green(),
+            "benchmark cases".bold()
+        );
         println!("  {} {}", "Inputs".bright_black(), args.inputs.len());
         println!("  {} {}", "Rows".bright_black(), total_rows);
         println!("  {} {}", "Rewritten ids".bright_black(), rewritten_ids);
@@ -201,19 +206,34 @@ pub(crate) fn run_benchmark_split_cases(args: BenchmarkSplitCasesArgs) -> Result
     };
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&summary).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Split".bold().bright_green(), "benchmark cases".bold());
+        println!(
+            "{} {}",
+            "Split".bold().bright_green(),
+            "benchmark cases".bold()
+        );
         println!("  {} {}", "Input rows".bright_black(), summary.input_rows);
         println!("  {} {}", "Train rows".bright_black(), summary.train_rows);
         println!("  {} {}", "Dev rows".bright_black(), summary.dev_rows);
-        println!("  {} {}", "Train output".bright_black(), summary.train_output);
+        println!(
+            "  {} {}",
+            "Train output".bright_black(),
+            summary.train_output
+        );
         println!("  {} {}", "Dev output".bright_black(), summary.dev_output);
     }
     Ok(())
 }
 
-fn disambiguate_case_id(base_id: &str, source_tag: &str, seen_ids: &std::collections::BTreeSet<String>) -> String {
+fn disambiguate_case_id(
+    base_id: &str,
+    source_tag: &str,
+    seen_ids: &std::collections::BTreeSet<String>,
+) -> String {
     let base = format!("{base_id}__{source_tag}");
     if !seen_ids.contains(&base) {
         return base;
@@ -295,17 +315,33 @@ pub(crate) fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Prepared".bold().bright_green(), "benchmark dataset".bold());
+        println!(
+            "{} {}",
+            "Prepared".bold().bright_green(),
+            "benchmark dataset".bold()
+        );
         println!("  {} {}", "Observed".bright_black(), observed_rows);
         println!(
             "  {} {}",
             "Observer".bright_black(),
             render_observer_resolution(&observer_resolution(&observer))
         );
-        println!("  {} {}", "Observed output".bright_black(), observed_path.display());
-        println!("  {} {}", "Trace output".bright_black(), traces_dir.display());
+        println!(
+            "  {} {}",
+            "Observed output".bright_black(),
+            observed_path.display()
+        );
+        println!(
+            "  {} {}",
+            "Trace output".bright_black(),
+            traces_dir.display()
+        );
         if let Some(discover_result) = discover_result {
-            println!("  {} {}", "Artifacts".bright_black(), discover_result.artifacts.len());
+            println!(
+                "  {} {}",
+                "Artifacts".bright_black(),
+                discover_result.artifacts.len()
+            );
             println!(
                 "  {} {}",
                 "Artifact set".bright_black(),
@@ -336,7 +372,11 @@ pub(crate) fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Observed".bold().bright_green(), "benchmark cases".bold());
+        println!(
+            "{} {}",
+            "Observed".bold().bright_green(),
+            "benchmark cases".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!(
             "  {} {}",
@@ -359,9 +399,17 @@ pub(crate) fn run_benchmark_list_profiles(args: BenchmarkListProfilesArgs) -> Re
     } else {
         println!("{}", "Benchmark adapter profiles".bold().bright_blue());
         for profile in profiles {
-            println!("  {} {}", profile.id.bold(), profile.description.bright_black());
+            println!(
+                "  {} {}",
+                profile.id.bold(),
+                profile.description.bright_black()
+            );
             println!("    {} {}", "Format".bright_black(), profile.source_format);
-            println!("    {} {}", "Default route".bright_black(), profile.default_route);
+            println!(
+                "    {} {}",
+                "Default route".bright_black(),
+                profile.default_route
+            );
         }
     }
     Ok(())
@@ -376,10 +424,21 @@ pub(crate) fn run_benchmark_detect_profile(args: BenchmarkDetectProfileArgs) -> 
         "detected_profile": profile.id(),
     });
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&response).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Detected".bold().bright_green(), profile.id().bold());
-        println!("  {} {}", "Dataset".bright_black(), args.raw_dataset.display());
+        println!(
+            "{} {}",
+            "Detected".bold().bright_green(),
+            profile.id().bold()
+        );
+        println!(
+            "  {} {}",
+            "Dataset".bright_black(),
+            args.raw_dataset.display()
+        );
     }
     Ok(())
 }
@@ -390,9 +449,16 @@ pub(crate) fn run_benchmark_emit_traces(args: BenchmarkEmitTracesArgs) -> Result
         .wrap_err("failed to emit trace tables")?;
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&summary).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Emitted".bold().bright_green(), "discovery traces".bold());
+        println!(
+            "{} {}",
+            "Emitted".bold().bright_green(),
+            "discovery traces".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), summary.rows);
         println!("  {} {}", "Config".bright_black(), summary.config);
         println!("  {} {}", "Output".bright_black(), summary.output_dir);
@@ -408,16 +474,20 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
         other => other,
     };
     match profile {
-        BenchmarkAdapterProfile::Auto => unreachable!("auto profile should be resolved before dispatch"),
-        BenchmarkAdapterProfile::SaladBaseSet => run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
-            raw_salad_json: args.raw_dataset,
-            subset: SaladSubset::BaseSet,
-            output: args.output,
-            requested_tool: args.requested_tool,
-            requested_action: args.requested_action,
-            scope: args.scope,
-            json: args.json,
-        }),
+        BenchmarkAdapterProfile::Auto => {
+            unreachable!("auto profile should be resolved before dispatch")
+        }
+        BenchmarkAdapterProfile::SaladBaseSet => {
+            run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
+                raw_salad_json: args.raw_dataset,
+                subset: SaladSubset::BaseSet,
+                output: args.output,
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+                json: args.json,
+            })
+        }
         BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
             run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
                 raw_salad_json: args.raw_dataset,
@@ -485,18 +555,20 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             },
             args.json,
         ),
-        BenchmarkAdapterProfile::RogueSecurityPromptInjections => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "rogue-security/prompt-injections-benchmark",
-            adapt_rogue_security_prompt_injections_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
-            args.json,
-        ),
+        BenchmarkAdapterProfile::RogueSecurityPromptInjections => {
+            run_benchmark_adapt_prompt_json_rows(
+                &args.raw_dataset,
+                &args.output,
+                "rogue-security/prompt-injections-benchmark",
+                adapt_rogue_security_prompt_injections_dataset,
+                &BenchmarkAdaptDefaults {
+                    requested_tool: args.requested_tool,
+                    requested_action: args.requested_action,
+                    scope: args.scope,
+                },
+                args.json,
+            )
+        }
         BenchmarkAdapterProfile::ChatgptJailbreakPrompts => run_benchmark_adapt_prompt_json_rows(
             &args.raw_dataset,
             &args.output,
@@ -605,7 +677,11 @@ fn run_benchmark_adapt_prompt_json_rows(
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Adapted".bold().bright_green(), dataset_name.bold());
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            dataset_name.bold()
+        );
         println!("  {} {}", "Rows".bright_black(), cases.len());
         if let Some(first) = cases.first() {
             println!("  {} {}", "Route".bright_black(), first.expected_route);
@@ -653,7 +729,11 @@ pub(crate) fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Adapted".bold().bright_green(), "Salad-Data dataset".bold());
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            "Salad-Data dataset".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!(
             "  {} {}",
@@ -698,7 +778,11 @@ pub(crate) fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Adapted".bold().bright_green(), "ALERT dataset".bold());
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            "ALERT dataset".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
@@ -735,7 +819,11 @@ pub(crate) fn run_benchmark_adapt_squad(args: BenchmarkAdaptSquadArgs) -> Result
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Adapted".bold().bright_green(), "SQuAD dataset".bold());
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            "SQuAD dataset".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
@@ -772,7 +860,11 @@ pub(crate) fn run_benchmark_adapt_pint(args: BenchmarkAdaptPintArgs) -> Result<(
             .into_diagnostic()?
         );
     } else {
-        println!("{} {}", "Adapted".bold().bright_green(), "PINT dataset".bold());
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            "PINT dataset".bold()
+        );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), args.output.display());
     }
@@ -832,7 +924,10 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         let execution = pipeline
             .run(base_dir, &case.input)
             .into_diagnostic()
-            .wrap_err(format!("benchmark pipeline execution failed for case {}", case.id))?;
+            .wrap_err(format!(
+                "benchmark pipeline execution failed for case {}",
+                case.id
+            ))?;
 
         let actual_route_raw = execution
             .output
@@ -851,7 +946,10 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
             matched_cases += 1;
         }
 
-        let attack_confidence = execution.output.get("attack_confidence").and_then(Value::as_f64);
+        let attack_confidence = execution
+            .output
+            .get("attack_confidence")
+            .and_then(Value::as_f64);
 
         let is_attack = expected_route != "allow";
         if is_attack {
@@ -923,10 +1021,21 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&benchmark).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&benchmark).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Benchmark".bold().bright_green(), benchmark.pipeline_id.bold());
-        println!("  {} {}", "Cases".bright_black(), benchmark.summary.total_cases);
+        println!(
+            "{} {}",
+            "Benchmark".bold().bright_green(),
+            benchmark.pipeline_id.bold()
+        );
+        println!(
+            "  {} {}",
+            "Cases".bright_black(),
+            benchmark.summary.total_cases
+        );
         println!(
             "  {} {:.1}%",
             "Exact match".bright_black(),
@@ -953,9 +1062,7 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
 
 pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -> Result<()> {
     let artifact_set_path = &args.artifact_set_json;
-    let artifact_set_dir = artifact_set_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let artifact_set_dir = artifact_set_path.parent().unwrap_or_else(|| Path::new("."));
     let artifact_set: ArtifactSet = serde_json::from_str(
         &fs::read_to_string(artifact_set_path)
             .into_diagnostic()
@@ -983,10 +1090,14 @@ pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -
         let artifact_path = artifact_set_dir.join(&descriptor.artifact);
         let gate = LogicPearlGateIr::from_path(&artifact_path)
             .into_diagnostic()
-            .wrap_err(format!("failed to load artifact for target {}", descriptor.name))?;
-        let target_score = score_target_against_records(&gate, &headers, &records, &descriptor.name)
-            .into_diagnostic()
-            .wrap_err(format!("failed to score target {}", descriptor.name))?;
+            .wrap_err(format!(
+                "failed to load artifact for target {}",
+                descriptor.name
+            ))?;
+        let target_score =
+            score_target_against_records(&gate, &headers, &records, &descriptor.name)
+                .into_diagnostic()
+                .wrap_err(format!("failed to score target {}", descriptor.name))?;
         target_scores.push(ArtifactTargetScore {
             target: descriptor.name.clone(),
             artifact: artifact_path.display().to_string(),
@@ -1008,7 +1119,9 @@ pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -
         total_target_rows,
         macro_exact_match_rate: average(target_scores.iter().map(|score| score.exact_match_rate)),
         macro_positive_recall: average(target_scores.iter().map(|score| score.positive_recall)),
-        macro_negative_pass_rate: average(target_scores.iter().map(|score| score.negative_pass_rate)),
+        macro_negative_pass_rate: average(
+            target_scores.iter().map(|score| score.negative_pass_rate),
+        ),
     };
     let report = ArtifactScoreReport {
         artifact_set_id: artifact_set.artifact_set_id,
@@ -1032,10 +1145,21 @@ pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -
     }
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&report).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
     } else {
-        println!("{} {}", "Scored".bold().bright_green(), report.artifact_set_id.bold());
-        println!("  {} {}", "Targets".bright_black(), report.summary.target_count);
+        println!(
+            "{} {}",
+            "Scored".bold().bright_green(),
+            report.artifact_set_id.bold()
+        );
+        println!(
+            "  {} {}",
+            "Targets".bright_black(),
+            report.summary.target_count
+        );
         println!(
             "  {} {:.1}%",
             "Macro exact match".bright_black(),
@@ -1142,7 +1266,10 @@ fn parse_target_label(raw: &str, line_no: usize, column: &str) -> logicpearl_cor
     }
 }
 
-fn split_benchmark_cases(cases: Vec<BenchmarkCase>, train_fraction: f64) -> (Vec<BenchmarkCase>, Vec<BenchmarkCase>) {
+fn split_benchmark_cases(
+    cases: Vec<BenchmarkCase>,
+    train_fraction: f64,
+) -> (Vec<BenchmarkCase>, Vec<BenchmarkCase>) {
     let mut groups: BTreeMap<String, Vec<BenchmarkCase>> = BTreeMap::new();
     for case in cases {
         let group_key = format!(
@@ -1215,6 +1342,18 @@ fn average(values: impl Iterator<Item = f64>) -> f64 {
         0.0
     } else {
         collected.iter().sum::<f64>() / collected.len() as f64
+    }
+}
+
+fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
+    if collapse_non_allow_to_deny {
+        if route == "allow" {
+            "allow".to_string()
+        } else {
+            "deny".to_string()
+        }
+    } else {
+        route.to_string()
     }
 }
 
@@ -1298,7 +1437,8 @@ mod tests {
             csv::StringRecord::from(vec!["1", "1"]),
             csv::StringRecord::from(vec!["0", "0"]),
         ];
-        let score = score_target_against_records(&gate, &headers, &records, "target_exfiltration").unwrap();
+        let score =
+            score_target_against_records(&gate, &headers, &records, "target_exfiltration").unwrap();
         assert_eq!(score.rows, 3);
         assert_eq!(score.positive_rows, 1);
         assert_eq!(score.negative_rows, 2);
@@ -1306,17 +1446,5 @@ mod tests {
         assert_eq!(score.true_positives, 1);
         assert_eq!(score.true_negatives, 2);
         assert_eq!(score.false_positives, 0);
-    }
-}
-
-fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
-    if collapse_non_allow_to_deny {
-        if route == "allow" {
-            "allow".to_string()
-        } else {
-            "deny".to_string()
-        }
-    } else {
-        route.to_string()
     }
 }

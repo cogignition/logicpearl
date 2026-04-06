@@ -189,10 +189,10 @@ pub fn guardrails_signal_label(signal: GuardrailsSignal) -> &'static str {
     }
 }
 
-pub fn guardrails_signal_phrases<'a>(
-    config: &'a GuardrailsCueConfig,
+pub fn guardrails_signal_phrases(
+    config: &GuardrailsCueConfig,
     signal: GuardrailsSignal,
-) -> &'a [String] {
+) -> &[String] {
     match signal {
         GuardrailsSignal::InstructionOverride => &config.instruction_override_phrases,
         GuardrailsSignal::SystemPrompt => &config.system_prompt_phrases,
@@ -579,7 +579,7 @@ fn contains_gap_pattern_by_tokens(text_tokens: &[String], phrase_tokens: &[Strin
     }
 
     for start in 0..text_tokens.len() {
-        let Some(first_end) = match_segment_at(text_tokens, start, &segments[0]) else {
+        let Some(first_end) = match_segment_at(text_tokens, start, segments[0]) else {
             continue;
         };
         let mut search_start = first_end;
@@ -612,7 +612,7 @@ fn contains_gap_pattern_by_tokens(text_tokens: &[String], phrase_tokens: &[Strin
     false
 }
 
-fn split_gap_pattern_segments<'a>(phrase_tokens: &'a [String]) -> Vec<&'a [String]> {
+fn split_gap_pattern_segments(phrase_tokens: &[String]) -> Vec<&[String]> {
     let mut segments = Vec::new();
     let mut start = 0usize;
     for (index, token) in phrase_tokens.iter().enumerate() {
@@ -842,13 +842,17 @@ fn edit_distance_at_most_one(left: &str, right: &str) -> bool {
             return false;
         }
 
-        if left_len == right_len {
-            i += 1;
-            j += 1;
-        } else if left_len > right_len {
-            i += 1;
-        } else {
-            j += 1;
+        match left_len.cmp(&right_len) {
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                i += 1;
+            }
+            std::cmp::Ordering::Less => {
+                j += 1;
+            }
         }
     }
 

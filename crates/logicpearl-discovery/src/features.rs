@@ -42,7 +42,10 @@ pub(super) fn infer_binary_feature_names(rows: &[DecisionTraceRow]) -> Vec<Strin
             let mut names: Vec<String> = row
                 .features
                 .keys()
-                .filter(|feature| rows.iter().all(|row| is_binary_value(row.features.get(*feature))))
+                .filter(|feature| {
+                    rows.iter()
+                        .all(|row| is_binary_value(row.features.get(*feature)))
+                })
                 .cloned()
                 .collect();
             names.sort();

@@ -11,6 +11,7 @@ if [ -n "$staged_rust_files" ]; then
   # shellcheck disable=SC2086
   rustfmt --check $staged_rust_files
 fi
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_getting_started
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_benchmark_heldout
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_demos

@@ -13,7 +13,10 @@ pub(crate) fn run_pipeline_validate(args: PipelineValidateArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("pipeline validation failed")?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&validated).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&validated).into_diagnostic()?
+        );
     } else {
         println!(
             "{} {}",
@@ -21,7 +24,11 @@ pub(crate) fn run_pipeline_validate(args: PipelineValidateArgs) -> Result<()> {
             format!("manifest is valid ({})", validated.pipeline_id).bright_black()
         );
         println!("  {} {}", "Stages".bright_black(), validated.stage_count);
-        println!("  {} {}", "Exports".bright_black(), validated.exports.join(", "));
+        println!(
+            "  {} {}",
+            "Exports".bright_black(),
+            validated.exports.join(", ")
+        );
         for stage in &validated.stages {
             println!(
                 "  {} {} {}",
@@ -47,7 +54,10 @@ pub(crate) fn run_pipeline_inspect(args: PipelineInspectArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("pipeline inspection failed")?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&validated).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&validated).into_diagnostic()?
+        );
     } else {
         println!(
             "{} {}",
@@ -56,7 +66,11 @@ pub(crate) fn run_pipeline_inspect(args: PipelineInspectArgs) -> Result<()> {
         );
         println!("  {} {}", "Entrypoint".bright_black(), validated.entrypoint);
         println!("  {} {}", "Stages".bright_black(), validated.stage_count);
-        println!("  {} {}", "Final exports".bright_black(), validated.exports.join(", "));
+        println!(
+            "  {} {}",
+            "Final exports".bright_black(),
+            validated.exports.join(", ")
+        );
         for stage in &validated.stages {
             println!(
                 "  {} {} {}",
@@ -71,7 +85,11 @@ pub(crate) fn run_pipeline_inspect(args: PipelineInspectArgs) -> Result<()> {
                 println!("    {} {}", "Plugin".bright_black(), plugin_manifest);
             }
             if !stage.exports.is_empty() {
-                println!("    {} {}", "Exports".bright_black(), stage.exports.join(", "));
+                println!(
+                    "    {} {}",
+                    "Exports".bright_black(),
+                    stage.exports.join(", ")
+                );
             }
         }
     }
@@ -98,14 +116,20 @@ pub(crate) fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("pipeline execution failed")?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&execution).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&execution).into_diagnostic()?
+        );
     } else {
         println!(
             "{} {}",
             "Pipeline".bold().bright_green(),
             execution.pipeline_id.bold()
         );
-        println!("{}", serde_json::to_string_pretty(&execution.output).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&execution.output).into_diagnostic()?
+        );
     }
     Ok(())
 }
@@ -130,7 +154,10 @@ pub(crate) fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("pipeline trace execution failed")?;
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&execution).into_diagnostic()?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&execution).into_diagnostic()?
+        );
     } else {
         println!(
             "{} {}",

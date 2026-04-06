@@ -100,6 +100,17 @@ pub struct ObserverAutoSelectionReport {
     pub tried: Vec<ObserverSynthesisTrialReport>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ObserverAutoSynthesisOptions<'a> {
+    pub train_cases: &'a [SynthesisCase],
+    pub dev_cases: &'a [SynthesisCase],
+    pub bootstrap: ObserverBootstrapStrategy,
+    pub target_goal: ObserverTargetGoal,
+    pub positive_routes: &'a [String],
+    pub candidate_frontier: &'a [usize],
+    pub tolerance: f64,
+}
+
 struct CandidatePool {
     candidates: Vec<String>,
     positive_constraints: Vec<Vec<usize>>,
@@ -1035,16 +1046,10 @@ pub fn evaluate_guardrails_artifact_signal(
 pub fn synthesize_guardrails_artifact_auto(
     artifact: &NativeObserverArtifact,
     signal: GuardrailsSignal,
-    train_cases: &[SynthesisCase],
-    dev_cases: &[SynthesisCase],
-    bootstrap: ObserverBootstrapStrategy,
-    target_goal: ObserverTargetGoal,
-    positive_routes: &[String],
-    candidate_frontier: &[usize],
-    tolerance: f64,
+    options: ObserverAutoSynthesisOptions<'_>,
 ) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
     let started = Instant::now();
-    if candidate_frontier.is_empty() {
+    if options.candidate_frontier.is_empty() {
         return Err(LogicPearlError::message(
             "auto candidate search requires at least one candidate cap",
         ));
@@ -1056,10 +1061,10 @@ pub fn synthesize_guardrails_artifact_auto(
         ObserverSynthesisReport,
         ObserverSignalScoreReport,
     )> = Vec::new();
-    let dev_eval_bootstrap = if matches!(bootstrap, ObserverBootstrapStrategy::Auto) {
+    let dev_eval_bootstrap = if matches!(options.bootstrap, ObserverBootstrapStrategy::Auto) {
         ObserverBootstrapStrategy::Route
     } else {
-        bootstrap
+        options.bootstrap
     };
     let seed_phrases = {
         let config = artifact.guardrails.as_ref().ok_or_else(|| {
@@ -1068,27 +1073,28 @@ pub fn synthesize_guardrails_artifact_auto(
         guardrails_signal_phrases(config, signal).to_vec()
     };
 
-    for &bootstrap_candidate in auto_bootstrap_strategies(bootstrap) {
+    for &bootstrap_candidate in auto_bootstrap_strategies(options.bootstrap) {
         let Ok((bootstrap_mode, positive_prompts, negative_prompts)) = infer_bootstrap_examples(
-            train_cases,
+            options.train_cases,
             signal,
             bootstrap_candidate,
-            positive_routes,
+            options.positive_routes,
             &seed_phrases,
         ) else {
             continue;
         };
         log_synthesis_progress(format!(
-            "signal={} mode={bootstrap_mode:?} train_pos={} train_neg={} frontier={candidate_frontier:?}",
+            "signal={} mode={bootstrap_mode:?} train_pos={} train_neg={} frontier={:?}",
             guardrails_signal_label(signal),
             positive_prompts.len(),
             negative_prompts.len(),
+            options.candidate_frontier,
         ));
         let pool = build_candidate_pool(
             signal,
             &positive_prompts,
             &negative_prompts,
-            *candidate_frontier.iter().max().unwrap_or(&0),
+            *options.candidate_frontier.iter().max().unwrap_or(&0),
         );
         if pool.candidates.is_empty() {
             log_synthesis_progress(format!(
@@ -1102,7 +1108,7 @@ pub fn synthesize_guardrails_artifact_auto(
             guardrails_signal_label(signal),
             pool.candidates.len(),
         ));
-        for &cap in candidate_frontier {
+        for &cap in options.candidate_frontier {
             let trial_started = Instant::now();
             log_synthesis_progress(format!(
                 "signal={} mode={bootstrap_mode:?} trying cap={cap}",
@@ -1122,9 +1128,9 @@ pub fn synthesize_guardrails_artifact_auto(
             let Ok(dev_score) = evaluate_guardrails_artifact_signal(
                 &candidate_artifact,
                 signal,
-                dev_cases,
+                options.dev_cases,
                 dev_eval_bootstrap,
-                positive_routes,
+                options.positive_routes,
             ) else {
                 continue;
             };
@@ -1148,12 +1154,12 @@ pub fn synthesize_guardrails_artifact_auto(
 
     let best_primary_metric = trials
         .iter()
-        .map(|(_, _, _, score)| primary_metric(target_goal, score))
+        .map(|(_, _, _, score)| primary_metric(options.target_goal, score))
         .fold(f64::NEG_INFINITY, f64::max);
 
     let mut chosen_index = None;
     for (index, (cap, _, train_report, score)) in trials.iter().enumerate() {
-        if primary_metric(target_goal, score) + tolerance < best_primary_metric {
+        if primary_metric(options.target_goal, score) + options.tolerance < best_primary_metric {
             continue;
         }
         match chosen_index {
@@ -1161,7 +1167,7 @@ pub fn synthesize_guardrails_artifact_auto(
             Some(current) => {
                 let (current_cap, _, current_train_report, current_score) = &trials[current];
                 let better = is_better_trial(
-                    target_goal,
+                    options.target_goal,
                     *cap,
                     train_report,
                     score,
@@ -1185,27 +1191,27 @@ pub fn synthesize_guardrails_artifact_auto(
         guardrails_signal_label(signal),
         chosen_report
             .selected_max_candidates
-            .unwrap_or(candidate_frontier[0]),
+            .unwrap_or(options.candidate_frontier[0]),
         started.elapsed().as_secs_f32(),
     ));
     chosen_report.auto_selection = Some(ObserverAutoSelectionReport {
-        target_goal,
-        selection_metric: selection_metric_name(target_goal).to_string(),
-        tolerance,
+        target_goal: options.target_goal,
+        selection_metric: selection_metric_name(options.target_goal).to_string(),
+        tolerance: options.tolerance,
         tried: trials
             .into_iter()
             .chain(std::iter::once((
                 chosen_report
                     .selected_max_candidates
-                    .unwrap_or(candidate_frontier[0]),
+                    .unwrap_or(options.candidate_frontier[0]),
                 chosen_artifact.clone(),
                 chosen_report.clone(),
                 evaluate_guardrails_artifact_signal(
                     &chosen_artifact,
                     signal,
-                    dev_cases,
+                    options.dev_cases,
                     dev_eval_bootstrap,
-                    positive_routes,
+                    options.positive_routes,
                 )?,
             )))
             .map(

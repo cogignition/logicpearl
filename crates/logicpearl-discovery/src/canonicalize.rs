@@ -72,9 +72,7 @@ fn rule_canonicalization_key(rule: &RuleDefinition) -> Option<String> {
     let Expression::Comparison(comparison) = &rule.deny_when else {
         return None;
     };
-    if comparison.value.literal().and_then(Value::as_f64).is_none() {
-        return None;
-    }
+    comparison.value.literal().and_then(Value::as_f64)?;
     if !matches!(
         comparison.op,
         ComparisonOperator::Eq
@@ -105,7 +103,8 @@ fn canonicalize_numeric_rule_group(group: Vec<RuleDefinition>) -> Vec<RuleDefini
     let mut intervals = Vec::new();
     let mut strongest_status = RuleVerificationStatus::HeuristicUnverified;
     for rule in &group {
-        strongest_status = strongest_verification_status(strongest_status, verification_status(rule));
+        strongest_status =
+            strongest_verification_status(strongest_status, verification_status(rule));
         let Expression::Comparison(comparison) = &rule.deny_when else {
             continue;
         };
@@ -298,18 +297,26 @@ pub(super) fn comparison_matches(
     match (&comparison.op, value, right) {
         (ComparisonOperator::Eq, left, right) => values_equal(left, right),
         (ComparisonOperator::Ne, left, right) => !values_equal(left, right),
-        (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().zip(right.as_f64()).map(|(l, r)| l <= r).unwrap_or(false)
-        }
-        (ComparisonOperator::Lt, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().zip(right.as_f64()).map(|(l, r)| l < r).unwrap_or(false)
-        }
-        (ComparisonOperator::Gt, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().zip(right.as_f64()).map(|(l, r)| l > r).unwrap_or(false)
-        }
-        (ComparisonOperator::Gte, Value::Number(left), Value::Number(right)) => {
-            left.as_f64().zip(right.as_f64()).map(|(l, r)| l >= r).unwrap_or(false)
-        }
+        (ComparisonOperator::Lte, Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .map(|(l, r)| l <= r)
+            .unwrap_or(false),
+        (ComparisonOperator::Lt, Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .map(|(l, r)| l < r)
+            .unwrap_or(false),
+        (ComparisonOperator::Gt, Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .map(|(l, r)| l > r)
+            .unwrap_or(false),
+        (ComparisonOperator::Gte, Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .zip(right.as_f64())
+            .map(|(l, r)| l >= r)
+            .unwrap_or(false),
         (ComparisonOperator::In, left, Value::Array(items)) => {
             items.iter().any(|item| values_equal(left, item))
         }
