@@ -85,6 +85,7 @@ struct WafRouteClasses {
     automation_probe: WafRouteClass,
     command_injection: WafRouteClass,
     php_injection: WafRouteClass,
+    path_traversal: WafRouteClass,
     sensitive_surface: WafRouteClass,
     protocol_review: WafRouteClass,
     sqli: WafRouteClass,
@@ -109,6 +110,8 @@ struct WafRoutePatterns {
     xss_markers: Vec<String>,
     xss_meta_markers: Vec<String>,
     restricted_markers: Vec<String>,
+    path_traversal_markers: Vec<String>,
+    path_traversal_meta_markers: Vec<String>,
     restricted_meta_markers: Vec<String>,
     restricted_extensions: Vec<String>,
     export_markers: Vec<String>,
@@ -1694,6 +1697,12 @@ fn classify_waf_route_family(request: &ParsedHttpRequest, meta: Option<&str>) ->
         return route_class(&patterns.route_classes.php_injection);
     }
 
+    if contains_any_marker(&request_text, &patterns.path_traversal_markers)
+        || contains_any_marker(&meta_text, &patterns.path_traversal_meta_markers)
+    {
+        return route_class(&patterns.route_classes.path_traversal);
+    }
+
     if contains_any_marker(&request_text, &patterns.restricted_markers)
         || contains_any_marker(&meta_text, &patterns.restricted_meta_markers)
         || patterns
@@ -2368,6 +2377,25 @@ mod tests {
     }
 
     #[test]
+    fn classify_waf_routes_path_traversal_to_injection_payload() {
+        let request = waf_request("/download?file=../../etc/passwd");
+        let (route, category) = classify_waf_route_family(&request, None);
+        assert_eq!(route, "deny_injection_payload");
+        assert_eq!(category, "waf:path-traversal");
+    }
+
+    #[test]
+    fn classify_waf_routes_bad_bot_meta_to_review() {
+        let request = waf_request("/index.html");
+        let (route, category) = classify_waf_route_family(
+            &request,
+            Some("[msg \"BAD BOT - Detected and Blocked.\"] Matched phrase \"BLEXBot\" at REQUEST_HEADERS:User-Agent."),
+        );
+        assert_eq!(route, "review_suspicious_request");
+        assert_eq!(category, "waf:automation-probe");
+    }
+
+    #[test]
     fn classify_waf_routes_backup_extensions_to_sensitive_surface() {
         let request = waf_request("/tienda1/miembros/fotos.jsp.BAK");
         let (route, category) = classify_waf_route_family(&request, None);
@@ -2714,7 +2742,7 @@ mod tests {
         fs::create_dir_all(&daily).unwrap();
         fs::write(
             daily.join("modsec_audit.anon.log"),
-            "--badbot-A--\n[25/Aug/2025:00:05:10 +0200] tx 1 1 1 1\n--badbot-B--\nGET /robots.txt HTTP/1.1\nHost: example.test\nUser-Agent: DotBot/1.2\n\n--badbot-H--\nMessage: Access denied with code 403 (phase 2). Matched phrase \"DotBot\" at REQUEST_HEADERS:User-agent. [msg \"BAD BOT - Detected and Blocked.\"]\n--badbot-Z--\n--secret-A--\n[25/Aug/2025:00:05:11 +0200] tx 1 1 1 1\n--secret-B--\nGET /.git/HEAD HTTP/1.1\nHost: example.test\n\n--secret-H--\nMessage: Warning. Matched phrase \"/.git/\" at REQUEST_FILENAME. [msg \"Restricted File Access Attempt\"] [tag \"attack-lfi\"]\n--secret-Z--\n",
+            "--badbot-A--\n[25/Aug/2025:00:05:10 +0200] tx 1 1 1 1\n--badbot-B--\nGET /robots.txt HTTP/1.1\nHost: example.test\nUser-Agent: DotBot/1.2\n\n--badbot-H--\nMessage: Access denied with code 403 (phase 2). Matched phrase \"DotBot\" at REQUEST_HEADERS:User-agent. [msg \"BAD BOT - Detected and Blocked.\"]\n--badbot-Z--\n--secret-A--\n[25/Aug/2025:00:05:11 +0200] tx 1 1 1 1\n--secret-B--\nGET /config.ini HTTP/1.1\nHost: example.test\n\n--secret-H--\nMessage: Warning. String match within \".ini\" at TX:extension. [msg \"URL file extension is restricted by policy\"] [tag \"attack-protocol\"] [tag \"ext_restricted\"]\n--secret-Z--\n",
         )
         .unwrap();
 

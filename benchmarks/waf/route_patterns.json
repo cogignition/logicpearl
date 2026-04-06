@@ -12,6 +12,10 @@
       "expected_route": "deny_injection_payload",
       "category": "waf:php-injection"
     },
+    "path_traversal": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:path-traversal"
+    },
     "sensitive_surface": {
       "expected_route": "deny_sensitive_surface",
       "category": "waf:restricted-resource"
@@ -54,7 +58,10 @@
   ],
   "scanner_meta_markers": [
     "bad bot",
-    "scanner"
+    "scanner",
+    "detected and blocked",
+    "matched phrase",
+    "user-agent"
   ],
   "protocol_review_meta_markers": [
     "attack-protocol",
@@ -131,17 +138,31 @@
     "cross site scripting"
   ],
   "restricted_markers": [
+    "/.git",
+    "/.env",
+    "/phpmyadmin",
+    "/wp-admin",
+    "restricted file access"
+  ],
+  "path_traversal_markers": [
     "../",
     "..\\",
     "%2e%2e",
-    "/.git",
-    "/.env",
+    "%2e%2e%2f",
+    "%2e%2e/",
     "/etc/passwd",
     "/windows/win.ini",
-    "/phpmyadmin",
-    "/wp-admin",
+    "/proc/self/environ",
+    "..;/",
+    "..%2f",
+    "..%5c",
+    "attack-lfi"
+  ],
+  "path_traversal_meta_markers": [
     "attack-lfi",
-    "restricted file access"
+    "path traversal",
+    "local file inclusion",
+    "directory traversal"
   ],
   "restricted_meta_markers": [
     "attack-lfi",

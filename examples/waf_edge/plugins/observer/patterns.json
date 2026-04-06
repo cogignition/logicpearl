@@ -21,8 +21,13 @@
     "..\\",
     "%2e%2e%2f",
     "%2e%2e/",
+    "%252e%252e%252f",
+    "..%2f",
+    "..%5c",
+    "..;/",
     "/etc/passwd",
-    "/windows/win.ini"
+    "/windows/win.ini",
+    "/proc/self/environ"
   ],
   "server_include_patterns": [
     "<!--#include",
@@ -74,7 +79,12 @@
     "masscan",
     "dirbuster",
     "dotbot",
-    "blexbot"
+    "blexbot",
+    "ahrefsbot",
+    "semrushbot",
+    "mj12bot",
+    "gobuster",
+    "wpscan"
   ],
   "sensitive_meta_markers": [
     "restricted file access",
@@ -91,7 +101,10 @@
   ],
   "bad_bot_meta_patterns": [
     "bad bot",
-    "scanner"
+    "scanner",
+    "detected and blocked",
+    "matched phrase",
+    "user-agent"
   ],
   "protocol_meta_patterns": [
     "attack-protocol",
