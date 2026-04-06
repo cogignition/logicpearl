@@ -1,0 +1,68 @@
+{
+  "scanner_markers": [
+    "sqlmap",
+    "nikto",
+    "acunetix",
+    "nmap",
+    "masscan",
+    "dirbuster",
+    "dotbot",
+    "ahrefsbot",
+    "blexbot"
+  ],
+  "scanner_meta_markers": [
+    "bad bot",
+    "scanner"
+  ],
+  "sqli_markers": [
+    "' or 1=1",
+    "\" or \"1\"=\"1",
+    "union select",
+    "drop table",
+    "select * from",
+    "sleep(",
+    "waitfor delay",
+    "information_schema"
+  ],
+  "sqli_meta_markers": [
+    "attack-sqli",
+    "sql injection"
+  ],
+  "xss_markers": [
+    "<script",
+    "javascript:",
+    "onerror=",
+    "onload=",
+    "<img src=x"
+  ],
+  "xss_meta_markers": [
+    "attack-xss",
+    "cross site scripting"
+  ],
+  "restricted_markers": [
+    "../",
+    "..\\",
+    "%2e%2e",
+    "/.git",
+    "/.env",
+    "/etc/passwd",
+    "/windows/win.ini",
+    "/phpmyadmin",
+    "/wp-admin",
+    "attack-lfi",
+    "restricted file access"
+  ],
+  "restricted_meta_markers": [
+    "attack-lfi",
+    "restricted file access",
+    "ext_restricted",
+    "url file extension is restricted by policy"
+  ],
+  "export_markers": [
+    "download all",
+    "full export",
+    "dump all",
+    "entire tenant",
+    "all customer records"
+  ]
+}

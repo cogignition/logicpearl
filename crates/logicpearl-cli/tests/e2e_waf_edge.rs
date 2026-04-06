@@ -31,8 +31,8 @@ fn waf_edge_demo_pipeline_runs_and_scores_cleanly() {
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
     let pipeline = repo_root.join("examples/waf_edge/waf_edge.pipeline.json");
     let allow_input = repo_root.join("examples/waf_edge/input_allow.json");
-    let prompt_input = repo_root.join("examples/waf_edge/input_block_prompt.json");
-    let export_input = repo_root.join("examples/waf_edge/input_block_export.json");
+    let prompt_input = repo_root.join("examples/waf_edge/input_block_sqli.json");
+    let sensitive_input = repo_root.join("examples/waf_edge/input_block_sensitive.json");
     let review_input = repo_root.join("examples/waf_edge/input_review_probe.json");
     let dev_cases = repo_root.join("examples/waf_edge/dev_cases.jsonl");
 
@@ -61,22 +61,22 @@ fn waf_edge_demo_pipeline_runs_and_scores_cleanly() {
     );
     assert_eq!(
         deny_prompt["output"]["route_status"].as_str(),
-        Some("deny_instruction_boundary")
+        Some("deny_injection_payload")
     );
 
-    let deny_export = run_cli_json(
+    let deny_sensitive = run_cli_json(
         cli_bin,
         &[
             "pipeline",
             "run",
             pipeline.to_str().unwrap(),
-            export_input.to_str().unwrap(),
+            sensitive_input.to_str().unwrap(),
             "--json",
         ],
     );
     assert_eq!(
-        deny_export["output"]["route_status"].as_str(),
-        Some("deny_request_abuse")
+        deny_sensitive["output"]["route_status"].as_str(),
+        Some("deny_sensitive_surface")
     );
 
     let review = run_cli_json(
@@ -104,7 +104,7 @@ fn waf_edge_demo_pipeline_runs_and_scores_cleanly() {
             "--json",
         ],
     );
-    assert_eq!(benchmark["summary"]["total_cases"].as_u64(), Some(8));
-    assert_eq!(benchmark["summary"]["matched_cases"].as_u64(), Some(8));
+    assert_eq!(benchmark["summary"]["total_cases"].as_u64(), Some(4));
+    assert_eq!(benchmark["summary"]["matched_cases"].as_u64(), Some(4));
     assert_eq!(benchmark["summary"]["exact_match_rate"].as_f64(), Some(1.0));
 }

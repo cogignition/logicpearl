@@ -1,16 +1,31 @@
 {
-  "method": "POST",
-  "path": "/v1/agents/support/search",
-  "source_zone": "trusted_app",
+  "body": {},
   "headers": {
-    "tenant_scope": "support:acme",
-    "content_type": "application/json"
+    "accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5",
+    "accept-charset": "utf-8, utf-8;q=0.5, *;q=0.5",
+    "accept-encoding": "x-gzip, x-deflate, gzip, deflate",
+    "accept-language": "en",
+    "cache-control": "no-cache",
+    "connection": "close",
+    "cookie": "JSESSIONID=5F15B27EABC9E712884C23BD1075BDCA",
+    "host": "localhost:8080",
+    "pragma": "no-cache",
+    "user-agent": "Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)"
   },
-  "query": {},
-  "body": {
-    "prompt": "Summarize the outage note for a new support engineer and list the three most important takeaways.",
-    "requested_tool": "browser",
-    "requested_action": "search_docs",
-    "scope": "tenant"
-  }
+  "http_version": "HTTP/1.1",
+  "method": "GET",
+  "modsecurity_meta": "",
+  "path": "/tienda1/publico/caracteristicas.jsp",
+  "query": {
+    "id": "2"
+  },
+  "raw_request": "GET http://localhost:8080/tienda1/publico/caracteristicas.jsp?id=2 HTTP/1.1\nUser-Agent: Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)\nPragma: no-cache\nCache-control: no-cache\nAccept: text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5\nAccept-Encoding: x-gzip, x-deflate, gzip, deflate\nAccept-Charset: utf-8, utf-8;q=0.5, *;q=0.5\nAccept-Language: en\nHost: localhost:8080\nCookie: JSESSIONID=5F15B27EABC9E712884C23BD1075BDCA\nConnection: close",
+  "request_uri": "http://localhost:8080/tienda1/publico/caracteristicas.jsp?id=2",
+  "requested_action": "allow_or_block",
+  "requested_tool": "http",
+  "scope": "edge",
+  "source_file": "normalTrafficTraining.txt",
+  "source_log": "",
+  "source_zone": "public_web",
+  "waf_dataset": "csic-http-2010"
 }

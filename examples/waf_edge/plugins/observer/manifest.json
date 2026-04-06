@@ -10,6 +10,7 @@
   "capabilities": [
     "raw_json_input",
     "feature_output",
-    "waf_request_mapping"
+    "waf_request_mapping",
+    "batch_requests"
   ]
 }

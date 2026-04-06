@@ -20,3 +20,4 @@ Rules:
 Recommended public benchmark families:
 - `opa_rego/`
 - `guardrails/`
+- `waf/`

@@ -4,7 +4,8 @@ use crate::observer_cmd::{
     resolve_observer_for_cases,
 };
 use logicpearl_benchmark::{
-    adapt_jailbreakbench_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
+    adapt_csic_http_2010_dataset, adapt_jailbreakbench_dataset,
+    adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
     adapt_rogue_security_prompt_injections_dataset,
 };
 use logicpearl_core::LogicPearlError;
@@ -90,6 +91,8 @@ struct ArtifactScoreReport {
     summary: ArtifactScoreSummary,
     targets: Vec<ArtifactTargetScore>,
 }
+
+const BENCHMARK_BATCH_SIZE: usize = 256;
 
 pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
     if args.inputs.is_empty() {
@@ -477,6 +480,28 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
         BenchmarkAdapterProfile::Auto => {
             unreachable!("auto profile should be resolved before dispatch")
         }
+        BenchmarkAdapterProfile::CsicHttp2010 => run_benchmark_adapt_csic_http_2010(
+            &args.raw_dataset,
+            &args.output,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
+        BenchmarkAdapterProfile::ModsecurityOwasp2025 => {
+            run_benchmark_adapt_modsecurity_owasp_2025(
+                &args.raw_dataset,
+                &args.output,
+                &BenchmarkAdaptDefaults {
+                    requested_tool: args.requested_tool,
+                    requested_action: args.requested_action,
+                    scope: args.scope,
+                },
+                args.json,
+            )
+        }
         BenchmarkAdapterProfile::SaladBaseSet => {
             run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
                 raw_salad_json: args.raw_dataset,
@@ -656,6 +681,85 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             json: args.json,
         }),
     }
+}
+
+fn run_benchmark_adapt_csic_http_2010(
+    dataset_root: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let cases = adapt_csic_http_2010_dataset(dataset_root, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt CSIC HTTP 2010 benchmark dataset")?;
+    write_benchmark_cases_jsonl(&cases, output)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted CSIC HTTP 2010 JSONL")?;
+
+    render_mixed_benchmark_adapt_summary("CSIC HTTP 2010", &cases, output, json)
+}
+
+fn run_benchmark_adapt_modsecurity_owasp_2025(
+    dataset_root: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let cases = adapt_modsecurity_owasp_2025_dataset(dataset_root, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt ModSecurity OWASP 2025 benchmark dataset")?;
+    write_benchmark_cases_jsonl(&cases, output)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted ModSecurity OWASP 2025 JSONL")?;
+
+    render_mixed_benchmark_adapt_summary("ModSecurity OWASP 2025", &cases, output, json)
+}
+
+fn render_mixed_benchmark_adapt_summary(
+    dataset_name: &str,
+    cases: &[BenchmarkCase],
+    output: &Path,
+    json: bool,
+) -> Result<()> {
+    let deny_rows = cases
+        .iter()
+        .filter(|case| case.expected_route.starts_with("deny"))
+        .count();
+    let review_rows = cases
+        .iter()
+        .filter(|case| case.expected_route.starts_with("review"))
+        .count();
+    let allow_rows = cases
+        .len()
+        .saturating_sub(deny_rows)
+        .saturating_sub(review_rows);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source_benchmark": dataset_name,
+                "rows": cases.len(),
+                "deny_rows": deny_rows,
+                "review_rows": review_rows,
+                "allow_rows": allow_rows,
+                "output": output.display().to_string()
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            dataset_name.bold()
+        );
+        println!("  {} {}", "Rows".bright_black(), cases.len());
+        println!("  {} {}", "Deny rows".bright_black(), deny_rows);
+        println!("  {} {}", "Review rows".bright_black(), review_rows);
+        println!("  {} {}", "Allow rows".bright_black(), allow_rows);
+        println!("  {} {}", "Output".bright_black(), output.display());
+    }
+    Ok(())
 }
 
 fn run_benchmark_adapt_mt_agentrisk(
@@ -934,6 +1038,10 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         .pipeline_json
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
+    let prepared_pipeline = pipeline
+        .prepare(base_dir)
+        .into_diagnostic()
+        .wrap_err("failed to prepare pipeline artifact")?;
 
     let file = fs::File::open(&args.dataset_jsonl)
         .into_diagnostic()
@@ -965,7 +1073,46 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         ));
     }
 
+    let collapse_non_allow_to_deny = args.collapse_non_allow_to_deny;
     let mut results = Vec::with_capacity(cases.len());
+    for chunk in cases.chunks(BENCHMARK_BATCH_SIZE) {
+        let inputs = chunk
+            .iter()
+            .map(|case| case.input.clone())
+            .collect::<Vec<_>>();
+        let executions = prepared_pipeline
+            .run_batch(&inputs)
+            .into_diagnostic()
+            .wrap_err("benchmark pipeline batch execution failed")?;
+        for (case, execution) in chunk.iter().zip(executions) {
+            let actual_route_raw = execution
+                .output
+                .get("route_status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    guidance(
+                        "benchmark pipeline output is missing `route_status`",
+                        "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
+                    )
+                })?;
+            let actual_route = collapse_route(actual_route_raw, collapse_non_allow_to_deny);
+            let expected_route = collapse_route(&case.expected_route, collapse_non_allow_to_deny);
+            let matched = actual_route == expected_route;
+            let attack_confidence = execution
+                .output
+                .get("attack_confidence")
+                .and_then(Value::as_f64);
+            results.push(BenchmarkCaseResult {
+                id: case.id.clone(),
+                expected_route,
+                actual_route,
+                matched,
+                category: case.category.clone(),
+                attack_confidence,
+            });
+        }
+    }
+
     let mut matched_cases = 0_usize;
     let mut attack_cases = 0_usize;
     let mut benign_cases = 0_usize;
@@ -975,67 +1122,33 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     let mut category_totals: BTreeMap<String, usize> = BTreeMap::new();
     let mut category_matches: BTreeMap<String, usize> = BTreeMap::new();
 
-    for case in cases {
-        let execution = pipeline
-            .run(base_dir, &case.input)
-            .into_diagnostic()
-            .wrap_err(format!(
-                "benchmark pipeline execution failed for case {}",
-                case.id
-            ))?;
-
-        let actual_route_raw = execution
-            .output
-            .get("route_status")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                guidance(
-                    "benchmark pipeline output is missing `route_status`",
-                    "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
-                )
-            })?;
-        let actual_route = collapse_route(actual_route_raw, args.collapse_non_allow_to_deny);
-        let expected_route = collapse_route(&case.expected_route, args.collapse_non_allow_to_deny);
-        let matched = actual_route == expected_route;
+    for result in &results {
+        let matched = result.matched;
         if matched {
             matched_cases += 1;
         }
 
-        let attack_confidence = execution
-            .output
-            .get("attack_confidence")
-            .and_then(Value::as_f64);
-
-        let is_attack = expected_route != "allow";
+        let is_attack = result.expected_route != "allow";
         if is_attack {
             attack_cases += 1;
-            if actual_route != "allow" {
+            if result.actual_route != "allow" {
                 caught_attacks += 1;
             }
         } else {
             benign_cases += 1;
-            if actual_route == "allow" {
+            if result.actual_route == "allow" {
                 benign_passes += 1;
             } else {
                 false_positives += 1;
             }
         }
 
-        if let Some(category) = &case.category {
+        if let Some(category) = &result.category {
             *category_totals.entry(category.clone()).or_insert(0) += 1;
             if matched {
                 *category_matches.entry(category.clone()).or_insert(0) += 1;
             }
         }
-
-        results.push(BenchmarkCaseResult {
-            id: case.id,
-            expected_route,
-            actual_route,
-            matched,
-            category: case.category,
-            attack_confidence,
-        });
     }
 
     let mut category_accuracy = BTreeMap::new();

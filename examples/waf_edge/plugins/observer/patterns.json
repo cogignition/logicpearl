@@ -1,0 +1,65 @@
+{
+  "sqli_patterns": [
+    "' or 1=1",
+    "\" or \"1\"=\"1",
+    "union select",
+    "drop table",
+    "sleep(",
+    "waitfor delay",
+    "information_schema",
+    "'--"
+  ],
+  "xss_patterns": [
+    "<script",
+    "javascript:",
+    "onerror=",
+    "onload=",
+    "<img src=x"
+  ],
+  "traversal_patterns": [
+    "../",
+    "..\\",
+    "%2e%2e%2f",
+    "%2e%2e/",
+    "/etc/passwd",
+    "/windows/win.ini"
+  ],
+  "sensitive_route_patterns": [
+    "/admin",
+    "/internal",
+    "/.git",
+    "/.env",
+    "/config",
+    "config.ini",
+    ".bak",
+    ".backup",
+    ".sql",
+    ".old",
+    ".log",
+    "/phpmyadmin",
+    "/wp-admin"
+  ],
+  "benign_patterns": [
+    "search",
+    "show product",
+    "status page",
+    "contact support",
+    "view invoice",
+    "catalog"
+  ],
+  "scanner_patterns": [
+    "sqlmap",
+    "nikto",
+    "acunetix",
+    "nmap",
+    "masscan",
+    "dirbuster",
+    "dotbot",
+    "blexbot"
+  ],
+  "sensitive_meta_markers": [
+    "restricted file access",
+    "attack-lfi",
+    "ext_restricted"
+  ]
+}

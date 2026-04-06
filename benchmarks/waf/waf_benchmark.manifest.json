@@ -1,0 +1,45 @@
+{
+  "benchmark_version": "1.0",
+  "benchmark_id": "logicpearl_waf_v1",
+  "description": "Public LogicPearl benchmark manifest for request-level WAF pipelines.",
+  "task": "http_request_routing_and_attack_detection",
+  "recommended_pipeline": {
+    "observer_stage": "extract normalized HTTP request features from raw method, path, headers, query, body, and request metadata",
+    "policy_stages": [
+      "injection_payload",
+      "sensitive_surface",
+      "route_status"
+    ],
+    "final_routes": [
+      "allow",
+      "deny_injection_payload",
+      "deny_sensitive_surface",
+      "review_suspicious_request"
+    ]
+  },
+  "datasets": [
+    {
+      "name": "CSIC HTTP 2010",
+      "role": "balanced benign-vs-anomalous request corpus",
+      "type": "request_level_http"
+    },
+    {
+      "name": "OWASP ModSecurity 2025",
+      "role": "real-world malicious and suspicious traffic corpus",
+      "type": "production_audit_log"
+    }
+  ],
+  "metrics": [
+    "exact_match_rate",
+    "attack_catch_rate",
+    "benign_pass_rate",
+    "false_positive_rate",
+    "collapsed_allow_deny_exact_match_rate"
+  ],
+  "rules": [
+    "Keep the benchmark dataset public and reproducible.",
+    "Separate the readable demo slice from the full benchmark corpus.",
+    "Report both exact routes and collapsed allow-vs-deny scores.",
+    "Keep WAF meaning in adapters and plugins, not the generic core."
+  ]
+}

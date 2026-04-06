@@ -10,6 +10,7 @@
   "capabilities": [
     "route_status_summary",
     "pipeline_audit_summary",
-    "counterfactual_output"
+    "counterfactual_output",
+    "batch_requests"
   ]
 }

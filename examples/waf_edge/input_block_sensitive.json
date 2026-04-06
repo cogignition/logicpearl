@@ -1,0 +1,22 @@
+{
+  "body": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "connection": "keep-alive",
+    "host": "www.d5993d4.hu",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  },
+  "http_version": "HTTP/1.1",
+  "method": "GET",
+  "modsecurity_meta": "Message: Warning. String match within \".asa/ .asax/ .ascx/ .axd/ .backup/ .bak/ .bat/ .cdx/ .cer/ .cfg/ .cmd/ .com/ .config/ .conf/ .cs/ .csproj/ .csr/ .dat/ .db/ .dbf/ .dll/ .dos/ .htr/ .htw/ .ida/ .idc/ .idq/ .inc/ .ini/ .key/ .licx/ .lnk/ .log/ .mdb/ .old/ .pass/ .pdb/ .pol/ .printer/ .pwd/ .rdb/ .resources/ .resx/ .sql/ .swp/ .sys/ .vb/ .vbs/ .vbproj/ .vsdisco/ .webinfo/ .xsd/ .xsx/\" at TX:extension. [file \"/usr/share/modsecurity-crs/rules/REQUEST-920-PROTOCOL-ENFORCEMENT.conf\"] [line \"1019\"] [id \"920440\"] [msg \"URL file extension is restricted by policy\"] [data \".ini\"] [severity \"CRITICAL\"] [ver \"OWASP_CRS/3.2.3\"] [tag \"application-multi\"] [tag \"language-multi\"] [tag \"platform-multi\"] [tag \"attack-protocol\"] [tag \"OWASP_CRS\"] [tag \"OWASP_CRS/POLICY/EXT_RESTRICTED\"] [tag \"WASCTC/WASC-15\"] [tag \"OWASP_TOP_10/A7\"] [tag \"PCI/6.5.10\"]\nApache-Error: [file \"apache2_util.c\"] [line 273] [level 3] [client 100.109.152.43] ModSecurity: Warning. String match within \".asa/ .asax/ .ascx/ .axd/ .backup/ .bak/ .bat/ .cdx/ .cer/ .cfg/ .cmd/ .com/ .config/ .conf/ .cs/ .csproj/ .csr/ .dat/ .db/ .dbf/ .dll/ .dos/ .htr/ .htw/ .ida/ .idc/ .idq/ .inc/ .ini/ .key/ .licx/ .lnk/ .log/ .mdb/ .old/ .pass/ .pdb/ .pol/ .printer/ .pwd/ .rdb/ .resources/ .resx/ .sql/ .swp/ .sys/ .vb/ .vbs/ .vbproj/ .vsdisco/ .webinfo/ .xsd/ .xsx/\" at TX:extension. [file \"/usr/share/modsecurity-crs/rules/REQUEST-920-PROTOCOL-ENFORCEMENT.conf\"] [line \"1019\"] [id \"920440\"] [msg \"URL file extension is restricted by policy\"] [data \".ini\"] [severity \"CRITICAL\"] [ver \"OWASP_CRS/3.2.3\"] [tag \"application-multi\"] [tag \"language-multi\"] [tag \"platform-multi\"] [tag \"attack-protocol\"] [tag \"OWASP_CRS\"] [tag \"OWASP_CRS/POLICY/EXT_RESTRICTED\"] [tag \"WASCTC/WASC-15\"] [tag \"OWASP_TOP_10/A7\"] [tag \"PCI/6.5.10\"] [hostname \"www.d5993d4.hu\"] [uri \"/d_057bc65a/config.ini\"] [unique_id \"aIei2n6EeGrYSaHTJ4afVAAAABE\"]\nStopwatch: 1753719514185033 2269 (- - -)\nStopwatch2: 1753719514185033 2269; combined=1704, p1=622, p2=904, p3=0, p4=0, p5=177, sr=103, sw=1, l=0, gc=0\nProducer: ModSecurity for Apache/2.9.3 (http://www.modsecurity.org/); OWASP_CRS/3.2.3.\nServer: Apache\nEngine-Mode: \"ENABLED\"",
+  "path": "/d_057bc65a/config.ini",
+  "query": {},
+  "raw_request": "GET /d_057bc65a/config.ini HTTP/1.1\nHost: www.d5993d4.hu\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\nConnection: keep-alive\nAccept-Encoding: gzip",
+  "request_uri": "/d_057bc65a/config.ini",
+  "requested_action": "allow_or_block",
+  "requested_tool": "http",
+  "scope": "edge",
+  "source_log": "/private/tmp/logicpearl_modsecurity_owasp/28-Jul-2025/modsec_audit.anon.log",
+  "source_zone": "public_web",
+  "waf_dataset": "modsecurity-owasp-2025"
+}

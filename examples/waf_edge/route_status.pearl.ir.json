@@ -5,16 +5,20 @@
   "input_schema": {
     "features": [
       {
-        "id": "request_abuse_bitmask",
+        "id": "injection_payload_bitmask",
         "type": "int"
       },
       {
-        "id": "instruction_boundary_bitmask",
+        "id": "sensitive_surface_bitmask",
         "type": "int"
       },
       {
-        "id": "data_exfiltration_bitmask",
-        "type": "int"
+        "id": "has_scanner_fingerprint",
+        "type": "bool"
+      },
+      {
+        "id": "has_malformed_encoding",
+        "type": "bool"
       },
       {
         "id": "risk_score",
@@ -28,40 +32,49 @@
   },
   "rules": [
     {
-      "id": "deny_if_any_prior_guardrail_fired",
+      "id": "deny_if_any_prior_waf_family_fired",
       "kind": "predicate",
       "bit": 0,
       "deny_when": {
         "any": [
           {
-            "feature": "request_abuse_bitmask",
+            "feature": "injection_payload_bitmask",
             "op": ">",
             "value": 0
           },
           {
-            "feature": "instruction_boundary_bitmask",
-            "op": ">",
-            "value": 0
-          },
-          {
-            "feature": "data_exfiltration_bitmask",
+            "feature": "sensitive_surface_bitmask",
             "op": ">",
             "value": 0
           }
         ]
       },
-      "message": "One or more edge guardrails fired."
+      "message": "One or more edge WAF families fired."
     },
     {
-      "id": "review_high_risk_probe",
+      "id": "review_suspicious_probe",
       "kind": "predicate",
       "bit": 1,
       "deny_when": {
         "all": [
           {
+            "any": [
+              {
+                "feature": "has_scanner_fingerprint",
+                "op": "==",
+                "value": true
+              },
+              {
+                "feature": "has_malformed_encoding",
+                "op": "==",
+                "value": true
+              }
+            ]
+          },
+          {
             "feature": "risk_score",
             "op": ">=",
-            "value": 0.78
+            "value": 0.55
           },
           {
             "feature": "likely_benign_request",
@@ -70,7 +83,7 @@
           }
         ]
       },
-      "message": "High-risk but non-decisive requests are routed for review."
+      "message": "Scanner-like or malformed high-risk requests are routed for review."
     }
   ],
   "evaluation": {

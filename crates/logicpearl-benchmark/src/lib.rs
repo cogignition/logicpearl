@@ -62,6 +62,31 @@ struct MtAgentRiskTurnEntry {
     instruction_file: String,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedHttpRequest {
+    method: String,
+    path: String,
+    request_uri: String,
+    http_version: String,
+    headers: serde_json::Map<String, Value>,
+    query: serde_json::Map<String, Value>,
+    body: serde_json::Map<String, Value>,
+    raw_request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WafRoutePatterns {
+    scanner_markers: Vec<String>,
+    scanner_meta_markers: Vec<String>,
+    sqli_markers: Vec<String>,
+    sqli_meta_markers: Vec<String>,
+    xss_markers: Vec<String>,
+    xss_meta_markers: Vec<String>,
+    restricted_markers: Vec<String>,
+    restricted_meta_markers: Vec<String>,
+    export_markers: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaladBaseCase {
     pub qid: serde_json::Value,
@@ -112,6 +137,8 @@ pub struct SquadQuestion {
 #[serde(rename_all = "kebab-case")]
 pub enum BenchmarkAdapterProfile {
     Auto,
+    CsicHttp2010,
+    ModsecurityOwasp2025,
     SaladBaseSet,
     SaladAttackEnhancedSet,
     SafearenaSafe,
@@ -261,6 +288,8 @@ impl BenchmarkAdapterProfile {
     pub fn id(&self) -> &'static str {
         match self {
             Self::Auto => "auto",
+            Self::CsicHttp2010 => "csic-http-2010",
+            Self::ModsecurityOwasp2025 => "modsecurity-owasp-2025",
             Self::SaladBaseSet => "salad-base-set",
             Self::SaladAttackEnhancedSet => "salad-attack-enhanced-set",
             Self::SafearenaSafe => "safearena-safe",
@@ -283,6 +312,12 @@ impl BenchmarkAdapterProfile {
     pub fn description(&self) -> &'static str {
         match self {
             Self::Auto => "Detect the adapter profile from the raw dataset shape when the format is obvious.",
+            Self::CsicHttp2010 => {
+                "Adapt the CSIC 2010 HTTP request corpus into mixed allow/deny WAF benchmark cases."
+            }
+            Self::ModsecurityOwasp2025 => {
+                "Adapt the OWASP ModSecurity 2025 audit-log corpus into mixed WAF deny/review benchmark cases."
+            }
             Self::SaladBaseSet => "Adapt Salad-Data base_set rows into deny benchmark cases.",
             Self::SaladAttackEnhancedSet => "Adapt Salad-Data attack_enhanced_set rows into deny benchmark cases.",
             Self::SafearenaSafe => "Adapt SafeArena safe task rows into allow benchmark cases.",
@@ -317,6 +352,12 @@ impl BenchmarkAdapterProfile {
     pub fn source_format(&self) -> &'static str {
         match self {
             Self::Auto => "Any supported raw benchmark format",
+            Self::CsicHttp2010 => {
+                "CSIC HTTP 2010 dataset root directory with normalTrafficTraining.txt and anomalousTrafficTest.txt"
+            }
+            Self::ModsecurityOwasp2025 => {
+                "Extracted OWASP ModSecurity 2025 dataset root with dated modsec_audit.anon.log files"
+            }
             Self::SaladBaseSet => "Salad base_set JSON array",
             Self::SaladAttackEnhancedSet => "Salad attack_enhanced_set JSON array",
             Self::SafearenaSafe => "SafeArena safe.json task array",
@@ -341,6 +382,7 @@ impl BenchmarkAdapterProfile {
     pub fn default_route(&self) -> &'static str {
         match self {
             Self::Auto => "detected",
+            Self::CsicHttp2010 | Self::ModsecurityOwasp2025 => "mixed",
             Self::Squad => "allow",
             Self::SafearenaSafe | Self::McpMark => "allow",
             Self::SaladBaseSet => "deny",
@@ -363,6 +405,8 @@ impl BenchmarkAdapterProfile {
 pub fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
     [
         BenchmarkAdapterProfile::Auto,
+        BenchmarkAdapterProfile::CsicHttp2010,
+        BenchmarkAdapterProfile::ModsecurityOwasp2025,
         BenchmarkAdapterProfile::SaladBaseSet,
         BenchmarkAdapterProfile::SaladAttackEnhancedSet,
         BenchmarkAdapterProfile::SafearenaSafe,
@@ -488,6 +532,12 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
 
 pub fn detect_benchmark_adapter_profile(path: &Path) -> Result<BenchmarkAdapterProfile> {
     if path.is_dir() {
+        if is_csic_http_2010_root(path) {
+            return Ok(BenchmarkAdapterProfile::CsicHttp2010);
+        }
+        if is_modsecurity_owasp_root(path) {
+            return Ok(BenchmarkAdapterProfile::ModsecurityOwasp2025);
+        }
         if is_mt_agentrisk_root(path) {
             return Ok(BenchmarkAdapterProfile::MtAgentRisk);
         }
@@ -1047,6 +1097,89 @@ pub fn adapt_mt_agentrisk_dataset(
     Ok(cases)
 }
 
+pub fn adapt_csic_http_2010_dataset(
+    dataset_root: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    if !is_csic_http_2010_root(dataset_root) {
+        return Err(LogicPearlError::message(format!(
+            "CSIC HTTP 2010 dataset root is missing expected files: {}",
+            dataset_root.display()
+        )));
+    }
+
+    let mut cases = Vec::new();
+    cases.extend(adapt_csic_http_2010_file(
+        &dataset_root.join("normalTrafficTraining.txt"),
+        true,
+        defaults,
+    )?);
+    cases.extend(adapt_csic_http_2010_file(
+        &dataset_root.join("anomalousTrafficTest.txt"),
+        false,
+        defaults,
+    )?);
+    cases.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(cases)
+}
+
+pub fn adapt_modsecurity_owasp_2025_dataset(
+    dataset_root: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    if !is_modsecurity_owasp_root(dataset_root) {
+        return Err(LogicPearlError::message(format!(
+            "ModSecurity dataset root is missing expected audit logs: {}",
+            dataset_root.display()
+        )));
+    }
+
+    let mut logs = Vec::new();
+    collect_modsecurity_logs(dataset_root, &mut logs)?;
+    logs.sort();
+
+    let mut cases = Vec::new();
+    for log_path in logs {
+        let raw = fs::read_to_string(&log_path)?;
+        for transaction in parse_modsecurity_transactions(&raw) {
+            let Some(request_block) = transaction.sections.get("B") else {
+                continue;
+            };
+            let Some(request) = parse_http_request_block(request_block) else {
+                continue;
+            };
+            let meta = transaction.sections.get("H").cloned().unwrap_or_default();
+            let (expected_route, category) = classify_modsecurity_transaction(&request, &meta);
+            let tx_id = transaction
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("tx_{:06}", cases.len() + 1));
+            cases.push(build_waf_case(
+                format!("modsecurity_{}", sanitize_identifier(&tx_id)),
+                &request,
+                expected_route,
+                category,
+                defaults,
+                serde_json::json!({
+                    "waf_dataset": "modsecurity-owasp-2025",
+                    "modsecurity_meta": meta,
+                    "source_log": log_path.display().to_string(),
+                }),
+            ));
+        }
+    }
+
+    if cases.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "ModSecurity dataset contains no parseable audit transactions at {}",
+            dataset_root.display()
+        )));
+    }
+
+    cases.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(cases)
+}
+
 pub fn load_trace_projection_config(config_path: &Path) -> Result<TraceProjectionConfig> {
     let config_text = fs::read_to_string(config_path)?;
     let config: TraceProjectionConfig = serde_json::from_str(&config_text).map_err(|err| {
@@ -1222,11 +1355,43 @@ fn adapt_dataset_with_config(
         .collect()
 }
 
+fn is_csic_http_2010_root(path: &Path) -> bool {
+    path.is_dir()
+        && path.join("normalTrafficTraining.txt").is_file()
+        && path.join("anomalousTrafficTest.txt").is_file()
+}
+
+fn is_modsecurity_owasp_root(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let mut logs = Vec::new();
+    collect_modsecurity_logs(path, &mut logs).is_ok() && !logs.is_empty()
+}
+
 fn is_mt_agentrisk_root(path: &Path) -> bool {
     path.is_dir()
         && path.join("single_dataset.csv").is_file()
         && path.join("multi_dataset.csv").is_file()
         && path.join("workspaces").is_dir()
+}
+
+fn collect_modsecurity_logs(root: &Path, logs: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_modsecurity_logs(&path, logs)?;
+        } else if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value == "modsec_audit.anon.log")
+            .unwrap_or(false)
+        {
+            logs.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn sorted_child_dirs(root: &Path) -> Result<Vec<std::path::PathBuf>> {
@@ -1252,6 +1417,447 @@ fn read_trimmed_text(path: &Path) -> Result<String> {
         )));
     }
     Ok(trimmed.to_string())
+}
+
+fn adapt_csic_http_2010_file(
+    dataset_path: &Path,
+    allow_rows: bool,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    let raw = fs::read_to_string(dataset_path)?;
+    let blocks = split_http_request_blocks(&raw);
+    if blocks.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "CSIC dataset file contains no request blocks: {}",
+            dataset_path.display()
+        )));
+    }
+
+    let id_prefix = if allow_rows {
+        "csic_allow"
+    } else {
+        "csic_attack"
+    };
+    let mut cases = Vec::new();
+    for (index, block) in blocks.into_iter().enumerate() {
+        let Some(request) = parse_http_request_block(&block) else {
+            continue;
+        };
+        let (expected_route, category) = if allow_rows {
+            ("allow", "waf:benign".to_string())
+        } else {
+            classify_waf_route_family(&request, None)
+        };
+        cases.push(build_waf_case(
+            format!("{id_prefix}_{index:06}"),
+            &request,
+            expected_route,
+            category,
+            defaults,
+            serde_json::json!({
+                "waf_dataset": "csic-http-2010",
+                "source_file": dataset_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default(),
+            }),
+        ));
+    }
+    Ok(cases)
+}
+
+fn split_http_request_blocks(raw: &str) -> Vec<String> {
+    let normalized = raw.replace("\r\n", "\n");
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+
+    for line in normalized.lines() {
+        if looks_like_http_request_line(line) && !current.is_empty() {
+            let block = current.join("\n");
+            let trimmed = block.trim();
+            if !trimmed.is_empty() {
+                blocks.push(trimmed.to_string());
+            }
+            current.clear();
+        }
+        current.push(line.to_string());
+    }
+
+    let trailing = current.join("\n");
+    let trimmed = trailing.trim();
+    if !trimmed.is_empty() {
+        blocks.push(trimmed.to_string());
+    }
+
+    blocks
+}
+
+fn looks_like_http_request_line(line: &str) -> bool {
+    let methods = [
+        "GET ", "POST ", "PUT ", "PATCH ", "DELETE ", "HEAD ", "OPTIONS ",
+    ];
+    methods.iter().any(|method| line.starts_with(method)) && line.contains(" HTTP/")
+}
+
+fn parse_http_request_block(block: &str) -> Option<ParsedHttpRequest> {
+    let normalized = block.replace("\r\n", "\n");
+    let mut lines = normalized.lines();
+    let request_line = lines.next()?.trim();
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next()?.to_string();
+    let request_uri = request_parts.next()?.to_string();
+    let http_version = request_parts.next().unwrap_or("HTTP/1.1").to_string();
+
+    let mut header_lines = Vec::new();
+    let mut body_lines = Vec::new();
+    let mut in_body = false;
+    for line in lines {
+        if !in_body && line.trim().is_empty() {
+            in_body = true;
+            continue;
+        }
+        if in_body {
+            body_lines.push(line);
+        } else {
+            header_lines.push(line);
+        }
+    }
+
+    let mut headers = serde_json::Map::new();
+    for line in header_lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(
+                name.trim().to_ascii_lowercase(),
+                Value::String(value.trim().to_string()),
+            );
+        }
+    }
+
+    let (path, raw_query) = split_request_uri(&request_uri);
+    let content_type = headers
+        .get("content-type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let body_text = body_lines.join("\n");
+
+    Some(ParsedHttpRequest {
+        method,
+        path,
+        request_uri,
+        http_version,
+        headers,
+        query: parse_kv_payload(&raw_query, true),
+        body: parse_kv_payload(
+            &body_text,
+            content_type.contains("application/x-www-form-urlencoded"),
+        ),
+        raw_request: normalized,
+    })
+}
+
+fn split_request_uri(uri: &str) -> (String, String) {
+    let path_and_query = if let Some(rest) = uri.strip_prefix("http://") {
+        rest.split_once('/')
+            .map(|(_, tail)| format!("/{tail}"))
+            .unwrap_or_else(|| "/".to_string())
+    } else if let Some(rest) = uri.strip_prefix("https://") {
+        rest.split_once('/')
+            .map(|(_, tail)| format!("/{tail}"))
+            .unwrap_or_else(|| "/".to_string())
+    } else {
+        uri.to_string()
+    };
+
+    if let Some((path, query)) = path_and_query.split_once('?') {
+        (path.to_string(), query.to_string())
+    } else {
+        (path_and_query, String::new())
+    }
+}
+
+fn parse_kv_payload(raw: &str, split_pairs: bool) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return out;
+    }
+
+    if split_pairs {
+        for pair in trimmed.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            out.insert(
+                percent_decode_component(key),
+                Value::String(percent_decode_component(value)),
+            );
+        }
+    } else {
+        out.insert(
+            "raw".to_string(),
+            Value::String(percent_decode_component(trimmed)),
+        );
+    }
+    out
+}
+
+fn percent_decode_component(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = String::new();
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    out.push(decoded as char);
+                    index += 3;
+                    continue;
+                }
+                out.push('%');
+                index += 1;
+            }
+            byte => {
+                out.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
+fn classify_modsecurity_transaction(
+    request: &ParsedHttpRequest,
+    meta: &str,
+) -> (&'static str, String) {
+    classify_waf_route_family(request, Some(meta))
+}
+
+fn classify_waf_route_family(
+    request: &ParsedHttpRequest,
+    meta: Option<&str>,
+) -> (&'static str, String) {
+    let meta_text = meta.unwrap_or_default().to_ascii_lowercase();
+    let request_text = waf_request_text(request);
+    let patterns = waf_route_patterns();
+
+    if contains_any_marker(&request_text, &patterns.scanner_markers)
+        || contains_any_marker(&meta_text, &patterns.scanner_meta_markers)
+    {
+        return (
+            "review_suspicious_request",
+            "waf:automation-probe".to_string(),
+        );
+    }
+
+    if contains_any_marker(&request_text, &patterns.restricted_markers)
+        || contains_any_marker(&meta_text, &patterns.restricted_meta_markers)
+    {
+        return (
+            "deny_sensitive_surface",
+            "waf:restricted-resource".to_string(),
+        );
+    }
+
+    if contains_any_marker(&request_text, &patterns.sqli_markers)
+        || contains_any_marker(&meta_text, &patterns.sqli_meta_markers)
+    {
+        return ("deny_injection_payload", "waf:sqli".to_string());
+    }
+
+    if contains_any_marker(&request_text, &patterns.xss_markers)
+        || contains_any_marker(&meta_text, &patterns.xss_meta_markers)
+    {
+        return ("deny_injection_payload", "waf:xss".to_string());
+    }
+
+    if contains_any_marker(&request_text, &patterns.export_markers) {
+        return (
+            "deny_data_exfiltration",
+            "waf:data-exfiltration".to_string(),
+        );
+    }
+
+    if meta.is_some() {
+        ("deny_sensitive_surface", "waf:modsecurity-deny".to_string())
+    } else {
+        (
+            "deny_injection_payload",
+            "waf:anomalous-request".to_string(),
+        )
+    }
+}
+
+fn waf_request_text(request: &ParsedHttpRequest) -> String {
+    let mut parts = vec![
+        request.method.to_ascii_lowercase(),
+        request.path.to_ascii_lowercase(),
+        request.request_uri.to_ascii_lowercase(),
+        request.raw_request.to_ascii_lowercase(),
+    ];
+
+    for value in request.headers.values() {
+        if let Some(text) = value.as_str() {
+            parts.push(text.to_ascii_lowercase());
+        }
+    }
+    for value in request.query.values() {
+        if let Some(text) = value.as_str() {
+            parts.push(text.to_ascii_lowercase());
+        }
+    }
+    for value in request.body.values() {
+        if let Some(text) = value.as_str() {
+            parts.push(text.to_ascii_lowercase());
+        }
+    }
+
+    parts.join(" ")
+}
+
+fn contains_any_marker(haystack: &str, markers: &[String]) -> bool {
+    markers.iter().any(|marker| haystack.contains(marker))
+}
+
+fn waf_route_patterns() -> &'static WafRoutePatterns {
+    static ROUTE_PATTERNS: std::sync::OnceLock<WafRoutePatterns> = std::sync::OnceLock::new();
+    ROUTE_PATTERNS.get_or_init(|| {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../benchmarks/waf/route_patterns.json"
+        )))
+        .expect("built-in WAF route patterns must be valid JSON")
+    })
+}
+
+fn build_waf_case(
+    id: String,
+    request: &ParsedHttpRequest,
+    expected_route: &str,
+    category: String,
+    defaults: &BenchmarkAdaptDefaults,
+    extra: Value,
+) -> BenchmarkCase {
+    let mut input = serde_json::Map::new();
+    input.insert("method".to_string(), Value::String(request.method.clone()));
+    input.insert("path".to_string(), Value::String(request.path.clone()));
+    input.insert(
+        "source_zone".to_string(),
+        Value::String("public_web".to_string()),
+    );
+    input.insert(
+        "headers".to_string(),
+        Value::Object(request.headers.clone()),
+    );
+    input.insert("query".to_string(), Value::Object(request.query.clone()));
+    input.insert("body".to_string(), Value::Object(request.body.clone()));
+    input.insert(
+        "raw_request".to_string(),
+        Value::String(request.raw_request.clone()),
+    );
+    input.insert(
+        "request_uri".to_string(),
+        Value::String(request.request_uri.clone()),
+    );
+    input.insert(
+        "http_version".to_string(),
+        Value::String(request.http_version.clone()),
+    );
+    input.insert(
+        "requested_tool".to_string(),
+        Value::String(defaults.requested_tool.clone()),
+    );
+    input.insert(
+        "requested_action".to_string(),
+        Value::String(defaults.requested_action.clone()),
+    );
+    input.insert("scope".to_string(), Value::String(defaults.scope.clone()));
+
+    if let Some(extra_object) = extra.as_object() {
+        for (key, value) in extra_object {
+            input.insert(key.clone(), value.clone());
+        }
+    }
+    input
+        .entry("modsecurity_meta".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    input
+        .entry("source_log".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+
+    BenchmarkCase {
+        id,
+        input: Value::Object(input),
+        expected_route: expected_route.to_string(),
+        category: Some(category),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ModSecurityTransaction {
+    id: Option<String>,
+    sections: BTreeMap<String, String>,
+}
+
+fn parse_modsecurity_transactions(raw: &str) -> Vec<ModSecurityTransaction> {
+    let normalized = raw.replace("\r\n", "\n");
+    let mut transactions = Vec::new();
+    let mut current: Option<ModSecurityTransaction> = None;
+    let mut current_section: Option<String> = None;
+    let mut section_lines = Vec::new();
+
+    for line in normalized.lines() {
+        if line.starts_with("--") && line.ends_with("--") && line.len() >= 6 {
+            let trimmed = line.trim_matches('-');
+            let section = trimmed.chars().last().unwrap_or('Z').to_string();
+            let tx_id = trimmed
+                .strip_suffix(&section)
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| trimmed.to_string());
+
+            if let Some(tx) = current.as_mut() {
+                if let Some(section_name) = current_section.take() {
+                    tx.sections
+                        .insert(section_name, section_lines.join("\n").trim().to_string());
+                    section_lines.clear();
+                }
+            }
+
+            if section == "A" {
+                if let Some(tx) = current.take() {
+                    transactions.push(tx);
+                }
+                current = Some(ModSecurityTransaction {
+                    id: Some(tx_id),
+                    sections: BTreeMap::new(),
+                });
+                current_section = Some(section);
+            } else if section == "Z" {
+                if let Some(tx) = current.take() {
+                    transactions.push(tx);
+                }
+            } else if current.is_some() {
+                current_section = Some(section);
+            }
+            continue;
+        }
+
+        if current_section.is_some() {
+            section_lines.push(line.to_string());
+        }
+    }
+
+    if let Some(tx) = current {
+        transactions.push(tx);
+    }
+
+    transactions
 }
 
 fn load_mt_agentrisk_turns(turns_path: &Path) -> Result<Vec<String>> {
@@ -1500,9 +2106,10 @@ fn allow_word(allowed: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_jailbreakbench_dataset,
-        adapt_mcpmark_dataset, adapt_mt_agentrisk_dataset, adapt_noeti_toxicqa_dataset,
-        adapt_openagentsafety_s26_dataset, adapt_pint_dataset, adapt_promptshield_dataset,
+        adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_csic_http_2010_dataset,
+        adapt_jailbreakbench_dataset, adapt_mcpmark_dataset, adapt_modsecurity_owasp_2025_dataset,
+        adapt_mt_agentrisk_dataset, adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset,
+        adapt_pint_dataset, adapt_promptshield_dataset,
         adapt_rogue_security_prompt_injections_dataset, adapt_safearena_dataset,
         adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, builtin_adapter_config,
         detect_benchmark_adapter_profile, BenchmarkAdaptDefaults, BenchmarkAdapterProfile,
@@ -1605,6 +2212,37 @@ mod tests {
         fs::create_dir_all(dir.path().join("workspaces")).unwrap();
         let detected = detect_benchmark_adapter_profile(dir.path()).unwrap();
         assert_eq!(detected, BenchmarkAdapterProfile::MtAgentRisk);
+    }
+
+    #[test]
+    fn detects_csic_http_2010_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("normalTrafficTraining.txt"),
+            "GET / HTTP/1.1\n\n\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("anomalousTrafficTest.txt"),
+            "GET /admin HTTP/1.1\n\n\n",
+        )
+        .unwrap();
+        let detected = detect_benchmark_adapter_profile(dir.path()).unwrap();
+        assert_eq!(detected, BenchmarkAdapterProfile::CsicHttp2010);
+    }
+
+    #[test]
+    fn detects_modsecurity_owasp_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let daily = dir.path().join("25-Aug-2025");
+        fs::create_dir_all(&daily).unwrap();
+        fs::write(
+            daily.join("modsec_audit.anon.log"),
+            "--abc123-A--\n[25/Aug/2025:00:05:10 +0200] tx 1 1 1 1\n--abc123-B--\nGET /.env HTTP/1.1\nHost: example.test\n\n--abc123-H--\nMessage: Warning. Matched phrase \"/.env\" at REQUEST_FILENAME. [msg \"Restricted File Access Attempt\"] [tag \"attack-lfi\"]\n--abc123-Z--\n",
+        )
+        .unwrap();
+        let detected = detect_benchmark_adapter_profile(dir.path()).unwrap();
+        assert_eq!(detected, BenchmarkAdapterProfile::ModsecurityOwasp2025);
     }
 
     #[test]
@@ -1959,6 +2597,65 @@ mod tests {
                 .map(Vec::len),
             Some(2)
         );
+    }
+
+    #[test]
+    fn adapt_csic_http_2010_directory_into_mixed_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("normalTrafficTraining.txt"),
+            "GET http://localhost:8080/tienda1/index.jsp HTTP/1.1\nHost: localhost:8080\nUser-Agent: Mozilla/5.0\n\n\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("anomalousTrafficTest.txt"),
+            "GET http://localhost:8080/tienda1/publico/anadir.jsp?q=%27+OR+1%3D1 HTTP/1.1\nHost: localhost:8080\nUser-Agent: Mozilla/5.0\n\n\n",
+        )
+        .unwrap();
+
+        let rows = adapt_csic_http_2010_dataset(
+            dir.path(),
+            &BenchmarkAdaptDefaults {
+                requested_tool: "http".to_string(),
+                requested_action: "allow_or_block".to_string(),
+                scope: "edge".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .any(|row| row.expected_route == "deny_injection_payload"));
+        assert!(rows.iter().any(|row| row.expected_route == "allow"));
+    }
+
+    #[test]
+    fn adapt_modsecurity_directory_into_mixed_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let daily = dir.path().join("25-Aug-2025");
+        fs::create_dir_all(&daily).unwrap();
+        fs::write(
+            daily.join("modsec_audit.anon.log"),
+            "--badbot-A--\n[25/Aug/2025:00:05:10 +0200] tx 1 1 1 1\n--badbot-B--\nGET /robots.txt HTTP/1.1\nHost: example.test\nUser-Agent: DotBot/1.2\n\n--badbot-H--\nMessage: Access denied with code 403 (phase 2). Matched phrase \"DotBot\" at REQUEST_HEADERS:User-agent. [msg \"BAD BOT - Detected and Blocked.\"]\n--badbot-Z--\n--secret-A--\n[25/Aug/2025:00:05:11 +0200] tx 1 1 1 1\n--secret-B--\nGET /.git/HEAD HTTP/1.1\nHost: example.test\n\n--secret-H--\nMessage: Warning. Matched phrase \"/.git/\" at REQUEST_FILENAME. [msg \"Restricted File Access Attempt\"] [tag \"attack-lfi\"]\n--secret-Z--\n",
+        )
+        .unwrap();
+
+        let rows = adapt_modsecurity_owasp_2025_dataset(
+            dir.path(),
+            &BenchmarkAdaptDefaults {
+                requested_tool: "http".to_string(),
+                requested_action: "allow_or_block".to_string(),
+                scope: "edge".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .any(|row| row.expected_route == "review_suspicious_request"));
+        assert!(rows
+            .iter()
+            .any(|row| row.expected_route == "deny_sensitive_surface"));
     }
 
     #[test]

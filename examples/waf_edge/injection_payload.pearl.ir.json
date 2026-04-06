@@ -1,0 +1,67 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "injection_payload",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "contains_sqli_signature",
+        "type": "bool"
+      },
+      {
+        "id": "contains_xss_signature",
+        "type": "bool"
+      },
+      {
+        "id": "contains_path_traversal",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_sqli_signature",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "contains_sqli_signature",
+        "op": "==",
+        "value": true
+      },
+      "message": "The request contains a SQL injection signature."
+    },
+    {
+      "id": "deny_xss_signature",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "contains_xss_signature",
+        "op": "==",
+        "value": true
+      },
+      "message": "The request contains a script injection signature."
+    },
+    {
+      "id": "deny_path_traversal",
+      "kind": "predicate",
+      "bit": 2,
+      "deny_when": {
+        "feature": "contains_path_traversal",
+        "op": "==",
+        "value": true
+      },
+      "message": "The request contains a path traversal signature."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example WAF injection-detection pearl."
+  },
+  "provenance": {
+    "generator": "logicpearl.waf_edge_example",
+    "generator_version": "0.1.1"
+  }
+}

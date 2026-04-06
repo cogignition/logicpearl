@@ -5,6 +5,7 @@ use std::path::Path;
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
 const MIN_AUTO_SYNTHESIS_CASES: usize = 40;
+const PLUGIN_BATCH_SIZE: usize = 256;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -226,31 +227,75 @@ pub(crate) fn observe_benchmark_cases(
             .wrap_err("failed to create observed benchmark output directory")?;
     }
 
-    let mut rows = 0_usize;
-    let mut out = String::new();
-    for case in load_benchmark_cases(dataset_jsonl)
+    let cases = load_benchmark_cases(dataset_jsonl)
         .into_diagnostic()
-        .wrap_err("failed to load benchmark cases for observation")?
-    {
-        let features = observe_features(observer, &case.input)
-            .wrap_err(format!("observer execution failed for case {}", case.id))?;
-        let observed = ObservedBenchmarkCase {
-            id: case.id,
-            input: case.input,
-            expected_route: case.expected_route,
-            category: case.category,
-            features,
-        };
-        out.push_str(&serde_json::to_string(&observed).into_diagnostic()?);
-        out.push('\n');
-        rows += 1;
-    }
+        .wrap_err("failed to load benchmark cases for observation")?;
+    let observed_cases: Vec<ObservedBenchmarkCase> = match observer {
+        ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests") => {
+            let mut observed = Vec::with_capacity(cases.len());
+            for chunk in cases.chunks(PLUGIN_BATCH_SIZE) {
+                let payloads = chunk
+                    .iter()
+                    .map(|case| {
+                        serde_json::json!({
+                            "raw_input": case.input
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
+                    .into_diagnostic()
+                    .wrap_err("observer plugin batch execution failed")?;
+                for (case, response) in chunk.iter().zip(responses) {
+                    let features = response
+                        .extra
+                        .get("features")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .ok_or_else(|| {
+                            guidance(
+                                "observer plugin batch response is missing `features`",
+                                "An observer plugin used for benchmark observation must return a top-level features object.",
+                            )
+                        })?;
+                    observed.push(ObservedBenchmarkCase {
+                        id: case.id.clone(),
+                        input: case.input.clone(),
+                        expected_route: case.expected_route.clone(),
+                        category: case.category.clone(),
+                        features,
+                    });
+                }
+            }
+            observed
+        }
+        _ => cases
+            .into_iter()
+            .map(|case| {
+                let features = observe_features(observer, &case.input)
+                    .wrap_err(format!("observer execution failed for case {}", case.id))?;
+                Ok(ObservedBenchmarkCase {
+                    id: case.id,
+                    input: case.input,
+                    expected_route: case.expected_route,
+                    category: case.category,
+                    features,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
+    let rows = observed_cases.len();
 
     if rows == 0 {
         return Err(guidance(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running benchmark observe.",
         ));
+    }
+
+    let mut out = String::new();
+    for observed in observed_cases {
+        out.push_str(&serde_json::to_string(&observed).into_diagnostic()?);
+        out.push('\n');
     }
 
     fs::write(output, out)

@@ -2,50 +2,43 @@ import json
 import sys
 
 
-def main() -> int:
-    request = json.load(sys.stdin)
-    payload = request.get("payload", {})
-
+def audit_payload(payload: dict) -> dict:
     allow = bool(payload.get("allow", False))
     bitmask = int(payload.get("bitmask", 0))
-    request_abuse = int(payload.get("request_abuse_bitmask", 0))
-    instruction_boundary = int(payload.get("instruction_boundary_bitmask", 0))
-    data_exfiltration = int(payload.get("data_exfiltration_bitmask", 0))
+    injection_payload = int(payload.get("injection_payload_bitmask", 0))
+    sensitive_surface = int(payload.get("sensitive_surface_bitmask", 0))
+    has_scanner_fingerprint = bool(payload.get("has_scanner_fingerprint", False))
+    has_malformed_encoding = bool(payload.get("has_malformed_encoding", False))
     risk_score = float(payload.get("risk_score", 0.0))
     likely_benign = bool(payload.get("likely_benign_request", False))
 
     if allow:
         route_status = "allow"
-        decision_basis = "no_guardrail_triggered"
-        explanation = "The request stays inside the tenant-scoped support workflow and no denial pearl fired."
+        decision_basis = "no_waf_family_triggered"
+        explanation = "The request looks like normal application traffic and no denial pearl fired."
         counterfactual = "No changes required."
-    elif request_abuse > 0:
-        route_status = "deny_request_abuse"
-        decision_basis = "request_abuse"
-        explanation = "The request hit a sensitive route from an untrusted zone or carried a classic injection signature."
-        counterfactual = "Keep the request on the public support route and remove injection or traversal patterns."
-    elif instruction_boundary > 0:
-        route_status = "deny_instruction_boundary"
-        decision_basis = "instruction_boundary"
-        explanation = "The prompt tries to override trusted instructions or expose hidden system behavior."
-        counterfactual = "Ask for the allowed support task directly without requesting hidden prompts, rules, or overrides."
-    elif data_exfiltration > 0:
-        route_status = "deny_data_exfiltration"
-        decision_basis = "data_exfiltration"
-        explanation = "The request asks for secrets or a bulk export that does not belong on the public edge."
-        counterfactual = "Restrict the request to tenant-scoped records and remove credential or full-export asks."
+    elif injection_payload > 0:
+        route_status = "deny_injection_payload"
+        decision_basis = "injection_payload"
+        explanation = "The request contains SQL injection, XSS, or path traversal content."
+        counterfactual = "Remove the exploit payload and keep parameters in their expected application format."
+    elif sensitive_surface > 0:
+        route_status = "deny_sensitive_surface"
+        decision_basis = "sensitive_surface"
+        explanation = "The request targets a sensitive route from an untrusted zone."
+        counterfactual = "Move privileged traffic behind the trusted boundary and keep public requests off admin and export paths."
     elif bitmask & (1 << 1):
         route_status = "review_suspicious_request"
-        decision_basis = "high_risk_probe"
-        explanation = "No deny pearl fired, but the request is still obfuscated or unusual enough to warrant human review."
-        counterfactual = "Rewrite the request in plain language and remove wrapper tokens or hidden-rule references."
+        decision_basis = "scanner_or_probe"
+        explanation = "The request looks scanner-like or malformed enough to warrant review without treating it as a hard exploit match."
+        counterfactual = "Use standard browser-style requests and remove scanner fingerprints or malformed encodings."
     else:
         route_status = "deny"
         decision_basis = "route_status"
         explanation = "The route pearl denied the request."
-        counterfactual = "Reduce risk features until the request stays inside the allowed support workflow."
+        counterfactual = "Reduce risk features until the request stays inside the allowed traffic shape."
 
-    response = {
+    return {
         "ok": True,
         "route_status": route_status,
         "decision_basis": decision_basis,
@@ -54,12 +47,26 @@ def main() -> int:
         "summary": {
             "allow": allow,
             "bitmask": bitmask,
+            "has_scanner_fingerprint": has_scanner_fingerprint,
+            "has_malformed_encoding": has_malformed_encoding,
             "risk_score": risk_score,
             "likely_benign_request": likely_benign,
             "consistent": (allow and bitmask == 0) or ((not allow) and bitmask != 0),
         },
         "warnings": [],
     }
+
+
+def main() -> int:
+    request = json.load(sys.stdin)
+    if "payloads" in request:
+        responses = [audit_payload(payload) for payload in request.get("payloads", [])]
+        json.dump({"ok": True, "responses": responses, "warnings": []}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+
+    payload = request.get("payload", {})
+    response = audit_payload(payload)
 
     json.dump(response, sys.stdout)
     sys.stdout.write("\n")

@@ -1,6 +1,6 @@
 {
   "pipeline_version": "1.0",
-  "pipeline_id": "waf_edge_guardrail_v1",
+  "pipeline_id": "waf_edge_v1",
   "entrypoint": "input",
   "stages": [
     {
@@ -13,56 +13,43 @@
         "source_zone": "$.source_zone",
         "headers": "$.headers",
         "query": "$.query",
-        "body": "$.body"
+        "body": "$.body",
+        "raw_request": "$.raw_request",
+        "modsecurity_meta": "$.modsecurity_meta"
       },
       "export": {
-        "contains_injection_signature": "$.features.contains_injection_signature",
+        "contains_sqli_signature": "$.features.contains_sqli_signature",
+        "contains_xss_signature": "$.features.contains_xss_signature",
+        "contains_path_traversal": "$.features.contains_path_traversal",
         "targets_sensitive_route": "$.features.targets_sensitive_route",
-        "requests_instruction_override": "$.features.requests_instruction_override",
-        "targets_system_prompt": "$.features.targets_system_prompt",
-        "requests_secret_exfiltration": "$.features.requests_secret_exfiltration",
-        "requests_bulk_export": "$.features.requests_bulk_export",
         "origin_outside_trust_zone": "$.features.origin_outside_trust_zone",
-        "uses_wrapper_obfuscation": "$.features.uses_wrapper_obfuscation",
+        "has_scanner_fingerprint": "$.features.has_scanner_fingerprint",
+        "has_malformed_encoding": "$.features.has_malformed_encoding",
         "likely_benign_request": "$.features.likely_benign_request",
         "risk_score": "$.features.risk_score"
       }
     },
     {
-      "id": "request_abuse",
+      "id": "injection_payload",
       "kind": "pearl",
-      "artifact": "./request_abuse.pearl.ir.json",
+      "artifact": "./injection_payload.pearl.ir.json",
       "input": {
-        "contains_injection_signature": "@observer.contains_injection_signature",
+        "contains_sqli_signature": "@observer.contains_sqli_signature",
+        "contains_xss_signature": "@observer.contains_xss_signature",
+        "contains_path_traversal": "@observer.contains_path_traversal"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "sensitive_surface",
+      "kind": "pearl",
+      "artifact": "./sensitive_surface.pearl.ir.json",
+      "input": {
         "targets_sensitive_route": "@observer.targets_sensitive_route",
         "origin_outside_trust_zone": "@observer.origin_outside_trust_zone"
-      },
-      "export": {
-        "bitmask": "$.bitmask",
-        "allow": "$.allow"
-      }
-    },
-    {
-      "id": "instruction_boundary",
-      "kind": "pearl",
-      "artifact": "./instruction_boundary.pearl.ir.json",
-      "input": {
-        "requests_instruction_override": "@observer.requests_instruction_override",
-        "targets_system_prompt": "@observer.targets_system_prompt",
-        "uses_wrapper_obfuscation": "@observer.uses_wrapper_obfuscation"
-      },
-      "export": {
-        "bitmask": "$.bitmask",
-        "allow": "$.allow"
-      }
-    },
-    {
-      "id": "data_exfiltration",
-      "kind": "pearl",
-      "artifact": "./data_exfiltration.pearl.ir.json",
-      "input": {
-        "requests_secret_exfiltration": "@observer.requests_secret_exfiltration",
-        "requests_bulk_export": "@observer.requests_bulk_export"
       },
       "export": {
         "bitmask": "$.bitmask",
@@ -74,9 +61,10 @@
       "kind": "pearl",
       "artifact": "./route_status.pearl.ir.json",
       "input": {
-        "request_abuse_bitmask": "@request_abuse.bitmask",
-        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
-        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "injection_payload_bitmask": "@injection_payload.bitmask",
+        "sensitive_surface_bitmask": "@sensitive_surface.bitmask",
+        "has_scanner_fingerprint": "@observer.has_scanner_fingerprint",
+        "has_malformed_encoding": "@observer.has_malformed_encoding",
         "risk_score": "@observer.risk_score",
         "likely_benign_request": "@observer.likely_benign_request"
       },
@@ -92,9 +80,10 @@
       "input": {
         "allow": "@route_status.allow",
         "bitmask": "@route_status.bitmask",
-        "request_abuse_bitmask": "@request_abuse.bitmask",
-        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
-        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "injection_payload_bitmask": "@injection_payload.bitmask",
+        "sensitive_surface_bitmask": "@sensitive_surface.bitmask",
+        "has_scanner_fingerprint": "@observer.has_scanner_fingerprint",
+        "has_malformed_encoding": "@observer.has_malformed_encoding",
         "risk_score": "@observer.risk_score",
         "likely_benign_request": "@observer.likely_benign_request"
       },
@@ -116,17 +105,15 @@
     "counterfactual": "@audit.counterfactual",
     "consistent": "@audit.consistent",
     "risk_score": "@observer.risk_score",
-    "contains_injection_signature": "@observer.contains_injection_signature",
+    "contains_sqli_signature": "@observer.contains_sqli_signature",
+    "contains_xss_signature": "@observer.contains_xss_signature",
+    "contains_path_traversal": "@observer.contains_path_traversal",
     "targets_sensitive_route": "@observer.targets_sensitive_route",
-    "requests_instruction_override": "@observer.requests_instruction_override",
-    "targets_system_prompt": "@observer.targets_system_prompt",
-    "requests_secret_exfiltration": "@observer.requests_secret_exfiltration",
-    "requests_bulk_export": "@observer.requests_bulk_export",
     "origin_outside_trust_zone": "@observer.origin_outside_trust_zone",
-    "uses_wrapper_obfuscation": "@observer.uses_wrapper_obfuscation",
+    "has_scanner_fingerprint": "@observer.has_scanner_fingerprint",
+    "has_malformed_encoding": "@observer.has_malformed_encoding",
     "likely_benign_request": "@observer.likely_benign_request",
-    "request_abuse_bitmask": "@request_abuse.bitmask",
-    "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
-    "data_exfiltration_bitmask": "@data_exfiltration.bitmask"
+    "injection_payload_bitmask": "@injection_payload.bitmask",
+    "sensitive_surface_bitmask": "@sensitive_surface.bitmask"
   }
 }

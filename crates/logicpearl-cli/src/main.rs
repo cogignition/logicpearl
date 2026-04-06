@@ -27,7 +27,7 @@ use logicpearl_observer_synthesis::{
     ObserverTargetGoal,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
-use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginStage};
+use logicpearl_plugin::{run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginStage};
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -315,6 +315,10 @@ enum ObserverTargetGoalArg {
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum BenchmarkAdapterProfileArg {
     Auto,
+    #[value(name = "csic-http-2010")]
+    CsicHttp2010,
+    #[value(name = "modsecurity-owasp-2025")]
+    ModsecurityOwasp2025,
     SaladBaseSet,
     SaladAttackEnhancedSet,
     SafearenaSafe,
@@ -1135,6 +1139,10 @@ fn main() -> Result<()> {
 fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> BenchmarkAdapterProfile {
     match profile {
         BenchmarkAdapterProfileArg::Auto => BenchmarkAdapterProfile::Auto,
+        BenchmarkAdapterProfileArg::CsicHttp2010 => BenchmarkAdapterProfile::CsicHttp2010,
+        BenchmarkAdapterProfileArg::ModsecurityOwasp2025 => {
+            BenchmarkAdapterProfile::ModsecurityOwasp2025
+        }
         BenchmarkAdapterProfileArg::SaladBaseSet => BenchmarkAdapterProfile::SaladBaseSet,
         BenchmarkAdapterProfileArg::SaladAttackEnhancedSet => {
             BenchmarkAdapterProfile::SaladAttackEnhancedSet

@@ -1,0 +1,35 @@
+{
+  "body": {},
+  "headers": {
+    "accept": "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5",
+    "accept-charset": "utf-8, utf-8;q=0.5, *;q=0.5",
+    "accept-encoding": "x-gzip, x-deflate, gzip, deflate",
+    "accept-language": "en",
+    "cache-control": "no-cache",
+    "connection": "close",
+    "cookie": "JSESSIONID=C5988B4CCF93162A3ABD2BE9EDA285BC",
+    "host": "localhost:8080",
+    "pragma": "no-cache",
+    "user-agent": "Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)"
+  },
+  "http_version": "HTTP/1.1",
+  "method": "GET",
+  "modsecurity_meta": "",
+  "path": "/tienda1/publico/anadir.jsp",
+  "query": {
+    "B1": "';waitfor delay '0:0:15';--",
+    "cantidad": "12",
+    "id": "2",
+    "nombre": "Jam\u00f3n Ib\u00e9rico",
+    "precio": "39"
+  },
+  "raw_request": "GET http://localhost:8080/tienda1/publico/anadir.jsp?id=2&nombre=Jam%F3n+Ib%E9rico&precio=39&cantidad=12&B1=%27%3Bwaitfor+delay+%270%3A0%3A15%27%3B-- HTTP/1.1\nUser-Agent: Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)\nPragma: no-cache\nCache-control: no-cache\nAccept: text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5\nAccept-Encoding: x-gzip, x-deflate, gzip, deflate\nAccept-Charset: utf-8, utf-8;q=0.5, *;q=0.5\nAccept-Language: en\nHost: localhost:8080\nCookie: JSESSIONID=C5988B4CCF93162A3ABD2BE9EDA285BC\nConnection: close",
+  "request_uri": "http://localhost:8080/tienda1/publico/anadir.jsp?id=2&nombre=Jam%F3n+Ib%E9rico&precio=39&cantidad=12&B1=%27%3Bwaitfor+delay+%270%3A0%3A15%27%3B--",
+  "requested_action": "allow_or_block",
+  "requested_tool": "http",
+  "scope": "edge",
+  "source_file": "anomalousTrafficTest.txt",
+  "source_log": "",
+  "source_zone": "public_web",
+  "waf_dataset": "csic-http-2010"
+}

@@ -1,48 +1,46 @@
-# WAF Edge Guardrail Demo
+# WAF Edge Demo
 
-This example shows the public LogicPearl shape for an AI-aware edge or WAF deployment:
+This example shows a true web-application-firewall workflow in LogicPearl:
 
 - raw HTTP request in
-- a custom observer plugin extracts WAF and prompt-risk features
-- grouped pearls evaluate independent denial reasons
+- a custom observer plugin extracts WAF features from real request fields and audit metadata
+- grouped pearls evaluate independent denial families
 - a final route pearl decides `allow`, `deny_*`, or `review_*`
 
-The important boundary is intentional:
+The boundary is intentional:
 
 - generic predicate/runtime behavior stays in the LogicPearl engine
 - WAF semantics live in custom plugins under [`plugins/`](./plugins)
 
-## Why This Demo Exists
+That makes this a good public proof of:
 
-This is the cleanest public story for LogicPearl when the input is messy:
+- deterministic edge policy
+- versioned artifact bundles
+- human-review lanes
+- team-friendly rollout without hiding logic in ad hoc code
 
-- teams can inspect the raw request boundary
-- the extracted features are explicit
-- each pearl carries one denial family
-- the final route is deterministic and explainable
+## Why This Is Better Than "Just Ship A Binary"
 
-It is also a better deployment story than "just ship a binary".
-
-What you version and share across a team is the artifact bundle:
+The deployable unit is a versioned artifact bundle:
 
 - [`waf_edge.pipeline.json`](./waf_edge.pipeline.json)
-- the pearl IR files
-- plugin manifests and plugin code
+- pearl IR files
+- plugin manifests
+- plugin code
 - optional compiled outputs if you choose to generate native or WASM artifacts later
 
-That means updates are handled the same way teams already handle config and policy bundles:
+So team usage looks like:
 
-- review in git
-- CI validation
-- staged rollout
-- explicit version changes
+- review changes in git
+- validate in CI
+- promote the artifact bundle through environments
+- update the route policy or plugin without pretending the whole system is one opaque executable
 
 ## Files
 
 - [`waf_edge.pipeline.json`](./waf_edge.pipeline.json)
-- [`request_abuse.pearl.ir.json`](./request_abuse.pearl.ir.json)
-- [`instruction_boundary.pearl.ir.json`](./instruction_boundary.pearl.ir.json)
-- [`data_exfiltration.pearl.ir.json`](./data_exfiltration.pearl.ir.json)
+- [`injection_payload.pearl.ir.json`](./injection_payload.pearl.ir.json)
+- [`sensitive_surface.pearl.ir.json`](./sensitive_surface.pearl.ir.json)
 - [`route_status.pearl.ir.json`](./route_status.pearl.ir.json)
 - [`plugins/observer/`](./plugins/observer)
 - [`plugins/route_audit/`](./plugins/route_audit)
@@ -66,25 +64,25 @@ logicpearl pipeline run \
   --json
 ```
 
-Prompt-injection block:
+SQL injection block:
 
 ```bash
 logicpearl pipeline run \
   examples/waf_edge/waf_edge.pipeline.json \
-  examples/waf_edge/input_block_prompt.json \
+  examples/waf_edge/input_block_sqli.json \
   --json
 ```
 
-Admin export block:
+Restricted-resource block:
 
 ```bash
 logicpearl pipeline run \
   examples/waf_edge/waf_edge.pipeline.json \
-  examples/waf_edge/input_block_export.json \
+  examples/waf_edge/input_block_sensitive.json \
   --json
 ```
 
-Suspicious review case:
+Scanner review case:
 
 ```bash
 logicpearl pipeline run \
@@ -98,7 +96,7 @@ Trace the full execution:
 ```bash
 logicpearl pipeline trace \
   examples/waf_edge/waf_edge.pipeline.json \
-  examples/waf_edge/input_block_prompt.json \
+  examples/waf_edge/input_block_sqli.json \
   --json
 ```
 
@@ -111,11 +109,46 @@ logicpearl benchmark run \
   --json
 ```
 
-The benchmark slice is intentionally tiny and human-readable. It is there to prove:
+The checked-in slice is intentionally small and readable. It is generated from the adapted public corpora and proves:
 
 - the grouped pearl evaluates collectively
-- the plugin boundary is explicit
-- the example behavior is reproducible
+- route reasoning stays explicit
+- the demo remains reproducible in CI
+
+## Public Datasets To Scale This Demo
+
+This checked-in slice is for clarity. To scale it with public corpora, use:
+
+1. **ModSecurity 2025 production malicious HTTP traffic**
+   - real blocked malicious requests from a production server
+   - best public malicious WAF corpus for realism
+   - Zenodo: <https://zenodo.org/records/17178461>
+   - Paper: <https://www.mdpi.com/2306-5729/10/11/186>
+
+2. **CSIC 2010 HTTP dataset**
+   - classic labeled normal vs anomalous HTTP requests
+   - old, but still useful for balanced reproducible WAF benchmarking
+   - overview PDF mirror: <https://petescully.co.uk/wp-content/uploads/2018/04/http_dataset_csic_2010.pdf>
+
+The clean public path is:
+
+- use adapters or parsers to normalize those corpora into benchmark cases
+- keep WAF meaning in plugins
+- keep the grouped pearl and route logic inspectable
+
+Build the larger public benchmark cases with:
+
+```bash
+python3 scripts/waf/build_waf_benchmark_cases.py \
+  --output-dir /tmp/waf_benchmark
+```
+
+Then regenerate the checked-in readable slice with:
+
+```bash
+python3 scripts/waf/build_waf_demo_slice.py \
+  --input /tmp/waf_benchmark/dev.jsonl
+```
 
 ## Open The Walkthrough Page
 

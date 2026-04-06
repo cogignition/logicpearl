@@ -1,189 +1,119 @@
 import json
 import re
 import sys
+from urllib.parse import unquote_plus
+from pathlib import Path
+
+CONFIG = json.loads((Path(__file__).with_name("patterns.json")).read_text())
 
 
-INJECTION_PATTERNS = (
-    "' or 1=1",
-    "\" or \"1\"=\"1",
-    "union select",
-    "<script",
-    "../",
-    "..\\",
-    "drop table",
-    "sleep(",
-    "waitfor delay",
-    "${jndi:",
-)
-
-INSTRUCTION_OVERRIDE_PATTERNS = (
-    "ignore previous instructions",
-    "ignore prior instructions",
-    "disregard the instructions above",
-    "override the guardrails",
-    "bypass the safety rules",
-    "follow only the next command",
-)
-
-SYSTEM_TARGET_PATTERNS = (
-    "system prompt",
-    "hidden rules",
-    "hidden instructions",
-    "developer prompt",
-    "show me the prompt",
-    "reveal your instructions",
-)
-
-SECRET_PATTERNS = (
-    "api key",
-    "api keys",
-    "password",
-    "passwords",
-    "credential",
-    "credentials",
-    "token",
-    "tokens",
-    "session cookie",
-    "secret",
-    "secrets",
-)
-
-BULK_EXPORT_PATTERNS = (
-    "export all",
-    "download all",
-    "full export",
-    "all customer records",
-    "entire tenant",
-    "dump all",
-)
-
-BENIGN_PATTERNS = (
-    "summarize",
-    "explain",
-    "list the key takeaways",
-    "draft a response",
-    "translate",
-    "find the relevant article",
-)
-
-
-def contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+def contains_any(text: str, phrases) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
 def normalize_text(value: str) -> str:
-    lowered = value.lower()
+    lowered = unquote_plus(value).lower()
     collapsed = re.sub(r"\s+", " ", lowered)
     return collapsed.strip()
 
 
-def contains_wrapper_obfuscation(prompt: str) -> bool:
-    if "###" in prompt or "::" in prompt or "<system>" in prompt or "[[system]]" in prompt:
-        return True
-    if re.search(r"(hidd3n|rul3s|promp7|sys7em)", prompt):
-        return True
-    if re.search(r"(?:\b\w\b\s+){4,}\b\w+\b", prompt):
-        return True
-    return False
-
-
-def bool_from_query(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).lower() in {"1", "true", "yes", "download"}
-
-
-def main() -> int:
-    request = json.load(sys.stdin)
-    raw = request.get("payload", {}).get("raw_input", {})
-
+def observe_raw_input(raw) -> dict:
     method = normalize_text(str(raw.get("method", "")))
     path = normalize_text(str(raw.get("path", "")))
     source_zone = normalize_text(str(raw.get("source_zone", "")))
+    raw_request = normalize_text(str(raw.get("raw_request", "")))
+    modsecurity_meta = normalize_text(str(raw.get("modsecurity_meta", "")))
     headers = raw.get("headers", {}) if isinstance(raw.get("headers", {}), dict) else {}
     query = raw.get("query", {}) if isinstance(raw.get("query", {}), dict) else {}
     body = raw.get("body", {}) if isinstance(raw.get("body", {}), dict) else {}
 
-    prompt = normalize_text(str(body.get("prompt", "")))
-    requested_tool = normalize_text(str(body.get("requested_tool", "")))
-    requested_action = normalize_text(str(body.get("requested_action", "")))
-    scope = normalize_text(str(body.get("scope", "")))
     tenant_scope = normalize_text(str(headers.get("tenant_scope", "")))
+    user_agent = normalize_text(str(headers.get("user_agent", headers.get("user-agent", ""))))
     query_text = normalize_text(json.dumps(query, sort_keys=True))
     body_text = normalize_text(json.dumps(body, sort_keys=True))
     combined_text = " ".join(
-        part for part in (path, query_text, body_text, prompt, requested_action, tenant_scope) if part
+        part
+        for part in (
+            path,
+            query_text,
+            body_text,
+            tenant_scope,
+            user_agent,
+            raw_request,
+            modsecurity_meta,
+        )
+        if part
     )
 
-    contains_injection_signature = contains_any(combined_text, INJECTION_PATTERNS)
-    targets_sensitive_route = path.startswith("/v1/admin") or path.startswith("/internal/export")
-    requests_instruction_override = contains_any(prompt, INSTRUCTION_OVERRIDE_PATTERNS)
-    targets_system_prompt = contains_any(prompt, SYSTEM_TARGET_PATTERNS)
-    requests_secret_exfiltration = contains_any(prompt, SECRET_PATTERNS)
-    requests_bulk_export = (
-        contains_any(prompt, BULK_EXPORT_PATTERNS)
-        or requested_action in {"export_customer_records", "download_full_export", "dump_workspace"}
-        or bool_from_query(query.get("download"))
-        or str(query.get("include", "")).lower() == "all"
-        or scope == "global"
-        or (method == "get" and targets_sensitive_route)
+    contains_sqli_signature = contains_any(combined_text, CONFIG["sqli_patterns"])
+    contains_xss_signature = contains_any(combined_text, CONFIG["xss_patterns"])
+    contains_path_traversal = contains_any(combined_text, CONFIG["traversal_patterns"])
+    targets_sensitive_route = (
+        path.startswith("/admin")
+        or path.startswith("/internal")
+        or contains_any(path, CONFIG["sensitive_route_patterns"])
+        or contains_any(combined_text, CONFIG["sensitive_meta_markers"])
     )
     origin_outside_trust_zone = source_zone in {"public_web", "untrusted_browser"}
-    uses_wrapper_obfuscation = contains_wrapper_obfuscation(prompt)
+    has_scanner_fingerprint = contains_any(user_agent, CONFIG["scanner_patterns"]) or path in {"/.env", "/wp-admin/install.php", "/phpmyadmin"}
+    has_malformed_encoding = "%25" in combined_text or "%2f%2e" in combined_text or "%%" in combined_text
 
     likely_benign_request = (
-        contains_any(prompt, BENIGN_PATTERNS)
-        and not contains_injection_signature
-        and not requests_instruction_override
-        and not targets_system_prompt
-        and not requests_secret_exfiltration
-        and not requests_bulk_export
+        contains_any(combined_text, CONFIG["benign_patterns"])
+        and not contains_sqli_signature
+        and not contains_xss_signature
+        and not contains_path_traversal
         and not targets_sensitive_route
     )
 
     risk_score = 0.03
-    if contains_injection_signature:
+    if contains_sqli_signature:
         risk_score += 0.24
-    if requests_instruction_override:
+    if contains_xss_signature:
         risk_score += 0.22
-    if targets_system_prompt:
-        risk_score += 0.2
-    if requests_secret_exfiltration:
-        risk_score += 0.2
-    if requests_bulk_export:
-        risk_score += 0.18
+    if contains_path_traversal:
+        risk_score += 0.24
     if targets_sensitive_route:
         risk_score += 0.14
     if origin_outside_trust_zone:
         risk_score += 0.1
-    if uses_wrapper_obfuscation:
-        risk_score += 0.13
-    if uses_wrapper_obfuscation and re.search(r"\d", prompt):
-        risk_score += 0.62
-    if requested_tool in {"shell", "filesystem"} and requests_bulk_export:
-        risk_score += 0.07
+    if has_scanner_fingerprint:
+        risk_score += 0.46
+    if has_malformed_encoding:
+        risk_score += 0.28
     if likely_benign_request:
         risk_score = min(risk_score, 0.12)
     risk_score = round(max(0.0, min(1.0, risk_score)), 2)
 
-    response = {
+    return {
         "ok": True,
         "features": {
-            "contains_injection_signature": contains_injection_signature,
+            "contains_sqli_signature": contains_sqli_signature,
+            "contains_xss_signature": contains_xss_signature,
+            "contains_path_traversal": contains_path_traversal,
             "targets_sensitive_route": targets_sensitive_route,
-            "requests_instruction_override": requests_instruction_override,
-            "targets_system_prompt": targets_system_prompt,
-            "requests_secret_exfiltration": requests_secret_exfiltration,
-            "requests_bulk_export": requests_bulk_export,
             "origin_outside_trust_zone": origin_outside_trust_zone,
-            "uses_wrapper_obfuscation": uses_wrapper_obfuscation,
+            "has_scanner_fingerprint": has_scanner_fingerprint,
+            "has_malformed_encoding": has_malformed_encoding,
             "likely_benign_request": likely_benign_request,
             "risk_score": risk_score,
         },
         "warnings": [],
     }
+
+
+def main() -> int:
+    request = json.load(sys.stdin)
+    if "payloads" in request:
+        responses = []
+        for payload in request.get("payloads", []):
+            responses.append(observe_raw_input(payload.get("raw_input", {})))
+        json.dump({"ok": True, "responses": responses, "warnings": []}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+
+    raw = request.get("payload", {}).get("raw_input", {})
+    response = observe_raw_input(raw)
 
     json.dump(response, sys.stdout)
     sys.stdout.write("\n")

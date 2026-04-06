@@ -1,6 +1,8 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
-use logicpearl_plugin::{run_plugin, PluginManifest, PluginRequest, PluginResponse, PluginStage};
+use logicpearl_plugin::{
+    run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginResponse, PluginStage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use serde_json::Value;
@@ -83,6 +85,27 @@ pub struct StageExecution {
 pub struct ComposePlan {
     pub pipeline: PipelineDefinition,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedPipeline {
+    definition: PipelineDefinition,
+    stages: Vec<PreparedStage>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedStage {
+    stage: PipelineStage,
+    executable: PreparedStageExecutable,
+}
+
+#[derive(Debug, Clone)]
+enum PreparedStageExecutable {
+    Pearl(LogicPearlGateIr),
+    Plugin {
+        manifest: PluginManifest,
+        stage: PluginStage,
+    },
 }
 
 impl PipelineDefinition {
@@ -178,13 +201,69 @@ impl PipelineDefinition {
     }
 
     pub fn run(&self, base_dir: impl AsRef<Path>, root_input: &Value) -> Result<PipelineExecution> {
-        self.validate(&base_dir)?;
+        self.prepare(base_dir)?.run(root_input)
+    }
 
+    pub fn write_pretty(&self, path: impl AsRef<Path>) -> Result<()> {
+        fs::write(path, serde_json::to_string_pretty(self)? + "\n")?;
+        Ok(())
+    }
+
+    pub fn prepare(&self, base_dir: impl AsRef<Path>) -> Result<PreparedPipeline> {
+        self.validate(&base_dir)?;
         let base_dir = base_dir.as_ref();
+        let mut prepared_stages = Vec::with_capacity(self.stages.len());
+        for stage in &self.stages {
+            let executable = match stage.kind {
+                PipelineStageKind::Pearl => {
+                    let artifact_path = resolve_relative_path(
+                        base_dir,
+                        stage.artifact.as_ref().expect("validated pearl artifact"),
+                    );
+                    PreparedStageExecutable::Pearl(LogicPearlGateIr::from_path(&artifact_path)?)
+                }
+                PipelineStageKind::ObserverPlugin
+                | PipelineStageKind::EnricherPlugin
+                | PipelineStageKind::VerifyPlugin => {
+                    let manifest_path = resolve_relative_path(
+                        base_dir,
+                        stage
+                            .plugin_manifest
+                            .as_ref()
+                            .expect("validated plugin manifest"),
+                    );
+                    let manifest = PluginManifest::from_path(&manifest_path)?;
+                    let plugin_stage = plugin_stage_for_kind(&stage.kind).ok_or_else(|| {
+                        LogicPearlError::message(format!(
+                            "stage {} does not map to a plugin stage",
+                            stage.id
+                        ))
+                    })?;
+                    PreparedStageExecutable::Plugin {
+                        manifest,
+                        stage: plugin_stage,
+                    }
+                }
+            };
+            prepared_stages.push(PreparedStage {
+                stage: stage.clone(),
+                executable,
+            });
+        }
+        Ok(PreparedPipeline {
+            definition: self.clone(),
+            stages: prepared_stages,
+        })
+    }
+}
+
+impl PreparedPipeline {
+    pub fn run(&self, root_input: &Value) -> Result<PipelineExecution> {
         let mut stage_exports: HashMap<String, HashMap<String, Value>> = HashMap::new();
         let mut stages = Vec::with_capacity(self.stages.len());
 
-        for stage in &self.stages {
+        for prepared_stage in &self.stages {
+            let stage = &prepared_stage.stage;
             let should_run = match &stage.when {
                 Some(condition) => truthy(&resolve_stage_input_value(
                     condition,
@@ -207,32 +286,7 @@ impl PipelineDefinition {
                 continue;
             }
 
-            let raw_result = match stage.kind {
-                PipelineStageKind::Pearl => {
-                    let artifact_path = resolve_relative_path(
-                        base_dir,
-                        stage.artifact.as_ref().expect("validated pearl artifact"),
-                    );
-                    let gate = LogicPearlGateIr::from_path(&artifact_path)?;
-                    let features =
-                        build_stage_input_object(&stage.input, root_input, &stage_exports)?;
-                    let bitmask = logicpearl_runtime::evaluate_gate(&gate, &features)?;
-                    Value::Object(Map::from_iter([
-                        ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                        ("bitmask".to_string(), Value::Number(bitmask.into())),
-                        (
-                            "allow".to_string(),
-                            Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
-                        ),
-                    ]))
-                }
-                PipelineStageKind::ObserverPlugin => {
-                    run_observer_plugin_stage(stage, base_dir, root_input, &stage_exports)?
-                }
-                PipelineStageKind::EnricherPlugin | PipelineStageKind::VerifyPlugin => {
-                    run_generic_plugin_stage(stage, base_dir, root_input, &stage_exports)?
-                }
-            };
+            let raw_result = run_prepared_stage(prepared_stage, root_input, &stage_exports)?;
 
             let exports = build_stage_exports(&stage.export, &raw_result)?;
             stage_exports.insert(stage.id.clone(), exports.clone());
@@ -247,7 +301,7 @@ impl PipelineDefinition {
         }
 
         let mut output = HashMap::new();
-        for (key, value) in &self.output {
+        for (key, value) in &self.definition.output {
             output.insert(
                 key.clone(),
                 resolve_pipeline_output_value(value, root_input, &stage_exports)?,
@@ -255,16 +309,101 @@ impl PipelineDefinition {
         }
 
         Ok(PipelineExecution {
-            pipeline_id: self.pipeline_id.clone(),
+            pipeline_id: self.definition.pipeline_id.clone(),
             ok: true,
             output,
             stages,
         })
     }
 
-    pub fn write_pretty(&self, path: impl AsRef<Path>) -> Result<()> {
-        fs::write(path, serde_json::to_string_pretty(self)? + "\n")?;
-        Ok(())
+    pub fn run_batch(&self, root_inputs: &[Value]) -> Result<Vec<PipelineExecution>> {
+        let mut stage_exports: Vec<HashMap<String, HashMap<String, Value>>> =
+            vec![HashMap::new(); root_inputs.len()];
+        let mut case_stages: Vec<Vec<StageExecution>> = (0..root_inputs.len())
+            .map(|_| Vec::with_capacity(self.stages.len()))
+            .collect();
+
+        for prepared_stage in &self.stages {
+            let stage = &prepared_stage.stage;
+            let should_run: Vec<bool> = root_inputs
+                .iter()
+                .zip(stage_exports.iter())
+                .map(|(root_input, exports)| -> Result<bool> {
+                    Ok(match &stage.when {
+                        Some(condition) => {
+                            truthy(&resolve_stage_input_value(condition, root_input, exports)?)
+                        }
+                        None => true,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            let runnable_indexes: Vec<usize> = should_run
+                .iter()
+                .enumerate()
+                .filter_map(|(index, should)| should.then_some(index))
+                .collect();
+
+            let raw_results = run_prepared_stage_batch(
+                prepared_stage,
+                root_inputs,
+                &stage_exports,
+                &runnable_indexes,
+            )?;
+            let mut raw_iter = raw_results.into_iter();
+
+            for index in 0..root_inputs.len() {
+                if !should_run[index] {
+                    case_stages[index].push(StageExecution {
+                        id: stage.id.clone(),
+                        kind: stage.kind.clone(),
+                        ok: true,
+                        skipped: true,
+                        exports: HashMap::new(),
+                        raw_result: Value::Null,
+                    });
+                    stage_exports[index].insert(stage.id.clone(), HashMap::new());
+                    continue;
+                }
+
+                let raw_result = raw_iter.next().ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "prepared stage batch for {} returned fewer results than expected",
+                        stage.id
+                    ))
+                })?;
+                let exports = build_stage_exports(&stage.export, &raw_result)?;
+                stage_exports[index].insert(stage.id.clone(), exports.clone());
+                case_stages[index].push(StageExecution {
+                    id: stage.id.clone(),
+                    kind: stage.kind.clone(),
+                    ok: true,
+                    skipped: false,
+                    exports,
+                    raw_result,
+                });
+            }
+        }
+
+        root_inputs
+            .iter()
+            .enumerate()
+            .map(|(index, root_input)| {
+                let mut output = HashMap::new();
+                for (key, value) in &self.definition.output {
+                    output.insert(
+                        key.clone(),
+                        resolve_pipeline_output_value(value, root_input, &stage_exports[index])?,
+                    );
+                }
+                Ok(PipelineExecution {
+                    pipeline_id: self.definition.pipeline_id.clone(),
+                    ok: true,
+                    output,
+                    stages: case_stages[index].clone(),
+                })
+            })
+            .collect()
     }
 }
 
@@ -477,69 +616,121 @@ fn plugin_stage_for_kind(kind: &PipelineStageKind) -> Option<PluginStage> {
     }
 }
 
-fn run_observer_plugin_stage(
-    stage: &PipelineStage,
-    base_dir: &Path,
+fn run_prepared_stage(
+    prepared_stage: &PreparedStage,
     root_input: &Value,
     stage_exports: &HashMap<String, HashMap<String, Value>>,
 ) -> Result<Value> {
-    let manifest_path = resolve_relative_path(
-        base_dir,
-        stage
-            .plugin_manifest
-            .as_ref()
-            .expect("validated observer plugin manifest"),
-    );
-    let manifest = PluginManifest::from_path(&manifest_path)?;
-    let raw_input = Value::Object(
-        build_stage_input_object(&stage.input, root_input, stage_exports)?
-            .into_iter()
-            .collect(),
-    );
-    let response = run_plugin(
-        &manifest,
-        &PluginRequest {
-            protocol_version: "1".to_string(),
-            stage: PluginStage::Observer,
-            payload: serde_json::json!({
-                "raw_input": raw_input,
-            }),
-        },
-    )?;
-    plugin_response_to_value(response)
+    let stage = &prepared_stage.stage;
+    match &prepared_stage.executable {
+        PreparedStageExecutable::Pearl(gate) => {
+            let features = build_stage_input_object(&stage.input, root_input, stage_exports)?;
+            let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
+            Ok(Value::Object(Map::from_iter([
+                ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
+                ("bitmask".to_string(), Value::Number(bitmask.into())),
+                (
+                    "allow".to_string(),
+                    Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
+                ),
+            ])))
+        }
+        PreparedStageExecutable::Plugin {
+            manifest,
+            stage: plugin_stage,
+        } => {
+            let payload = match plugin_stage {
+                PluginStage::Observer => Value::Object(Map::from_iter([(
+                    "raw_input".to_string(),
+                    Value::Object(
+                        build_stage_input_object(&stage.input, root_input, stage_exports)?
+                            .into_iter()
+                            .collect(),
+                    ),
+                )])),
+                _ => Value::Object(
+                    build_stage_input_object(&stage.input, root_input, stage_exports)?
+                        .into_iter()
+                        .collect(),
+                ),
+            };
+            let response = run_plugin(
+                manifest,
+                &PluginRequest {
+                    protocol_version: "1".to_string(),
+                    stage: plugin_stage.clone(),
+                    payload,
+                },
+            )?;
+            plugin_response_to_value(response)
+        }
+    }
 }
 
-fn run_generic_plugin_stage(
-    stage: &PipelineStage,
-    base_dir: &Path,
-    root_input: &Value,
-    stage_exports: &HashMap<String, HashMap<String, Value>>,
-) -> Result<Value> {
-    let manifest_path = resolve_relative_path(
-        base_dir,
-        stage
-            .plugin_manifest
-            .as_ref()
-            .expect("validated plugin manifest"),
-    );
-    let manifest = PluginManifest::from_path(&manifest_path)?;
-    let plugin_stage = plugin_stage_for_kind(&stage.kind).ok_or_else(|| {
-        LogicPearlError::message(format!("stage {} does not map to a plugin stage", stage.id))
-    })?;
-    let payload = Value::Object(
-        build_stage_input_object(&stage.input, root_input, stage_exports)?
-            .into_iter()
+fn run_prepared_stage_batch(
+    prepared_stage: &PreparedStage,
+    root_inputs: &[Value],
+    stage_exports: &[HashMap<String, HashMap<String, Value>>],
+    runnable_indexes: &[usize],
+) -> Result<Vec<Value>> {
+    let stage = &prepared_stage.stage;
+    match &prepared_stage.executable {
+        PreparedStageExecutable::Pearl(gate) => runnable_indexes
+            .iter()
+            .map(|index| {
+                let features = build_stage_input_object(
+                    &stage.input,
+                    &root_inputs[*index],
+                    &stage_exports[*index],
+                )?;
+                let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
+                Ok(Value::Object(Map::from_iter([
+                    ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
+                    ("bitmask".to_string(), Value::Number(bitmask.into())),
+                    (
+                        "allow".to_string(),
+                        Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
+                    ),
+                ])))
+            })
             .collect(),
-    );
-    let response = run_plugin(
-        &manifest,
-        &PluginRequest {
-            protocol_version: "1".to_string(),
+        PreparedStageExecutable::Plugin {
+            manifest,
             stage: plugin_stage,
-            payload,
-        },
-    )?;
-    plugin_response_to_value(response)
+        } => {
+            let payloads: Vec<Value> = runnable_indexes
+                .iter()
+                .map(|index| match plugin_stage {
+                    PluginStage::Observer => Ok(Value::Object(Map::from_iter([(
+                        "raw_input".to_string(),
+                        Value::Object(
+                            build_stage_input_object(
+                                &stage.input,
+                                &root_inputs[*index],
+                                &stage_exports[*index],
+                            )?
+                            .into_iter()
+                            .collect(),
+                        ),
+                    )]))),
+                    _ => Ok(Value::Object(
+                        build_stage_input_object(
+                            &stage.input,
+                            &root_inputs[*index],
+                            &stage_exports[*index],
+                        )?
+                        .into_iter()
+                        .collect(),
+                    )),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let responses = run_plugin_batch(manifest, plugin_stage.clone(), &payloads)?;
+            responses
+                .into_iter()
+                .map(plugin_response_to_value)
+                .collect()
+        }
+    }
 }
 
 fn plugin_response_to_value(response: PluginResponse) -> Result<Value> {

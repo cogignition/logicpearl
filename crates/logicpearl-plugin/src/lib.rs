@@ -36,6 +36,13 @@ pub struct PluginRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginBatchRequest {
+    pub protocol_version: String,
+    pub stage: PluginStage,
+    pub payloads: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginErrorPayload {
     pub code: String,
     pub message: String,
@@ -52,6 +59,17 @@ pub struct PluginResponse {
     pub error: Option<PluginErrorPayload>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginBatchResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub error: Option<PluginErrorPayload>,
+    #[serde(default)]
+    pub responses: Vec<PluginResponse>,
 }
 
 impl PluginManifest {
@@ -83,6 +101,13 @@ impl PluginManifest {
         }
         Ok(())
     }
+
+    pub fn supports_capability(&self, capability: &str) -> bool {
+        self.capabilities
+            .as_ref()
+            .map(|caps| caps.iter().any(|item| item == capability))
+            .unwrap_or(false)
+    }
 }
 
 pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<PluginResponse> {
@@ -93,6 +118,81 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
         )));
     }
 
+    let stdout = run_plugin_raw(manifest, request)?;
+    parse_plugin_response(manifest, &stdout)
+}
+
+pub fn run_plugin_batch(
+    manifest: &PluginManifest,
+    stage: PluginStage,
+    payloads: &[Value],
+) -> Result<Vec<PluginResponse>> {
+    if manifest.stage != stage {
+        return Err(LogicPearlError::message(format!(
+            "plugin stage mismatch: manifest is {:?}, request is {:?}",
+            manifest.stage, stage
+        )));
+    }
+    if payloads.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !manifest.supports_capability("batch_requests") {
+        return payloads
+            .iter()
+            .map(|payload| {
+                run_plugin(
+                    manifest,
+                    &PluginRequest {
+                        protocol_version: "1".to_string(),
+                        stage: stage.clone(),
+                        payload: payload.clone(),
+                    },
+                )
+            })
+            .collect();
+    }
+
+    let stdout = run_plugin_raw(
+        manifest,
+        &PluginBatchRequest {
+            protocol_version: "1".to_string(),
+            stage: stage.clone(),
+            payloads: payloads.to_vec(),
+        },
+    )?;
+    let batch: PluginBatchResponse = serde_json::from_str(&stdout).map_err(|err| {
+        LogicPearlError::message(format!(
+            "plugin {} returned invalid batch JSON: {}",
+            manifest.name, err
+        ))
+    })?;
+    if !batch.ok {
+        if let Some(error) = &batch.error {
+            return Err(LogicPearlError::message(format!(
+                "plugin {} failed [{}]: {}",
+                manifest.name, error.code, error.message
+            )));
+        }
+        return Err(LogicPearlError::message(format!(
+            "plugin {} returned ok=false without structured batch error",
+            manifest.name
+        )));
+    }
+    if batch.responses.len() != payloads.len() {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} returned {} batch responses for {} payloads",
+            manifest.name,
+            batch.responses.len(),
+            payloads.len()
+        )));
+    }
+    for response in &batch.responses {
+        validate_ok_plugin_response(manifest, response)?;
+    }
+    Ok(batch.responses)
+}
+
+fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Result<String> {
     let program = manifest
         .entrypoint
         .first()
@@ -136,13 +236,26 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
         )));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let response: PluginResponse = serde_json::from_str(&stdout).map_err(|err| {
+    String::from_utf8(output.stdout).map_err(|err| {
+        LogicPearlError::message(format!(
+            "plugin {} returned invalid UTF-8: {}",
+            manifest.name, err
+        ))
+    })
+}
+
+fn parse_plugin_response(manifest: &PluginManifest, stdout: &str) -> Result<PluginResponse> {
+    let response: PluginResponse = serde_json::from_str(stdout).map_err(|err| {
         LogicPearlError::message(format!(
             "plugin {} returned invalid JSON: {}",
             manifest.name, err
         ))
     })?;
+    validate_ok_plugin_response(manifest, &response)?;
+    Ok(response)
+}
+
+fn validate_ok_plugin_response(manifest: &PluginManifest, response: &PluginResponse) -> Result<()> {
     if !response.ok {
         if let Some(error) = &response.error {
             return Err(LogicPearlError::message(format!(
@@ -155,7 +268,7 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
             manifest.name
         )));
     }
-    Ok(response)
+    Ok(())
 }
 
 fn resolve_entrypoint_segment(

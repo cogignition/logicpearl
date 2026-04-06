@@ -530,12 +530,12 @@ That file covers:
 
 A compact artifact-first demo for learning the pearl format and runtime shape.
 
-### WAF / AI Edge Demo
+### WAF Demo
 
-A full raw-request demo showing:
+A full raw-request WAF demo showing:
 
 - custom observer plugins for domain semantics
-- grouped pearls for independent denial reasons
+- classic WAF request classes like SQLi, restricted-resource access, and automation probes
 - a collective route pearl for `allow`, `deny`, and `review`
 
 See:
