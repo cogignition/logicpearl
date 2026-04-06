@@ -1,4 +1,46 @@
 {
+  "route_classes": {
+    "automation_probe": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:automation-probe"
+    },
+    "command_injection": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:command-injection"
+    },
+    "php_injection": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:php-injection"
+    },
+    "sensitive_surface": {
+      "expected_route": "deny_sensitive_surface",
+      "category": "waf:restricted-resource"
+    },
+    "protocol_review": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:protocol-violation"
+    },
+    "sqli": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:sqli"
+    },
+    "xss": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:xss"
+    },
+    "data_exfiltration": {
+      "expected_route": "deny_data_exfiltration",
+      "category": "waf:data-exfiltration"
+    },
+    "modsecurity_default": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:modsecurity-deny"
+    },
+    "csic_default": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:anomalous-request"
+    }
+  },
   "scanner_markers": [
     "sqlmap",
     "nikto",
@@ -33,6 +75,27 @@
     "command injection",
     "web_attack/command_injection",
     "language-shell"
+  ],
+  "php_injection_markers": [
+    "base64_decode",
+    "gzdecode",
+    "eval(",
+    "assert(",
+    "shell_exec",
+    "passthru(",
+    "system(",
+    "php-cgi.exe",
+    "eval-stdin.php"
+  ],
+  "php_injection_meta_patterns": [
+    "attack-injection-php",
+    "web_attack/php_injection",
+    "php injection attack",
+    "php open tag found",
+    "high-risk php function",
+    "php script file upload",
+    "wrapper scheme detected",
+    "serialized object injection"
   ],
   "server_include_patterns": [
     "<!--#include",
@@ -91,27 +154,35 @@
     ".asax",
     ".ascx",
     ".axd",
+    ".asp",
     ".backup",
     ".bak",
     ".bat",
+    ".cfm",
     ".cfg",
     ".cmd",
     ".com",
     ".config",
     ".conf",
+    ".cnf",
     ".csr",
     ".dat",
     ".db",
     ".dbf",
+    ".do",
     ".dll",
     ".env",
+    ".htr",
     ".ini",
+    ".inc",
+    ".java",
     ".key",
     ".licx",
     ".lnk",
     ".log",
     ".mdb",
     ".old",
+    ".nsf",
     ".orig",
     ".pass",
     ".pdb",

@@ -75,11 +75,34 @@ struct ParsedHttpRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct WafRouteClass {
+    expected_route: String,
+    category: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WafRouteClasses {
+    automation_probe: WafRouteClass,
+    command_injection: WafRouteClass,
+    php_injection: WafRouteClass,
+    sensitive_surface: WafRouteClass,
+    protocol_review: WafRouteClass,
+    sqli: WafRouteClass,
+    xss: WafRouteClass,
+    data_exfiltration: WafRouteClass,
+    modsecurity_default: WafRouteClass,
+    csic_default: WafRouteClass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct WafRoutePatterns {
+    route_classes: WafRouteClasses,
     scanner_markers: Vec<String>,
     scanner_meta_markers: Vec<String>,
     protocol_review_meta_markers: Vec<String>,
     command_injection_meta_patterns: Vec<String>,
+    php_injection_markers: Vec<String>,
+    php_injection_meta_patterns: Vec<String>,
     server_include_patterns: Vec<String>,
     sqli_markers: Vec<String>,
     sqli_meta_markers: Vec<String>,
@@ -1448,7 +1471,7 @@ fn adapt_csic_http_2010_file(
             continue;
         };
         let (expected_route, category) = if allow_rows {
-            ("allow", "waf:benign".to_string())
+            ("allow".to_string(), "waf:benign".to_string())
         } else {
             classify_waf_route_family(&request, None)
         };
@@ -1636,17 +1659,18 @@ fn percent_decode_component(value: &str) -> String {
     out
 }
 
-fn classify_modsecurity_transaction(
-    request: &ParsedHttpRequest,
-    meta: &str,
-) -> (&'static str, String) {
+fn classify_modsecurity_transaction(request: &ParsedHttpRequest, meta: &str) -> (String, String) {
     classify_waf_route_family(request, Some(meta))
 }
 
-fn classify_waf_route_family(
-    request: &ParsedHttpRequest,
-    meta: Option<&str>,
-) -> (&'static str, String) {
+fn route_class(classification: &WafRouteClass) -> (String, String) {
+    (
+        classification.expected_route.clone(),
+        classification.category.clone(),
+    )
+}
+
+fn classify_waf_route_family(request: &ParsedHttpRequest, meta: Option<&str>) -> (String, String) {
     let meta_text = meta.unwrap_or_default().to_ascii_lowercase();
     let request_text = waf_request_text(request);
     let request_path = request.path.to_ascii_lowercase();
@@ -1655,19 +1679,19 @@ fn classify_waf_route_family(
     if contains_any_marker(&request_text, &patterns.scanner_markers)
         || contains_any_marker(&meta_text, &patterns.scanner_meta_markers)
     {
-        return (
-            "review_suspicious_request",
-            "waf:automation-probe".to_string(),
-        );
+        return route_class(&patterns.route_classes.automation_probe);
     }
 
     if contains_any_marker(&request_text, &patterns.server_include_patterns)
         || contains_any_marker(&meta_text, &patterns.command_injection_meta_patterns)
     {
-        return (
-            "deny_injection_payload",
-            "waf:command-injection".to_string(),
-        );
+        return route_class(&patterns.route_classes.command_injection);
+    }
+
+    if contains_any_marker(&request_text, &patterns.php_injection_markers)
+        || contains_any_marker(&meta_text, &patterns.php_injection_meta_patterns)
+    {
+        return route_class(&patterns.route_classes.php_injection);
     }
 
     if contains_any_marker(&request_text, &patterns.restricted_markers)
@@ -1677,45 +1701,33 @@ fn classify_waf_route_family(
             .iter()
             .any(|suffix| request_path.ends_with(suffix))
     {
-        return (
-            "deny_sensitive_surface",
-            "waf:restricted-resource".to_string(),
-        );
+        return route_class(&patterns.route_classes.sensitive_surface);
     }
 
     if contains_any_marker(&meta_text, &patterns.protocol_review_meta_markers) {
-        return (
-            "review_suspicious_request",
-            "waf:protocol-violation".to_string(),
-        );
+        return route_class(&patterns.route_classes.protocol_review);
     }
 
     if contains_any_marker(&request_text, &patterns.sqli_markers)
         || contains_any_marker(&meta_text, &patterns.sqli_meta_markers)
     {
-        return ("deny_injection_payload", "waf:sqli".to_string());
+        return route_class(&patterns.route_classes.sqli);
     }
 
     if contains_any_marker(&request_text, &patterns.xss_markers)
         || contains_any_marker(&meta_text, &patterns.xss_meta_markers)
     {
-        return ("deny_injection_payload", "waf:xss".to_string());
+        return route_class(&patterns.route_classes.xss);
     }
 
     if contains_any_marker(&request_text, &patterns.export_markers) {
-        return (
-            "deny_data_exfiltration",
-            "waf:data-exfiltration".to_string(),
-        );
+        return route_class(&patterns.route_classes.data_exfiltration);
     }
 
     if meta.is_some() {
-        ("deny_injection_payload", "waf:modsecurity-deny".to_string())
+        route_class(&patterns.route_classes.modsecurity_default)
     } else {
-        (
-            "deny_injection_payload",
-            "waf:anomalous-request".to_string(),
-        )
+        route_class(&patterns.route_classes.csic_default)
     }
 }
 
@@ -1764,7 +1776,7 @@ fn waf_route_patterns() -> &'static WafRoutePatterns {
 fn build_waf_case(
     id: String,
     request: &ParsedHttpRequest,
-    expected_route: &str,
+    expected_route: String,
     category: String,
     defaults: &BenchmarkAdaptDefaults,
     extra: Value,
@@ -1819,7 +1831,7 @@ fn build_waf_case(
     BenchmarkCase {
         id,
         input: Value::Object(input),
-        expected_route: expected_route.to_string(),
+        expected_route,
         category: Some(category),
     }
 }
@@ -2342,6 +2354,17 @@ mod tests {
         );
         assert_eq!(route, "deny_injection_payload");
         assert_eq!(category, "waf:command-injection");
+    }
+
+    #[test]
+    fn classify_waf_routes_php_injection_meta_to_injection_payload() {
+        let request = waf_request("/php-cgi.exe");
+        let (route, category) = classify_waf_route_family(
+            &request,
+            Some("[msg \"PHP Injection Attack: High-Risk PHP function name found\"] [tag \"attack-injection-php\"]"),
+        );
+        assert_eq!(route, "deny_injection_payload");
+        assert_eq!(category, "waf:php-injection");
     }
 
     #[test]

@@ -53,9 +53,11 @@ def observe_raw_input(raw) -> dict:
     contains_xss_signature = contains_any(combined_text, CONFIG["xss_patterns"])
     contains_path_traversal = contains_any(combined_text, CONFIG["traversal_patterns"])
     contains_server_include = contains_any(combined_text, CONFIG["server_include_patterns"])
+    contains_php_injection = contains_any(combined_text, CONFIG["php_injection_patterns"])
     sqli_marker_count = count_matches(combined_text, CONFIG["sqli_patterns"])
     xss_marker_count = count_matches(combined_text, CONFIG["xss_patterns"])
     traversal_marker_count = count_matches(combined_text, CONFIG["traversal_patterns"])
+    php_injection_marker_count = count_matches(combined_text, CONFIG["php_injection_patterns"])
     sensitive_route_marker_count = count_matches(path, CONFIG["sensitive_route_patterns"])
     scanner_marker_count = count_matches(user_agent, CONFIG["scanner_patterns"])
     targets_sensitive_route = (
@@ -78,6 +80,9 @@ def observe_raw_input(raw) -> dict:
     meta_reports_command_injection = contains_any(
         modsecurity_meta, CONFIG["command_injection_meta_patterns"]
     )
+    meta_reports_php_injection = contains_any(
+        modsecurity_meta, CONFIG["php_injection_meta_patterns"]
+    )
     contains_waitfor_delay = "waitfor delay" in combined_text or "sleep(" in combined_text
     contains_union_select = "union select" in combined_text
     contains_quote = "'" in combined_text or '"' in combined_text
@@ -98,6 +103,7 @@ def observe_raw_input(raw) -> dict:
             contains_xss_signature,
             contains_path_traversal,
             contains_server_include,
+            contains_php_injection,
             targets_sensitive_route,
             has_scanner_fingerprint,
             has_malformed_encoding,
@@ -107,6 +113,7 @@ def observe_raw_input(raw) -> dict:
             meta_reports_bad_bot,
             meta_reports_protocol_violation,
             meta_reports_command_injection,
+            meta_reports_php_injection,
         )
     )
 
@@ -127,6 +134,8 @@ def observe_raw_input(raw) -> dict:
         risk_score += 0.24
     if contains_server_include:
         risk_score += 0.2
+    if contains_php_injection:
+        risk_score += 0.24
     if targets_sensitive_route:
         risk_score += 0.14
     if origin_outside_trust_zone:
@@ -137,6 +146,8 @@ def observe_raw_input(raw) -> dict:
         risk_score += 0.28
     if meta_reports_command_injection:
         risk_score += 0.28
+    if meta_reports_php_injection:
+        risk_score += 0.24
     if likely_benign_request:
         risk_score = min(risk_score, 0.12)
     risk_score = round(max(0.0, min(1.0, risk_score)), 2)
@@ -148,9 +159,11 @@ def observe_raw_input(raw) -> dict:
             "contains_xss_signature": contains_xss_signature,
             "contains_path_traversal": contains_path_traversal,
             "contains_server_include": contains_server_include,
+            "contains_php_injection": contains_php_injection,
             "sqli_marker_count": sqli_marker_count,
             "xss_marker_count": xss_marker_count,
             "traversal_marker_count": traversal_marker_count,
+            "php_injection_marker_count": php_injection_marker_count,
             "sensitive_route_marker_count": sensitive_route_marker_count,
             "scanner_marker_count": scanner_marker_count,
             "targets_sensitive_route": targets_sensitive_route,
@@ -166,6 +179,7 @@ def observe_raw_input(raw) -> dict:
             "meta_reports_bad_bot": meta_reports_bad_bot,
             "meta_reports_protocol_violation": meta_reports_protocol_violation,
             "meta_reports_command_injection": meta_reports_command_injection,
+            "meta_reports_php_injection": meta_reports_php_injection,
             "contains_waitfor_delay": contains_waitfor_delay,
             "contains_union_select": contains_union_select,
             "contains_quote": contains_quote,
