@@ -134,6 +134,11 @@ def parse_args() -> argparse.Namespace:
         default="parity-first",
         help="Observer synthesis goal to use while freezing the guardrail bundle.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing synthesized observer outputs in the output directory when possible.",
+    )
     return parser.parse_args()
 
 
@@ -176,6 +181,13 @@ def run_plain(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=REPO_ROOT, check=True)
     elapsed = time.monotonic() - started
     print(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ completed in {elapsed:.1f}s", flush=True)
+
+
+def log_resume(path: Path, label: str) -> None:
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] ↺ reusing existing {label}: {path}",
+        flush=True,
+    )
 
 
 def ensure_exists(path: Path) -> None:
@@ -376,24 +388,32 @@ def main() -> int:
     synthesis_reports: list[dict[str, Any]] = []
     for index, signal in enumerate(SYNTHESIS_SIGNALS, start=1):
         output_path = synthesized_dir / f"{index:02d}_{signal}.observer.json"
-        report = run_json(
-            [
-                *cli,
-                "observer",
-                "synthesize",
-                "--artifact",
-                str(current_observer_path),
-                "--benchmark-cases",
-                str(merged_dev_path),
-                "--signal",
-                signal,
-                "--target-goal",
-                args.target_goal,
-                "--output",
-                str(output_path),
-                "--json",
-            ]
-        )
+        if args.resume and output_path.exists():
+            log_resume(output_path, f"{signal} synthesis output")
+            report = {
+                "status": "resumed",
+                "signal": signal,
+                "output": str(output_path),
+            }
+        else:
+            report = run_json(
+                [
+                    *cli,
+                    "observer",
+                    "synthesize",
+                    "--artifact",
+                    str(current_observer_path),
+                    "--benchmark-cases",
+                    str(merged_dev_path),
+                    "--signal",
+                    signal,
+                    "--target-goal",
+                    args.target_goal,
+                    "--output",
+                    str(output_path),
+                    "--json",
+                ]
+            )
         report["input_artifact"] = str(current_observer_path)
         synthesis_reports.append(report)
         current_observer_path = output_path
