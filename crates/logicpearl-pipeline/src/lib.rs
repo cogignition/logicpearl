@@ -104,14 +104,10 @@ impl PipelineDefinition {
             )));
         }
         if self.pipeline_id.trim().is_empty() {
-            return Err(LogicPearlError::message(
-                "pipeline_id must be non-empty",
-            ));
+            return Err(LogicPearlError::message("pipeline_id must be non-empty"));
         }
         if self.entrypoint.trim().is_empty() {
-            return Err(LogicPearlError::message(
-                "entrypoint must be non-empty",
-            ));
+            return Err(LogicPearlError::message("entrypoint must be non-empty"));
         }
         if self.stages.is_empty() {
             return Err(LogicPearlError::message(
@@ -190,7 +186,11 @@ impl PipelineDefinition {
 
         for stage in &self.stages {
             let should_run = match &stage.when {
-                Some(condition) => truthy(&resolve_stage_input_value(condition, root_input, &stage_exports)?),
+                Some(condition) => truthy(&resolve_stage_input_value(
+                    condition,
+                    root_input,
+                    &stage_exports,
+                )?),
                 None => true,
             };
 
@@ -214,18 +214,17 @@ impl PipelineDefinition {
                         stage.artifact.as_ref().expect("validated pearl artifact"),
                     );
                     let gate = LogicPearlGateIr::from_path(&artifact_path)?;
-                    let features = build_stage_input_object(&stage.input, root_input, &stage_exports)?;
+                    let features =
+                        build_stage_input_object(&stage.input, root_input, &stage_exports)?;
                     let bitmask = logicpearl_runtime::evaluate_gate(&gate, &features)?;
-                    Value::Object(
-                        Map::from_iter([
-                            ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                            ("bitmask".to_string(), Value::Number(bitmask.into())),
-                            (
-                                "allow".to_string(),
-                                Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
-                            ),
-                        ]),
-                    )
+                    Value::Object(Map::from_iter([
+                        ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
+                        ("bitmask".to_string(), Value::Number(bitmask.into())),
+                        (
+                            "allow".to_string(),
+                            Value::Bool(bitmask == gate.evaluation.allow_when_bitmask),
+                        ),
+                    ]))
                 }
                 PipelineStageKind::ObserverPlugin => {
                     run_observer_plugin_stage(stage, base_dir, root_input, &stage_exports)?
@@ -249,7 +248,10 @@ impl PipelineDefinition {
 
         let mut output = HashMap::new();
         for (key, value) in &self.output {
-            output.insert(key.clone(), resolve_pipeline_output_value(value, root_input, &stage_exports)?);
+            output.insert(
+                key.clone(),
+                resolve_pipeline_output_value(value, root_input, &stage_exports)?,
+            );
         }
 
         Ok(PipelineExecution {
@@ -296,7 +298,10 @@ pub fn compose_pipeline(
         }
 
         let mut export = HashMap::new();
-        export.insert("bitmask".to_string(), Value::String("$.bitmask".to_string()));
+        export.insert(
+            "bitmask".to_string(),
+            Value::String("$.bitmask".to_string()),
+        );
         export.insert("allow".to_string(), Value::String("$.allow".to_string()));
 
         notes.push(format!(
@@ -519,10 +524,7 @@ fn run_generic_plugin_stage(
     );
     let manifest = PluginManifest::from_path(&manifest_path)?;
     let plugin_stage = plugin_stage_for_kind(&stage.kind).ok_or_else(|| {
-        LogicPearlError::message(format!(
-            "stage {} does not map to a plugin stage",
-            stage.id
-        ))
+        LogicPearlError::message(format!("stage {} does not map to a plugin stage", stage.id))
     })?;
     let payload = Value::Object(
         build_stage_input_object(&stage.input, root_input, stage_exports)?
@@ -702,7 +704,12 @@ fn resolve_value(
         Value::Array(items) => {
             let mut resolved = Vec::with_capacity(items.len());
             for item in items {
-                resolved.push(resolve_value(item, dollar_scope, local_scope, stage_exports)?);
+                resolved.push(resolve_value(
+                    item,
+                    dollar_scope,
+                    local_scope,
+                    stage_exports,
+                )?);
             }
             Ok(Value::Array(resolved))
         }
@@ -810,8 +817,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/authz");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
         let validated = pipeline.validate(base_dir).expect("pipeline validates");
         assert_eq!(validated.pipeline_id, "demo");
         assert_eq!(validated.stage_count, 1);
@@ -844,9 +850,10 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/authz");
-        let err = pipeline.validate(base_dir).expect_err("validation should fail");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
+        let err = pipeline
+            .validate(base_dir)
+            .expect_err("validation should fail");
         assert!(err.to_string().contains("unknown or future stage"));
     }
 
@@ -881,8 +888,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/authz");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
         let input = json!({
             "request": {
                 "action": "delete",
@@ -1021,24 +1027,25 @@ mod tests {
         let execution = pipeline.run(base_dir, &input).expect("pipeline runs");
         assert_eq!(execution.output.get("bitmask"), Some(&json!(0)));
         assert_eq!(execution.output.get("allow"), Some(&json!(true)));
-        assert_eq!(execution.output.get("audit_status"), Some(&json!("clean_pass")));
+        assert_eq!(
+            execution.output.get("audit_status"),
+            Some(&json!("clean_pass"))
+        );
         assert_eq!(execution.output.get("consistent"), Some(&json!(true)));
     }
 
     #[test]
     fn composes_starter_pipeline_from_artifacts() {
-        let artifact_paths = vec![
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/ir/valid/auth-demo-v1.json"),
-        ];
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/generated");
+        let artifact_paths =
+            vec![Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/ir/valid/auth-demo-v1.json")];
+        let base_dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/generated");
         let plan = compose_pipeline("starter", &artifact_paths, &base_dir).expect("compose works");
         assert_eq!(plan.pipeline.pipeline_id, "starter");
         assert_eq!(plan.pipeline.stages.len(), 1);
         assert_eq!(plan.pipeline.stages[0].id, "auth_demo_v1");
-        assert!(plan.pipeline.stages[0]
-            .input
-            .contains_key("action"));
+        assert!(plan.pipeline.stages[0].input.contains_key("action"));
         assert_eq!(
             plan.pipeline.output.get("allow"),
             Some(&json!("@auth_demo_v1.allow"))

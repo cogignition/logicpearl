@@ -66,7 +66,9 @@ impl PluginManifest {
 
     pub fn validate(&self) -> Result<()> {
         if self.name.trim().is_empty() {
-            return Err(LogicPearlError::message("plugin manifest name must be non-empty"));
+            return Err(LogicPearlError::message(
+                "plugin manifest name must be non-empty",
+            ));
         }
         if self.protocol_version != "1" {
             return Err(LogicPearlError::message(format!(
@@ -104,7 +106,10 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
             .collect();
         command.args(&args);
     }
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = command.spawn()?;
     let stdin = child
@@ -153,7 +158,11 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
     Ok(response)
 }
 
-fn resolve_entrypoint_segment(manifest: &PluginManifest, segment: &str, executable: bool) -> String {
+fn resolve_entrypoint_segment(
+    manifest: &PluginManifest,
+    segment: &str,
+    executable: bool,
+) -> String {
     if let Some(dir) = &manifest.manifest_dir {
         let candidate = dir.join(segment);
         if candidate.exists() {

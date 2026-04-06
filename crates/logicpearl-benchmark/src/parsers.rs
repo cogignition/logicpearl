@@ -78,8 +78,14 @@ pub(crate) fn parse_squad_question_rows(raw: &str) -> Result<Vec<serde_json::Map
             for question in &paragraph.qas {
                 let mut row = serde_json::Map::new();
                 row.insert("id".to_string(), Value::String(question.id.clone()));
-                row.insert("question".to_string(), Value::String(question.question.clone()));
-                row.insert("context".to_string(), Value::String(paragraph.context.clone()));
+                row.insert(
+                    "question".to_string(),
+                    Value::String(question.question.clone()),
+                );
+                row.insert(
+                    "context".to_string(),
+                    Value::String(paragraph.context.clone()),
+                );
                 if let Some(title) = &article.title {
                     row.insert("title".to_string(), Value::String(title.clone()));
                 }

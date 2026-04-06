@@ -50,8 +50,12 @@ pub fn synthesize_boolean_conjunctions(
         return Ok(Vec::new());
     }
 
-    let positives: Vec<&BooleanSearchExample> = examples.iter().filter(|example| example.positive).collect();
-    let negatives: Vec<&BooleanSearchExample> = examples.iter().filter(|example| !example.positive).collect();
+    let positives: Vec<&BooleanSearchExample> =
+        examples.iter().filter(|example| example.positive).collect();
+    let negatives: Vec<&BooleanSearchExample> = examples
+        .iter()
+        .filter(|example| !example.positive)
+        .collect();
     if positives.len() < options.min_positive_support {
         return Ok(Vec::new());
     }
@@ -81,7 +85,12 @@ pub fn synthesize_boolean_conjunctions(
         let covered_positive_indexes: Vec<usize> = uncovered_positive_indexes
             .iter()
             .copied()
-            .filter(|index| conjunction_matches(&positives[*index].features, &candidate.required_true_features))
+            .filter(|index| {
+                conjunction_matches(
+                    &positives[*index].features,
+                    &candidate.required_true_features,
+                )
+            })
             .collect();
         if covered_positive_indexes.is_empty() {
             break;
@@ -245,7 +254,10 @@ fn keep_sum(count: usize) -> String {
     )
 }
 
-fn conjunction_matches(features: &BTreeMap<String, bool>, required_true_features: &[String]) -> bool {
+fn conjunction_matches(
+    features: &BTreeMap<String, bool>,
+    required_true_features: &[String],
+) -> bool {
     required_true_features
         .iter()
         .all(|feature| features.get(feature).copied().unwrap_or(false))
@@ -277,9 +289,8 @@ fn solve_selected_feature_indexes_with_z3(feature_count: usize, smt: String) -> 
         )));
     }
 
-    let stdout = String::from_utf8(output.stdout).map_err(|err| {
-        LogicPearlError::message(format!("z3 output was not valid UTF-8: {err}"))
-    })?;
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| LogicPearlError::message(format!("z3 output was not valid UTF-8: {err}")))?;
     if !stdout.lines().next().unwrap_or_default().contains("sat") {
         return Ok(Vec::new());
     }
@@ -314,7 +325,11 @@ mod tests {
 
     #[test]
     fn synthesizes_exact_two_feature_conjunction() {
-        if std::process::Command::new("z3").arg("-version").output().is_err() {
+        if std::process::Command::new("z3")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
             return;
         }
 
@@ -336,7 +351,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].required_true_features, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            candidates[0].required_true_features,
+            vec!["a".to_string(), "b".to_string()]
+        );
         assert_eq!(candidates[0].positive_hits, 2);
         assert_eq!(candidates[0].negative_hits, 0);
     }

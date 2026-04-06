@@ -1,5 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr};
+use logicpearl_ir::{
+    ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -55,7 +57,10 @@ fn evaluate_expression(expression: &Expression, features: &HashMap<String, Value
     }
 }
 
-fn evaluate_comparison(expression: &ComparisonExpression, features: &HashMap<String, Value>) -> Result<bool> {
+fn evaluate_comparison(
+    expression: &ComparisonExpression,
+    features: &HashMap<String, Value>,
+) -> Result<bool> {
     let left = features.get(&expression.feature).ok_or_else(|| {
         LogicPearlError::message(format!("missing runtime feature: {}", expression.feature))
     })?;
@@ -85,7 +90,11 @@ fn resolve_comparison_value<'a>(
     }
 }
 
-fn compare_numbers(left: &Value, right: &Value, predicate: impl Fn(f64, f64) -> bool) -> Result<bool> {
+fn compare_numbers(
+    left: &Value,
+    right: &Value,
+    predicate: impl Fn(f64, f64) -> bool,
+) -> Result<bool> {
     let left = left
         .as_f64()
         .ok_or_else(|| LogicPearlError::message("runtime numeric comparison requires number"))?;
@@ -113,8 +122,8 @@ fn value_in(left: &Value, right: &Value) -> Result<bool> {
 mod tests {
     use super::*;
     use logicpearl_ir::{
-        EvaluationConfig, FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition, RuleKind,
-        RuleVerificationStatus, VerificationConfig,
+        EvaluationConfig, FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition,
+        RuleKind, RuleVerificationStatus, VerificationConfig,
     };
     use serde_json::json;
 
@@ -200,6 +209,7 @@ mod tests {
             ("clearance".to_string(), json!(2)),
             ("sensitivity".to_string(), json!(4)),
         ]);
-        assert!(evaluate_comparison(&expression, &features).expect("feature ref comparison should evaluate"));
+        assert!(evaluate_comparison(&expression, &features)
+            .expect("feature ref comparison should evaluate"));
     }
 }

@@ -21,8 +21,8 @@ struct DemoCase {
 }
 
 fn parse_input_row(traces_path: &Path, expected_allowed: bool) -> Map<String, Value> {
-    let loaded =
-        load_decision_traces_auto(traces_path, None, None, None).expect("demo dataset should normalize");
+    let loaded = load_decision_traces_auto(traces_path, None, None, None)
+        .expect("demo dataset should normalize");
     let row = loaded
         .rows
         .into_iter()
@@ -110,9 +110,13 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
             String::from_utf8_lossy(&build_output.stderr)
         );
 
-        let build_result: BuildResult =
-            serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
-        assert_eq!(build_result.training_parity, 1.0, "{} should build to perfect parity", demo.name);
+        let build_result: BuildResult = serde_json::from_slice(&build_output.stdout)
+            .expect("build output should be valid JSON");
+        assert_eq!(
+            build_result.training_parity, 1.0,
+            "{} should build to perfect parity",
+            demo.name
+        );
 
         let native_binary = Path::new(
             build_result
@@ -121,15 +125,27 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
                 .as_deref()
                 .expect("build should emit native binary"),
         );
-        assert!(native_binary.exists(), "native binary should exist for {}", demo.name);
+        assert!(
+            native_binary.exists(),
+            "native binary should exist for {}",
+            demo.name
+        );
 
         let allowed_payload = Value::Object(parse_input_row(&traces_path, demo.allowed));
         let denied_payload = Value::Object(parse_input_row(&traces_path, !demo.allowed));
 
         let allowed_output = run_compiled_binary(native_binary, &allowed_payload, temp.path());
-        assert_eq!(allowed_output, "0", "{} should allow known-allowed row", demo.name);
+        assert_eq!(
+            allowed_output, "0",
+            "{} should allow known-allowed row",
+            demo.name
+        );
 
         let denied_output = run_compiled_binary(native_binary, &denied_payload, temp.path());
-        assert_ne!(denied_output, "0", "{} should deny known-denied row", demo.name);
+        assert_ne!(
+            denied_output, "0",
+            "{} should deny known-denied row",
+            demo.name
+        );
     }
 }

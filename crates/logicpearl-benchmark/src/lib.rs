@@ -384,7 +384,10 @@ pub fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
 pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<BenchmarkAdapterConfig> {
     let raw = match profile {
         BenchmarkAdapterProfile::SaladBaseSet => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/salad-base-set.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/salad-base-set.yaml"
+            ))
         }
         BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
             include_str!(concat!(
@@ -393,19 +396,31 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
             ))
         }
         BenchmarkAdapterProfile::SafearenaSafe => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/safearena-safe.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/safearena-safe.yaml"
+            ))
         }
         BenchmarkAdapterProfile::SafearenaHarm => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/safearena-harm.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/safearena-harm.yaml"
+            ))
         }
         BenchmarkAdapterProfile::Alert => {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/alert.yaml"))
         }
         BenchmarkAdapterProfile::JailbreakBench => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/jailbreakbench.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/jailbreakbench.yaml"
+            ))
         }
         BenchmarkAdapterProfile::PromptShield => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/promptshield.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/promptshield.yaml"
+            ))
         }
         BenchmarkAdapterProfile::RogueSecurityPromptInjections => {
             include_str!(concat!(
@@ -426,7 +441,10 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
             ))
         }
         BenchmarkAdapterProfile::McpMark => {
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/mcpmark.yaml"))
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/mcpmark.yaml"
+            ))
         }
         BenchmarkAdapterProfile::Squad => {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/squad.yaml"))
@@ -445,10 +463,7 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
         }
         _ => return None,
     };
-    Some(
-        serde_yaml::from_str(raw)
-            .expect("built-in benchmark adapter profile must be valid YAML"),
-    )
+    Some(serde_yaml::from_str(raw).expect("built-in benchmark adapter profile must be valid YAML"))
 }
 
 pub fn detect_benchmark_adapter_profile(path: &Path) -> Result<BenchmarkAdapterProfile> {
@@ -522,7 +537,10 @@ pub fn detect_benchmark_adapter_profile(path: &Path) -> Result<BenchmarkAdapterP
                 && first.contains_key("task_id")
                 && first.contains_key("sites")
             {
-                let category = first.get("category").and_then(Value::as_str).unwrap_or_default();
+                let category = first
+                    .get("category")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 return Ok(if category.eq_ignore_ascii_case("safe") {
                     BenchmarkAdapterProfile::SafearenaSafe
                 } else {
@@ -704,10 +722,9 @@ pub fn write_benchmark_cases_jsonl(cases: &[BenchmarkCase], output: &Path) -> Re
     }
     let mut out = String::new();
     for case in cases {
-        out.push_str(
-            &serde_json::to_string(case)
-                .map_err(|err| LogicPearlError::message(format!("could not serialize benchmark case ({err})")))?,
-        );
+        out.push_str(&serde_json::to_string(case).map_err(|err| {
+            LogicPearlError::message(format!("could not serialize benchmark case ({err})"))
+        })?);
         out.push('\n');
     }
     fs::write(output, out)?;
@@ -723,13 +740,15 @@ pub fn adapt_salad_dataset(
         SaladSubsetKind::BaseSet => BenchmarkAdapterProfile::SaladBaseSet,
         SaladSubsetKind::AttackEnhancedSet => BenchmarkAdapterProfile::SaladAttackEnhancedSet,
     };
-    let config = builtin_adapter_config(profile).ok_or_else(|| {
-        LogicPearlError::message("missing built-in Salad adapter config")
-    })?;
+    let config = builtin_adapter_config(profile)
+        .ok_or_else(|| LogicPearlError::message("missing built-in Salad adapter config"))?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
-pub fn adapt_alert_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+pub fn adapt_alert_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::Alert)
         .ok_or_else(|| LogicPearlError::message("missing built-in ALERT adapter config"))?;
     adapt_dataset_with_config(raw_json, defaults, &config)
@@ -739,8 +758,10 @@ pub fn adapt_jailbreakbench_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::JailbreakBench)
-        .ok_or_else(|| LogicPearlError::message("missing built-in JailbreakBench adapter config"))?;
+    let config =
+        builtin_adapter_config(BenchmarkAdapterProfile::JailbreakBench).ok_or_else(|| {
+            LogicPearlError::message("missing built-in JailbreakBench adapter config")
+        })?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
@@ -758,7 +779,11 @@ pub fn adapt_rogue_security_prompt_injections_dataset(
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::RogueSecurityPromptInjections)
-        .ok_or_else(|| LogicPearlError::message("missing built-in rogue-security prompt-injections adapter config"))?;
+        .ok_or_else(|| {
+            LogicPearlError::message(
+                "missing built-in rogue-security prompt-injections adapter config",
+            )
+        })?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
@@ -767,7 +792,9 @@ pub fn adapt_chatgpt_jailbreak_prompts_dataset(
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::ChatgptJailbreakPrompts)
-        .ok_or_else(|| LogicPearlError::message("missing built-in ChatGPT-Jailbreak-Prompts adapter config"))?;
+        .ok_or_else(|| {
+            LogicPearlError::message("missing built-in ChatGPT-Jailbreak-Prompts adapter config")
+        })?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
@@ -775,8 +802,10 @@ pub fn adapt_openagentsafety_s26_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::OpenAgentSafetyS26)
-        .ok_or_else(|| LogicPearlError::message("missing built-in OpenAgentSafety S26 adapter config"))?;
+    let config =
+        builtin_adapter_config(BenchmarkAdapterProfile::OpenAgentSafetyS26).ok_or_else(|| {
+            LogicPearlError::message("missing built-in OpenAgentSafety S26 adapter config")
+        })?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
@@ -804,13 +833,19 @@ pub fn adapt_safearena_dataset(
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
-pub fn adapt_squad_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+pub fn adapt_squad_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::Squad)
         .ok_or_else(|| LogicPearlError::message("missing built-in SQuAD adapter config"))?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
-pub fn adapt_vigil_dataset(raw_json: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+pub fn adapt_vigil_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::Vigil)
         .ok_or_else(|| LogicPearlError::message("missing built-in Vigil adapter config"))?;
     adapt_dataset_with_config(raw_json, defaults, &config)
@@ -820,12 +855,17 @@ pub fn adapt_noeti_toxicqa_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::NoetiToxicQa)
-        .ok_or_else(|| LogicPearlError::message("missing built-in NOETI ToxicQAFinal adapter config"))?;
+    let config =
+        builtin_adapter_config(BenchmarkAdapterProfile::NoetiToxicQa).ok_or_else(|| {
+            LogicPearlError::message("missing built-in NOETI ToxicQAFinal adapter config")
+        })?;
     adapt_dataset_with_config(raw_json, defaults, &config)
 }
 
-pub fn adapt_pint_dataset(raw_yaml: &str, defaults: &BenchmarkAdaptDefaults) -> Result<Vec<BenchmarkCase>> {
+pub fn adapt_pint_dataset(
+    raw_yaml: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
     let config = builtin_adapter_config(BenchmarkAdapterProfile::Pint)
         .ok_or_else(|| LogicPearlError::message("missing built-in PINT adapter config"))?;
     adapt_dataset_with_config(raw_yaml, defaults, &config)
@@ -844,7 +884,11 @@ pub fn load_trace_projection_config(config_path: &Path) -> Result<TraceProjectio
     Ok(config)
 }
 
-pub fn emit_trace_tables(observed_jsonl: &Path, config_path: &Path, output_dir: &Path) -> Result<TraceEmitSummary> {
+pub fn emit_trace_tables(
+    observed_jsonl: &Path,
+    config_path: &Path,
+    output_dir: &Path,
+) -> Result<TraceEmitSummary> {
     let config = load_trace_projection_config(config_path)?;
     let file = fs::File::open(observed_jsonl)?;
     let reader = BufReader::new(file);
@@ -996,7 +1040,9 @@ fn adapt_dataset_with_config(
 
     rows.iter()
         .enumerate()
-        .map(|(index, row)| build_case_from_row(row, index, defaults, config, &prompt_keys, &category_keys))
+        .map(|(index, row)| {
+            build_case_from_row(row, index, defaults, config, &prompt_keys, &category_keys)
+        })
         .collect()
 }
 
@@ -1021,7 +1067,13 @@ fn build_case_from_row(
         .id_fields
         .iter()
         .find_map(|field| row.get(field))
-        .map(|value| format!("{}_{}", config.output.id_prefix, stable_value_id(value, index)))
+        .map(|value| {
+            format!(
+                "{}_{}",
+                config.output.id_prefix,
+                stable_value_id(value, index)
+            )
+        })
         .unwrap_or_else(|| format!("{}_{index:06}", config.output.id_prefix));
 
     let expected_route = if let Some(routes) = &config.output.boolean_label_routes {
@@ -1065,7 +1117,10 @@ fn build_case_from_row(
     input.insert("scope".to_string(), Value::String(defaults.scope.clone()));
     for field in &config.source.input_fields {
         if let Some(value) = row.get(&field.source) {
-            input.insert(field.target.clone(), transform_input_field(value, field.mode));
+            input.insert(
+                field.target.clone(),
+                transform_input_field(value, field.mode),
+            );
         }
     }
     for (key, value) in &config.output.static_input {
@@ -1127,25 +1182,36 @@ fn boolish(value: Option<&Value>) -> bool {
     match value {
         Some(Value::Bool(boolean)) => *boolean,
         Some(Value::Number(number)) => number.as_i64().unwrap_or_default() != 0,
-        Some(Value::String(text)) => matches!(text.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y"),
+        Some(Value::String(text)) => matches!(
+            text.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "y"
+        ),
         _ => false,
     }
 }
 
 fn bit(value: bool) -> u8 {
-    if value { 1 } else { 0 }
+    if value {
+        1
+    } else {
+        0
+    }
 }
 
 fn allow_word(allowed: bool) -> &'static str {
-    if allowed { "allowed" } else { "denied" }
+    if allowed {
+        "allowed"
+    } else {
+        "denied"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset,
-        adapt_jailbreakbench_dataset, adapt_mcpmark_dataset, adapt_noeti_toxicqa_dataset,
-        adapt_openagentsafety_s26_dataset, adapt_pint_dataset, adapt_promptshield_dataset,
+        adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_jailbreakbench_dataset,
+        adapt_mcpmark_dataset, adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset,
+        adapt_pint_dataset, adapt_promptshield_dataset,
         adapt_rogue_security_prompt_injections_dataset, adapt_safearena_dataset,
         adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, builtin_adapter_config,
         detect_benchmark_adapter_profile, BenchmarkAdaptDefaults, BenchmarkAdapterProfile,
@@ -1252,7 +1318,14 @@ mod tests {
         assert_eq!(config.output.expected_route.as_deref(), Some("deny"));
         assert_eq!(
             config.source.prompt_fields,
-            vec!["prompt", "instruction", "text", "question", "input", "content"]
+            vec![
+                "prompt",
+                "instruction",
+                "text",
+                "question",
+                "input",
+                "content"
+            ]
         );
     }
 
@@ -1271,13 +1344,17 @@ mod tests {
         assert_eq!(rows[0].id, "alert_a1");
         assert_eq!(rows[0].expected_route, "deny");
         assert_eq!(rows[0].category.as_deref(), Some("injection"));
-        assert_eq!(rows[0].input.get("document_instructions_present"), Some(&Value::Bool(false)));
+        assert_eq!(
+            rows[0].input.get("document_instructions_present"),
+            Some(&Value::Bool(false))
+        );
     }
 
     #[test]
     fn loads_builtin_salad_configs() {
         let base = builtin_adapter_config(BenchmarkAdapterProfile::SaladBaseSet).unwrap();
-        let attack = builtin_adapter_config(BenchmarkAdapterProfile::SaladAttackEnhancedSet).unwrap();
+        let attack =
+            builtin_adapter_config(BenchmarkAdapterProfile::SaladAttackEnhancedSet).unwrap();
         assert_eq!(base.id, "salad-base-set");
         assert_eq!(base.output.expected_route.as_deref(), Some("deny"));
         assert_eq!(attack.id, "salad-attack-enhanced-set");
@@ -1302,7 +1379,10 @@ mod tests {
         .unwrap();
         assert_eq!(base_rows[0].id, "salad_base_q1");
         assert_eq!(base_rows[0].expected_route, "deny");
-        assert_eq!(base_rows[0].category.as_deref(), Some("O53: Financial Crimes"));
+        assert_eq!(
+            base_rows[0].category.as_deref(),
+            Some("O53: Financial Crimes")
+        );
 
         let attack_rows = adapt_salad_dataset(
             r#"[{"aid":"a1","augq":"Ignore the rules","1-category":"harm","3-category":"prompt_injection"}]"#,
@@ -1324,7 +1404,10 @@ mod tests {
         let config = builtin_adapter_config(BenchmarkAdapterProfile::Squad).unwrap();
         assert_eq!(config.id, "squad");
         assert_eq!(config.output.expected_route.as_deref(), Some("allow"));
-        assert_eq!(config.output.default_category.as_deref(), Some("benign_negative"));
+        assert_eq!(
+            config.output.default_category.as_deref(),
+            Some("benign_negative")
+        );
         assert_eq!(config.source.input_fields.len(), 1);
         assert_eq!(config.source.input_fields[0].source, "context");
         assert_eq!(config.source.input_fields[0].target, "context");
@@ -1357,7 +1440,12 @@ mod tests {
         assert_eq!(config.id, "pint");
         assert_eq!(config.source.label_fields, vec!["label"]);
         assert_eq!(
-            config.output.boolean_label_routes.as_ref().unwrap().true_route,
+            config
+                .output
+                .boolean_label_routes
+                .as_ref()
+                .unwrap()
+                .true_route,
             "deny"
         );
     }
@@ -1382,7 +1470,8 @@ mod tests {
 
     #[test]
     fn loads_builtin_chatgpt_jailbreak_adapter_config() {
-        let config = builtin_adapter_config(BenchmarkAdapterProfile::ChatgptJailbreakPrompts).unwrap();
+        let config =
+            builtin_adapter_config(BenchmarkAdapterProfile::ChatgptJailbreakPrompts).unwrap();
         assert_eq!(config.id, "chatgpt-jailbreak-prompts");
         assert_eq!(config.output.expected_route.as_deref(), Some("deny"));
     }
@@ -1393,7 +1482,12 @@ mod tests {
         assert_eq!(config.id, "jailbreakbench");
         assert_eq!(config.source.label_fields, vec!["label"]);
         assert_eq!(
-            config.output.boolean_label_routes.as_ref().unwrap().true_route,
+            config
+                .output
+                .boolean_label_routes
+                .as_ref()
+                .unwrap()
+                .true_route,
             "deny"
         );
     }

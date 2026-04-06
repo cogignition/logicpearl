@@ -210,11 +210,17 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
             "--json",
         ],
     );
-    assert_eq!(prepare["observer"]["profile"].as_str(), Some("guardrails_v1"));
+    assert_eq!(
+        prepare["observer"]["profile"].as_str(),
+        Some("guardrails_v1")
+    );
     assert_eq!(prepare["observed_rows"].as_u64(), Some(8));
 
     let artifact_set = train_prep_dir.join("discovered/artifact_set.json");
-    assert!(artifact_set.exists(), "artifact set should exist after prepare");
+    assert!(
+        artifact_set.exists(),
+        "artifact set should exist after prepare"
+    );
 
     run_cli_json(
         cli_bin,
