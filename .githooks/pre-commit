@@ -5,6 +5,12 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 echo "Running LogicPearl pre-commit E2E check..."
+staged_rust_files="$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')"
+if [ -n "$staged_rust_files" ]; then
+  echo "Checking Rust formatting on staged files..."
+  # shellcheck disable=SC2086
+  rustfmt --check $staged_rust_files
+fi
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_getting_started
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_benchmark_heldout
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_demos
