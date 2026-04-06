@@ -12,6 +12,8 @@ use logicpearl_verify::{
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
+use std::process::Command;
 
 use super::canonicalize::{
     canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules,
@@ -26,6 +28,7 @@ use super::{
 };
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
+const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
 
 #[derive(Debug, Clone, PartialEq)]
 struct CandidatePlanScore {
@@ -225,7 +228,7 @@ fn rule_signature(rule: &RuleDefinition) -> String {
 }
 
 pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
-    let mut remaining_denied: Vec<usize> = rows
+    let denied_indices: Vec<usize> = rows
         .iter()
         .enumerate()
         .filter_map(|(index, row)| (!row.allowed).then_some(index))
@@ -236,24 +239,338 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
         .filter_map(|(index, row)| row.allowed.then_some(index))
         .collect();
 
+    let all_candidates = candidate_rules(rows, &denied_indices, &allowed_indices);
+    if all_candidates.is_empty() {
+        return Err(LogicPearlError::message("no recoverable deny rule found"));
+    }
+
+    let greedy_plan = discover_rules_greedy(rows, &denied_indices, &allowed_indices)?;
+    let shortlist = exact_selection_shortlist(
+        &all_candidates,
+        &greedy_plan,
+        EXACT_SELECTION_FRONTIER_LIMIT,
+    );
+    let selected_candidates =
+        match select_candidate_rules_exact(rows, &denied_indices, &allowed_indices, &shortlist) {
+            Some(exact_plan) if !exact_plan.is_empty() => {
+                let greedy_score = score_candidate_set(rows, &greedy_plan);
+                let exact_score = score_candidate_set(rows, &exact_plan);
+                if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
+                    exact_plan
+                } else {
+                    greedy_plan
+                }
+            }
+            _ => greedy_plan,
+        };
+
+    Ok(selected_candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| rule_from_candidate(index as u32, candidate))
+        .collect())
+}
+
+fn discover_rules_greedy(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+) -> Result<Vec<CandidateRule>> {
+    let mut remaining_denied = denied_indices.to_vec();
     let mut discovered = Vec::new();
     while !remaining_denied.is_empty() {
-        let candidate = select_candidate_rule(rows, &remaining_denied, &allowed_indices)
+        let candidate = select_candidate_rule(rows, &remaining_denied, allowed_indices)
             .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
             break;
         }
 
-        let bit = discovered.len() as u32;
         let has_false_positives = candidate.false_positives > 0;
-        discovered.push(rule_from_candidate(bit, &candidate));
+        discovered.push(candidate.clone());
         remaining_denied.retain(|index| !matches_candidate(&rows[*index].features, &candidate));
         if has_false_positives {
             break;
         }
     }
-
     Ok(discovered)
+}
+
+fn exact_selection_shortlist(
+    all_candidates: &[CandidateRule],
+    greedy_plan: &[CandidateRule],
+    limit: usize,
+) -> Vec<CandidateRule> {
+    let mut shortlisted: Vec<CandidateRule> = all_candidates.iter().take(limit).cloned().collect();
+    let mut signatures: BTreeSet<String> =
+        shortlisted.iter().map(CandidateRule::signature).collect();
+    for candidate in greedy_plan {
+        let signature = candidate.signature();
+        if signatures.insert(signature) {
+            shortlisted.push(candidate.clone());
+        }
+    }
+    shortlisted.sort_by(compare_candidate_priority);
+    shortlisted
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CandidateSetScore {
+    total_errors: usize,
+    false_positives: usize,
+    false_negatives: usize,
+    rule_count: usize,
+    complexity_penalty: usize,
+}
+
+fn compare_candidate_set_score(left: &CandidateSetScore, right: &CandidateSetScore) -> Ordering {
+    left.total_errors
+        .cmp(&right.total_errors)
+        .then_with(|| left.false_positives.cmp(&right.false_positives))
+        .then_with(|| left.rule_count.cmp(&right.rule_count))
+        .then_with(|| left.complexity_penalty.cmp(&right.complexity_penalty))
+        .then_with(|| left.false_negatives.cmp(&right.false_negatives))
+}
+
+fn score_candidate_set(
+    rows: &[DecisionTraceRow],
+    candidates: &[CandidateRule],
+) -> CandidateSetScore {
+    let false_positives = rows
+        .iter()
+        .filter(|row| {
+            row.allowed
+                && candidates
+                    .iter()
+                    .any(|rule| matches_candidate(&row.features, rule))
+        })
+        .count();
+    let false_negatives = rows
+        .iter()
+        .filter(|row| {
+            !row.allowed
+                && !candidates
+                    .iter()
+                    .any(|rule| matches_candidate(&row.features, rule))
+        })
+        .count();
+    let complexity_penalty = candidates.iter().map(candidate_total_penalty).sum();
+    CandidateSetScore {
+        total_errors: false_positives + false_negatives,
+        false_positives,
+        false_negatives,
+        rule_count: candidates.len(),
+        complexity_penalty,
+    }
+}
+
+fn candidate_total_penalty(candidate: &CandidateRule) -> usize {
+    candidate_complexity_penalty(candidate) + candidate_memorization_penalty(candidate)
+}
+
+fn select_candidate_rules_exact(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+    candidates: &[CandidateRule],
+) -> Option<Vec<CandidateRule>> {
+    if candidates.is_empty() {
+        return Some(Vec::new());
+    }
+    let denied_matches: Vec<Vec<usize>> = denied_indices
+        .iter()
+        .map(|index| {
+            candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(candidate_index, candidate)| {
+                    matches_candidate(&rows[*index].features, candidate).then_some(candidate_index)
+                })
+                .collect()
+        })
+        .collect();
+    let allowed_matches: Vec<Vec<usize>> = allowed_indices
+        .iter()
+        .map(|index| {
+            candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(candidate_index, candidate)| {
+                    matches_candidate(&rows[*index].features, candidate).then_some(candidate_index)
+                })
+                .collect()
+        })
+        .collect();
+
+    let smt = build_exact_selection_smt(candidates, &denied_matches, &allowed_matches);
+    let selected_indexes = solve_selected_rule_indexes_with_z3(candidates.len(), &smt).ok()?;
+    Some(
+        selected_indexes
+            .into_iter()
+            .map(|index| candidates[index].clone())
+            .collect(),
+    )
+}
+
+fn build_exact_selection_smt(
+    candidates: &[CandidateRule],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> String {
+    let mut smt = String::from("(set-option :opt.priority lex)\n");
+    for index in 0..candidates.len() {
+        smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
+    }
+
+    for (index, matches) in denied_matches.iter().enumerate() {
+        smt.push_str(&format!("(declare-fun deny_hit_{index} () Bool)\n"));
+        smt.push_str(&format!(
+            "(assert (= deny_hit_{index} {}))\n",
+            match_expression_for(matches)
+        ));
+    }
+    for (index, matches) in allowed_matches.iter().enumerate() {
+        smt.push_str(&format!("(declare-fun allow_hit_{index} () Bool)\n"));
+        smt.push_str(&format!(
+            "(assert (= allow_hit_{index} {}))\n",
+            match_expression_for(matches)
+        ));
+    }
+
+    smt.push_str(&format!(
+        "(minimize (+ {} {}))\n",
+        hit_sum("deny_hit", denied_matches.len(), false),
+        hit_sum("allow_hit", allowed_matches.len(), true)
+    ));
+    smt.push_str(&format!(
+        "(minimize {})\n",
+        hit_sum("allow_hit", allowed_matches.len(), true)
+    ));
+    smt.push_str(&format!("(minimize {})\n", keep_sum(candidates.len())));
+    smt.push_str(&format!("(minimize {})\n", weighted_keep_sum(candidates)));
+    smt.push_str("(check-sat)\n(get-model)\n");
+    smt
+}
+
+fn match_expression_for(matches: &[usize]) -> String {
+    if matches.is_empty() {
+        return "false".to_string();
+    }
+    if matches.len() == 1 {
+        return format!("keep_{}", matches[0]);
+    }
+    format!(
+        "(or {})",
+        matches
+            .iter()
+            .map(|index| format!("keep_{index}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
+    if count == 0 {
+        return "0".to_string();
+    }
+    format!(
+        "(+ {})",
+        (0..count)
+            .map(|index| {
+                if when_true {
+                    format!("(ite {prefix}_{index} 1 0)")
+                } else {
+                    format!("(ite {prefix}_{index} 0 1)")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn keep_sum(count: usize) -> String {
+    if count == 0 {
+        return "0".to_string();
+    }
+    format!(
+        "(+ {})",
+        (0..count)
+            .map(|index| format!("(ite keep_{index} 1 0)"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn weighted_keep_sum(candidates: &[CandidateRule]) -> String {
+    if candidates.is_empty() {
+        return "0".to_string();
+    }
+    format!(
+        "(+ {})",
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                format!(
+                    "(ite keep_{index} {} 0)",
+                    candidate_total_penalty(candidate)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    )
+}
+
+fn solve_selected_rule_indexes_with_z3(candidate_count: usize, smt: &str) -> Result<Vec<usize>> {
+    let smt_path = std::env::temp_dir().join(format!(
+        "logicpearl-discovery-{}-{}.smt2",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(&smt_path, smt)?;
+
+    let output = Command::new("z3")
+        .arg("-smt2")
+        .arg(&smt_path)
+        .output()
+        .map_err(|err| {
+            LogicPearlError::message(format!(
+                "failed to launch z3; make sure Z3 is installed and on PATH: {err}"
+            ))
+        })?;
+    let _ = fs::remove_file(&smt_path);
+
+    if !output.status.success() {
+        return Err(LogicPearlError::message(format!(
+            "z3 failed while solving exact rule selection: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| LogicPearlError::message(format!("z3 output was not valid UTF-8: {err}")))?;
+    if !stdout.lines().next().unwrap_or_default().contains("sat") {
+        return Ok(Vec::new());
+    }
+
+    let mut selected = Vec::new();
+    for index in 0..candidate_count {
+        let needle = format!("(define-fun keep_{index} () Bool");
+        if let Some(position) = stdout.find(&needle) {
+            let remainder = &stdout[position + needle.len()..];
+            if remainder.trim_start().starts_with("true") {
+                selected.push(index);
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn unique_suffix() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 fn select_candidate_rule(
@@ -808,4 +1125,108 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
         },
         features,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compare_candidate_set_score, score_candidate_set, select_candidate_rules_exact,
+        CandidateRule, CandidateSetScore,
+    };
+    use crate::DecisionTraceRow;
+    use logicpearl_ir::{ComparisonOperator, ComparisonValue};
+    use serde_json::{Number, Value};
+    use std::collections::HashMap;
+
+    #[test]
+    fn exact_selection_prefers_minimal_general_rule_over_equal_singletons() {
+        if std::process::Command::new("z3")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let rows = vec![
+            row(1.0, false),
+            row(2.0, false),
+            row(3.0, true),
+            row(4.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize];
+        let allowed_indices = vec![2usize, 3usize];
+        let candidates = vec![
+            numeric_candidate("score", ComparisonOperator::Eq, 1.0),
+            numeric_candidate("score", ComparisonOperator::Eq, 2.0),
+            numeric_candidate("score", ComparisonOperator::Lte, 2.0),
+        ];
+
+        let selected =
+            select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+                .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].op, ComparisonOperator::Lte);
+        assert_eq!(
+            selected[0].value.literal().and_then(Value::as_f64),
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn candidate_set_score_prefers_fewer_false_positives_after_equal_total_error() {
+        let better = CandidateSetScore {
+            total_errors: 2,
+            false_positives: 0,
+            false_negatives: 2,
+            rule_count: 2,
+            complexity_penalty: 0,
+        };
+        let worse = CandidateSetScore {
+            total_errors: 2,
+            false_positives: 1,
+            false_negatives: 1,
+            rule_count: 1,
+            complexity_penalty: 0,
+        };
+        assert_eq!(
+            compare_candidate_set_score(&better, &worse),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn candidate_set_score_counts_selected_set_union_errors() {
+        let rows = vec![
+            row(1.0, false),
+            row(2.0, false),
+            row(3.0, true),
+            row(4.0, true),
+        ];
+        let candidate_a = numeric_candidate("score", ComparisonOperator::Eq, 1.0);
+        let candidate_b = numeric_candidate("score", ComparisonOperator::Gte, 3.0);
+        let score = score_candidate_set(&rows, &[candidate_a, candidate_b]);
+        assert_eq!(score.false_negatives, 1);
+        assert_eq!(score.false_positives, 2);
+        assert_eq!(score.total_errors, 3);
+    }
+
+    fn row(score: f64, allowed: bool) -> DecisionTraceRow {
+        let mut features = HashMap::new();
+        features.insert(
+            "score".to_string(),
+            Value::Number(Number::from_f64(score).unwrap()),
+        );
+        DecisionTraceRow { features, allowed }
+    }
+
+    fn numeric_candidate(feature: &str, op: ComparisonOperator, value: f64) -> CandidateRule {
+        CandidateRule {
+            feature: feature.to_string(),
+            op,
+            value: ComparisonValue::Literal(Value::Number(Number::from_f64(value).unwrap())),
+            denied_coverage: 0,
+            false_positives: 0,
+        }
+    }
 }
