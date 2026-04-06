@@ -48,6 +48,13 @@ pub struct GuardrailsCueConfig {
     pub benign_question_phrases: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompiledPhraseMatchText {
+    raw: String,
+    tokens: Vec<String>,
+    normalized_tokens: Vec<String>,
+}
+
 pub fn status() -> Result<&'static str> {
     Ok("native observer profiles available")
 }
@@ -201,7 +208,24 @@ pub fn set_guardrails_signal_phrases(
 }
 
 pub fn prompt_matches_phrase(prompt: &str, phrase: &str) -> bool {
-    contains_phrase(prompt, phrase)
+    let compiled_prompt = compile_phrase_match_text(prompt);
+    let compiled_phrase = compile_phrase_match_text(phrase);
+    compiled_prompt_matches_phrase(&compiled_prompt, &compiled_phrase)
+}
+
+pub fn compile_phrase_match_text(text: &str) -> CompiledPhraseMatchText {
+    CompiledPhraseMatchText {
+        raw: text.to_string(),
+        tokens: word_tokens(text).into_iter().map(str::to_string).collect(),
+        normalized_tokens: normalized_word_tokens(text),
+    }
+}
+
+pub fn compiled_prompt_matches_phrase(
+    prompt: &CompiledPhraseMatchText,
+    phrase: &CompiledPhraseMatchText,
+) -> bool {
+    contains_phrase_compiled(prompt, phrase)
 }
 
 fn observe_guardrails_v1(raw_input: &Value, config: &GuardrailsCueConfig) -> Result<Map<String, Value>> {
@@ -340,23 +364,31 @@ fn matches_tool_misuse(prompt: &str, phrases: &[String]) -> bool {
 }
 
 fn contains_any(text: &str, phrases: &[String]) -> bool {
-    phrases.iter().any(|phrase| contains_phrase(text, phrase))
+    let compiled_text = compile_phrase_match_text(text);
+    phrases.iter().any(|phrase| {
+        let compiled_phrase = compile_phrase_match_text(phrase);
+        compiled_prompt_matches_phrase(&compiled_text, &compiled_phrase)
+    })
 }
 
 fn contains_any_static(text: &str, phrases: &[&str]) -> bool {
-    phrases.iter().any(|phrase| contains_phrase(text, phrase))
+    let compiled_text = compile_phrase_match_text(text);
+    phrases.iter().any(|phrase| {
+        let compiled_phrase = compile_phrase_match_text(phrase);
+        compiled_prompt_matches_phrase(&compiled_text, &compiled_phrase)
+    })
 }
 
-fn contains_phrase(text: &str, phrase: &str) -> bool {
-    if phrase.is_empty() {
+fn contains_phrase_compiled(text: &CompiledPhraseMatchText, phrase: &CompiledPhraseMatchText) -> bool {
+    if phrase.raw.is_empty() {
         return false;
     }
 
-    if contains_phrase_exact(text, phrase) {
+    if contains_phrase_exact(&text.raw, &phrase.raw) {
         return true;
     }
 
-    contains_phrase_by_tokens(text, phrase)
+    contains_phrase_by_tokens_compiled(text, phrase)
 }
 
 fn contains_phrase_exact(text: &str, phrase: &str) -> bool {
@@ -383,43 +415,45 @@ fn contains_phrase_exact(text: &str, phrase: &str) -> bool {
     false
 }
 
-fn contains_phrase_by_tokens(text: &str, phrase: &str) -> bool {
-    let text_tokens = word_tokens(text);
-    let phrase_tokens = word_tokens(phrase);
-    if phrase_tokens.is_empty() {
+fn contains_phrase_by_tokens_compiled(
+    text: &CompiledPhraseMatchText,
+    phrase: &CompiledPhraseMatchText,
+) -> bool {
+    if phrase.tokens.is_empty() {
         return false;
     }
 
-    if text_tokens.len() >= phrase_tokens.len()
-        && text_tokens.windows(phrase_tokens.len()).any(|window| {
+    if text.tokens.len() >= phrase.tokens.len()
+        && text.tokens.windows(phrase.tokens.len()).any(|window| {
             window
                 .iter()
-                .zip(phrase_tokens.iter())
+                .zip(phrase.tokens.iter())
                 .all(|(text_token, phrase_token)| tokens_match(text_token, phrase_token))
         })
     {
         return true;
     }
 
-    contains_phrase_by_normalized_token_sequence(text, phrase)
+    contains_phrase_by_normalized_token_sequence_compiled(text, phrase)
 }
 
-fn contains_phrase_by_normalized_token_sequence(text: &str, phrase: &str) -> bool {
+fn contains_phrase_by_normalized_token_sequence_compiled(
+    text: &CompiledPhraseMatchText,
+    phrase: &CompiledPhraseMatchText,
+) -> bool {
     const MAX_EXTRA_SEQUENCE_TOKENS: usize = 3;
 
-    let text_tokens = normalized_word_tokens(text);
-    let phrase_tokens = normalized_word_tokens(phrase);
-    if phrase_tokens.is_empty() || text_tokens.len() < phrase_tokens.len() {
+    if phrase.normalized_tokens.is_empty() || text.normalized_tokens.len() < phrase.normalized_tokens.len() {
         return false;
     }
 
-    for start in 0..text_tokens.len() {
+    for start in 0..text.normalized_tokens.len() {
         let mut text_index = start;
         let mut phrase_index = 0usize;
         let mut skipped = 0usize;
 
-        while text_index < text_tokens.len() && phrase_index < phrase_tokens.len() {
-            if tokens_match(&text_tokens[text_index], &phrase_tokens[phrase_index]) {
+        while text_index < text.normalized_tokens.len() && phrase_index < phrase.normalized_tokens.len() {
+            if tokens_match(&text.normalized_tokens[text_index], &phrase.normalized_tokens[phrase_index]) {
                 phrase_index += 1;
             } else {
                 skipped += 1;
@@ -430,7 +464,7 @@ fn contains_phrase_by_normalized_token_sequence(text: &str, phrase: &str) -> boo
             text_index += 1;
         }
 
-        if phrase_index == phrase_tokens.len() {
+        if phrase_index == phrase.normalized_tokens.len() {
             return true;
         }
     }

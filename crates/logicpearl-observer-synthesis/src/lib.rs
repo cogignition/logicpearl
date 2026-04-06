@@ -1,8 +1,9 @@
 use logicpearl_benchmark::SynthesisCase;
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_observer::{
-    guardrails_signal_feature, guardrails_signal_label, guardrails_signal_phrases, prompt_matches_phrase,
-    observe_with_artifact, set_guardrails_signal_phrases, GuardrailsSignal, NativeObserverArtifact,
+    compile_phrase_match_text, compiled_prompt_matches_phrase, guardrails_signal_feature,
+    guardrails_signal_label, guardrails_signal_phrases, prompt_matches_phrase, observe_with_artifact,
+    set_guardrails_signal_phrases, CompiledPhraseMatchText, GuardrailsSignal, NativeObserverArtifact,
     ObserverProfile as NativeObserverProfile,
 };
 use serde::Serialize;
@@ -96,6 +97,12 @@ pub struct ObserverAutoSelectionReport {
     pub selection_metric: String,
     pub tolerance: f64,
     pub tried: Vec<ObserverSynthesisTrialReport>,
+}
+
+struct CandidatePool {
+    candidates: Vec<String>,
+    positive_constraints: Vec<Vec<usize>>,
+    negative_constraints: Vec<Vec<usize>>,
 }
 
 const AUTO_BOOTSTRAP_STRATEGIES: [ObserverBootstrapStrategy; 3] = [
@@ -410,6 +417,18 @@ pub fn generate_phrase_candidates(
     negative_prompts: &[String],
     max_candidates: usize,
 ) -> Vec<String> {
+    rank_phrase_candidates(signal, positive_prompts, negative_prompts)
+        .into_iter()
+        .take(max_candidates)
+        .map(|(phrase, _, _)| phrase)
+        .collect()
+}
+
+fn rank_phrase_candidates(
+    signal: GuardrailsSignal,
+    positive_prompts: &[String],
+    negative_prompts: &[String],
+) -> Vec<(String, usize, usize)> {
     let mut positive_hits: BTreeMap<String, usize> = BTreeMap::new();
     let mut negative_hits: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -450,10 +469,6 @@ pub fn generate_phrase_candidates(
     });
 
     ranked
-        .into_iter()
-        .take(max_candidates)
-        .map(|(phrase, _, _)| phrase)
-        .collect()
 }
 
 pub fn candidate_ngrams(prompt: &str, signal: GuardrailsSignal) -> Vec<String> {
@@ -492,11 +507,128 @@ fn collect_candidate_windows(
 }
 
 pub fn matching_candidate_indexes(prompt: &str, candidates: &[String]) -> Vec<usize> {
+    let compiled_prompt = compile_phrase_match_text(prompt);
+    let compiled_candidates: Vec<CompiledPhraseMatchText> = candidates
+        .iter()
+        .map(|candidate| compile_phrase_match_text(candidate))
+        .collect();
+    matching_candidate_indexes_compiled(&compiled_prompt, &compiled_candidates)
+}
+
+fn matching_candidate_indexes_compiled(
+    prompt: &CompiledPhraseMatchText,
+    candidates: &[CompiledPhraseMatchText],
+) -> Vec<usize> {
     candidates
         .iter()
         .enumerate()
-        .filter_map(|(index, phrase)| prompt_matches_phrase(prompt, phrase).then_some(index))
+        .filter_map(|(index, phrase)| compiled_prompt_matches_phrase(prompt, phrase).then_some(index))
         .collect()
+}
+
+fn build_candidate_pool(
+    signal: GuardrailsSignal,
+    positive_prompts: &[String],
+    negative_prompts: &[String],
+    max_candidates: usize,
+) -> CandidatePool {
+    let candidates: Vec<String> = rank_phrase_candidates(signal, positive_prompts, negative_prompts)
+        .into_iter()
+        .take(max_candidates)
+        .map(|(phrase, _, _)| phrase)
+        .collect();
+    let compiled_candidates: Vec<CompiledPhraseMatchText> = candidates
+        .iter()
+        .map(|candidate| compile_phrase_match_text(candidate))
+        .collect();
+    let positive_constraints = build_constraints(positive_prompts, &compiled_candidates);
+    let negative_constraints = build_constraints(negative_prompts, &compiled_candidates);
+    CandidatePool {
+        candidates,
+        positive_constraints,
+        negative_constraints,
+    }
+}
+
+fn build_constraints(
+    prompts: &[String],
+    compiled_candidates: &[CompiledPhraseMatchText],
+) -> Vec<Vec<usize>> {
+    prompts
+        .iter()
+        .map(|prompt| {
+            let compiled_prompt = compile_phrase_match_text(prompt);
+            matching_candidate_indexes_compiled(&compiled_prompt, compiled_candidates)
+        })
+        .filter(|matches| !matches.is_empty())
+        .collect()
+}
+
+fn truncate_constraints(constraints: &[Vec<usize>], candidate_count: usize) -> Vec<Vec<usize>> {
+    constraints
+        .iter()
+        .map(|matches| {
+            matches
+                .iter()
+                .copied()
+                .take_while(|index| *index < candidate_count)
+                .collect::<Vec<_>>()
+        })
+        .filter(|matches| !matches.is_empty())
+        .collect()
+}
+
+fn synthesize_from_candidate_pool(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    bootstrap_mode: ObserverBootstrapMode,
+    positive_prompts: &[String],
+    negative_prompts: &[String],
+    pool: &CandidatePool,
+    candidate_cap: usize,
+) -> Result<(NativeObserverArtifact, ObserverSynthesisReport)> {
+    let candidate_count = pool.candidates.len().min(candidate_cap);
+    if candidate_count == 0 {
+        return Err(LogicPearlError::message(format!(
+            "could not generate candidate phrases for {}",
+            guardrails_signal_label(signal)
+        )));
+    }
+    let candidates = &pool.candidates[..candidate_count];
+    let positive_constraints = truncate_constraints(&pool.positive_constraints, candidate_count);
+    let negative_constraints = truncate_constraints(&pool.negative_constraints, candidate_count);
+    let selected = solve_phrase_subset_with_z3_soft(candidates, &positive_constraints, &negative_constraints)?;
+    if selected.is_empty() {
+        return Err(LogicPearlError::message(
+            "z3 could not synthesize a useful phrase subset",
+        ));
+    }
+
+    let phrases_after: Vec<String> = selected.iter().map(|index| candidates[*index].clone()).collect();
+    let mut synthesized = artifact.clone();
+    let synthesized_config = synthesized
+        .guardrails
+        .as_mut()
+        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+    let phrases_before = guardrails_signal_phrases(synthesized_config, signal).to_vec();
+    set_guardrails_signal_phrases(synthesized_config, signal, phrases_after.clone());
+
+    Ok((
+        synthesized,
+        ObserverSynthesisReport {
+            signal: guardrails_signal_label(signal).to_string(),
+            bootstrap_mode,
+            positive_case_count: positive_prompts.len(),
+            negative_case_count: negative_prompts.len(),
+            candidate_count,
+            phrases_before,
+            matched_positives_after: count_selected_hits(&selected, &positive_constraints),
+            matched_negatives_after: count_selected_hits(&selected, &negative_constraints),
+            phrases_after,
+            selected_max_candidates: Some(candidate_cap),
+            auto_selection: None,
+        },
+    ))
 }
 
 pub fn count_phrase_hits(constraints: &[Vec<usize>]) -> usize {
@@ -641,55 +773,18 @@ pub fn synthesize_guardrails_artifact(
     let phrases_before = guardrails_signal_phrases(config, signal).to_vec();
     let (bootstrap_mode, positive_prompts, negative_prompts) =
         infer_bootstrap_examples(cases, signal, bootstrap, positive_routes, &phrases_before)?;
-    let candidates = generate_phrase_candidates(signal, &positive_prompts, &negative_prompts, max_candidates);
-    if candidates.is_empty() {
-        return Err(LogicPearlError::message(format!(
-            "could not generate candidate phrases for {}",
-            guardrails_signal_label(signal)
-        )));
-    }
-
-    let positive_constraints: Vec<Vec<usize>> = positive_prompts
-        .iter()
-        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
-        .filter(|matches| !matches.is_empty())
-        .collect();
-    let negative_constraints: Vec<Vec<usize>> = negative_prompts
-        .iter()
-        .map(|prompt| matching_candidate_indexes(prompt, &candidates))
-        .filter(|matches| !matches.is_empty())
-        .collect();
-    let selected = solve_phrase_subset_with_z3_soft(&candidates, &positive_constraints, &negative_constraints)?;
-    if selected.is_empty() {
-        return Err(LogicPearlError::message(
-            "z3 could not synthesize a useful phrase subset",
-        ));
-    }
-
-    let phrases_after: Vec<String> = selected.iter().map(|index| candidates[*index].clone()).collect();
-    let mut synthesized = artifact.clone();
-    let synthesized_config = synthesized
-        .guardrails
-        .as_mut()
-        .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
-    set_guardrails_signal_phrases(synthesized_config, signal, phrases_after.clone());
-
-    Ok((
-        synthesized,
-        ObserverSynthesisReport {
-            signal: guardrails_signal_label(signal).to_string(),
-            bootstrap_mode,
-            positive_case_count: positive_prompts.len(),
-            negative_case_count: negative_prompts.len(),
-            candidate_count: candidates.len(),
-            phrases_before,
-            matched_positives_after: count_selected_hits(&selected, &positive_constraints),
-            matched_negatives_after: count_selected_hits(&selected, &negative_constraints),
-            phrases_after,
-            selected_max_candidates: Some(max_candidates),
-            auto_selection: None,
-        },
-    ))
+    let pool = build_candidate_pool(signal, &positive_prompts, &negative_prompts, max_candidates);
+    let (synthesized, mut report) = synthesize_from_candidate_pool(
+        artifact,
+        signal,
+        bootstrap_mode,
+        &positive_prompts,
+        &negative_prompts,
+        &pool,
+        max_candidates,
+    )?;
+    report.phrases_before = phrases_before;
+    Ok((synthesized, report))
 }
 
 pub fn evaluate_guardrails_artifact_signal(
@@ -782,15 +877,37 @@ pub fn synthesize_guardrails_artifact_auto(
     } else {
         bootstrap
     };
+    let seed_phrases = {
+        let config = artifact
+            .guardrails
+            .as_ref()
+            .ok_or_else(|| LogicPearlError::message("guardrails_v1 artifact is missing its cue configuration"))?;
+        guardrails_signal_phrases(config, signal).to_vec()
+    };
 
     for &bootstrap_candidate in auto_bootstrap_strategies(bootstrap) {
+        let Ok((bootstrap_mode, positive_prompts, negative_prompts)) =
+            infer_bootstrap_examples(train_cases, signal, bootstrap_candidate, positive_routes, &seed_phrases)
+        else {
+            continue;
+        };
+        let pool = build_candidate_pool(
+            signal,
+            &positive_prompts,
+            &negative_prompts,
+            *candidate_frontier.iter().max().unwrap_or(&0),
+        );
+        if pool.candidates.is_empty() {
+            continue;
+        }
         for &cap in candidate_frontier {
-            let Ok((candidate_artifact, train_report)) = synthesize_guardrails_artifact(
+            let Ok((candidate_artifact, train_report)) = synthesize_from_candidate_pool(
                 artifact,
                 signal,
-                train_cases,
-                bootstrap_candidate,
-                positive_routes,
+                bootstrap_mode,
+                &positive_prompts,
+                &negative_prompts,
+                &pool,
                 cap,
             ) else {
                 continue;
