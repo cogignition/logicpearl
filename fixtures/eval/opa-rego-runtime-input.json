@@ -1,0 +1,17 @@
+{
+  "role_level": 1,
+  "is_admin": 0,
+  "is_contractor": 0,
+  "team_match": 1,
+  "is_public": 1,
+  "archived": 0,
+  "sensitivity": 1,
+  "action_read": 1,
+  "action_write": 0,
+  "action_delete": 0,
+  "failed_attempts": 0,
+  "concurrent_sessions": 1,
+  "is_business_hours": 1,
+  "is_authenticated": 1,
+  "risk_score": 3
+}

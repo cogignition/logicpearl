@@ -226,20 +226,19 @@ pub(crate) fn compile_native_runner(
         native_artifact_output_path(artifact_dir, &pearl_name, target_triple.as_deref())
     });
     let workspace_root = workspace_root();
+    let generated_root = generated_build_root(&workspace_root);
     let crate_name = format!("logicpearl_compiled_{}", sanitize_identifier(&pearl_name));
-    let build_dir = workspace_root
-        .join("target")
-        .join("generated")
-        .join(&crate_name);
+    let build_dir = generated_root.join(&crate_name);
     let src_dir = build_dir.join("src");
     fs::create_dir_all(&src_dir)
         .into_diagnostic()
         .wrap_err("failed to create generated compile directory")?;
 
+    let logicpearl_ir_dep = dependency_spec(&workspace_root, "logicpearl-ir", "crates/logicpearl-ir");
+    let logicpearl_runtime_dep =
+        dependency_spec(&workspace_root, "logicpearl-runtime", "crates/logicpearl-runtime");
     let cargo_toml = format!(
-        "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nlogicpearl-ir = {{ path = \"{}\" }}\nlogicpearl-runtime = {{ path = \"{}\" }}\nserde_json = \"1\"\n",
-        workspace_root.join("crates/logicpearl-ir").display(),
-        workspace_root.join("crates/logicpearl-runtime").display(),
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nlogicpearl-ir = {logicpearl_ir_dep}\nlogicpearl-runtime = {logicpearl_runtime_dep}\nserde_json = \"1\"\n",
     );
     fs::write(build_dir.join("Cargo.toml"), cargo_toml)
         .into_diagnostic()
@@ -316,6 +315,7 @@ pub(crate) fn compile_wasm_module(
     let output_path = output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pearl_name));
     let sidecar_path = wasm_sidecar_output_path(artifact_dir, &pearl_name);
     let workspace_root = workspace_root();
+    let generated_root = generated_build_root(&workspace_root);
     let crate_name = format!(
         "logicpearl_compiled_{}_wasm",
         sanitize_identifier(&pearl_name)
@@ -323,10 +323,7 @@ pub(crate) fn compile_wasm_module(
     let gate = LogicPearlGateIr::from_path(pearl_ir)
         .into_diagnostic()
         .wrap_err("failed to load pearl IR for wasm compilation")?;
-    let build_dir = workspace_root
-        .join("target")
-        .join("generated")
-        .join(&crate_name);
+    let build_dir = generated_root.join(&crate_name);
     let src_dir = build_dir.join("src");
     fs::create_dir_all(&src_dir)
         .into_diagnostic()
@@ -758,6 +755,32 @@ fn workspace_root() -> PathBuf {
         .and_then(|path| path.parent())
         .map(PathBuf::from)
         .expect("logicpearl-cli crate should live under workspace/crates/logicpearl-cli")
+}
+
+fn generated_build_root(workspace_root: &Path) -> PathBuf {
+    if has_workspace_sources(workspace_root) {
+        workspace_root.join("target").join("generated")
+    } else {
+        std::env::temp_dir().join("logicpearl").join("target").join("generated")
+    }
+}
+
+fn dependency_spec(workspace_root: &Path, crate_name: &str, relative_path: &str) -> String {
+    let local_path = workspace_root.join(relative_path);
+    if has_workspace_sources(workspace_root) && local_path.exists() {
+        format!("{{ path = \"{}\" }}", local_path.display())
+    } else {
+        format!("\"{}\"", published_crate_version(crate_name))
+    }
+}
+
+fn published_crate_version(_crate_name: &str) -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+fn has_workspace_sources(workspace_root: &Path) -> bool {
+    workspace_root.join("crates/logicpearl-ir").exists()
+        && workspace_root.join("crates/logicpearl-runtime").exists()
 }
 
 fn binary_file_name(base: &str, target_triple: Option<&str>) -> String {

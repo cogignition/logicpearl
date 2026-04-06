@@ -31,7 +31,7 @@ New here? Read [Terminology](./TERMINOLOGY.md) first.
 Quick proof path:
 
 ```bash
-cargo install --path crates/logicpearl-cli
+cargo install logicpearl
 logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
 ```
 
@@ -71,6 +71,12 @@ Prerequisites:
 - a willingness to treat logic as a build artifact instead of application glue
 
 Install the public CLI once:
+
+```bash
+cargo install logicpearl
+```
+
+If you are developing from a local checkout instead of crates.io:
 
 ```bash
 cargo install --path crates/logicpearl-cli
@@ -161,6 +167,8 @@ logicpearl compile examples/getting_started/output --name authz-demo --target x8
 logicpearl compile examples/getting_started/output --name authz-demo --target aarch64-apple-darwin
 logicpearl compile examples/getting_started/output --name authz-demo --target wasm32-unknown-unknown
 ```
+
+For cross-target builds, install the Rust target first with `rustup target add <target-triple>`, and make sure any required linker/toolchain is available on your machine.
 
 That is the simplest LogicPearl loop:
 - observed behavior goes in
@@ -391,8 +399,10 @@ uv run python ../benchmarks/opa_rego/run_benchmark.py
 
 ### Run the Rust runtime directly
 
+Use the checked-in normalized feature input:
+
 ```bash
-logicpearl run benchmarks/opa_rego/output/pearl.ir.json benchmarks/opa_rego/output/runtime_inputs.json
+logicpearl run benchmarks/opa_rego/output/pearl.ir.json fixtures/eval/opa-rego-runtime-input.json
 ```
 
 Expected OPA outputs:

@@ -451,7 +451,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logicpearl"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "csv",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-benchmark"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-conformance"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "csv",
  "serde",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-discovery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "csv",
  "logicpearl-core",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-ir"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer-synthesis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-benchmark",
  "logicpearl-core",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-pipeline"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -579,7 +579,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-verify"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "logicpearl-core",
  "serde",
