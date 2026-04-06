@@ -3,14 +3,30 @@ import sys
 
 
 def audit_payload(payload: dict) -> dict:
-    allow = bool(payload.get("allow", False))
     bitmask = int(payload.get("bitmask", 0))
-    injection_payload = int(payload.get("injection_payload_bitmask", 0))
-    sensitive_surface = int(payload.get("sensitive_surface_bitmask", 0))
+    injection_payload = int(
+        payload.get(
+            "injection_payload_bitmask",
+            payload.get("target_injection_payload_bitmask", 0),
+        )
+    )
+    sensitive_surface = int(
+        payload.get(
+            "sensitive_surface_bitmask",
+            payload.get("target_sensitive_surface_bitmask", 0),
+        )
+    )
+    suspicious_request = int(payload.get("target_suspicious_request_bitmask", 0))
     has_scanner_fingerprint = bool(payload.get("has_scanner_fingerprint", False))
     has_malformed_encoding = bool(payload.get("has_malformed_encoding", False))
     risk_score = float(payload.get("risk_score", 0.0))
     likely_benign = bool(payload.get("likely_benign_request", False))
+    allow = bool(
+        payload.get(
+            "allow",
+            (bitmask == 0 and injection_payload == 0 and sensitive_surface == 0 and suspicious_request == 0),
+        )
+    )
 
     if allow:
         route_status = "allow"
@@ -27,6 +43,11 @@ def audit_payload(payload: dict) -> dict:
         decision_basis = "sensitive_surface"
         explanation = "The request targets a sensitive route from an untrusted zone."
         counterfactual = "Move privileged traffic behind the trusted boundary and keep public requests off admin and export paths."
+    elif suspicious_request > 0:
+        route_status = "review_suspicious_request"
+        decision_basis = "suspicious_request"
+        explanation = "The request looks scanner-like or malformed enough to warrant review without treating it as a hard exploit match."
+        counterfactual = "Use standard browser-style requests and remove scanner fingerprints or malformed encodings."
     elif bitmask & (1 << 1):
         route_status = "review_suspicious_request"
         decision_basis = "scanner_or_probe"
@@ -47,6 +68,7 @@ def audit_payload(payload: dict) -> dict:
         "summary": {
             "allow": allow,
             "bitmask": bitmask,
+            "suspicious_request_bitmask": suspicious_request,
             "has_scanner_fingerprint": has_scanner_fingerprint,
             "has_malformed_encoding": has_malformed_encoding,
             "risk_score": risk_score,

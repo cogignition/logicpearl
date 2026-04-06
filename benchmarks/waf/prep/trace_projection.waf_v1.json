@@ -1,0 +1,106 @@
+{
+  "feature_columns": [
+    "contains_sqli_signature",
+    "contains_xss_signature",
+    "contains_path_traversal",
+    "contains_server_include",
+    "sqli_marker_count",
+    "xss_marker_count",
+    "traversal_marker_count",
+    "contains_waitfor_delay",
+    "contains_union_select",
+    "contains_quote",
+    "contains_comment_sequence",
+    "contains_script_tag",
+    "contains_event_handler",
+    "contains_dotdot",
+    "targets_sensitive_route",
+    "sensitive_route_marker_count",
+    "path_targets_admin",
+    "path_targets_hidden",
+    "contains_restricted_extension",
+    "origin_outside_trust_zone",
+    "has_scanner_fingerprint",
+    "scanner_marker_count",
+    "has_malformed_encoding",
+    "meta_reports_sqli",
+    "meta_reports_xss",
+    "meta_reports_restricted_resource",
+    "meta_reports_bad_bot",
+    "meta_reports_protocol_violation",
+    "meta_reports_command_injection",
+    "request_has_query",
+    "request_has_body",
+    "path_depth",
+    "query_key_count",
+    "body_key_count",
+    "percent_encoding_count",
+    "suspicious_token_count",
+    "likely_benign_request",
+    "risk_score"
+  ],
+  "emit_multi_target": true,
+  "binary_targets": [
+    {
+      "name": "target_injection_payload",
+      "trace_features": [
+        "contains_sqli_signature",
+        "contains_xss_signature",
+        "contains_path_traversal",
+        "contains_server_include",
+        "sqli_marker_count",
+        "xss_marker_count",
+        "traversal_marker_count",
+        "contains_waitfor_delay",
+        "contains_union_select",
+        "contains_quote",
+        "contains_comment_sequence",
+        "contains_script_tag",
+        "contains_event_handler",
+        "contains_dotdot",
+        "meta_reports_sqli",
+        "meta_reports_xss",
+        "meta_reports_command_injection"
+      ],
+      "positive_when": {
+        "expected_routes": ["deny_injection_payload"]
+      }
+    },
+    {
+      "name": "target_sensitive_surface",
+      "trace_features": [
+        "targets_sensitive_route",
+        "sensitive_route_marker_count",
+        "path_targets_admin",
+        "path_targets_hidden",
+        "contains_restricted_extension",
+        "origin_outside_trust_zone",
+        "meta_reports_restricted_resource"
+      ],
+      "positive_when": {
+        "expected_routes": ["deny_sensitive_surface"]
+      }
+    },
+    {
+      "name": "target_suspicious_request",
+      "trace_features": [
+        "has_scanner_fingerprint",
+        "scanner_marker_count",
+        "has_malformed_encoding",
+        "meta_reports_bad_bot",
+        "meta_reports_protocol_violation",
+        "request_has_query",
+        "request_has_body",
+        "path_depth",
+        "query_key_count",
+        "body_key_count",
+        "percent_encoding_count",
+        "suspicious_token_count",
+        "likely_benign_request"
+      ],
+      "positive_when": {
+        "expected_routes": ["review_suspicious_request"]
+      }
+    }
+  ]
+}

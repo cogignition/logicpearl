@@ -49,9 +49,20 @@ pub(super) fn build_gate(
     let mut residual_rules_discovered = 0usize;
     if let Some(options) = residual_options {
         let first_pass_gate = gate_from_rules(rows, gate_id, rules.clone())?;
-        let residual_rules = discover_residual_rules(rows, &first_pass_gate, options)?;
-        residual_rules_discovered = residual_rules.len();
-        rules.extend(residual_rules);
+        match discover_residual_rules(rows, &first_pass_gate, options) {
+            Ok(residual_rules) => {
+                residual_rules_discovered = residual_rules.len();
+                rules.extend(residual_rules);
+            }
+            Err(err) => {
+                let message = err.to_string();
+                if !message.contains("boolean conjunction synthesis")
+                    && !message.contains("failed to launch z3")
+                {
+                    return Err(err);
+                }
+            }
+        }
     }
     let mut refined_rules_applied = 0usize;
     if let Some(options) = refinement_options {
@@ -843,7 +854,10 @@ fn candidate_rules(
     allowed_indices: &[usize],
 ) -> Vec<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
-    let numeric_features = numeric_feature_names(rows);
+    let numeric_features = numeric_feature_names(rows)
+        .into_iter()
+        .filter(|feature| feature_has_nontrivial_numeric_range(rows, feature))
+        .collect::<Vec<_>>();
     let mut candidates = Vec::new();
 
     for feature in feature_names {
@@ -943,8 +957,6 @@ fn candidate_rules(
                 ComparisonOperator::Lte,
                 ComparisonOperator::Gt,
                 ComparisonOperator::Gte,
-                ComparisonOperator::Eq,
-                ComparisonOperator::Ne,
             ] {
                 let candidate = CandidateRule {
                     feature: left.clone(),
@@ -1027,6 +1039,21 @@ fn numeric_thresholds(
         .into_iter()
         .map(|scaled| scaled as f64 / 1000.0)
         .collect()
+}
+
+fn feature_has_nontrivial_numeric_range(rows: &[DecisionTraceRow], feature: &str) -> bool {
+    let mut distinct_values: BTreeSet<i64> = BTreeSet::new();
+    for value in rows
+        .iter()
+        .filter_map(|row| row.features.get(feature))
+        .filter_map(Value::as_f64)
+    {
+        distinct_values.insert((value * 1000.0).round() as i64);
+        if distinct_values.len() > 2 {
+            return true;
+        }
+    }
+    false
 }
 
 fn candidate_coverage(
@@ -1130,8 +1157,8 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_candidate_set_score, score_candidate_set, select_candidate_rules_exact,
-        CandidateRule, CandidateSetScore,
+        candidate_rules, compare_candidate_set_score, score_candidate_set,
+        select_candidate_rules_exact, CandidateRule, CandidateSetScore,
     };
     use crate::DecisionTraceRow;
     use logicpearl_ir::{ComparisonOperator, ComparisonValue};
@@ -1211,6 +1238,51 @@ mod tests {
         assert_eq!(score.total_errors, 3);
     }
 
+    #[test]
+    fn candidate_rules_skip_feature_refs_for_binary_numeric_features() {
+        let rows = vec![
+            binary_pair_row(1.0, 0.0, false),
+            binary_pair_row(0.0, 1.0, false),
+            binary_pair_row(0.0, 0.0, true),
+            binary_pair_row(1.0, 1.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize];
+        let allowed_indices = vec![2usize, 3usize];
+        let candidates = candidate_rules(&rows, &denied_indices, &allowed_indices);
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| matches!(candidate.value, ComparisonValue::FeatureRef { .. })),
+            "binary numeric features should not produce feature-ref candidates"
+        );
+    }
+
+    #[test]
+    fn candidate_rules_limit_feature_refs_to_ordered_numeric_comparisons() {
+        let rows = vec![
+            binary_pair_row(0.0, 2.0, false),
+            binary_pair_row(1.0, 3.0, false),
+            binary_pair_row(2.0, 1.0, true),
+            binary_pair_row(3.0, 0.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize];
+        let allowed_indices = vec![2usize, 3usize];
+        let candidates = candidate_rules(&rows, &denied_indices, &allowed_indices);
+        assert!(
+            candidates
+                .iter()
+                .filter(|candidate| matches!(candidate.value, ComparisonValue::FeatureRef { .. }))
+                .all(|candidate| matches!(
+                    candidate.op,
+                    ComparisonOperator::Lt
+                        | ComparisonOperator::Lte
+                        | ComparisonOperator::Gt
+                        | ComparisonOperator::Gte
+                )),
+            "feature-ref candidates should stay ordered comparisons"
+        );
+    }
+
     fn row(score: f64, allowed: bool) -> DecisionTraceRow {
         let mut features = HashMap::new();
         features.insert(
@@ -1228,5 +1300,18 @@ mod tests {
             denied_coverage: 0,
             false_positives: 0,
         }
+    }
+
+    fn binary_pair_row(left: f64, right: f64, allowed: bool) -> DecisionTraceRow {
+        let mut features = HashMap::new();
+        features.insert(
+            "left".to_string(),
+            Value::Number(Number::from_f64(left).unwrap()),
+        );
+        features.insert(
+            "right".to_string(),
+            Value::Number(Number::from_f64(right).unwrap()),
+        );
+        DecisionTraceRow { features, allowed }
     }
 }

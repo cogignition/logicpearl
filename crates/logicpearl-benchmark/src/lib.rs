@@ -78,12 +78,16 @@ struct ParsedHttpRequest {
 struct WafRoutePatterns {
     scanner_markers: Vec<String>,
     scanner_meta_markers: Vec<String>,
+    protocol_review_meta_markers: Vec<String>,
+    command_injection_meta_patterns: Vec<String>,
+    server_include_patterns: Vec<String>,
     sqli_markers: Vec<String>,
     sqli_meta_markers: Vec<String>,
     xss_markers: Vec<String>,
     xss_meta_markers: Vec<String>,
     restricted_markers: Vec<String>,
     restricted_meta_markers: Vec<String>,
+    restricted_extensions: Vec<String>,
     export_markers: Vec<String>,
 }
 
@@ -1645,6 +1649,7 @@ fn classify_waf_route_family(
 ) -> (&'static str, String) {
     let meta_text = meta.unwrap_or_default().to_ascii_lowercase();
     let request_text = waf_request_text(request);
+    let request_path = request.path.to_ascii_lowercase();
     let patterns = waf_route_patterns();
 
     if contains_any_marker(&request_text, &patterns.scanner_markers)
@@ -1656,12 +1661,32 @@ fn classify_waf_route_family(
         );
     }
 
+    if contains_any_marker(&request_text, &patterns.server_include_patterns)
+        || contains_any_marker(&meta_text, &patterns.command_injection_meta_patterns)
+    {
+        return (
+            "deny_injection_payload",
+            "waf:command-injection".to_string(),
+        );
+    }
+
     if contains_any_marker(&request_text, &patterns.restricted_markers)
         || contains_any_marker(&meta_text, &patterns.restricted_meta_markers)
+        || patterns
+            .restricted_extensions
+            .iter()
+            .any(|suffix| request_path.ends_with(suffix))
     {
         return (
             "deny_sensitive_surface",
             "waf:restricted-resource".to_string(),
+        );
+    }
+
+    if contains_any_marker(&meta_text, &patterns.protocol_review_meta_markers) {
+        return (
+            "review_suspicious_request",
+            "waf:protocol-violation".to_string(),
         );
     }
 
@@ -1685,7 +1710,7 @@ fn classify_waf_route_family(
     }
 
     if meta.is_some() {
-        ("deny_sensitive_surface", "waf:modsecurity-deny".to_string())
+        ("deny_injection_payload", "waf:modsecurity-deny".to_string())
     } else {
         (
             "deny_injection_payload",
@@ -2067,7 +2092,7 @@ fn projection_matches(case: &ObservedBenchmarkCase, predicate: &ProjectionPredic
 
 fn csv_value(value: Option<&Value>) -> String {
     match value {
-        Some(Value::Bool(boolean)) => bit(*boolean).to_string(),
+        Some(Value::Bool(boolean)) => boolean.to_string(),
         Some(Value::Number(number)) => number.to_string(),
         Some(Value::String(text)) => text.replace(',', "_"),
         Some(Value::Null) | None => String::new(),
@@ -2084,14 +2109,6 @@ fn boolish(value: Option<&Value>) -> bool {
             "1" | "true" | "yes" | "y"
         ),
         _ => false,
-    }
-}
-
-fn bit(value: bool) -> u8 {
-    if value {
-        1
-    } else {
-        0
     }
 }
 
@@ -2112,11 +2129,24 @@ mod tests {
         adapt_pint_dataset, adapt_promptshield_dataset,
         adapt_rogue_security_prompt_injections_dataset, adapt_safearena_dataset,
         adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, builtin_adapter_config,
-        detect_benchmark_adapter_profile, BenchmarkAdaptDefaults, BenchmarkAdapterProfile,
-        SaladSubsetKind,
+        classify_waf_route_family, csv_value, detect_benchmark_adapter_profile,
+        BenchmarkAdaptDefaults, BenchmarkAdapterProfile, ParsedHttpRequest, SaladSubsetKind,
     };
-    use serde_json::Value;
+    use serde_json::{Map, Value};
     use std::fs;
+
+    fn waf_request(path: &str) -> ParsedHttpRequest {
+        ParsedHttpRequest {
+            method: "GET".to_string(),
+            path: path.to_string(),
+            request_uri: path.to_string(),
+            http_version: "HTTP/1.1".to_string(),
+            headers: Map::new(),
+            query: Map::new(),
+            body: Map::new(),
+            raw_request: format!("GET {path} HTTP/1.1"),
+        }
+    }
 
     #[test]
     fn detects_squad_shape() {
@@ -2295,6 +2325,31 @@ mod tests {
             rows[0].input.get("document_instructions_present"),
             Some(&Value::Bool(false))
         );
+    }
+
+    #[test]
+    fn csv_value_preserves_boolean_scalars() {
+        assert_eq!(csv_value(Some(&Value::Bool(true))), "true");
+        assert_eq!(csv_value(Some(&Value::Bool(false))), "false");
+    }
+
+    #[test]
+    fn classify_waf_routes_command_injection_meta_to_injection_payload() {
+        let request = waf_request("/wp-plain.php");
+        let (route, category) = classify_waf_route_family(
+            &request,
+            Some("[msg \"Remote Command Execution: Direct Unix Command Execution\"] [tag \"attack-rce\"]"),
+        );
+        assert_eq!(route, "deny_injection_payload");
+        assert_eq!(category, "waf:command-injection");
+    }
+
+    #[test]
+    fn classify_waf_routes_backup_extensions_to_sensitive_surface() {
+        let request = waf_request("/tienda1/miembros/fotos.jsp.BAK");
+        let (route, category) = classify_waf_route_family(&request, None);
+        assert_eq!(route, "deny_sensitive_surface");
+        assert_eq!(category, "waf:restricted-resource");
     }
 
     #[test]

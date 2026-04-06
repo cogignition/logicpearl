@@ -1,6 +1,7 @@
 use super::*;
 use logicpearl_observer::guardrails_signal_phrases;
 use logicpearl_observer_synthesis::{evaluate_guardrails_artifact_signal, ObserverSynthesisReport};
+use std::io::{BufRead, Write};
 use std::path::Path;
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
@@ -227,63 +228,43 @@ pub(crate) fn observe_benchmark_cases(
             .wrap_err("failed to create observed benchmark output directory")?;
     }
 
-    let cases = load_benchmark_cases(dataset_jsonl)
+    let input = fs::File::open(dataset_jsonl)
         .into_diagnostic()
-        .wrap_err("failed to load benchmark cases for observation")?;
-    let observed_cases: Vec<ObservedBenchmarkCase> = match observer {
-        ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests") => {
-            let mut observed = Vec::with_capacity(cases.len());
-            for chunk in cases.chunks(PLUGIN_BATCH_SIZE) {
-                let payloads = chunk
-                    .iter()
-                    .map(|case| {
-                        serde_json::json!({
-                            "raw_input": case.input
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
-                    .into_diagnostic()
-                    .wrap_err("observer plugin batch execution failed")?;
-                for (case, response) in chunk.iter().zip(responses) {
-                    let features = response
-                        .extra
-                        .get("features")
-                        .and_then(Value::as_object)
-                        .cloned()
-                        .ok_or_else(|| {
-                            guidance(
-                                "observer plugin batch response is missing `features`",
-                                "An observer plugin used for benchmark observation must return a top-level features object.",
-                            )
-                        })?;
-                    observed.push(ObservedBenchmarkCase {
-                        id: case.id.clone(),
-                        input: case.input.clone(),
-                        expected_route: case.expected_route.clone(),
-                        category: case.category.clone(),
-                        features,
-                    });
-                }
-            }
-            observed
+        .wrap_err("failed to open benchmark cases for observation")?;
+    let reader = std::io::BufReader::new(input);
+    let mut writer = std::io::BufWriter::new(
+        fs::File::create(output)
+            .into_diagnostic()
+            .wrap_err("failed to create observed benchmark output file")?,
+    );
+
+    let mut rows = 0_usize;
+    let mut chunk = Vec::with_capacity(PLUGIN_BATCH_SIZE);
+
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line
+            .into_diagnostic()
+            .wrap_err("failed to read benchmark dataset line")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
         }
-        _ => cases
-            .into_iter()
-            .map(|case| {
-                let features = observe_features(observer, &case.input)
-                    .wrap_err(format!("observer execution failed for case {}", case.id))?;
-                Ok(ObservedBenchmarkCase {
-                    id: case.id,
-                    input: case.input,
-                    expected_route: case.expected_route,
-                    category: case.category,
-                    features,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?,
-    };
-    let rows = observed_cases.len();
+        let case: BenchmarkCase = serde_json::from_str(trimmed)
+            .into_diagnostic()
+            .wrap_err(format!(
+                "invalid benchmark case JSON on line {}. Each line must contain id, input, and expected_route",
+                line_no + 1
+            ))?;
+        chunk.push(case);
+        if chunk.len() >= PLUGIN_BATCH_SIZE {
+            rows += observe_case_chunk(observer, &chunk, &mut writer)?;
+            chunk.clear();
+        }
+    }
+
+    if !chunk.is_empty() {
+        rows += observe_case_chunk(observer, &chunk, &mut writer)?;
+    }
 
     if rows == 0 {
         return Err(guidance(
@@ -292,16 +273,88 @@ pub(crate) fn observe_benchmark_cases(
         ));
     }
 
-    let mut out = String::new();
-    for observed in observed_cases {
-        out.push_str(&serde_json::to_string(&observed).into_diagnostic()?);
-        out.push('\n');
-    }
-
-    fs::write(output, out)
+    writer
+        .flush()
         .into_diagnostic()
-        .wrap_err("failed to write observed benchmark JSONL")?;
+        .wrap_err("failed to flush observed benchmark JSONL")?;
     Ok(rows)
+}
+
+fn observe_case_chunk(
+    observer: &ResolvedObserver,
+    chunk: &[BenchmarkCase],
+    writer: &mut std::io::BufWriter<fs::File>,
+) -> Result<usize> {
+    match observer {
+        ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests") => {
+            let payloads = chunk
+                .iter()
+                .map(|case| {
+                    serde_json::json!({
+                        "raw_input": case.input
+                    })
+                })
+                .collect::<Vec<_>>();
+            let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
+                .into_diagnostic()
+                .wrap_err("observer plugin batch execution failed")?;
+            for (case, response) in chunk.iter().zip(responses) {
+                let features = response
+                    .extra
+                    .get("features")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .ok_or_else(|| {
+                        guidance(
+                            "observer plugin batch response is missing `features`",
+                            "An observer plugin used for benchmark observation must return a top-level features object.",
+                        )
+                    })?;
+                write_observed_case(
+                    writer,
+                    &ObservedBenchmarkCase {
+                        id: case.id.clone(),
+                        input: case.input.clone(),
+                        expected_route: case.expected_route.clone(),
+                        category: case.category.clone(),
+                        features,
+                    },
+                )?;
+            }
+        }
+        _ => {
+            for case in chunk {
+                let features = observe_features(observer, &case.input)
+                    .wrap_err(format!("observer execution failed for case {}", case.id))?;
+                write_observed_case(
+                    writer,
+                    &ObservedBenchmarkCase {
+                        id: case.id.clone(),
+                        input: case.input.clone(),
+                        expected_route: case.expected_route.clone(),
+                        category: case.category.clone(),
+                        features,
+                    },
+                )?;
+            }
+        }
+    }
+    Ok(chunk.len())
+}
+
+fn write_observed_case(
+    writer: &mut std::io::BufWriter<fs::File>,
+    observed: &ObservedBenchmarkCase,
+) -> Result<()> {
+    serde_json::to_writer(&mut *writer, observed)
+        .into_diagnostic()
+        .wrap_err("failed to serialize observed benchmark case")?;
+    use std::io::Write as _;
+    writer
+        .write_all(b"\n")
+        .into_diagnostic()
+        .wrap_err("failed to write observed benchmark row delimiter")?;
+    Ok(())
 }
 
 pub(crate) fn observe_features(
