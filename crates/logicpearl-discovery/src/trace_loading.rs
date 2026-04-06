@@ -1,7 +1,8 @@
 use super::{DecisionTraceRow, LoadedDecisionTraces};
 use logicpearl_core::{LogicPearlError, Result};
 use serde_json::{Number, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -10,28 +11,27 @@ pub(crate) struct BinaryLabelDomain {
     pub(crate) negative_value: Option<String>,
 }
 
-pub fn load_decision_traces(
-    csv_path: &Path,
-    label_column: &str,
-) -> Result<Vec<DecisionTraceRow>> {
+#[derive(Debug, Clone)]
+pub(crate) struct LoadedFlatRecords {
+    pub(crate) field_names: Vec<String>,
+    pub(crate) records: Vec<BTreeMap<String, Value>>,
+}
+
+pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<DecisionTraceRow>> {
     load_decision_traces_with_labels(csv_path, label_column, None, None)
 }
 
 pub fn load_decision_traces_with_labels(
-    csv_path: &Path,
+    path: &Path,
     label_column: &str,
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<Vec<DecisionTraceRow>> {
-    let mut reader = csv::Reader::from_path(csv_path)?;
-    let headers = reader.headers()?.clone();
-    let records = reader
-        .records()
-        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
+    let loaded = load_flat_records(path)?;
     load_decision_traces_from_records(
-        csv_path,
-        &headers,
-        &records,
+        path,
+        &loaded.field_names,
+        &loaded.records,
         label_column,
         positive_label,
         negative_label,
@@ -39,21 +39,17 @@ pub fn load_decision_traces_with_labels(
 }
 
 pub fn load_decision_traces_auto(
-    csv_path: &Path,
+    path: &Path,
     label_column: Option<&str>,
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<LoadedDecisionTraces> {
-    let mut reader = csv::Reader::from_path(csv_path)?;
-    let headers = reader.headers()?.clone();
-    let records = reader
-        .records()
-        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
-    let resolved_label = infer_label_column(csv_path, &headers, &records, label_column)?;
+    let loaded = load_flat_records(path)?;
+    let resolved_label = infer_label_column(path, &loaded.field_names, &loaded.records, label_column)?;
     let rows = load_decision_traces_from_records(
-        csv_path,
-        &headers,
-        &records,
+        path,
+        &loaded.field_names,
+        &loaded.records,
         &resolved_label,
         positive_label,
         negative_label,
@@ -64,54 +60,281 @@ pub fn load_decision_traces_auto(
     })
 }
 
+pub(crate) fn load_flat_records(path: &Path) -> Result<LoadedFlatRecords> {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("json") => load_json_records(path),
+        Some("jsonl") | Some("ndjson") => load_jsonl_records(path),
+        _ => load_csv_records(path),
+    }
+}
+
+fn load_csv_records(path: &Path) -> Result<LoadedFlatRecords> {
+    let mut reader = csv::Reader::from_path(path)?;
+    let headers = reader.headers()?.clone();
+    let records = reader
+        .records()
+        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
+    if headers.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "decision trace input {} has no columns",
+            path.display()
+        )));
+    }
+
+    let field_names = headers.iter().map(ToOwned::to_owned).collect::<Vec<_>>();
+    let mut out = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        let mut row = BTreeMap::new();
+        for (header, value) in headers.iter().zip(record.iter()) {
+            if value.trim().is_empty() {
+                return Err(LogicPearlError::message(format!(
+                    "row {} has an empty value for field {header:?}",
+                    index + 2
+                )));
+            }
+            row.insert(header.to_string(), parse_scalar(value)?);
+        }
+        out.push(row);
+    }
+
+    Ok(LoadedFlatRecords {
+        field_names,
+        records: out,
+    })
+}
+
+fn load_json_records(path: &Path) -> Result<LoadedFlatRecords> {
+    let payload = fs::read_to_string(path)?;
+    let value: Value = serde_json::from_str(&payload)
+        .map_err(|err| LogicPearlError::message(format!("failed to parse JSON decision traces: {err}")))?;
+    let rows = match value {
+        Value::Array(rows) => rows,
+        Value::Object(mut object) => match object.remove("decision_traces") {
+            Some(Value::Array(rows)) => rows,
+            Some(_) => {
+                return Err(LogicPearlError::message(
+                    "top-level `decision_traces` must be a JSON array",
+                ))
+            }
+            None => {
+                return Err(LogicPearlError::message(
+                    "JSON decision traces must be an array or an object with a top-level `decision_traces` array",
+                ))
+            }
+        },
+        _ => {
+            return Err(LogicPearlError::message(
+                "JSON decision traces must be an array or an object with a top-level `decision_traces` array",
+            ))
+        }
+    };
+    flatten_json_rows(path, rows)
+}
+
+fn load_jsonl_records(path: &Path) -> Result<LoadedFlatRecords> {
+    let payload = fs::read_to_string(path)?;
+    let mut rows = Vec::new();
+    for (index, line) in payload.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(trimmed).map_err(|err| {
+            LogicPearlError::message(format!(
+                "failed to parse JSONL decision trace row {}: {err}",
+                index + 1
+            ))
+        })?;
+        rows.push(value);
+    }
+    flatten_json_rows(path, rows)
+}
+
+fn flatten_json_rows(path: &Path, rows: Vec<Value>) -> Result<LoadedFlatRecords> {
+    if rows.is_empty() {
+        return Ok(LoadedFlatRecords {
+            field_names: Vec::new(),
+            records: Vec::new(),
+        });
+    }
+
+    let mut flat_rows = Vec::with_capacity(rows.len());
+    for (index, row) in rows.into_iter().enumerate() {
+        let Value::Object(object) = row else {
+            return Err(LogicPearlError::message(format!(
+                "decision trace row {} in {} must be a JSON object",
+                index + 1,
+                path.display()
+            )));
+        };
+        let mut flat = BTreeMap::new();
+        flatten_json_object(index + 1, None, &Value::Object(object), &mut flat)?;
+        if flat.is_empty() {
+            return Err(LogicPearlError::message(format!(
+                "decision trace row {} in {} did not produce any scalar fields",
+                index + 1,
+                path.display()
+            )));
+        }
+        flat_rows.push(flat);
+    }
+
+    let field_names = ensure_rectangular_schema(path, &flat_rows)?;
+    Ok(LoadedFlatRecords {
+        field_names,
+        records: flat_rows,
+    })
+}
+
+fn flatten_json_object(
+    row_number: usize,
+    prefix: Option<&str>,
+    value: &Value,
+    out: &mut BTreeMap<String, Value>,
+) -> Result<()> {
+    match value {
+        Value::Object(object) => {
+            if object.is_empty() {
+                return Err(LogicPearlError::message(format!(
+                    "row {row_number} contains an empty object at {}",
+                    prefix.unwrap_or("<root>")
+                )));
+            }
+            for (key, nested) in object {
+                let next = match prefix {
+                    Some(prefix) => format!("{prefix}.{key}"),
+                    None => key.clone(),
+                };
+                flatten_json_object(row_number, Some(&next), nested, out)?;
+            }
+        }
+        Value::Array(values) => {
+            if values.is_empty() {
+                return Err(LogicPearlError::message(format!(
+                    "row {row_number} contains an empty array at {}",
+                    prefix.unwrap_or("<root>")
+                )));
+            }
+            for (index, nested) in values.iter().enumerate() {
+                let next = match prefix {
+                    Some(prefix) => format!("{prefix}.{index}"),
+                    None => index.to_string(),
+                };
+                flatten_json_object(row_number, Some(&next), nested, out)?;
+            }
+        }
+        Value::Null => {
+            return Err(LogicPearlError::message(format!(
+                "row {row_number} contains null at {}",
+                prefix.unwrap_or("<root>")
+            )))
+        }
+        Value::String(raw) => {
+            let key = prefix.ok_or_else(|| {
+                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+            })?;
+            out.insert(key.to_string(), parse_scalar(raw)?);
+        }
+        Value::Bool(boolean) => {
+            let key = prefix.ok_or_else(|| {
+                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+            })?;
+            out.insert(key.to_string(), Value::Bool(*boolean));
+        }
+        Value::Number(number) => {
+            let key = prefix.ok_or_else(|| {
+                LogicPearlError::message(format!("row {row_number} contains a bare scalar at the root"))
+            })?;
+            out.insert(key.to_string(), Value::Number(number.clone()));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_rectangular_schema(path: &Path, rows: &[BTreeMap<String, Value>]) -> Result<Vec<String>> {
+    let first_keys = rows
+        .first()
+        .map(|row| row.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let expected = first_keys.iter().cloned().collect::<BTreeSet<_>>();
+    for (index, row) in rows.iter().enumerate().skip(1) {
+        let actual = row.keys().cloned().collect::<BTreeSet<_>>();
+        if actual != expected {
+            let missing = expected
+                .difference(&actual)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let extra = actual
+                .difference(&expected)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(LogicPearlError::message(format!(
+                "decision trace row {} in {} has a different schema; missing: [{}], extra: [{}]",
+                index + 1,
+                path.display(),
+                missing,
+                extra
+            )));
+        }
+    }
+    Ok(first_keys)
+}
+
 fn load_decision_traces_from_records(
-    csv_path: &Path,
-    headers: &csv::StringRecord,
-    records: &[csv::StringRecord],
+    path: &Path,
+    field_names: &[String],
+    records: &[BTreeMap<String, Value>],
     label_column: &str,
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<Vec<DecisionTraceRow>> {
-    if !headers.iter().any(|header| header == label_column) {
-        let candidates = detect_label_candidates(headers, records);
+    if !field_names.iter().any(|header| header == label_column) {
+        let candidates = detect_label_candidates(field_names, records);
         let candidate_text = if candidates.is_empty() {
             "none".to_string()
         } else {
             candidates.join(", ")
         };
         return Err(LogicPearlError::message(format!(
-            "decision trace CSV {} is missing label column {:?}; candidate binary columns: {}",
-            csv_path.display(),
+            "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
+            path.display(),
             label_column,
             candidate_text
         )));
     }
     let label_domain =
-        infer_binary_label_domain(records, headers, label_column, positive_label, negative_label)?;
+        infer_binary_label_domain(records, label_column, positive_label, negative_label)?;
 
     let mut rows = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
         let mut features = std::collections::HashMap::new();
         let mut allowed = None;
-        for (header, value) in headers.iter().zip(record.iter()) {
-            if header == label_column {
-                allowed = Some(parse_allowed_label(value, index + 2, label_column, &label_domain)?);
-                continue;
+        for field_name in field_names {
+            let value = record.get(field_name).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "row {} is missing field {field_name:?}",
+                    index + 1
+                ))
+            })?;
+            if field_name == label_column {
+                allowed = Some(parse_allowed_label_value(value, index + 1, label_column, &label_domain)?);
+            } else {
+                features.insert(field_name.to_string(), value.clone());
             }
-            if value.trim().is_empty() {
-                return Err(LogicPearlError::message(format!(
-                    "row {} has an empty value for feature {header:?}",
-                    index + 2
-                )));
-            }
-            features.insert(header.to_string(), parse_scalar(value)?);
         }
         rows.push(DecisionTraceRow {
             features,
             allowed: allowed.ok_or_else(|| {
                 LogicPearlError::message(format!(
-                    "row {} is missing label column {label_column:?}",
-                    index + 2
+                    "row {} is missing label field {label_column:?}",
+                    index + 1
                 ))
             })?,
         });
@@ -120,34 +343,34 @@ fn load_decision_traces_from_records(
 }
 
 fn infer_label_column(
-    csv_path: &Path,
-    headers: &csv::StringRecord,
-    records: &[csv::StringRecord],
+    path: &Path,
+    field_names: &[String],
+    records: &[BTreeMap<String, Value>],
     explicit_label: Option<&str>,
 ) -> Result<String> {
     if let Some(label_column) = explicit_label {
-        if headers.iter().any(|header| header == label_column) {
+        if field_names.iter().any(|field| field == label_column) {
             return Ok(label_column.to_string());
         }
-        let candidates = detect_label_candidates(headers, records);
+        let candidates = detect_label_candidates(field_names, records);
         let candidate_text = if candidates.is_empty() {
             "none".to_string()
         } else {
             candidates.join(", ")
         };
         return Err(LogicPearlError::message(format!(
-            "decision trace CSV {} is missing label column {:?}; candidate binary columns: {}",
-            csv_path.display(),
+            "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
+            path.display(),
             label_column,
             candidate_text
         )));
     }
 
-    let candidates = detect_label_candidates(headers, records);
+    let candidates = detect_label_candidates(field_names, records);
     if candidates.is_empty() {
         return Err(LogicPearlError::message(format!(
-            "could not infer a binary label column from {}; pass --label-column explicitly",
-            csv_path.display()
+            "could not infer a binary label field from {}; pass --label-column explicitly",
+            path.display()
         )));
     }
     let strong_candidates: Vec<&str> = candidates
@@ -160,8 +383,8 @@ fn infer_label_column(
     }
     if strong_candidates.len() > 1 {
         return Err(LogicPearlError::message(format!(
-            "multiple likely label columns found in {}: {}; pass --label-column explicitly",
-            csv_path.display(),
+            "multiple likely label fields found in {}: {}; pass --label-column explicitly",
+            path.display(),
             strong_candidates.join(", ")
         )));
     }
@@ -169,42 +392,30 @@ fn infer_label_column(
         return Ok(candidates[0].clone());
     }
     Err(LogicPearlError::message(format!(
-        "multiple possible binary label columns found in {}: {}; pass --label-column explicitly",
-        csv_path.display(),
+        "multiple possible binary label fields found in {}: {}; pass --label-column explicitly",
+        path.display(),
         candidates.join(", ")
     )))
 }
 
-fn detect_label_candidates(headers: &csv::StringRecord, records: &[csv::StringRecord]) -> Vec<String> {
-    headers
+fn detect_label_candidates(field_names: &[String], records: &[BTreeMap<String, Value>]) -> Vec<String> {
+    field_names
         .iter()
-        .enumerate()
-        .filter_map(|(index, header)| {
-            let mut saw_value = false;
-            let all_non_empty = records.iter().all(|record| {
-                let Some(value) = record.get(index) else {
-                    return false;
-                };
-                if value.trim().is_empty() {
-                    return false;
-                }
-                saw_value = true;
-                true
-            });
-            if all_non_empty
-                && saw_value
-                && infer_binary_label_domain(records, headers, header, None, None).is_ok()
-            {
-                Some(header.to_string())
-            } else {
-                None
-            }
+        .filter_map(|field_name| {
+            infer_binary_label_domain(records, field_name, None, None)
+                .ok()
+                .map(|_| field_name.clone())
         })
         .collect()
 }
 
 fn is_preferred_label_name(name: &str) -> bool {
-    let lowered = name.trim().to_ascii_lowercase();
+    let lowered = name
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .trim()
+        .to_ascii_lowercase();
     matches!(
         lowered.as_str(),
         "allowed"
@@ -224,34 +435,29 @@ fn is_preferred_label_name(name: &str) -> bool {
 }
 
 pub(crate) fn infer_binary_label_domain(
-    records: &[csv::StringRecord],
-    headers: &csv::StringRecord,
+    records: &[BTreeMap<String, Value>],
     label_column: &str,
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<BinaryLabelDomain> {
-    let label_index = headers
-        .iter()
-        .position(|header| header == label_column)
-        .ok_or_else(|| LogicPearlError::message(format!("missing label column {label_column:?}")))?;
     let mut unique_values = BTreeMap::<String, String>::new();
     for (row_index, record) in records.iter().enumerate() {
-        let raw = record.get(label_index).ok_or_else(|| {
+        let raw = record.get(label_column).ok_or_else(|| {
             LogicPearlError::message(format!(
-                "row {} is missing label column {label_column:?}",
-                row_index + 2
+                "row {} is missing label field {label_column:?}",
+                row_index + 1
             ))
         })?;
-        let normalized = normalize_binary_token(raw);
+        let normalized = normalize_binary_token_value(raw)?;
         if normalized.is_empty() {
             return Err(LogicPearlError::message(format!(
-                "row {} has an empty label value in column {label_column:?}",
-                row_index + 2
+                "row {} has an empty label value in field {label_column:?}",
+                row_index + 1
             )));
         }
         unique_values
             .entry(normalized)
-            .or_insert_with(|| raw.trim().to_string());
+            .or_insert_with(|| render_label_value(raw));
     }
     if unique_values.is_empty() || unique_values.len() > 2 {
         let distinct = if unique_values.is_empty() {
@@ -260,7 +466,7 @@ pub(crate) fn infer_binary_label_domain(
             unique_values.values().cloned().collect::<Vec<_>>().join(", ")
         };
         return Err(LogicPearlError::message(format!(
-            "label column {label_column:?} must contain one or two distinct non-empty values; found {}: {}",
+            "label field {label_column:?} must contain one or two distinct non-empty values; found {}: {}",
             unique_values.len(),
             distinct
         )));
@@ -271,7 +477,7 @@ pub(crate) fn infer_binary_label_domain(
     if let Some(label) = explicit_positive.as_ref() {
         if !unique_values.contains_key(label) {
             return Err(LogicPearlError::message(format!(
-                "--positive-label {:?} was not found in column {label_column:?}; distinct values: {}",
+                "--positive-label {:?} was not found in field {label_column:?}; distinct values: {}",
                 positive_label.unwrap_or_default(),
                 unique_values.values().cloned().collect::<Vec<_>>().join(", ")
             )));
@@ -280,7 +486,7 @@ pub(crate) fn infer_binary_label_domain(
     if let Some(label) = explicit_negative.as_ref() {
         if !unique_values.contains_key(label) {
             return Err(LogicPearlError::message(format!(
-                "--negative-label {:?} was not found in column {label_column:?}; distinct values: {}",
+                "--negative-label {:?} was not found in field {label_column:?}; distinct values: {}",
                 negative_label.unwrap_or_default(),
                 unique_values.values().cloned().collect::<Vec<_>>().join(", ")
             )));
@@ -347,13 +553,35 @@ pub(crate) fn infer_binary_label_domain(
         });
     }
     Err(LogicPearlError::message(format!(
-        "could not infer which value in label column {label_column:?} means allow/pass from binary values {}; pass --positive-label or --negative-label explicitly",
+        "could not infer which value in label field {label_column:?} means allow/pass from binary values {}; pass --positive-label or --negative-label explicitly",
         unique_values.values().cloned().collect::<Vec<_>>().join(", ")
     )))
 }
 
 fn normalize_binary_token(raw: &str) -> String {
     raw.trim().to_ascii_lowercase()
+}
+
+fn normalize_binary_token_value(raw: &Value) -> Result<String> {
+    match raw {
+        Value::String(value) => Ok(normalize_binary_token(value)),
+        Value::Bool(value) => Ok(if *value { "true" } else { "false" }.to_string()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Null => Ok(String::new()),
+        _ => Err(LogicPearlError::message(format!(
+            "label values must be scalar; got {}",
+            raw
+        ))),
+    }
+}
+
+fn render_label_value(raw: &Value) -> String {
+    match raw {
+        Value::String(value) => value.trim().to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn is_positive_label_token(value: &str) -> bool {
@@ -399,13 +627,13 @@ fn is_negative_label_token(value: &str) -> bool {
     )
 }
 
-pub(crate) fn parse_allowed_label(
-    raw: &str,
+pub(crate) fn parse_allowed_label_value(
+    raw: &Value,
     row_number: usize,
     label_column: &str,
     domain: &BinaryLabelDomain,
 ) -> Result<bool> {
-    let normalized = normalize_binary_token(raw);
+    let normalized = normalize_binary_token_value(raw)?;
     if domain.positive_value.as_deref() == Some(normalized.as_str()) {
         Ok(true)
     } else if domain.negative_value.as_deref() == Some(normalized.as_str()) {
@@ -419,7 +647,8 @@ pub(crate) fn parse_allowed_label(
             expected.push(negative.to_string());
         }
         Err(LogicPearlError::message(format!(
-            "row {row_number} has unsupported label value {raw:?} in column {label_column:?}; expected one of {}",
+            "row {row_number} has unsupported label value {:?} in field {label_column:?}; expected one of {}",
+            render_label_value(raw),
             expected.join(", ")
         )))
     }

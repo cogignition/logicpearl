@@ -16,13 +16,13 @@ fn repo_root() -> PathBuf {
 #[derive(Debug)]
 struct DemoCase {
     name: &'static str,
-    csv: &'static str,
+    traces: &'static str,
     allowed: bool,
 }
 
-fn parse_input_row(csv_path: &Path, expected_allowed: bool) -> Map<String, Value> {
+fn parse_input_row(traces_path: &Path, expected_allowed: bool) -> Map<String, Value> {
     let loaded =
-        load_decision_traces_auto(csv_path, None, None, None).expect("demo CSV should normalize");
+        load_decision_traces_auto(traces_path, None, None, None).expect("demo dataset should normalize");
     let row = loaded
         .rows
         .into_iter()
@@ -59,29 +59,44 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
     let demos = [
         DemoCase {
             name: "access_control",
-            csv: "examples/demos/access_control/traces.csv",
+            traces: "examples/demos/access_control/traces.csv",
             allowed: true,
         },
         DemoCase {
             name: "content_moderation",
-            csv: "examples/demos/content_moderation/traces.csv",
+            traces: "examples/demos/content_moderation/traces.csv",
             allowed: true,
         },
         DemoCase {
             name: "loan_approval",
-            csv: "examples/demos/loan_approval/traces.csv",
+            traces: "examples/demos/loan_approval/traces.csv",
+            allowed: true,
+        },
+        DemoCase {
+            name: "access_control_json",
+            traces: "examples/demos/access_control/traces.json",
+            allowed: true,
+        },
+        DemoCase {
+            name: "content_moderation_nested_json",
+            traces: "examples/demos/content_moderation/traces_nested.json",
+            allowed: true,
+        },
+        DemoCase {
+            name: "loan_approval_jsonl",
+            traces: "examples/demos/loan_approval/traces.jsonl",
             allowed: true,
         },
     ];
 
     for demo in demos {
-        let csv_path = repo_root.join(demo.csv);
+        let traces_path = repo_root.join(demo.traces);
         let temp = tempdir().expect("temp directory should be created");
         let output_path = temp.path().join(demo.name);
 
         let build_output = Command::new(cli_bin)
             .arg("build")
-            .arg(&csv_path)
+            .arg(&traces_path)
             .arg("--output-dir")
             .arg(&output_path)
             .arg("--json")
@@ -108,8 +123,8 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
         );
         assert!(native_binary.exists(), "native binary should exist for {}", demo.name);
 
-        let allowed_payload = Value::Object(parse_input_row(&csv_path, demo.allowed));
-        let denied_payload = Value::Object(parse_input_row(&csv_path, !demo.allowed));
+        let allowed_payload = Value::Object(parse_input_row(&traces_path, demo.allowed));
+        let denied_payload = Value::Object(parse_input_row(&traces_path, !demo.allowed));
 
         let allowed_output = run_compiled_binary(native_binary, &allowed_payload, temp.path());
         assert_eq!(allowed_output, "0", "{} should allow known-allowed row", demo.name);

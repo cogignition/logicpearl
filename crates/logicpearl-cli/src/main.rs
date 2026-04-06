@@ -333,10 +333,10 @@ enum BenchmarkAdapterProfileArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.csv --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
-    /// Path to a CSV file of labeled decision traces.
+    /// Path to labeled decision traces in .csv, .jsonl/.ndjson, or .json form.
     decision_traces: Option<PathBuf>,
     /// Directory to write the named artifact bundle into.
     #[arg(long)]
@@ -385,7 +385,7 @@ struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.csv --targets target_a --pinned-rules rules.json --output-dir discovered"
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
 )]
 struct DiscoverArgs {
     dataset_csv: PathBuf,

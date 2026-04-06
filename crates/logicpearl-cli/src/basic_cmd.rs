@@ -345,13 +345,13 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         (Some(_), Some(_)) => {
             return Err(guidance(
                 "build received both a CSV path and a trace plugin",
-                "Use either the positional <decision_traces.csv> input or --trace-plugin-manifest, not both.",
+                "Use either the positional decision trace dataset input or --trace-plugin-manifest, not both.",
             ));
         }
         (None, None) => {
             return Err(guidance(
                 "build is missing an input source",
-                "Provide a decision trace CSV path or use --trace-plugin-manifest with --trace-plugin-input.",
+                "Provide a decision trace dataset path (.csv, .jsonl, or .json) or use --trace-plugin-manifest with --trace-plugin-input.",
             ));
         }
     };

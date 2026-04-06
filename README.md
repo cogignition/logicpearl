@@ -104,12 +104,21 @@ What you should see:
 - a named artifact directory at `examples/getting_started/output`
 - `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, and a `.wasm` module inside it
 
-By default, `build` infers the binary label column when there is one unambiguous candidate. It also normalizes common human-formatted scalar values such as:
+By default, `build` accepts labeled decision traces in `.csv`, `.jsonl` / `.ndjson`, or `.json` form. For JSON inputs, nested objects and arrays are flattened into dotted feature paths such as `account.age_days` or `claims.0.code`.
+
+It also infers the binary label column when there is one unambiguous candidate and normalizes common human-formatted scalar values such as:
 - `$95,000` -> `95000`
 - `22%` -> `0.22`
 - `Yes` / `No` -> `true` / `false`
 
-If your CSV uses a different or ambiguous label column, pass `--label-column <name>`. If the label values are binary but not semantically obvious, pass `--positive-label <value>` or `--negative-label <value>`.
+If your dataset uses a different or ambiguous label column, pass `--label-column <name>`. If the label values are binary but not semantically obvious, pass `--positive-label <value>` or `--negative-label <value>`.
+
+Alternative input examples:
+
+```bash
+logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/loan-jsonl
+logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/mod-nested
+```
 
 You can also ask the public builder to do a second pass:
 - `--residual-pass` adds solver-backed recovery for missed denied slices

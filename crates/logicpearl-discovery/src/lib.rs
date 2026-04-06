@@ -17,7 +17,9 @@ mod trace_loading;
 use engine::{build_gate, load_pinned_rule_set};
 use features::sorted_feature_names;
 pub use trace_loading::{load_decision_traces, load_decision_traces_auto, load_decision_traces_with_labels};
-use trace_loading::{infer_binary_label_domain, parse_allowed_label, parse_scalar, BinaryLabelDomain};
+use trace_loading::{
+    infer_binary_label_domain, load_flat_records, parse_allowed_label_value, BinaryLabelDomain,
+};
 
 #[cfg(test)]
 use canonicalize::{canonicalize_rules, prune_redundant_rules};
@@ -391,11 +393,9 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         }
     }
 
-    let mut reader = csv::Reader::from_path(csv_path)?;
-    let headers = reader.headers()?.clone();
-    let records = reader
-        .records()
-        .collect::<std::result::Result<Vec<_>, csv::Error>>()?;
+    let loaded = load_flat_records(csv_path)?;
+    let headers = loaded.field_names;
+    let records = loaded.records;
     for target in &options.target_columns {
         if !headers.iter().any(|header| header == target) {
             return Err(LogicPearlError::message(format!(
@@ -426,7 +426,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         .target_columns
         .iter()
         .map(|target| {
-            infer_binary_label_domain(&records, &headers, target, None, None)
+            infer_binary_label_domain(&records, target, None, None)
                 .map(|domain| (target.clone(), domain))
         })
         .collect::<Result<_>>()?;
@@ -441,7 +441,13 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         let mut features = HashMap::new();
         let mut target_values = HashMap::new();
 
-        for (header, value) in headers.iter().zip(record.iter()) {
+        for header in &headers {
+            let value = record.get(header).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "row {} is missing field {header:?}",
+                    index + 1
+                ))
+            })?;
             if options.target_columns.iter().any(|target| target == header) {
                 let domain = target_domains.get(header).ok_or_else(|| {
                     LogicPearlError::message(format!(
@@ -450,24 +456,18 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 })?;
                 target_values.insert(
                     header.to_string(),
-                    parse_allowed_label(value, index + 2, header, domain)?,
+                    parse_allowed_label_value(value, index + 1, header, domain)?,
                 );
                 continue;
             }
-            if value.trim().is_empty() {
-                return Err(LogicPearlError::message(format!(
-                    "row {} has an empty value for feature {header:?}",
-                    index + 2
-                )));
-            }
-            features.insert(header.to_string(), parse_scalar(value)?);
+            features.insert(header.to_string(), value.clone());
         }
 
         for target in &options.target_columns {
             let allowed = *target_values.get(target).ok_or_else(|| {
                 LogicPearlError::message(format!(
                     "row {} is missing target column {target:?}",
-                    index + 2
+                    index + 1
                 ))
             })?;
             per_target_rows
@@ -788,6 +788,53 @@ mod tests {
     }
 
     #[test]
+    fn load_decision_traces_auto_supports_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_path = dir.path().join("decision_traces.jsonl");
+        std::fs::write(
+            &jsonl_path,
+            "{\"credit_score\":780,\"annual_income\":\"$95,000\",\"approved\":\"approved\"}\n{\"credit_score\":570,\"annual_income\":\"$48,000\",\"approved\":\"denied\"}\n",
+        )
+        .unwrap();
+
+        let loaded = load_decision_traces_auto(&jsonl_path, None, None, None).unwrap();
+        assert_eq!(loaded.label_column, "approved");
+        assert_eq!(loaded.rows[0].features["annual_income"], 95_000);
+        assert!(loaded.rows[0].allowed);
+        assert!(!loaded.rows[1].allowed);
+    }
+
+    #[test]
+    fn load_decision_traces_auto_supports_nested_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let json_path = dir.path().join("decision_traces.json");
+        std::fs::write(
+            &json_path,
+            r#"[
+  {
+    "account": {"age_days": 730, "verified": "Yes"},
+    "signals": {"toxicity_score": 0.05, "spam_likelihood": 0.10},
+    "result": {"verdict": "pass"}
+  },
+  {
+    "account": {"age_days": 12, "verified": "No"},
+    "signals": {"toxicity_score": 0.82, "spam_likelihood": 0.91},
+    "result": {"verdict": "flagged"}
+  }
+]"#,
+        )
+        .unwrap();
+
+        let loaded = load_decision_traces_auto(&json_path, None, None, None).unwrap();
+        assert_eq!(loaded.label_column, "result.verdict");
+        assert_eq!(loaded.rows[0].features["account.age_days"], 730);
+        assert_eq!(loaded.rows[0].features["account.verified"], Value::Bool(true));
+        assert_eq!(loaded.rows[1].features["signals.spam_likelihood"], Value::Number(Number::from_f64(0.91).unwrap()));
+        assert!(loaded.rows[0].allowed);
+        assert!(!loaded.rows[1].allowed);
+    }
+
+    #[test]
     fn load_decision_traces_requires_explicit_mapping_for_unknown_binary_labels() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
@@ -815,7 +862,7 @@ mod tests {
         .unwrap();
 
         let err = load_decision_traces_auto(&csv_path, None, None, None).unwrap_err();
-        assert!(err.to_string().contains("multiple possible binary label columns"));
+        assert!(err.to_string().contains("multiple possible binary label fields"));
         assert!(err.to_string().contains("is_member"));
         assert!(err.to_string().contains("is_urgent"));
     }
@@ -851,6 +898,37 @@ mod tests {
         assert_eq!(result.training_parity, 1.0);
         assert!(output_dir.join("pearl.ir.json").exists());
         assert!(output_dir.join("build_report.json").exists());
+    }
+
+    #[test]
+    fn build_pearl_from_jsonl_emits_gate_ir_and_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_path = dir.path().join("decision_traces.jsonl");
+        std::fs::write(
+            &jsonl_path,
+            "{\"age\":21,\"is_member\":1,\"allowed\":\"allowed\"}\n{\"age\":25,\"is_member\":0,\"allowed\":\"allowed\"}\n{\"age\":16,\"is_member\":1,\"allowed\":\"denied\"}\n{\"age\":15,\"is_member\":0,\"allowed\":\"denied\"}\n",
+        )
+        .unwrap();
+        let output_dir = dir.path().join("output");
+
+        let result = build_pearl_from_csv(
+            &jsonl_path,
+            &BuildOptions {
+                output_dir: PathBuf::from(&output_dir),
+                gate_id: "age_gate_jsonl".to_string(),
+                label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.rows, 4);
+        assert_eq!(result.training_parity, 1.0);
+        assert!(output_dir.join("pearl.ir.json").exists());
     }
 
     #[test]
