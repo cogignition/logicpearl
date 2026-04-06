@@ -2,16 +2,17 @@ use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
     adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
     adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_pint_dataset,
-    adapt_safearena_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, benchmark_adapter_registry,
-    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases, load_synthesis_case_rows,
-    load_synthesis_cases, load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
+    adapt_safearena_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset,
+    benchmark_adapter_registry, detect_benchmark_adapter_profile, emit_trace_tables,
+    load_benchmark_cases, load_synthesis_case_rows, load_synthesis_cases,
+    load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
     BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase,
     SaladSubsetKind, SynthesisCase, SynthesisCaseRow,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildOptions, DecisionTraceRow,
-    DiscoverOptions,
+    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildOptions,
+    DecisionTraceRow, DiscoverOptions,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -44,9 +45,9 @@ mod pipeline_cmd;
 
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
-    native_artifact_output_path, persist_build_report, resolve_artifact_input,
-    wasm_artifact_output_path, wasm_sidecar_output_path, write_named_artifact_manifest,
-    WasmArtifactOutput,
+    load_artifact_bundle_descriptor, native_artifact_output_path, persist_build_report,
+    resolve_artifact_input, wasm_artifact_output_path, wasm_sidecar_output_path,
+    write_named_artifact_manifest, WasmArtifactOutput,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
@@ -987,7 +988,11 @@ struct ObserverSynthesizeArgs {
     )]
     candidate_frontier: Vec<usize>,
     /// Tolerance from the best dev score for the selected target goal when choosing the smallest near-best artifact.
-    #[arg(long, default_value_t = 0.001, help_heading = "Advanced Observer Synthesis")]
+    #[arg(
+        long,
+        default_value_t = 0.001,
+        help_heading = "Advanced Observer Synthesis"
+    )]
     selection_tolerance: f64,
     #[arg(long)]
     json: bool,
@@ -1140,7 +1145,9 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
         BenchmarkAdapterProfileArg::ChatgptJailbreakPrompts => {
             BenchmarkAdapterProfile::ChatgptJailbreakPrompts
         }
-        BenchmarkAdapterProfileArg::OpenagentsafetyS26 => BenchmarkAdapterProfile::OpenAgentSafetyS26,
+        BenchmarkAdapterProfileArg::OpenagentsafetyS26 => {
+            BenchmarkAdapterProfile::OpenAgentSafetyS26
+        }
         BenchmarkAdapterProfileArg::Mcpmark => BenchmarkAdapterProfile::McpMark,
         BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
         BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,

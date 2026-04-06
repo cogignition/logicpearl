@@ -17,6 +17,8 @@ struct NamedArtifactManifest {
     artifact_name: String,
     gate_id: String,
     files: NamedArtifactFiles,
+    #[serde(default)]
+    bundle: ArtifactBundleDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +28,32 @@ struct NamedArtifactFiles {
     native_binary: Option<String>,
     wasm_module: Option<String>,
     wasm_sidecar: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct ArtifactBundleDescriptor {
+    pub(crate) bundle_kind: String,
+    pub(crate) cli_entrypoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) primary_runtime: Option<String>,
+    #[serde(default)]
+    pub(crate) deployables: Vec<ArtifactDeployable>,
+    #[serde(default)]
+    pub(crate) metadata_sidecars: Vec<ArtifactSidecar>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ArtifactDeployable {
+    pub(crate) kind: String,
+    pub(crate) path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ArtifactSidecar {
+    pub(crate) kind: String,
+    pub(crate) path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) companion_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +181,10 @@ pub(crate) fn wasm_artifact_output_path(artifact_dir: &Path, artifact_name: &str
 }
 
 pub(crate) fn wasm_sidecar_output_path(artifact_dir: &Path, artifact_name: &str) -> PathBuf {
-    artifact_dir.join(format!("{}.pearl.wasm.meta.json", artifact_file_stem(artifact_name)))
+    artifact_dir.join(format!(
+        "{}.pearl.wasm.meta.json",
+        artifact_file_stem(artifact_name)
+    ))
 }
 
 pub(crate) fn write_named_artifact_manifest(
@@ -193,6 +224,7 @@ pub(crate) fn write_named_artifact_manifest(
                     .map(|name| name.to_string_lossy().into_owned())
             }),
         },
+        bundle: build_artifact_bundle_descriptor(output_files),
     };
     fs::write(
         output_dir.join("artifact.json"),
@@ -201,6 +233,97 @@ pub(crate) fn write_named_artifact_manifest(
     .into_diagnostic()
     .wrap_err("failed to write artifact manifest")?;
     Ok(())
+}
+
+pub(crate) fn load_artifact_bundle_descriptor(
+    artifact_dir: &Path,
+) -> Result<Option<ArtifactBundleDescriptor>> {
+    let manifest_path = artifact_dir.join("artifact.json");
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let manifest = load_named_artifact_manifest(&manifest_path)?;
+    if manifest.bundle.bundle_kind.is_empty() {
+        return Ok(Some(build_bundle_descriptor_from_named_files(
+            &manifest.files,
+        )));
+    }
+    Ok(Some(manifest.bundle))
+}
+
+fn build_artifact_bundle_descriptor(output_files: &OutputFiles) -> ArtifactBundleDescriptor {
+    let files = NamedArtifactFiles {
+        pearl_ir: file_name_or_fallback(&output_files.pearl_ir, "pearl.ir.json"),
+        build_report: file_name_or_fallback(&output_files.build_report, "build_report.json"),
+        native_binary: output_files.native_binary.as_ref().and_then(|path| {
+            PathBuf::from(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }),
+        wasm_module: output_files.wasm_module.as_ref().and_then(|path| {
+            PathBuf::from(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }),
+        wasm_sidecar: output_files.wasm_sidecar.as_ref().and_then(|path| {
+            PathBuf::from(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }),
+    };
+    build_bundle_descriptor_from_named_files(&files)
+}
+
+fn build_bundle_descriptor_from_named_files(
+    files: &NamedArtifactFiles,
+) -> ArtifactBundleDescriptor {
+    let mut deployables = Vec::new();
+    if let Some(path) = &files.native_binary {
+        deployables.push(ArtifactDeployable {
+            kind: "native_binary".to_string(),
+            path: path.clone(),
+        });
+    }
+    if let Some(path) = &files.wasm_module {
+        deployables.push(ArtifactDeployable {
+            kind: "wasm_module".to_string(),
+            path: path.clone(),
+        });
+    }
+
+    let mut metadata_sidecars = Vec::new();
+    if let Some(path) = &files.wasm_sidecar {
+        metadata_sidecars.push(ArtifactSidecar {
+            kind: "wasm_metadata".to_string(),
+            path: path.clone(),
+            companion_to: files.wasm_module.clone(),
+        });
+    }
+
+    ArtifactBundleDescriptor {
+        bundle_kind: "direct_pearl_bundle".to_string(),
+        cli_entrypoint: "artifact.json".to_string(),
+        primary_runtime: files
+            .native_binary
+            .as_ref()
+            .map(|_| "native_binary".to_string())
+            .or_else(|| {
+                files
+                    .wasm_module
+                    .as_ref()
+                    .map(|_| "wasm_module".to_string())
+            }),
+        deployables,
+        metadata_sidecars,
+    }
+}
+
+fn file_name_or_fallback(path: &str, fallback: &str) -> String {
+    PathBuf::from(path)
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new(fallback))
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub(crate) fn persist_build_report(result: &BuildResult) -> Result<()> {
@@ -234,9 +357,13 @@ pub(crate) fn compile_native_runner(
         .into_diagnostic()
         .wrap_err("failed to create generated compile directory")?;
 
-    let logicpearl_ir_dep = dependency_spec(&workspace_root, "logicpearl-ir", "crates/logicpearl-ir");
-    let logicpearl_runtime_dep =
-        dependency_spec(&workspace_root, "logicpearl-runtime", "crates/logicpearl-runtime");
+    let logicpearl_ir_dep =
+        dependency_spec(&workspace_root, "logicpearl-ir", "crates/logicpearl-ir");
+    let logicpearl_runtime_dep = dependency_spec(
+        &workspace_root,
+        "logicpearl-runtime",
+        "crates/logicpearl-runtime",
+    );
     let cargo_toml = format!(
         "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n\n[dependencies]\nlogicpearl-ir = {logicpearl_ir_dep}\nlogicpearl-runtime = {logicpearl_runtime_dep}\nserde_json = \"1\"\n",
     );
@@ -312,7 +439,8 @@ pub(crate) fn compile_wasm_module(
     output: Option<PathBuf>,
 ) -> Result<WasmArtifactOutput> {
     let pearl_name = name.unwrap_or_else(|| gate_id.to_string());
-    let output_path = output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pearl_name));
+    let output_path =
+        output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pearl_name));
     let sidecar_path = wasm_sidecar_output_path(artifact_dir, &pearl_name);
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
@@ -443,13 +571,19 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
 
     let mut rules = String::new();
     for rule in &gate.rules {
-        let expression = emit_wasm_expression(&rule.deny_when, &feature_defs, &feature_indexes, &string_codes);
+        let expression = emit_wasm_expression(
+            &rule.deny_when,
+            &feature_defs,
+            &feature_indexes,
+            &string_codes,
+        );
         rules.push_str(&format!(
             "    if {expression} {{ bitmask |= 1u64 << {}; }}\n",
             rule.bit
         ));
     }
-    let mut helpers = String::from("#[inline]\nfn slot(values: &[f64], index: usize) -> f64 { values[index] }\n");
+    let mut helpers =
+        String::from("#[inline]\nfn slot(values: &[f64], index: usize) -> f64 { values[index] }\n");
     if used_ops.eq {
         helpers.push_str(
             "\n#[inline]\nfn eq_num(left: f64, right: f64) -> bool { !left.is_nan() && !right.is_nan() && (left - right).abs() < f64::EPSILON }\n",
@@ -491,22 +625,20 @@ fn collect_used_comparison_operators(gate: &LogicPearlGateIr) -> UsedWasmOperato
     ops
 }
 
-fn collect_expression_operators(
-    expression: &Expression,
-    ops: &mut UsedWasmOperators,
-) {
+fn collect_expression_operators(expression: &Expression, ops: &mut UsedWasmOperators) {
     match expression {
-        Expression::Comparison(comparison) => {
-            match comparison.op {
-                ComparisonOperator::Eq | ComparisonOperator::Ne | ComparisonOperator::In | ComparisonOperator::NotIn => {
-                    ops.eq = true;
-                }
-                ComparisonOperator::Gt => ops.gt = true,
-                ComparisonOperator::Gte => ops.gte = true,
-                ComparisonOperator::Lt => ops.lt = true,
-                ComparisonOperator::Lte => ops.lte = true,
+        Expression::Comparison(comparison) => match comparison.op {
+            ComparisonOperator::Eq
+            | ComparisonOperator::Ne
+            | ComparisonOperator::In
+            | ComparisonOperator::NotIn => {
+                ops.eq = true;
             }
-        }
+            ComparisonOperator::Gt => ops.gt = true,
+            ComparisonOperator::Gte => ops.gte = true,
+            ComparisonOperator::Lt => ops.lt = true,
+            ComparisonOperator::Lte => ops.lte = true,
+        },
         Expression::All { all } => {
             for child in all {
                 collect_expression_operators(child, ops);
@@ -534,14 +666,24 @@ fn emit_wasm_expression(
         Expression::All { all } => format!(
             "({})",
             all.iter()
-                .map(|child| emit_wasm_expression(child, feature_defs, feature_indexes, string_codes))
+                .map(|child| emit_wasm_expression(
+                    child,
+                    feature_defs,
+                    feature_indexes,
+                    string_codes
+                ))
                 .collect::<Vec<_>>()
                 .join(" && ")
         ),
         Expression::Any { any } => format!(
             "({})",
             any.iter()
-                .map(|child| emit_wasm_expression(child, feature_defs, feature_indexes, string_codes))
+                .map(|child| emit_wasm_expression(
+                    child,
+                    feature_defs,
+                    feature_indexes,
+                    string_codes
+                ))
                 .collect::<Vec<_>>()
                 .join(" || ")
         ),
@@ -646,7 +788,10 @@ fn rust_f64_literal(value: f64) -> String {
 fn build_string_codes(gate: &LogicPearlGateIr) -> BTreeMap<String, u32> {
     let mut values = BTreeMap::new();
     for feature in &gate.input_schema.features {
-        if matches!(feature.feature_type, FeatureType::String | FeatureType::Enum) {
+        if matches!(
+            feature.feature_type,
+            FeatureType::String | FeatureType::Enum
+        ) {
             if let Some(feature_values) = &feature.values {
                 for value in feature_values {
                     let key = string_key(value);
@@ -761,7 +906,10 @@ fn generated_build_root(workspace_root: &Path) -> PathBuf {
     if has_workspace_sources(workspace_root) {
         workspace_root.join("target").join("generated")
     } else {
-        std::env::temp_dir().join("logicpearl").join("target").join("generated")
+        std::env::temp_dir()
+            .join("logicpearl")
+            .join("target")
+            .join("generated")
     }
 }
 

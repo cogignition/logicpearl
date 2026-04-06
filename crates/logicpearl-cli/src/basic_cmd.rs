@@ -259,7 +259,7 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
         );
         println!(
             "  {} {}",
-            "Wasm sidecar".bright_black(),
+            "Wasm metadata".bright_black(),
             output.sidecar_path.display()
         );
     } else {
@@ -296,8 +296,10 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     });
 
-    let (mut rows, resolved_label_column) = match (&args.trace_plugin_manifest, &args.decision_traces)
-    {
+    let (mut rows, resolved_label_column) = match (
+        &args.trace_plugin_manifest,
+        &args.decision_traces,
+    ) {
         (Some(manifest_path), None) => {
             let manifest = PluginManifest::from_path(manifest_path)
                 .into_diagnostic()
@@ -544,12 +546,12 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         );
         println!(
             "  {} {}",
-            "Artifact".bright_black(),
+            "Artifact bundle".bright_black(),
             result.output_files.artifact_dir
         );
         println!(
             "  {} {}",
-            "Artifact manifest".bright_black(),
+            "CLI entrypoint".bright_black(),
             result.output_files.artifact_manifest
         );
         println!(
@@ -563,12 +565,12 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             result.output_files.build_report
         );
         if let Some(native_binary) = &result.output_files.native_binary {
-            println!("  {} {}", "Native binary".bright_black(), native_binary);
+            println!("  {} {}", "Deployable".bright_black(), native_binary);
         }
         if let Some(wasm_module) = &result.output_files.wasm_module {
-            println!("  {} {}", "Wasm module".bright_black(), wasm_module);
+            println!("  {} {}", "Deployable".bright_black(), wasm_module);
             if let Some(wasm_sidecar) = &result.output_files.wasm_sidecar {
-                println!("  {} {}", "Wasm sidecar".bright_black(), wasm_sidecar);
+                println!("  {} {}", "Wasm metadata".bright_black(), wasm_sidecar);
             }
         } else {
             println!(
@@ -621,6 +623,8 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
+    let bundle = load_artifact_bundle_descriptor(&resolved.artifact_dir)
+        .wrap_err("could not load artifact bundle metadata")?;
     if args.json {
         let summary = serde_json::json!({
             "artifact_dir": resolved.artifact_dir,
@@ -631,6 +635,7 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             "rules": gate.rules.len(),
             "correctness_scope": gate.verification.as_ref().and_then(|verification| verification.correctness_scope.clone()),
             "verification_summary": gate.verification.as_ref().and_then(|verification| verification.verification_summary.clone()),
+            "bundle": bundle,
         });
         println!(
             "{}",
@@ -638,11 +643,38 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         );
     } else {
         let inspector = TextInspector;
-        println!(
-            "{}\n{}",
-            "LogicPearl Artifact".bold().bright_blue(),
-            inspector.render(&gate).into_diagnostic()?
-        );
+        println!("{}", "LogicPearl Artifact".bold().bright_blue());
+        if let Some(bundle) = bundle {
+            println!(
+                "  {} {}",
+                "Bundle".bright_black(),
+                resolved.artifact_dir.display()
+            );
+            println!(
+                "  {} {}",
+                "CLI entrypoint".bright_black(),
+                resolved.artifact_dir.join(&bundle.cli_entrypoint).display()
+            );
+            if let Some(primary_runtime) = &bundle.primary_runtime {
+                println!("  {} {}", "Primary runtime".bright_black(), primary_runtime);
+            }
+            for deployable in &bundle.deployables {
+                println!(
+                    "  {} {}",
+                    "Deployable".bright_black(),
+                    resolved.artifact_dir.join(&deployable.path).display()
+                );
+            }
+            for sidecar in &bundle.metadata_sidecars {
+                println!(
+                    "  {} {}",
+                    "Wasm metadata".bright_black(),
+                    resolved.artifact_dir.join(&sidecar.path).display()
+                );
+            }
+            println!();
+        }
+        println!("{}", inspector.render(&gate).into_diagnostic()?);
     }
     Ok(())
 }

@@ -1,4 +1,5 @@
 use logicpearl_discovery::BuildResult;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::tempdir;
@@ -41,6 +42,25 @@ fn sample_dataset_builds_artifact_bundle_and_runs_compiled_binary() {
     assert!(Path::new(&build_result.output_files.artifact_manifest).exists());
     assert!(Path::new(&build_result.output_files.pearl_ir).exists());
     assert!(Path::new(&build_result.output_files.build_report).exists());
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(&build_result.output_files.artifact_manifest)
+            .expect("artifact manifest should be readable"),
+    )
+    .expect("artifact manifest should be valid JSON");
+    assert_eq!(
+        manifest["bundle"]["bundle_kind"].as_str(),
+        Some("direct_pearl_bundle")
+    );
+    assert_eq!(
+        manifest["bundle"]["cli_entrypoint"].as_str(),
+        Some("artifact.json")
+    );
+    assert!(
+        manifest["bundle"]["deployables"]
+            .as_array()
+            .is_some_and(|deployables| !deployables.is_empty()),
+        "artifact manifest should describe deployable outputs"
+    );
 
     let native_binary = build_result
         .output_files

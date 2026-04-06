@@ -108,11 +108,17 @@ logicpearl build examples/getting_started/decision_traces.csv --output-dir examp
 
 What you should see:
 - a named artifact directory at `examples/getting_started/output`
-- `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, a `.wasm` module, and a `.wasm.meta.json` sidecar inside it
+- one artifact bundle you can treat as the entrypoint for CLI usage
+- `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, a `.wasm` module, and a `.wasm.meta.json` metadata file inside it
+
+For end users, the important rule is:
+- the bundle directory or `artifact.json` is the logical artifact
+- the native binary and wasm module are deployable runtimes inside that bundle
+- the `.wasm.meta.json` file is companion metadata, not a second decision engine
 
 The wasm artifact is intentionally split:
 - `*.pearl.wasm` is a tiny compiled evaluator
-- `*.pearl.wasm.meta.json` is the sidecar with bit-to-rule metadata, messages, and counterfactual hints
+- `*.pearl.wasm.meta.json` is the wasm metadata file with bit-to-rule metadata, messages, and counterfactual hints
 
 By default, `build` accepts labeled decision traces in `.csv`, `.jsonl` / `.ndjson`, or `.json` form. For JSON inputs, nested objects and arrays are flattened into dotted feature paths such as `account.age_days` or `claims.0.code`.
 
