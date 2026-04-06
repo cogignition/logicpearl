@@ -45,7 +45,8 @@ mod pipeline_cmd;
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
     native_artifact_output_path, persist_build_report, resolve_artifact_input,
-    wasm_artifact_output_path, write_named_artifact_manifest,
+    wasm_artifact_output_path, wasm_sidecar_output_path, write_named_artifact_manifest,
+    WasmArtifactOutput,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,

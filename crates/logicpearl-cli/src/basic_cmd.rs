@@ -244,30 +244,39 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("failed to load pearl IR for compilation")?;
-    let output_path = if args.target.as_deref() == Some("wasm32-unknown-unknown") {
-        compile_wasm_module(
+    if args.target.as_deref() == Some("wasm32-unknown-unknown") {
+        let output = compile_wasm_module(
             &resolved.pearl_ir,
             &resolved.artifact_dir,
             &gate.gate_id,
             args.name,
             args.output,
-        )?
+        )?;
+        println!(
+            "{} {}",
+            "Compiled".bold().bright_green(),
+            output.module_path.display()
+        );
+        println!(
+            "  {} {}",
+            "Wasm sidecar".bright_black(),
+            output.sidecar_path.display()
+        );
     } else {
-        compile_native_runner(
+        let output_path = compile_native_runner(
             &resolved.pearl_ir,
             &resolved.artifact_dir,
             &gate.gate_id,
             args.name,
             args.target,
             args.output,
-        )?
-    };
-
-    println!(
-        "{} {}",
-        "Compiled".bold().bright_green(),
-        output_path.display()
-    );
+        )?;
+        println!(
+            "{} {}",
+            "Compiled".bold().bright_green(),
+            output_path.display()
+        );
+    }
     Ok(())
 }
 
@@ -450,8 +459,17 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             .clone()
             .map(PathBuf::from)
             .unwrap_or_else(|| wasm_artifact_output_path(&artifact_dir, &artifact_name));
+        let wasm_sidecar_path = result
+            .output_files
+            .wasm_sidecar
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| wasm_sidecar_output_path(&artifact_dir, &artifact_name));
         Some(if wasm_output_path.exists() {
-            wasm_output_path
+            WasmArtifactOutput {
+                module_path: wasm_output_path,
+                sidecar_path: wasm_sidecar_path,
+            }
         } else {
             compile_wasm_module(
                 &pearl_ir_path,
@@ -464,7 +482,12 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     } else {
         None
     };
-    result.output_files.wasm_module = wasm_output.map(|path| path.display().to_string());
+    result.output_files.wasm_module = wasm_output
+        .as_ref()
+        .map(|output| output.module_path.display().to_string());
+    result.output_files.wasm_sidecar = wasm_output
+        .as_ref()
+        .map(|output| output.sidecar_path.display().to_string());
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
@@ -544,6 +567,9 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         }
         if let Some(wasm_module) = &result.output_files.wasm_module {
             println!("  {} {}", "Wasm module".bright_black(), wasm_module);
+            if let Some(wasm_sidecar) = &result.output_files.wasm_sidecar {
+                println!("  {} {}", "Wasm sidecar".bright_black(), wasm_sidecar);
+            }
         } else {
             println!(
                 "  {} {}",
