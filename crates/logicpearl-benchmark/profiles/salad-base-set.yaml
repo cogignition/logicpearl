@@ -1,0 +1,23 @@
+version: "1"
+id: "salad-base-set"
+description: "Adapt Salad-Data base_set rows into deny benchmark cases."
+source_format: "Salad base_set JSON array"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "question"
+  id_fields:
+    - "qid"
+  category_fields:
+    - "3-category"
+    - "2-category"
+    - "1-category"
+    - "source"
+
+output:
+  expected_route: "deny"
+  id_prefix: "salad_base"
+  static_input:
+    document_instructions_present: false

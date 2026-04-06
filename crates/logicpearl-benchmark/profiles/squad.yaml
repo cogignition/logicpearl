@@ -1,0 +1,24 @@
+version: "1"
+id: "squad"
+description: "Adapt SQuAD-style benign question rows into allow benchmark cases."
+source_format: "SQuAD-style JSON with data[].paragraphs[].qas[]"
+default_route: "allow"
+
+source:
+  parser: "squad-questions"
+  prompt_fields:
+    - "question"
+  id_fields:
+    - "id"
+  category_fields:
+    - "title"
+  input_fields:
+    - source: "context"
+      target: "context"
+
+output:
+  expected_route: "allow"
+  id_prefix: "squad"
+  default_category: "benign_negative"
+  static_input:
+    document_instructions_present: false

@@ -383,41 +383,66 @@ pub fn benchmark_adapter_registry() -> Vec<BenchmarkAdapterDescriptor> {
 
 pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<BenchmarkAdapterConfig> {
     let raw = match profile {
-        BenchmarkAdapterProfile::SaladBaseSet => include_str!("../../../benchmarks/profiles/salad-base-set.yaml"),
+        BenchmarkAdapterProfile::SaladBaseSet => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/salad-base-set.yaml"))
+        }
         BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
-            include_str!("../../../benchmarks/profiles/salad-attack-enhanced-set.yaml")
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/salad-attack-enhanced-set.yaml"
+            ))
         }
         BenchmarkAdapterProfile::SafearenaSafe => {
-            include_str!("../../../benchmarks/profiles/safearena-safe.yaml")
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/safearena-safe.yaml"))
         }
         BenchmarkAdapterProfile::SafearenaHarm => {
-            include_str!("../../../benchmarks/profiles/safearena-harm.yaml")
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/safearena-harm.yaml"))
         }
-        BenchmarkAdapterProfile::Alert => include_str!("../../../benchmarks/profiles/alert.yaml"),
+        BenchmarkAdapterProfile::Alert => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/alert.yaml"))
+        }
         BenchmarkAdapterProfile::JailbreakBench => {
-            include_str!("../../../benchmarks/profiles/jailbreakbench.yaml")
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/jailbreakbench.yaml"))
         }
         BenchmarkAdapterProfile::PromptShield => {
-            include_str!("../../../benchmarks/profiles/promptshield.yaml")
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/promptshield.yaml"))
         }
         BenchmarkAdapterProfile::RogueSecurityPromptInjections => {
-            include_str!("../../../benchmarks/profiles/rogue-security-prompt-injections.yaml")
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/rogue-security-prompt-injections.yaml"
+            ))
         }
         BenchmarkAdapterProfile::ChatgptJailbreakPrompts => {
-            include_str!("../../../benchmarks/profiles/chatgpt-jailbreak-prompts.yaml")
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/chatgpt-jailbreak-prompts.yaml"
+            ))
         }
         BenchmarkAdapterProfile::OpenAgentSafetyS26 => {
-            include_str!("../../../benchmarks/profiles/openagentsafety-s26.yaml")
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/openagentsafety-s26.yaml"
+            ))
         }
         BenchmarkAdapterProfile::McpMark => {
-            include_str!("../../../benchmarks/profiles/mcpmark.yaml")
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/mcpmark.yaml"))
         }
-        BenchmarkAdapterProfile::Squad => include_str!("../../../benchmarks/profiles/squad.yaml"),
-        BenchmarkAdapterProfile::Vigil => include_str!("../../../benchmarks/profiles/vigil.yaml"),
+        BenchmarkAdapterProfile::Squad => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/squad.yaml"))
+        }
+        BenchmarkAdapterProfile::Vigil => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/vigil.yaml"))
+        }
         BenchmarkAdapterProfile::NoetiToxicQa => {
-            include_str!("../../../benchmarks/profiles/noeti-toxicqa.yaml")
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/profiles/noeti-toxicqa.yaml"
+            ))
         }
-        BenchmarkAdapterProfile::Pint => include_str!("../../../benchmarks/profiles/pint.yaml"),
+        BenchmarkAdapterProfile::Pint => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/profiles/pint.yaml"))
+        }
         _ => return None,
     };
     Some(

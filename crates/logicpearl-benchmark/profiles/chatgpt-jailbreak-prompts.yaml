@@ -1,0 +1,33 @@
+version: "1"
+id: "chatgpt-jailbreak-prompts"
+description: "Adapt ChatGPT-Jailbreak-Prompts rows into deny benchmark cases."
+source_format: "JSON array or JSONL with Prompt-style jailbreak fields"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "Prompt"
+    - "prompt"
+    - "text"
+  id_fields:
+    - "Name"
+    - "name"
+    - "id"
+  category_fields:
+    - "GPT-4"
+    - "category"
+  input_fields:
+    - source: "Name"
+      target: "jailbreak_name"
+    - source: "Jailbreak Score"
+      target: "jailbreak_score"
+    - source: "Votes"
+      target: "votes"
+
+output:
+  expected_route: "deny"
+  id_prefix: "chatgpt_jailbreak"
+  default_category: "prompt_injection"
+  static_input:
+    document_instructions_present: false

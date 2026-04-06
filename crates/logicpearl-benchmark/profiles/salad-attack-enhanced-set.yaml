@@ -1,0 +1,23 @@
+version: "1"
+id: "salad-attack-enhanced-set"
+description: "Adapt Salad-Data attack_enhanced_set rows into deny benchmark cases."
+source_format: "Salad attack_enhanced_set JSON array"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "augq"
+  id_fields:
+    - "aid"
+  category_fields:
+    - "3-category"
+    - "2-category"
+    - "1-category"
+    - "method"
+
+output:
+  expected_route: "deny"
+  id_prefix: "salad_attack"
+  static_input:
+    document_instructions_present: false

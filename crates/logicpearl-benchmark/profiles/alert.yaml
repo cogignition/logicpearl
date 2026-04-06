@@ -1,0 +1,32 @@
+version: "1"
+id: "alert"
+description: "Adapt ALERT adversarial instruction rows into deny benchmark cases."
+source_format: "JSON array or JSONL of prompt-like objects"
+default_route: "deny"
+
+source:
+  parser: "json-object-rows"
+  prompt_fields:
+    - "prompt"
+    - "instruction"
+    - "text"
+    - "question"
+    - "input"
+    - "content"
+  id_fields:
+    - "id"
+    - "aid"
+    - "qid"
+  category_fields:
+    - "category"
+    - "subcategory"
+    - "harm_category"
+    - "attack_category"
+    - "label"
+    - "source"
+
+output:
+  expected_route: "deny"
+  id_prefix: "alert"
+  static_input:
+    document_instructions_present: false
