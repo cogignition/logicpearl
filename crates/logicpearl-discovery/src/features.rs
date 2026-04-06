@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
+use super::rule_text::generate_rule_text;
 use super::DecisionTraceRow;
 
 const DERIVED_FEATURE_PREFIX: &str = "derived__";
@@ -410,15 +411,17 @@ pub(super) fn rule_with_added_condition(
         _ => rule.deny_when.clone(),
     };
 
+    let generated = generate_rule_text(&deny_when);
+
     RuleDefinition {
         id: rule.id.clone(),
         kind: rule.kind.clone(),
         bit: rule.bit,
         deny_when,
-        label: rule.label.clone(),
-        message: rule.message.clone(),
+        label: generated.label,
+        message: generated.message,
         severity: rule.severity.clone(),
-        counterfactual_hint: rule.counterfactual_hint.clone(),
+        counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(logicpearl_ir::RuleVerificationStatus::RefinedUnverified),
     }
 }

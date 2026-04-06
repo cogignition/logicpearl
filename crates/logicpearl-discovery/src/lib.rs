@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 mod canonicalize;
 mod engine;
 mod features;
+mod rule_text;
 mod trace_loading;
 
 use engine::{build_gate, load_pinned_rule_set};

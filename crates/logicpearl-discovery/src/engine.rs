@@ -22,6 +22,7 @@ use super::features::{
     boolean_feature_map, infer_binary_feature_names, infer_feature_type, is_derived_feature_name,
     numeric_feature_names, rule_contains_feature, rule_with_added_condition, sorted_feature_names,
 };
+use super::rule_text::generate_rule_text;
 use super::{
     CandidateRule, DecisionTraceRow, PinnedRuleSet, ResidualPassOptions,
     UniqueCoverageRefinementOptions,
@@ -1101,6 +1102,11 @@ fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Or
 
 fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
     match candidate.value {
+        ComparisonValue::Literal(ref value)
+            if candidate.op == ComparisonOperator::Eq && value.as_f64().is_some() =>
+        {
+            3
+        }
         ComparisonValue::FeatureRef { .. } => 1,
         ComparisonValue::Literal(_) if is_derived_feature_name(&candidate.feature) => 2,
         ComparisonValue::Literal(_) => 0,
@@ -1180,19 +1186,21 @@ fn string_coverage_for(
 }
 
 pub(super) fn rule_from_candidate(bit: u32, candidate: &CandidateRule) -> RuleDefinition {
+    let deny_when = Expression::Comparison(ComparisonExpression {
+        feature: candidate.feature.clone(),
+        op: candidate.op.clone(),
+        value: candidate.value.clone(),
+    });
+    let generated = generate_rule_text(&deny_when);
     RuleDefinition {
         id: format!("rule_{bit:03}"),
         kind: RuleKind::Predicate,
         bit,
-        deny_when: Expression::Comparison(ComparisonExpression {
-            feature: candidate.feature.clone(),
-            op: candidate.op.clone(),
-            value: candidate.value.clone(),
-        }),
-        label: None,
-        message: None,
+        deny_when,
+        label: generated.label,
+        message: generated.message,
         severity: None,
-        counterfactual_hint: None,
+        counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(RuleVerificationStatus::PipelineUnverified),
     }
 }
@@ -1223,15 +1231,16 @@ fn residual_rule_from_candidate(
         }
     };
 
+    let generated = generate_rule_text(&deny_when);
     RuleDefinition {
         id: format!("rule_{bit:03}"),
         kind: RuleKind::Predicate,
         bit,
         deny_when,
-        label: None,
-        message: None,
+        label: generated.label,
+        message: generated.message,
         severity: None,
-        counterfactual_hint: None,
+        counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(RuleVerificationStatus::RefinedUnverified),
     }
 }
@@ -1250,8 +1259,9 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_rules, compare_candidate_set_score, recover_rare_rules, score_candidate_set,
-        select_candidate_rules_exact, CandidateRule, CandidateSetScore,
+        candidate_complexity_penalty, candidate_rules, compare_candidate_set_score,
+        recover_rare_rules, rule_from_candidate, score_candidate_set, select_candidate_rules_exact,
+        CandidateRule, CandidateSetScore,
     };
     use crate::DecisionTraceRow;
     use logicpearl_ir::{ComparisonOperator, ComparisonValue};
@@ -1431,6 +1441,46 @@ mod tests {
         let score = score_candidate_set(&rows, &recovered);
         assert_eq!(score.false_negatives, 1);
         assert_eq!(score.false_positives, 1);
+    }
+
+    #[test]
+    fn discovered_rule_gets_generated_label_and_counterfactual() {
+        let rule = rule_from_candidate(
+            0,
+            &CandidateRule {
+                feature: "contains_xss_signature".to_string(),
+                op: ComparisonOperator::Eq,
+                value: ComparisonValue::Literal(Value::Bool(true)),
+                denied_coverage: 3,
+                false_positives: 0,
+            },
+        );
+
+        assert_eq!(rule.label.as_deref(), Some("XSS Signature Detected"));
+        assert_eq!(
+            rule.counterfactual_hint.as_deref(),
+            Some("Remove XSS Signature")
+        );
+    }
+
+    #[test]
+    fn numeric_exact_match_rules_get_extra_complexity_penalty() {
+        let exact = CandidateRule {
+            feature: "suspicious_token_count".to_string(),
+            op: ComparisonOperator::Eq,
+            value: ComparisonValue::Literal(Value::Number(Number::from(1))),
+            denied_coverage: 5,
+            false_positives: 0,
+        };
+        let threshold = CandidateRule {
+            feature: "suspicious_token_count".to_string(),
+            op: ComparisonOperator::Gte,
+            value: ComparisonValue::Literal(Value::Number(Number::from(1))),
+            denied_coverage: 5,
+            false_positives: 0,
+        };
+
+        assert!(candidate_complexity_penalty(&exact) > candidate_complexity_penalty(&threshold));
     }
 
     fn row(score: f64, allowed: bool) -> DecisionTraceRow {
