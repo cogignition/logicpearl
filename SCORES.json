@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
   "generated_by": "scripts/scoreboard/update_scores.py",
-  "generated_at": "2026-04-06T21:24:23.419764+00:00",
+  "generated_at": "2026-04-06T21:48:50.168088+00:00",
   "author": {
     "name": "Ken Erwin",
     "email": "ken@devopslibrary.com"
   },
   "revision": {
-    "head": "91f844df5d865c0e389d0c3e044159e000d8ceb8",
+    "head": "ac5c54042358a13f7a99ddbde1f0569f8143e912",
     "dirty": true
   },
   "suites": {
@@ -55,7 +55,15 @@
               "clearance_level",
               "failed_login_attempts",
               "mfa_enabled",
-              "resource_sensitivity"
+              "resource_sensitivity",
+              "derived__clearance_level__minus__resource_sensitivity",
+              "derived__clearance_level__over__resource_sensitivity",
+              "derived__resource_sensitivity__minus__clearance_level",
+              "derived__clearance_level__minus__failed_login_attempts",
+              "derived__failed_login_attempts__minus__clearance_level",
+              "derived__resource_sensitivity__over__clearance_level",
+              "derived__access_hour__minus__failed_login_attempts",
+              "derived__failed_login_attempts__minus__access_hour"
             ],
             "training_parity": 1.0,
             "native_binary_emitted": true,
@@ -78,7 +86,8 @@
               "report_count_24h",
               "spam_likelihood",
               "toxicity_score",
-              "verified"
+              "verified",
+              "derived__account_age_days__over__toxicity_score"
             ],
             "training_parity": 1.0,
             "native_binary_emitted": true,
@@ -100,7 +109,12 @@
               "annual_income",
               "credit_score",
               "debt_ratio",
-              "employment_years"
+              "employment_years",
+              "derived__credit_score__over__employment_years",
+              "derived__annual_income__over__employment_years",
+              "derived__debt_ratio__over__employment_years",
+              "derived__annual_income__over__credit_score",
+              "derived__credit_score__over__annual_income"
             ],
             "training_parity": 1.0,
             "native_binary_emitted": true,
@@ -111,7 +125,7 @@
     },
     "guardrails_open_sample200": {
       "status": "unavailable",
-      "reason": "Traceback (most recent call last):\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 265, in main\n    combined_pearl = read_json(bundle_dir / \"freeze\" / \"guardrails_combined.pearl.ir.json\")\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 79, in read_json\n    return json.loads(path.read_text())\n                      ~~~~~~~~~~~~~~^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_local.py\", line 546, in read_text\n    return PathBase.read_text(self, encoding, errors, newline)\n           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_abc.py\", line 632, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_local.py\", line 537, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/guardrails_bundle/freeze/guardrails_combined.pearl.ir.json'\nTraceback (most recent call last):\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 278, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 237, in main\n    run_benchmark(\n    ~~~~~~~~~~~~~^\n        bundle_dir,\n        ^^^^^^^^^^^\n    ...<4 lines>...\n        args.sample_size,\n        ^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 143, in run_benchmark\n    subprocess.run(cmd, cwd=REPO_ROOT, check=True)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/subprocess.py\", line 579, in run\n    raise CalledProcessError(retcode, process.args,\n                             output=stdout, stderr=stderr)\nsubprocess.CalledProcessError: Command '['/Users/missingno/.pyenv/versions/3.13.2/bin/python3', '/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py', '--bundle-dir', '/private/tmp/guardrails_bundle', '--raw-benchmark', '/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/logicpearl_splits/jailbreakbench/final_holdout.jsonl', '--profile', 'jailbreakbench', '--input-format', 'cases-jsonl', '--output-dir', '/private/var/folders/vb/8wx3j3c10wz21lvd5bdx8src0000gn/T/logicpearl_scores_guardrails_mwo34sag/guardrails/jailbreakbench', '--sample-size', '200']' returned non-zero exit status 1.",
+      "reason": "Traceback (most recent call last):\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 265, in main\n    combined_pearl = read_json(bundle_dir / \"freeze\" / \"guardrails_combined.pearl.ir.json\")\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py\", line 79, in read_json\n    return json.loads(path.read_text())\n                      ~~~~~~~~~~~~~~^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_local.py\", line 546, in read_text\n    return PathBase.read_text(self, encoding, errors, newline)\n           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_abc.py\", line 632, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/pathlib/_local.py\", line 537, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/guardrails_bundle/freeze/guardrails_combined.pearl.ir.json'\nTraceback (most recent call last):\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 278, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 237, in main\n    run_benchmark(\n    ~~~~~~~~~~~~~^\n        bundle_dir,\n        ^^^^^^^^^^^\n    ...<4 lines>...\n        args.sample_size,\n        ^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/run_open_guardrail_benchmarks.py\", line 143, in run_benchmark\n    subprocess.run(cmd, cwd=REPO_ROOT, check=True)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/missingno/.pyenv/versions/3.13.2/lib/python3.13/subprocess.py\", line 579, in run\n    raise CalledProcessError(retcode, process.args,\n                             output=stdout, stderr=stderr)\nsubprocess.CalledProcessError: Command '['/Users/missingno/.pyenv/versions/3.13.2/bin/python3', '/Users/missingno/Documents/LogicPearl/logicpearl/scripts/guardrails/evaluate_guardrail_bundle.py', '--bundle-dir', '/private/tmp/guardrails_bundle', '--raw-benchmark', '/Users/missingno/Documents/LogicPearl/datasets/public/jailbreakbench/logicpearl_splits/jailbreakbench/final_holdout.jsonl', '--profile', 'jailbreakbench', '--input-format', 'cases-jsonl', '--output-dir', '/private/var/folders/vb/8wx3j3c10wz21lvd5bdx8src0000gn/T/logicpearl_scores_guardrails_shrfd8qh/guardrails/jailbreakbench', '--sample-size', '200']' returned non-zero exit status 1.",
       "bundle_dir": "<tmp>/guardrails_bundle",
       "baseline": "scripts/guardrails/open_guardrail_regression_baseline.sample200.parity-first.json",
       "target_goal": "parity-first"

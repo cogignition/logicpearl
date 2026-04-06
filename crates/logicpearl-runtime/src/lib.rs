@@ -1,14 +1,16 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
+    ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
+    LogicPearlGateIr,
 };
-use serde_json::Value;
+use serde_json::{Number, Value};
 use std::collections::HashMap;
 
 pub fn evaluate_gate(gate: &LogicPearlGateIr, features: &HashMap<String, Value>) -> Result<u64> {
+    let features = with_derived_features(gate, features)?;
     let mut bitmask = 0_u64;
     for rule in &gate.rules {
-        if evaluate_expression(&rule.deny_when, features)? {
+        if evaluate_expression(&rule.deny_when, &features)? {
             bitmask |= 1_u64 << rule.bit;
         }
     }
@@ -55,6 +57,51 @@ fn evaluate_expression(expression: &Expression, features: &HashMap<String, Value
         }
         Expression::Not { expr } => Ok(!evaluate_expression(expr, features)?),
     }
+}
+
+fn with_derived_features(
+    gate: &LogicPearlGateIr,
+    features: &HashMap<String, Value>,
+) -> Result<HashMap<String, Value>> {
+    let mut resolved = features.clone();
+    for feature in &gate.input_schema.features {
+        let Some(derived) = &feature.derived else {
+            continue;
+        };
+        if resolved.contains_key(&feature.id) {
+            continue;
+        }
+        let left = numeric_feature_value(&resolved, &derived.left_feature)?;
+        let right = numeric_feature_value(&resolved, &derived.right_feature)?;
+        let value = match derived.op {
+            DerivedFeatureOperator::Difference => left - right,
+            DerivedFeatureOperator::Ratio => {
+                if left.is_nan() || right.is_nan() || right.abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    left / right
+                }
+            }
+        };
+        let sanitized = if value.is_finite() { value } else { 0.0 };
+        resolved.insert(
+            feature.id.clone(),
+            Value::Number(Number::from_f64(sanitized).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "derived feature {} could not be represented as a JSON number",
+                    feature.id
+                ))
+            })?),
+        );
+    }
+    Ok(resolved)
+}
+
+fn numeric_feature_value(features: &HashMap<String, Value>, feature: &str) -> Result<f64> {
+    features
+        .get(feature)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| LogicPearlError::message(format!("missing runtime feature: {feature}")))
 }
 
 fn evaluate_comparison(
@@ -141,6 +188,7 @@ mod tests {
                     min: None,
                     max: None,
                     editable: None,
+                    derived: None,
                 }],
             },
             rules: vec![RuleDefinition {
@@ -211,5 +259,88 @@ mod tests {
         ]);
         assert!(evaluate_comparison(&expression, &features)
             .expect("feature ref comparison should evaluate"));
+    }
+
+    #[test]
+    fn derived_ratio_feature_evaluates_from_raw_inputs() {
+        let gate = LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "ratio_gate".to_string(),
+            gate_type: "bitmask_gate".to_string(),
+            input_schema: InputSchema {
+                features: vec![
+                    FeatureDefinition {
+                        id: "debt".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "debt_to_income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        derived: Some(logicpearl_ir::DerivedFeatureDefinition {
+                            op: logicpearl_ir::DerivedFeatureOperator::Ratio,
+                            left_feature: "debt".to_string(),
+                            right_feature: "income".to_string(),
+                        }),
+                    },
+                ],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_000".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "debt_to_income".to_string(),
+                    op: ComparisonOperator::Gte,
+                    value: ComparisonValue::Literal(json!(0.5)),
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            }],
+            evaluation: EvaluationConfig {
+                combine: "bitwise_or".to_string(),
+                allow_when_bitmask: 0,
+            },
+            verification: Some(VerificationConfig {
+                domain_constraints: None,
+                correctness_scope: None,
+                verification_summary: Some(std::collections::HashMap::new()),
+            }),
+            provenance: Some(Provenance {
+                generator: Some("test".to_string()),
+                generator_version: Some("test".to_string()),
+                source_commit: None,
+                created_at: None,
+            }),
+        };
+        let features = HashMap::from([
+            ("debt".to_string(), json!(55.0)),
+            ("income".to_string(), json!(100.0)),
+        ]);
+        let bitmask = evaluate_gate(&gate, &features).expect("derived ratio should evaluate");
+        assert_eq!(bitmask, 1);
     }
 }

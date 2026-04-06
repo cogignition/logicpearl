@@ -13,7 +13,7 @@ mod features;
 mod trace_loading;
 
 use engine::{build_gate, load_pinned_rule_set};
-use features::sorted_feature_names;
+use features::augment_rows_with_numeric_interactions;
 use trace_loading::{
     infer_binary_label_domain, load_flat_records, parse_allowed_label_value, BinaryLabelDomain,
 };
@@ -614,6 +614,7 @@ pub fn build_pearl_from_rows(
         return Ok(cached);
     }
 
+    let (augmented_rows, derived_features) = augment_rows_with_numeric_interactions(rows);
     let residual_options = options
         .residual_pass
         .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
@@ -627,7 +628,9 @@ pub fn build_pearl_from_rows(
         .transpose()?;
     let (gate, residual_rules_discovered, refined_rules_applied, pinned_rules_applied) =
         build_gate(
+            &augmented_rows,
             rows,
+            &derived_features,
             &options.gate_id,
             residual_options.as_ref(),
             refinement_options.as_ref(),
@@ -654,7 +657,12 @@ pub fn build_pearl_from_rows(
         residual_rules_discovered,
         refined_rules_applied,
         pinned_rules_applied,
-        selected_features: sorted_feature_names(rows),
+        selected_features: gate
+            .input_schema
+            .features
+            .iter()
+            .map(|feature| feature.id.clone())
+            .collect(),
         training_parity,
         cache_hit: false,
         output_files: OutputFiles {
@@ -710,11 +718,11 @@ impl CreateDirAllExt for PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_pearl_from_csv, canonicalize_rules, dedupe_rules_by_signature, discover_from_csv,
-        discover_residual_rules, gate_from_rules, load_decision_traces, load_decision_traces_auto,
-        merge_discovered_and_pinned_rules, prune_redundant_rules, rule_from_candidate,
-        BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow, DiscoverOptions,
-        PinnedRuleSet, ResidualPassOptions,
+        build_pearl_from_csv, build_pearl_from_rows, canonicalize_rules, dedupe_rules_by_signature,
+        discover_from_csv, discover_residual_rules, gate_from_rules, load_decision_traces,
+        load_decision_traces_auto, merge_discovered_and_pinned_rules, prune_redundant_rules,
+        rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
+        DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
         ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition,
@@ -1115,6 +1123,8 @@ mod tests {
         ];
         let first_pass_gate = gate_from_rules(
             &rows,
+            &rows,
+            &[],
             "residual_gate",
             vec![rule_from_candidate(
                 0,
@@ -1577,5 +1587,72 @@ mod tests {
                 .collect::<HashMap<_, _>>(),
             allowed,
         }
+    }
+
+    #[test]
+    fn build_discovers_ratio_interaction_feature_when_axis_rules_are_insufficient() {
+        let dir = tempfile::tempdir().unwrap();
+        let output_dir = dir.path().join("ratio_gate");
+        let rows = vec![
+            row_values(
+                &[("debt", Value::from(50.0)), ("income", Value::from(100.0))],
+                false,
+            ),
+            row_values(
+                &[("debt", Value::from(60.0)), ("income", Value::from(120.0))],
+                false,
+            ),
+            row_values(
+                &[("debt", Value::from(45.0)), ("income", Value::from(80.0))],
+                false,
+            ),
+            row_values(
+                &[("debt", Value::from(30.0)), ("income", Value::from(50.0))],
+                false,
+            ),
+            row_values(
+                &[("debt", Value::from(50.0)), ("income", Value::from(150.0))],
+                true,
+            ),
+            row_values(
+                &[("debt", Value::from(60.0)), ("income", Value::from(200.0))],
+                true,
+            ),
+            row_values(
+                &[("debt", Value::from(30.0)), ("income", Value::from(80.0))],
+                true,
+            ),
+            row_values(
+                &[("debt", Value::from(45.0)), ("income", Value::from(120.0))],
+                true,
+            ),
+        ];
+        let result = build_pearl_from_rows(
+            &rows,
+            "ratio_demo".to_string(),
+            &BuildOptions {
+                output_dir: output_dir.clone(),
+                gate_id: "ratio_demo".to_string(),
+                label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.training_parity, 1.0);
+        let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+        let derived_feature = gate
+            .input_schema
+            .features
+            .iter()
+            .find(|feature| feature.id.contains("debt__over__income"))
+            .expect("ratio feature should be emitted into the schema");
+        assert!(derived_feature.derived.is_some());
+        let rendered_rules = serde_json::to_string(&gate.rules).unwrap();
+        assert!(rendered_rules.contains(&derived_feature.id));
     }
 }

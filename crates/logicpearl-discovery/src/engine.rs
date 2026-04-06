@@ -19,8 +19,8 @@ use super::canonicalize::{
     canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules,
 };
 use super::features::{
-    boolean_feature_map, infer_binary_feature_names, infer_feature_type, numeric_feature_names,
-    rule_contains_feature, rule_with_added_condition, sorted_feature_names,
+    boolean_feature_map, infer_binary_feature_names, infer_feature_type, is_derived_feature_name,
+    numeric_feature_names, rule_contains_feature, rule_with_added_condition, sorted_feature_names,
 };
 use super::{
     CandidateRule, DecisionTraceRow, PinnedRuleSet, ResidualPassOptions,
@@ -40,6 +40,8 @@ struct CandidatePlanScore {
 
 pub(super) fn build_gate(
     rows: &[DecisionTraceRow],
+    source_rows: &[DecisionTraceRow],
+    derived_features: &[FeatureDefinition],
     gate_id: &str,
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
@@ -48,7 +50,8 @@ pub(super) fn build_gate(
     let mut rules = discover_rules(rows)?;
     let mut residual_rules_discovered = 0usize;
     if let Some(options) = residual_options {
-        let first_pass_gate = gate_from_rules(rows, gate_id, rules.clone())?;
+        let first_pass_gate =
+            gate_from_rules(rows, source_rows, derived_features, gate_id, rules.clone())?;
         match discover_residual_rules(rows, &first_pass_gate, options) {
             Ok(residual_rules) => {
                 residual_rules_discovered = residual_rules.len();
@@ -87,7 +90,7 @@ pub(super) fn build_gate(
     }
 
     Ok((
-        gate_from_rules(rows, gate_id, rules)?,
+        gate_from_rules(rows, source_rows, derived_features, gate_id, rules)?,
         residual_rules_discovered,
         refined_rules_applied,
         pinned_rules_applied,
@@ -96,29 +99,32 @@ pub(super) fn build_gate(
 
 pub(super) fn gate_from_rules(
     rows: &[DecisionTraceRow],
+    source_rows: &[DecisionTraceRow],
+    derived_features: &[FeatureDefinition],
     gate_id: &str,
     rules: Vec<RuleDefinition>,
 ) -> Result<LogicPearlGateIr> {
-    let feature_sample = rows[0].features.clone();
+    let feature_sample = source_rows[0].features.clone();
+    let mut features = sorted_feature_names(source_rows)
+        .into_iter()
+        .map(|feature| FeatureDefinition {
+            id: feature.clone(),
+            feature_type: infer_feature_type(feature_sample.get(&feature).unwrap()),
+            description: None,
+            values: None,
+            min: None,
+            max: None,
+            editable: None,
+            derived: None,
+        })
+        .collect::<Vec<_>>();
+    features.extend(derived_features.iter().cloned());
     let verification_summary = rule_verification_summary(&rules);
     Ok(LogicPearlGateIr {
         ir_version: "1.0".to_string(),
         gate_id: gate_id.to_string(),
         gate_type: "bitmask_gate".to_string(),
-        input_schema: InputSchema {
-            features: sorted_feature_names(rows)
-                .into_iter()
-                .map(|feature| FeatureDefinition {
-                    id: feature.clone(),
-                    feature_type: infer_feature_type(feature_sample.get(&feature).unwrap()),
-                    description: None,
-                    values: None,
-                    min: None,
-                    max: None,
-                    editable: None,
-                })
-                .collect(),
-        },
+        input_schema: InputSchema { features },
         rules,
         evaluation: EvaluationConfig {
             combine: "bitwise_or".to_string(),
@@ -858,6 +864,11 @@ fn candidate_rules(
         .into_iter()
         .filter(|feature| feature_has_nontrivial_numeric_range(rows, feature))
         .collect::<Vec<_>>();
+    let feature_ref_numeric_features = numeric_features
+        .iter()
+        .filter(|feature| !is_derived_feature_name(feature))
+        .cloned()
+        .collect::<Vec<_>>();
     let mut candidates = Vec::new();
 
     for feature in feature_names {
@@ -947,8 +958,8 @@ fn candidate_rules(
         }
     }
 
-    for left in &numeric_features {
-        for right in &numeric_features {
+    for left in &feature_ref_numeric_features {
+        for right in &feature_ref_numeric_features {
             if left == right {
                 continue;
             }
@@ -1010,6 +1021,7 @@ fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Or
 fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
     match candidate.value {
         ComparisonValue::FeatureRef { .. } => 1,
+        ComparisonValue::Literal(_) if is_derived_feature_name(&candidate.feature) => 2,
         ComparisonValue::Literal(_) => 0,
     }
 }

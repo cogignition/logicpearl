@@ -1,8 +1,8 @@
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_discovery::{BuildResult, OutputFiles};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, Expression, FeatureDefinition, FeatureType,
-    LogicPearlGateIr,
+    ComparisonExpression, ComparisonOperator, DerivedFeatureDefinition, DerivedFeatureOperator,
+    Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,8 @@ struct WasmArtifactSidecar {
     feature_count: usize,
     missing_value: String,
     features: Vec<WasmFeatureDescriptor>,
+    #[serde(default)]
+    derived_features: Vec<WasmDerivedFeatureDescriptor>,
     string_codes: BTreeMap<String, u32>,
     rules: Vec<WasmRuleMetadata>,
 }
@@ -76,6 +78,14 @@ struct WasmFeatureDescriptor {
     #[serde(rename = "type")]
     feature_type: FeatureType,
     encoding: WasmFeatureEncoding,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WasmDerivedFeatureDescriptor {
+    id: String,
+    op: DerivedFeatureOperator,
+    left_feature: String,
+    right_feature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +119,7 @@ struct UsedWasmOperators {
     gte: bool,
     lt: bool,
     lte: bool,
+    ratio: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -506,16 +517,20 @@ pub(crate) fn compile_wasm_module(
 
 fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
     let string_codes = build_string_codes(gate);
+    let input_features = gate
+        .input_schema
+        .features
+        .iter()
+        .filter(|feature| feature.derived.is_none())
+        .collect::<Vec<_>>();
     let sidecar = WasmArtifactSidecar {
         artifact_version: "1.0".to_string(),
         gate_id: gate.gate_id.clone(),
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
         allow_entrypoint: "logicpearl_eval_allow_slots_f64".to_string(),
-        feature_count: gate.input_schema.features.len(),
+        feature_count: input_features.len(),
         missing_value: "NaN".to_string(),
-        features: gate
-            .input_schema
-            .features
+        features: input_features
             .iter()
             .enumerate()
             .map(|(index, feature)| WasmFeatureDescriptor {
@@ -527,6 +542,22 @@ fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
                     FeatureType::Int | FeatureType::Float => WasmFeatureEncoding::Numeric,
                     FeatureType::String | FeatureType::Enum => WasmFeatureEncoding::StringCode,
                 },
+            })
+            .collect(),
+        derived_features: gate
+            .input_schema
+            .features
+            .iter()
+            .filter_map(|feature| {
+                feature
+                    .derived
+                    .as_ref()
+                    .map(|derived| WasmDerivedFeatureDescriptor {
+                        id: feature.id.clone(),
+                        op: derived.op.clone(),
+                        left_feature: derived.left_feature.clone(),
+                        right_feature: derived.right_feature.clone(),
+                    })
             })
             .collect(),
         string_codes,
@@ -553,9 +584,13 @@ fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
 }
 
 fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
-    let feature_indexes: HashMap<&str, usize> = gate
+    let input_features = gate
         .input_schema
         .features
+        .iter()
+        .filter(|feature| feature.derived.is_none())
+        .collect::<Vec<_>>();
+    let feature_indexes: HashMap<&str, usize> = input_features
         .iter()
         .enumerate()
         .map(|(index, feature)| (feature.id.as_str(), index))
@@ -566,8 +601,33 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
         .iter()
         .map(|feature| (feature.id.as_str(), feature))
         .collect();
+    let derived_identifiers: HashMap<&str, String> = gate
+        .input_schema
+        .features
+        .iter()
+        .filter(|feature| feature.derived.is_some())
+        .map(|feature| {
+            (
+                feature.id.as_str(),
+                format!("derived_{}", sanitize_identifier(&feature.id)),
+            )
+        })
+        .collect();
     let string_codes = build_string_codes(gate);
-    let used_ops = collect_used_comparison_operators(gate);
+    let mut used_ops = collect_used_comparison_operators(gate);
+    collect_used_derived_operators(gate, &mut used_ops);
+    let derived_assignments = gate
+        .input_schema
+        .features
+        .iter()
+        .filter_map(|feature| {
+            let derived = feature.derived.as_ref()?;
+            let variable = derived_identifiers[feature.id.as_str()].clone();
+            let expression =
+                emit_wasm_derived_expression(derived, &feature_indexes, &derived_identifiers);
+            Some(format!("    let {variable} = {expression};\n"))
+        })
+        .collect::<String>();
 
     let mut rules = String::new();
     for rule in &gate.rules {
@@ -575,6 +635,7 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
             &rule.deny_when,
             &feature_defs,
             &feature_indexes,
+            &derived_identifiers,
             &string_codes,
         );
         rules.push_str(&format!(
@@ -609,11 +670,17 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
             "\n#[inline]\nfn lte_num(left: f64, right: f64) -> bool { !left.is_nan() && !right.is_nan() && left <= right }\n",
         );
     }
+    if used_ops.ratio {
+        helpers.push_str(
+            "\n#[inline]\nfn ratio_num(left: f64, right: f64) -> f64 {\n    if left.is_nan() || right.is_nan() || right.abs() < f64::EPSILON {\n        0.0\n    } else {\n        let value = left / right;\n        if value.is_finite() { value } else { 0.0 }\n    }\n}\n",
+        );
+    }
 
     format!(
-        "const FEATURE_COUNT: usize = {};\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{rules}    bitmask\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if ptr.is_null() || len < FEATURE_COUNT {{\n        return u64::MAX;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    match logicpearl_eval_bitmask_slots_f64(ptr, len) {{\n        u64::MAX => 2,\n        0 => 1,\n        _ => 0,\n    }}\n}}\n",
-        gate.input_schema.features.len(),
+        "const FEATURE_COUNT: usize = {};\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if ptr.is_null() || len < FEATURE_COUNT {{\n        return u64::MAX;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    match logicpearl_eval_bitmask_slots_f64(ptr, len) {{\n        u64::MAX => 2,\n        0 => 1,\n        _ => 0,\n    }}\n}}\n",
+        input_features.len(),
         helpers = helpers,
+        derived_assignments = derived_assignments,
     )
 }
 
@@ -653,16 +720,30 @@ fn collect_expression_operators(expression: &Expression, ops: &mut UsedWasmOpera
     }
 }
 
+fn collect_used_derived_operators(gate: &LogicPearlGateIr, ops: &mut UsedWasmOperators) {
+    for feature in &gate.input_schema.features {
+        match feature.derived.as_ref().map(|derived| &derived.op) {
+            Some(DerivedFeatureOperator::Ratio) => ops.ratio = true,
+            Some(DerivedFeatureOperator::Difference) | None => {}
+        }
+    }
+}
+
 fn emit_wasm_expression(
     expression: &Expression,
     feature_defs: &HashMap<&str, &FeatureDefinition>,
     feature_indexes: &HashMap<&str, usize>,
+    derived_identifiers: &HashMap<&str, String>,
     string_codes: &BTreeMap<String, u32>,
 ) -> String {
     match expression {
-        Expression::Comparison(comparison) => {
-            emit_wasm_comparison(comparison, feature_defs, feature_indexes, string_codes)
-        }
+        Expression::Comparison(comparison) => emit_wasm_comparison(
+            comparison,
+            feature_defs,
+            feature_indexes,
+            derived_identifiers,
+            string_codes,
+        ),
         Expression::All { all } => format!(
             "({})",
             all.iter()
@@ -670,6 +751,7 @@ fn emit_wasm_expression(
                     child,
                     feature_defs,
                     feature_indexes,
+                    derived_identifiers,
                     string_codes
                 ))
                 .collect::<Vec<_>>()
@@ -682,6 +764,7 @@ fn emit_wasm_expression(
                     child,
                     feature_defs,
                     feature_indexes,
+                    derived_identifiers,
                     string_codes
                 ))
                 .collect::<Vec<_>>()
@@ -689,7 +772,13 @@ fn emit_wasm_expression(
         ),
         Expression::Not { expr } => format!(
             "(!{})",
-            emit_wasm_expression(expr, feature_defs, feature_indexes, string_codes)
+            emit_wasm_expression(
+                expr,
+                feature_defs,
+                feature_indexes,
+                derived_identifiers,
+                string_codes,
+            )
         ),
     }
 }
@@ -698,15 +787,14 @@ fn emit_wasm_comparison(
     comparison: &ComparisonExpression,
     feature_defs: &HashMap<&str, &FeatureDefinition>,
     feature_indexes: &HashMap<&str, usize>,
+    derived_identifiers: &HashMap<&str, String>,
     string_codes: &BTreeMap<String, u32>,
 ) -> String {
-    let left_index = feature_indexes[comparison.feature.as_str()];
-    let left = format!("slot(values, {left_index})");
+    let left = emit_wasm_feature_source(&comparison.feature, feature_indexes, derived_identifiers);
     let feature_type = &feature_defs[comparison.feature.as_str()].feature_type;
 
     if let Some(feature_ref) = comparison.value.feature_ref() {
-        let right_index = feature_indexes[feature_ref];
-        let right = format!("slot(values, {right_index})");
+        let right = emit_wasm_feature_source(feature_ref, feature_indexes, derived_identifiers);
         return emit_operator_expr(comparison.op.clone(), &left, &right);
     }
 
@@ -735,6 +823,35 @@ fn emit_wasm_comparison(
             emit_operator_expr(comparison.op.clone(), &left, &right)
         }
     }
+}
+
+fn emit_wasm_derived_expression(
+    derived: &DerivedFeatureDefinition,
+    feature_indexes: &HashMap<&str, usize>,
+    derived_identifiers: &HashMap<&str, String>,
+) -> String {
+    let left =
+        emit_wasm_feature_source(&derived.left_feature, feature_indexes, derived_identifiers);
+    let right =
+        emit_wasm_feature_source(&derived.right_feature, feature_indexes, derived_identifiers);
+    match derived.op {
+        DerivedFeatureOperator::Difference => format!("({left} - {right})"),
+        DerivedFeatureOperator::Ratio => format!("ratio_num({left}, {right})"),
+    }
+}
+
+fn emit_wasm_feature_source(
+    feature_id: &str,
+    feature_indexes: &HashMap<&str, usize>,
+    derived_identifiers: &HashMap<&str, String>,
+) -> String {
+    if let Some(index) = feature_indexes.get(feature_id) {
+        return format!("slot(values, {index})");
+    }
+    derived_identifiers
+        .get(feature_id)
+        .cloned()
+        .expect("derived feature should have generated identifier")
 }
 
 fn emit_operator_expr(op: ComparisonOperator, left: &str, right: &str) -> String {

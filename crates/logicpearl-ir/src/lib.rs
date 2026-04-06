@@ -32,6 +32,22 @@ pub struct FeatureDefinition {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub editable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<DerivedFeatureDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DerivedFeatureDefinition {
+    pub op: DerivedFeatureOperator,
+    pub left_feature: String,
+    pub right_feature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DerivedFeatureOperator {
+    Difference,
+    Ratio,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,6 +229,9 @@ impl LogicPearlGateIr {
                 )));
             }
             feature.validate()?;
+            if let Some(derived) = &feature.derived {
+                validate_derived_feature(feature, derived, &known_features)?;
+            }
             known_features.insert(feature.id.clone(), feature);
         }
 
@@ -257,6 +276,11 @@ impl LogicPearlGateIr {
 
 impl FeatureDefinition {
     fn validate(&self) -> Result<()> {
+        if self.derived.is_some() && !matches!(self.feature_type, FeatureType::Float) {
+            return Err(LogicPearlError::message(
+                "derived features must use float type",
+            ));
+        }
         match self.feature_type {
             FeatureType::Enum => {
                 if self.values.as_ref().is_none_or(|values| values.is_empty()) {
@@ -278,6 +302,34 @@ impl FeatureDefinition {
         }
         Ok(())
     }
+}
+
+fn validate_derived_feature(
+    feature: &FeatureDefinition,
+    derived: &DerivedFeatureDefinition,
+    known_features: &HashMap<String, &FeatureDefinition>,
+) -> Result<()> {
+    let left = known_features.get(&derived.left_feature).ok_or_else(|| {
+        LogicPearlError::message(format!(
+            "unknown features referenced by derived feature {}: {}",
+            feature.id, derived.left_feature
+        ))
+    })?;
+    let right = known_features.get(&derived.right_feature).ok_or_else(|| {
+        LogicPearlError::message(format!(
+            "unknown features referenced by derived feature {}: {}",
+            feature.id, derived.right_feature
+        ))
+    })?;
+    for source in [left, right] {
+        if !matches!(source.feature_type, FeatureType::Int | FeatureType::Float) {
+            return Err(LogicPearlError::message(format!(
+                "derived feature {} requires numeric inputs: {}",
+                feature.id, source.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_expression(
@@ -529,6 +581,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        derived: None,
                     },
                     FeatureDefinition {
                         id: "right".to_string(),
@@ -538,6 +591,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        derived: None,
                     },
                 ],
             },
@@ -593,6 +647,64 @@ mod tests {
             .validate()
             .expect_err("mixed numeric/string feature refs should fail");
         assert!(err.to_string().contains("compatible feature types"));
+    }
+
+    #[test]
+    fn validates_derived_numeric_feature() {
+        let gate = LogicPearlGateIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "gate_id": "derived",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "debt", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "income", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "debt_to_income", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "ratio", "left_feature": "debt", "right_feature": "income"}}
+                    ]
+                },
+                "rules": [
+                    {"id": "rule_000", "kind": "predicate", "bit": 0,
+                     "deny_when": {"feature": "debt_to_income", "op": ">=", "value": 0.5}}
+                ],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect("derived numeric features should validate");
+        assert_eq!(gate.input_schema.features.len(), 3);
+    }
+
+    #[test]
+    fn rejects_derived_feature_with_non_numeric_source() {
+        let err = LogicPearlGateIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "gate_id": "derived_bad",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "path", "type": "string", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "score", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "bad_ratio", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "ratio", "left_feature": "score", "right_feature": "path"}}
+                    ]
+                },
+                "rules": [
+                    {"id": "rule_000", "kind": "predicate", "bit": 0,
+                     "deny_when": {"feature": "bad_ratio", "op": ">=", "value": 0.5}}
+                ],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect_err("non-numeric derived feature source should fail");
+        assert!(err.to_string().contains("requires numeric inputs"));
     }
 
     #[test]
