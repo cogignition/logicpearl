@@ -79,7 +79,7 @@ cargo install --path crates/logicpearl-cli
 For local development inside the repo, the equivalent form is:
 
 ```bash
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- <command>
+cargo run --manifest-path Cargo.toml -p logicpearl -- <command>
 ```
 
 The public repo also ships a local `pre-commit` hook under `.githooks/` that runs the getting-started end-to-end CLI test. In this checkout it is already enabled through the repo-local `core.hooksPath` setting.

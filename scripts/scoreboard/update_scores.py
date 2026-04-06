@@ -69,7 +69,7 @@ def logicpearl_cmd(*args: str) -> list[str]:
         "--manifest-path",
         str(REPO_ROOT / "Cargo.toml"),
         "-p",
-        "logicpearl-cli",
+        "logicpearl",
         "--",
         *args,
     ]

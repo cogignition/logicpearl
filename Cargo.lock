@@ -450,18 +450,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "logicpearl-benchmark"
-version = "0.1.0"
-dependencies = [
- "logicpearl-core",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
-name = "logicpearl-cli"
+name = "logicpearl"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -483,6 +472,17 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "logicpearl-benchmark"
+version = "0.1.0"
+dependencies = [
+ "logicpearl-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "tempfile",
 ]
 

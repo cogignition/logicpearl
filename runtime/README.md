@@ -5,7 +5,7 @@ This directory contains the older runtime package that preceded the new Rust wor
 The active public direction now lives at the workspace root:
 
 - `Cargo.toml`
-- `crates/logicpearl-cli`
+- `crates/logicpearl-cli` published as the `logicpearl` crate
 - `crates/logicpearl-ir`
 - `crates/logicpearl-runtime`
 - `crates/logicpearl-discovery`
@@ -18,7 +18,7 @@ Use the workspace CLI for the current public path:
 
 ```bash
 cargo test --manifest-path ../Cargo.toml --workspace
-cargo run --manifest-path ../Cargo.toml -p logicpearl-cli -- build ../examples/getting_started/decision_traces.csv --output-dir ../examples/getting_started/output
-cargo run --manifest-path ../Cargo.toml -p logicpearl-cli -- inspect ../examples/getting_started/output/pearl.ir.json
-cargo run --manifest-path ../Cargo.toml -p logicpearl-cli -- run ../examples/getting_started/output/pearl.ir.json ../examples/getting_started/new_input.json
+cargo run --manifest-path ../Cargo.toml -p logicpearl -- build ../examples/getting_started/decision_traces.csv --output-dir ../examples/getting_started/output
+cargo run --manifest-path ../Cargo.toml -p logicpearl -- inspect ../examples/getting_started/output/pearl.ir.json
+cargo run --manifest-path ../Cargo.toml -p logicpearl -- run ../examples/getting_started/output/pearl.ir.json ../examples/getting_started/new_input.json
 ```

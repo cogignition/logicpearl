@@ -17,7 +17,7 @@ The public repo is meant to stand on its own. Treat it like a real product repos
 If you need to prove the repo works, start here:
 
 ```bash
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- \
+cargo run --manifest-path Cargo.toml -p logicpearl -- \
   build examples/getting_started/decision_traces.csv \
   --output-dir /tmp/logicpearl-build
 ```
@@ -25,8 +25,8 @@ cargo run --manifest-path Cargo.toml -p logicpearl-cli -- \
 Then:
 
 ```bash
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- inspect /tmp/logicpearl-build
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- run /tmp/logicpearl-build examples/getting_started/new_input.json
+cargo run --manifest-path Cargo.toml -p logicpearl -- inspect /tmp/logicpearl-build
+cargo run --manifest-path Cargo.toml -p logicpearl -- run /tmp/logicpearl-build examples/getting_started/new_input.json
 ```
 
 The normal public artifact is a directory bundle, not just a raw `pearl.ir.json`.
@@ -45,7 +45,7 @@ If you add sophistication internally, keep the public command surface simple.
 ## Repository Boundaries
 
 Keep these boundaries intact:
-- `crates/logicpearl-cli`: user-facing Rust CLI
+- `crates/logicpearl-cli`: user-facing Rust CLI crate, published as `logicpearl`
 - `crates/logicpearl-ir`: public artifact structures
 - `crates/logicpearl-runtime`: deterministic evaluation
 - `crates/logicpearl-discovery`: discovery and refinement
@@ -79,11 +79,11 @@ cargo test --workspace
 ```
 
 ```bash
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- --help
+cargo run --manifest-path Cargo.toml -p logicpearl -- --help
 ```
 
 ```bash
-cargo run --manifest-path Cargo.toml -p logicpearl-cli -- benchmark --help
+cargo run --manifest-path Cargo.toml -p logicpearl -- benchmark --help
 ```
 
 The repo also includes end-to-end CLI coverage for:

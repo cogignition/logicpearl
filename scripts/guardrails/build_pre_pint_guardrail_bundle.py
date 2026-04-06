@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--use-installed-cli",
         action="store_true",
-        help="Use `logicpearl` from PATH instead of `cargo run -p logicpearl-cli --`.",
+        help="Use `logicpearl` from PATH instead of `cargo run -p logicpearl --`.",
     )
     parser.add_argument(
         "--target-goal",
@@ -146,7 +146,7 @@ def logicpearl_base_command(use_installed_cli: bool) -> list[str]:
         "--manifest-path",
         str(REPO_ROOT / "Cargo.toml"),
         "-p",
-        "logicpearl-cli",
+        "logicpearl",
         "--",
     ]
 
