@@ -20,10 +20,10 @@ TRACE_PROJECTION_CONFIG = REPO_ROOT / "benchmarks" / "guardrails" / "prep" / "tr
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a frozen pre-PINT guardrail bundle against a raw benchmark file such as PINT."
+        description="Evaluate a frozen guardrail bundle against a raw benchmark file."
     )
-    parser.add_argument("--bundle-dir", required=True, help="Frozen bundle directory created by build_pre_pint_guardrail_bundle.py")
-    parser.add_argument("--raw-benchmark", required=True, help="Raw benchmark input file, for example a PINT YAML export.")
+    parser.add_argument("--bundle-dir", required=True, help="Frozen bundle directory created by build_guardrail_bundle.py")
+    parser.add_argument("--raw-benchmark", required=True, help="Raw benchmark input file.")
     parser.add_argument(
         "--profile",
         default="pint",
@@ -262,8 +262,8 @@ def main() -> int:
     cli = logicpearl_base_command(args.use_installed_cli)
 
     observer_artifact = bundle_dir / "freeze" / "guardrails_v1.observer.json"
-    combined_pearl = read_json(bundle_dir / "freeze" / "guardrails_pre_pint_combined.pearl.ir.json")
-    compiled_pearl = bundle_dir / "freeze" / "guardrails_pre_pint_combined.pearl"
+    combined_pearl = read_json(bundle_dir / "freeze" / "guardrails_combined.pearl.ir.json")
+    compiled_pearl = bundle_dir / "freeze" / "guardrails_combined.pearl"
     route_policy = read_json(bundle_dir / "freeze" / "route_policy.json")
 
     cases_path = output_dir / "cases.jsonl"

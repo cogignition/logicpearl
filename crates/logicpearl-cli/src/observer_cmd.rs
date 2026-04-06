@@ -1,4 +1,6 @@
 use super::*;
+use logicpearl_observer::guardrails_signal_phrases;
+use logicpearl_observer_synthesis::{evaluate_guardrails_artifact_signal, ObserverSynthesisReport};
 use std::path::Path;
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
@@ -560,6 +562,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
             .into_diagnostic()?
             .trim_matches('"')
     );
+    let mut carried_forward_empty = false;
     let (synthesized, report) = if let Some((train_cases, dev_cases)) =
         choose_synthesis_train_and_dev(case_rows.clone(), args.dev_benchmark_cases.as_ref())?
     {
@@ -575,7 +578,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
             dev_cases.len(),
             args.candidate_frontier
         );
-        synthesize_guardrails_artifact_auto(
+        match synthesize_guardrails_artifact_auto(
             &artifact,
             signal,
             ObserverAutoSynthesisOptions {
@@ -587,9 +590,31 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
                 candidate_frontier: &args.candidate_frontier,
                 tolerance: args.selection_tolerance,
             },
-        )
-        .into_diagnostic()
-        .wrap_err("failed to auto-select observer candidate capacity")?
+        ) {
+            Ok(result) => result,
+            Err(error) if args.allow_empty && is_empty_synthesis_error(&error) => {
+                carried_forward_empty = true;
+                eprintln!(
+                    "[logicpearl observer synthesize] signal={} produced no usable variants; carrying input artifact forward unchanged",
+                    logicpearl_observer::guardrails_signal_label(signal),
+                );
+                (
+                    artifact.clone(),
+                    carried_forward_synthesis_report(
+                        &artifact,
+                        signal,
+                        &train_cases,
+                        bootstrap,
+                        &args.positive_routes,
+                    )?,
+                )
+            }
+            Err(error) => {
+                return Err(miette::miette!(
+                    "failed to auto-select observer candidate capacity: {error}"
+                ));
+            }
+        }
     } else {
         let cases = case_rows
             .into_iter()
@@ -599,16 +624,38 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
             "[logicpearl observer synthesize] dataset too small for auto holdout; using single pass with max_candidates={}",
             args.max_candidates
         );
-        synthesize_guardrails_artifact(
+        match synthesize_guardrails_artifact(
             &artifact,
             signal,
             &cases,
             bootstrap,
             &args.positive_routes,
             args.max_candidates,
-        )
-        .into_diagnostic()
-        .wrap_err("failed to synthesize observer artifact")?
+        ) {
+            Ok(result) => result,
+            Err(error) if args.allow_empty && is_empty_synthesis_error(&error) => {
+                carried_forward_empty = true;
+                eprintln!(
+                    "[logicpearl observer synthesize] signal={} produced no usable variants; carrying input artifact forward unchanged",
+                    logicpearl_observer::guardrails_signal_label(signal),
+                );
+                (
+                    artifact.clone(),
+                    carried_forward_synthesis_report(
+                        &artifact,
+                        signal,
+                        &cases,
+                        bootstrap,
+                        &args.positive_routes,
+                    )?,
+                )
+            }
+            Err(error) => {
+                return Err(miette::miette!(
+                    "failed to synthesize observer artifact: {error}"
+                ));
+            }
+        }
     };
 
     if let Some(parent) = args.output.parent() {
@@ -637,6 +684,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         "matched_positives_after": report.matched_positives_after,
         "matched_negatives_after": report.matched_negatives_after,
         "auto_selection": report.auto_selection,
+        "status": if carried_forward_empty { "carried_forward_no_candidates" } else { "synthesized" },
     });
 
     if args.json {
@@ -671,8 +719,51 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
             "Selected".bright_black(),
             report.phrases_after.join(", ")
         );
+        if carried_forward_empty {
+            println!(
+                "  {} carried input artifact forward because no candidates were available",
+                "Status".bright_black()
+            );
+        }
     }
     Ok(())
+}
+
+fn is_empty_synthesis_error(error: &logicpearl_core::LogicPearlError) -> bool {
+    let text = error.to_string();
+    text.contains("could not synthesize any observer variants")
+        || text.contains("could not generate candidate phrases")
+        || text.contains("z3 could not synthesize a useful phrase subset")
+}
+
+fn carried_forward_synthesis_report(
+    artifact: &NativeObserverArtifact,
+    signal: GuardrailsSignal,
+    cases: &[SynthesisCase],
+    bootstrap: ObserverBootstrapStrategy,
+    positive_routes: &[String],
+) -> Result<ObserverSynthesisReport> {
+    let score =
+        evaluate_guardrails_artifact_signal(artifact, signal, cases, bootstrap, positive_routes)
+            .into_diagnostic()?;
+    let phrases = artifact
+        .guardrails
+        .as_ref()
+        .map(|config| guardrails_signal_phrases(config, signal).to_vec())
+        .unwrap_or_default();
+    Ok(ObserverSynthesisReport {
+        signal: logicpearl_observer::guardrails_signal_label(signal).to_string(),
+        bootstrap_mode: score.bootstrap_mode,
+        positive_case_count: score.positive_case_count,
+        negative_case_count: score.negative_case_count,
+        candidate_count: 0,
+        phrases_before: phrases.clone(),
+        phrases_after: phrases,
+        matched_positives_after: score.true_positive_count,
+        matched_negatives_after: score.false_positive_count,
+        selected_max_candidates: None,
+        auto_selection: None,
+    })
 }
 
 pub(crate) fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {

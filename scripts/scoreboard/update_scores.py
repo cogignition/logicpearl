@@ -18,7 +18,7 @@ DEFAULT_OUTPUT = REPO_ROOT / "SCORES.json"
 DEFAULT_GUARDRAIL_BUNDLE = Path(
     os.environ.get(
         "LOGICPEARL_GUARDRAIL_BUNDLE_DIR",
-        "/private/tmp/guardrails_pre_pint_bundle_all_dev_final",
+        "/private/tmp/guardrails_bundle",
     )
 )
 
@@ -265,11 +265,27 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
             "200",
             "--target-goal",
             target_goal,
+            "--baseline",
+            "",
             "--output-dir",
             str(output_dir),
         ]
-        run(cmd)
-        summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+        completed = subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        summary_path = output_dir / "summary.json"
+        if completed.returncode != 0 and not summary_path.exists():
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                cmd,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
         benchmarks = {
             item["benchmark"]: item["summary"] for item in summary["benchmarks"]
         }

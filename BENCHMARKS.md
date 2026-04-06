@@ -158,17 +158,17 @@ logicpearl benchmark score-artifacts \
   --json
 ```
 
-For the full frozen pre-`PINT` path, use the checked-in public scripts:
+For the full frozen guardrail bundle path, use the checked-in public scripts:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle
 
 python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
   --profile pint \
-  --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+  --output-dir /tmp/guardrails_bundle/pint_eval
 ```
 
 That bundle path freezes:
@@ -186,7 +186,7 @@ These benchmark results show that the current public observer plus artifact-disc
 - keep the learned rules inspectable instead of turning them into opaque classifiers
 
 They do not yet prove:
-- final `PINT` performance
+- final proof-only benchmark performance
 - every possible agent-security scenario
 - performance on the access-gated `MT-AgentRisk` corpus
 - that every current target label is a native gold annotation from the source datasets themselves

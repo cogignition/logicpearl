@@ -58,21 +58,21 @@ Suggested rule:
 
 ## Frozen Bundle Path
 
-Build and commit the frozen pre-`PINT` bundle first:
+Build and commit the frozen guardrail bundle first:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle
 ```
 
 Then evaluate raw `PINT` against that frozen bundle:
 
 ```bash
 python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
   --profile pint \
-  --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+  --output-dir /tmp/guardrails_bundle/pint_eval
 ```
 
 That evaluator adapts raw `PINT`, runs the frozen observer, evaluates the frozen combined pearl, and then collapses rich internal routes into final `allow` / `deny`.

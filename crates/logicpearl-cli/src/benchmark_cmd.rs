@@ -4,7 +4,7 @@ use crate::observer_cmd::{
     resolve_observer_for_cases,
 };
 use logicpearl_benchmark::{
-    adapt_jailbreakbench_dataset, adapt_promptshield_dataset,
+    adapt_jailbreakbench_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
     adapt_rogue_security_prompt_injections_dataset,
 };
 use logicpearl_core::LogicPearlError;
@@ -637,6 +637,16 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             },
             args.json,
         ),
+        BenchmarkAdapterProfile::MtAgentRisk => run_benchmark_adapt_mt_agentrisk(
+            &args.raw_dataset,
+            &args.output,
+            &BenchmarkAdaptDefaults {
+                requested_tool: args.requested_tool,
+                requested_action: args.requested_action,
+                scope: args.scope,
+            },
+            args.json,
+        ),
         BenchmarkAdapterProfile::Pint => run_benchmark_adapt_pint(BenchmarkAdaptPintArgs {
             raw_pint_yaml: args.raw_dataset,
             output: args.output,
@@ -646,6 +656,51 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             json: args.json,
         }),
     }
+}
+
+fn run_benchmark_adapt_mt_agentrisk(
+    dataset_root: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let cases = adapt_mt_agentrisk_dataset(dataset_root, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt MT-AgentRisk benchmark dataset")?;
+    write_benchmark_cases_jsonl(&cases, output)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted MT-AgentRisk JSONL")?;
+
+    let deny_rows = cases
+        .iter()
+        .filter(|case| case.expected_route != "allow")
+        .count();
+    let allow_rows = cases.len().saturating_sub(deny_rows);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source_benchmark": "mt-agentrisk",
+                "rows": cases.len(),
+                "deny_rows": deny_rows,
+                "allow_rows": allow_rows,
+                "output": output.display().to_string()
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            "MT-AgentRisk dataset".bold()
+        );
+        println!("  {} {}", "Rows".bright_black(), cases.len());
+        println!("  {} {}", "Deny rows".bright_black(), deny_rows);
+        println!("  {} {}", "Allow rows".bright_black(), allow_rows);
+        println!("  {} {}", "Output".bright_black(), output.display());
+    }
+    Ok(())
 }
 
 fn run_benchmark_adapt_prompt_json_rows(

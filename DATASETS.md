@@ -26,7 +26,7 @@ If `LOGICPEARL_DATASETS` is unset, the scripts fall back to `../datasets/public`
 
 That is the root used by:
 - [scripts/guardrails/freeze_guardrail_holdouts.py](./scripts/guardrails/freeze_guardrail_holdouts.py)
-- [scripts/guardrails/build_pre_pint_guardrail_bundle.py](./scripts/guardrails/build_pre_pint_guardrail_bundle.py)
+- [scripts/guardrails/build_guardrail_bundle.py](./scripts/guardrails/build_guardrail_bundle.py)
 - [scripts/guardrails/run_open_guardrail_benchmarks.py](./scripts/guardrails/run_open_guardrail_benchmarks.py)
 - [scripts/guardrails/evaluate_guardrail_bundle.py](./scripts/guardrails/evaluate_guardrail_bundle.py)
 
@@ -58,6 +58,7 @@ These are useful as external benchmark checks for the frozen guardrail bundle.
 | `JailbreakBench` | https://github.com/JailbreakBench/jailbreakbench | `$LOGICPEARL_DATASETS/jailbreakbench/jbb_behaviors.json` |
 | `PromptShield` | https://huggingface.co/datasets/hendzh/PromptShield | `$LOGICPEARL_DATASETS/promptshield/promptshield.json` |
 | `rogue-security/prompt-injections-benchmark` | https://huggingface.co/datasets/rogue-security/prompt-injections-benchmark | `$LOGICPEARL_DATASETS/rogue_security/prompt_injections_benchmark.json` |
+| `MT-AgentRisk` | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo` |
 
 ## Access-Gated Corpora
 
@@ -66,10 +67,10 @@ These are relevant to the same workflow but may require explicit access approval
 | Dataset | Source | Expected local file |
 |---|---|---|
 | `PINT` | https://github.com/lakeraai/pint-benchmark | `$LOGICPEARL_DATASETS/pint/PINT.yaml` |
-| `MT-AgentRisk` single-turn | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/single_dataset.csv` |
-| `MT-AgentRisk` multi-turn | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/multi_dataset.csv` |
+| `MT-AgentRisk` full repo | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo` |
 
 `PINT` is not publicly downloadable in full from the benchmark repo. The public notebook says access must be requested from Lakera.
+`MT-AgentRisk` also requires Hugging Face access approval; the guardrail scripts auto-include it when the full repo is staged locally and skip it otherwise.
 
 ## Freeze `dev` And `final_holdout`
 
@@ -98,8 +99,8 @@ This is the cleanest public protocol:
 After the per-dataset splits exist:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle
 ```
 
 That script:
@@ -120,29 +121,29 @@ That script:
 
 ```bash
 python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
-  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_final_holdout
+  --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
 ```
 
 For a faster sampled regression check:
 
 ```bash
 python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \
-  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_sample200
+  --output-dir /tmp/guardrails_bundle/open_benchmarks_sample200
 ```
 
 ### Run a raw benchmark file such as `PINT`
 
 ```bash
 python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
   --profile pint \
-  --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+  --output-dir /tmp/guardrails_bundle/pint_eval
 ```
 
 That:

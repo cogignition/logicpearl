@@ -17,7 +17,7 @@ WORKSPACE_ROOT = REPO_ROOT.parent
 DEFAULT_DATASETS_ROOT = Path(
     os.environ.get("LOGICPEARL_DATASETS", str(WORKSPACE_ROOT / "datasets" / "public"))
 ).expanduser()
-DEFAULT_BUNDLE_DIR = Path("/tmp/guardrails_pre_pint_bundle")
+DEFAULT_BUNDLE_DIR = Path("/tmp/guardrails_bundle")
 DEFAULT_BASELINE_PATH = REPO_ROOT / "scripts" / "guardrails" / "open_guardrail_regression_baseline.sample200.json"
 BASELINE_DIR = DEFAULT_BASELINE_PATH.parent
 
@@ -45,12 +45,12 @@ BENCHMARKS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the frozen pre-PINT guardrail bundle against open post-freeze evaluation benchmarks."
+        description="Run the frozen guardrail bundle against open external evaluation benchmarks."
     )
     parser.add_argument(
         "--bundle-dir",
         default=str(DEFAULT_BUNDLE_DIR),
-        help="Frozen bundle directory created by build_pre_pint_guardrail_bundle.py.",
+        help="Frozen bundle directory created by build_guardrail_bundle.py.",
     )
     parser.add_argument(
         "--output-dir",

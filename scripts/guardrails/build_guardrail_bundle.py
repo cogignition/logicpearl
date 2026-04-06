@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from collections import defaultdict
 
 
 SCRIPT_PATH = Path(__file__).resolve()
@@ -31,6 +32,7 @@ class DatasetSpec:
     dataset_id: str
     profile: str
     raw_path: Path
+    optional: bool = False
 
 
 DATASETS: tuple[DatasetSpec, ...] = (
@@ -64,6 +66,12 @@ DATASETS: tuple[DatasetSpec, ...] = (
         "rogue_security_prompt_injections",
         "rogue-security-prompt-injections",
         DEFAULT_DATASETS_ROOT / "rogue_security" / "prompt_injections_benchmark.json",
+    ),
+    DatasetSpec(
+        "mt_agentrisk",
+        "mt-agentrisk",
+        DEFAULT_DATASETS_ROOT / "mt_agentrisk" / "full_repo",
+        optional=True,
     ),
 )
 
@@ -109,7 +117,7 @@ TARGET_GOALS: tuple[str, ...] = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build a frozen pre-PINT guardrail bundle from the staged public development corpora."
+        description="Build a frozen guardrail bundle from the staged public development corpora."
     )
     parser.add_argument("--output-dir", required=True, help="Directory to write the frozen bundle into.")
     parser.add_argument(
@@ -138,6 +146,18 @@ def parse_args() -> argparse.Namespace:
         "--resume",
         action="store_true",
         help="Resume from existing synthesized observer outputs in the output directory when possible.",
+    )
+    parser.add_argument(
+        "--dev-case-limit",
+        type=int,
+        default=0,
+        help="Optional deterministic route-stratified cap for the merged development cases used to build the bundle.",
+    )
+    parser.add_argument(
+        "--final-holdout-case-limit",
+        type=int,
+        default=0,
+        help="Optional deterministic route-stratified cap for the merged final-holdout cases used during frozen bundle scoring.",
     )
     return parser.parse_args()
 
@@ -204,12 +224,115 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def stable_case_sort_key(case: dict[str, Any]) -> str:
+    case_id = str(case.get("id", ""))
+    digest = hashlib.sha256(case_id.encode("utf-8")).hexdigest()
+    return f"{digest}:{case_id}"
+
+
+def route_stratified_sample_cases(
+    rows: list[dict[str, Any]],
+    max_cases: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if max_cases <= 0 or len(rows) <= max_cases:
+        route_counts: dict[str, int] = defaultdict(int)
+        for row in rows:
+            route_counts[str(row.get("expected_route", "unknown"))] += 1
+        return rows, {
+            "sampled": False,
+            "input_count": len(rows),
+            "output_count": len(rows),
+            "route_counts": dict(sorted(route_counts.items())),
+        }
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row.get("expected_route", "unknown"))].append(row)
+    for bucket in grouped.values():
+        bucket.sort(key=stable_case_sort_key)
+
+    total_rows = len(rows)
+    allocations: dict[str, int] = {}
+    remainders: list[tuple[float, str]] = []
+    allocated = 0
+    for route, bucket in grouped.items():
+        exact = max_cases * (len(bucket) / total_rows)
+        base = min(len(bucket), int(exact))
+        allocations[route] = base
+        allocated += base
+        remainders.append((exact - base, route))
+
+    positive_capacity_routes = [
+        route for route, bucket in grouped.items() if allocations[route] == 0 and len(bucket) > 0
+    ]
+    if max_cases >= len(grouped):
+        for route in positive_capacity_routes:
+            allocations[route] = 1
+            allocated += 1
+
+    if allocated > max_cases:
+        for _, route in sorted(
+            ((allocations[route] - 1, route) for route in allocations if allocations[route] > 1),
+            reverse=True,
+        ):
+            while allocations[route] > 1 and allocated > max_cases:
+                allocations[route] -= 1
+                allocated -= 1
+            if allocated <= max_cases:
+                break
+
+    for _, route in sorted(remainders, reverse=True):
+        if allocated >= max_cases:
+            break
+        if allocations[route] >= len(grouped[route]):
+            continue
+        allocations[route] += 1
+        allocated += 1
+
+    sampled: list[dict[str, Any]] = []
+    for route in sorted(grouped):
+        sampled.extend(grouped[route][: allocations.get(route, 0)])
+
+    sampled.sort(key=stable_case_sort_key)
+    output_route_counts: dict[str, int] = defaultdict(int)
+    input_route_counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        input_route_counts[str(row.get("expected_route", "unknown"))] += 1
+    for row in sampled:
+        output_route_counts[str(row.get("expected_route", "unknown"))] += 1
+    return sampled, {
+        "sampled": True,
+        "input_count": len(rows),
+        "output_count": len(sampled),
+        "max_cases": max_cases,
+        "input_route_counts": dict(sorted(input_route_counts.items())),
+        "output_route_counts": dict(sorted(output_route_counts.items())),
+    }
 
 
 def git_output(*args: str) -> str:
@@ -261,18 +384,18 @@ def build_combined_pearl(
 
     combined_gate = {
         "ir_version": "1.0",
-        "gate_id": "guardrails_pre_pint_combined",
+        "gate_id": "guardrails_combined",
         "gate_type": "bitmask_gate",
         "input_schema": {"features": ordered_features},
         "rules": combined_rules,
         "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
         "verification": {
             "domain_constraints": None,
-            "correctness_scope": "derived by merging frozen pre-PINT target pearls",
+            "correctness_scope": "derived by merging frozen guardrail target pearls",
             "verification_summary": {"pipeline_unverified": len(combined_rules)},
         },
         "provenance": {
-            "generator": "scripts/guardrails/build_pre_pint_guardrail_bundle.py",
+            "generator": "scripts/guardrails/build_guardrail_bundle.py",
             "generator_version": "0.1.0",
             "source_commit": git_output("rev-parse", "HEAD"),
             "created_at": None,
@@ -282,7 +405,7 @@ def build_combined_pearl(
 
     route_policy = {
         "route_policy_version": "1.0",
-        "policy_id": "guardrails_pre_pint_route_policy_v1",
+        "policy_id": "guardrails_route_policy_v1",
         "default_route": "allow",
         "rules": list(ROUTE_RULES),
         "collapse_non_allow_to": "deny",
@@ -330,17 +453,43 @@ def main() -> int:
     )
 
     split_manifests: list[dict[str, Any]] = []
+    skipped_datasets: list[dict[str, Any]] = []
     dev_case_paths: list[Path] = []
     final_holdout_paths: list[Path] = []
     for spec in DATASETS:
         raw_path = datasets_root / spec.raw_path.relative_to(DEFAULT_DATASETS_ROOT)
-        ensure_exists(raw_path)
+        if not raw_path.exists():
+            if spec.optional:
+                skipped_datasets.append(
+                    {
+                        "dataset_id": spec.dataset_id,
+                        "profile": spec.profile,
+                        "raw_path": str(raw_path),
+                        "reason": "optional dataset root not staged locally",
+                    }
+                )
+                continue
+            ensure_exists(raw_path)
         manifest_path = split_dir_for(datasets_root, spec) / "split_manifest.json"
-        ensure_exists(manifest_path)
+        if not manifest_path.exists():
+            if spec.optional:
+                skipped_datasets.append(
+                    {
+                        "dataset_id": spec.dataset_id,
+                        "profile": spec.profile,
+                        "raw_path": str(raw_path),
+                        "reason": "optional dataset split manifest was not generated",
+                    }
+                )
+                continue
+            ensure_exists(manifest_path)
         manifest = read_json(manifest_path)
         split_manifests.append(manifest)
         dev_case_paths.append(Path(manifest["dev_cases"]).resolve())
         final_holdout_paths.append(Path(manifest["final_holdout_cases"]).resolve())
+
+    if not dev_case_paths or not final_holdout_paths:
+        raise SystemExit("no staged guardrail dataset splits were available to build the bundle")
 
     merged_dev_path = output_dir / "guardrail_dev_full.jsonl"
     merge_report = run_json(
@@ -367,6 +516,28 @@ def main() -> int:
             "--json",
         ]
     )
+
+    working_dev_path = merged_dev_path
+    dev_sample_report: dict[str, Any] | None = None
+    if args.dev_case_limit > 0:
+        sampled_dev_rows, dev_sample_report = route_stratified_sample_cases(
+            read_jsonl(merged_dev_path),
+            args.dev_case_limit,
+        )
+        working_dev_path = output_dir / f"guardrail_dev_sampled_{args.dev_case_limit}.jsonl"
+        write_jsonl(working_dev_path, sampled_dev_rows)
+
+    working_final_holdout_path = merged_final_holdout_path
+    final_holdout_sample_report: dict[str, Any] | None = None
+    if args.final_holdout_case_limit > 0:
+        sampled_final_rows, final_holdout_sample_report = route_stratified_sample_cases(
+            read_jsonl(merged_final_holdout_path),
+            args.final_holdout_case_limit,
+        )
+        working_final_holdout_path = (
+            output_dir / f"guardrail_final_holdout_sampled_{args.final_holdout_case_limit}.jsonl"
+        )
+        write_jsonl(working_final_holdout_path, sampled_final_rows)
 
     observer_scaffold_path = freeze_dir / "guardrails_v1.observer.scaffold.json"
     observer_scaffold = run_json(
@@ -404,11 +575,12 @@ def main() -> int:
                     "--artifact",
                     str(current_observer_path),
                     "--benchmark-cases",
-                    str(merged_dev_path),
+                    str(working_dev_path),
                     "--signal",
                     signal,
                     "--target-goal",
                     args.target_goal,
+                    "--allow-empty",
                     "--output",
                     str(output_path),
                     "--json",
@@ -426,7 +598,7 @@ def main() -> int:
             *cli,
             "benchmark",
             "prepare",
-            str(merged_dev_path),
+            str(working_dev_path),
             "--observer-artifact",
             str(observer_artifact_path),
             "--config",
@@ -443,7 +615,7 @@ def main() -> int:
             *cli,
             "benchmark",
             "observe",
-            str(merged_final_holdout_path),
+            str(working_final_holdout_path),
             "--observer-artifact",
             str(observer_artifact_path),
             "--output",
@@ -487,24 +659,24 @@ def main() -> int:
         shutil.rmtree(frozen_artifact_set_dir)
     shutil.copytree(train_prep_dir / "discovered", frozen_artifact_set_dir)
 
-    combined_pearl_path = freeze_dir / "guardrails_pre_pint_combined.pearl.ir.json"
+    combined_pearl_path = freeze_dir / "guardrails_combined.pearl.ir.json"
     route_policy_path = freeze_dir / "route_policy.json"
     build_combined_pearl(frozen_artifact_set_dir / "artifact_set.json", combined_pearl_path, route_policy_path)
 
-    native_output = freeze_dir / "guardrails_pre_pint_combined.pearl"
+    native_output = freeze_dir / "guardrails_combined.pearl"
     run_plain(
         [
             *cli,
             "compile",
             str(combined_pearl_path),
             "--name",
-            "guardrails_pre_pint_combined",
+            "guardrails_combined",
             "--output",
             str(native_output),
         ]
     )
 
-    wasm_output = freeze_dir / "guardrails_pre_pint_combined.pearl.wasm"
+    wasm_output = freeze_dir / "guardrails_combined.pearl.wasm"
     wasm_compiled = True
     try:
         run_plain(
@@ -513,7 +685,7 @@ def main() -> int:
                 "compile",
                 str(combined_pearl_path),
                 "--name",
-                "guardrails_pre_pint_combined",
+                "guardrails_combined",
                 "--target",
                 "wasm32-unknown-unknown",
                 "--output",
@@ -525,7 +697,7 @@ def main() -> int:
 
     bundle_manifest = {
         "bundle_version": "1.0",
-        "bundle_id": "guardrails_pre_pint_bundle_v1",
+        "bundle_id": "guardrails_bundle_v1",
         "created_from_commit": git_output("rev-parse", "HEAD"),
         "git_clean": git_output("status", "--short") == "",
         "trace_projection_config": str(TRACE_PROJECTION_CONFIG),
@@ -538,8 +710,13 @@ def main() -> int:
         "combined_wasm_module": str(wasm_output) if wasm_compiled else None,
         "route_policy": str(route_policy_path),
         "datasets": split_manifests,
+        "skipped_datasets": skipped_datasets,
         "merge_report": merge_report,
         "final_holdout_merge_report": final_holdout_merge_report,
+        "working_dev_cases": str(working_dev_path),
+        "working_final_holdout_cases": str(working_final_holdout_path),
+        "dev_sample_report": dev_sample_report,
+        "final_holdout_sample_report": final_holdout_sample_report,
         "observer_scaffold": observer_scaffold,
         "observer_synthesis": synthesis_reports,
         "prepare_report": prepare_report,

@@ -1,15 +1,17 @@
 # Guardrail Scripts
 
-These scripts make the public non-`PINT` and final-`PINT` guardrail workflow reproducible.
+These scripts make the public guardrail workflow reproducible.
 
 Dataset sources, expected local staging paths, and the full split/build/eval flow are documented in:
 - [DATASETS.md](../../DATASETS.md)
 
 These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is unset, they fall back to `../datasets/public` relative to the cloned `logicpearl/` repo.
 
+If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo`, the freeze/build flow includes it automatically in the grouped guardrail bundle. If it is absent, the public scripts skip it and keep the rest of the workflow working.
+
 ## Scripts
 
-- `build_pre_pint_guardrail_bundle.py`
+- `build_guardrail_bundle.py`
   - freezes deterministic per-dataset `dev` and `final_holdout` splits across all staged guardrail datasets
   - merges the per-dataset `dev` splits into one development pool
   - scaffolds a native observer artifact
@@ -53,37 +55,55 @@ These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is u
 
 ## Usage
 
-Build the frozen pre-`PINT` bundle:
+Build the frozen guardrail bundle:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle
 ```
 
 Build the same bundle with a guardrail-specific synthesis goal:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle \
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle \
   --target-goal protective-gate
 ```
+
+Build a faster deterministic subset bundle for quick iteration:
+
+```bash
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle_sample \
+  --target-goal protective-gate \
+  --dev-case-limit 20000 \
+  --final-holdout-case-limit 4000
+```
+
+Those subset limits are route-stratified, so the smaller bundle keeps a stable mix of:
+- `allow`
+- `deny_untrusted_instruction`
+- `deny_exfiltration_risk`
+- `deny_tool_use`
+
+Use `--resume` with the same output directory if the long synthesis step has already finished once.
 
 Evaluate untouched `PINT` against that bundle:
 
 ```bash
 python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
   --profile pint \
-  --output-dir /tmp/guardrails_pre_pint_bundle/pint_eval
+  --output-dir /tmp/guardrails_bundle/pint_eval
 ```
 
 Run the same frozen bundle against the staged open post-freeze benchmarks:
 
 ```bash
 python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
-  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks
+  --bundle-dir /tmp/guardrails_bundle \
+  --output-dir /tmp/guardrails_bundle/open_benchmarks
 ```
 
 Freeze development and final-holdout splits for all staged guardrail datasets:
@@ -96,19 +116,19 @@ Later, when you are ready for a final untouched external check, run the frozen h
 
 ```bash
 python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
-  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_final_holdout
+  --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
 ```
 
 For a faster regression check that avoids a full rebuild and avoids scoring every case on large benchmarks:
 
 ```bash
 python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
-  --bundle-dir /tmp/guardrails_pre_pint_bundle \
+  --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \
-  --output-dir /tmp/guardrails_pre_pint_bundle/open_benchmarks_sample200
+  --output-dir /tmp/guardrails_bundle/open_benchmarks_sample200
 ```
 
 If a checked-in sampled baseline is present, the runner uses it automatically for sampled runs. It prefers a goal-specific file such as:

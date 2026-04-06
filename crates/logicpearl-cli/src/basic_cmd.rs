@@ -1,4 +1,24 @@
 use super::*;
+use std::path::Path;
+
+fn default_gate_id_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "decision_traces".to_string());
+    if stem != "traces" {
+        return stem;
+    }
+    let parent_name = match path
+        .parent()
+        .and_then(|value| value.file_name())
+        .map(|value| value.to_string_lossy().into_owned())
+    {
+        Some(value) => value,
+        None => return stem,
+    };
+    format!("{}_{}", sanitize_identifier(&parent_name), stem)
+}
 
 pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
     match args.topic {
@@ -291,8 +311,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     let gate_id = args.gate_id.unwrap_or_else(|| {
         args.decision_traces
             .as_deref()
-            .and_then(|path| path.file_stem())
-            .map(|stem| stem.to_string_lossy().into_owned())
+            .map(default_gate_id_from_path)
             .unwrap_or_else(|| "decision_traces".to_string())
     });
 

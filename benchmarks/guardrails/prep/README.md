@@ -372,7 +372,7 @@ logicpearl benchmark score-artifacts \
   --json
 ```
 
-## Frozen Pre-PINT Bundle
+## Frozen Guardrail Bundle
 
 For the public proof flow, the preferred source-of-truth is still a string of pearls:
 - one frozen observer artifact
@@ -382,12 +382,12 @@ For the public proof flow, the preferred source-of-truth is still a string of pe
 To make that easy to rerun and audit, the repo also ships a higher-level builder:
 
 ```bash
-python3 scripts/guardrails/build_pre_pint_guardrail_bundle.py \
-  --output-dir /tmp/guardrails_pre_pint_bundle
+python3 scripts/guardrails/build_guardrail_bundle.py \
+  --output-dir /tmp/guardrails_bundle
 ```
 
 That script:
-- adapts every staged non-`PINT` public corpus
+- adapts every staged public corpus
 - merges them into one train/dev benchmark set
 - freezes the observer artifact used for training
 - discovers the target pearls on train only
@@ -395,4 +395,4 @@ That script:
 - copies the frozen artifact set into one bundle
 - derives one combined pearl with route labels, messages, and counterfactual hints
 
-The frozen bundle is what should be committed before any final `PINT` run.
+The frozen bundle is what should be committed before any final proof-only benchmark run.

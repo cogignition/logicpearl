@@ -331,6 +331,7 @@ enum BenchmarkAdapterProfileArg {
     Vigil,
     #[value(name = "noeti-toxicqa", alias = "noeti-toxic-qa")]
     NoetiToxicQa,
+    MtAgentrisk,
     Pint,
 }
 
@@ -995,6 +996,9 @@ struct ObserverSynthesizeArgs {
         help_heading = "Advanced Observer Synthesis"
     )]
     selection_tolerance: f64,
+    /// Carry the input artifact forward unchanged instead of failing when a sampled or sparse dev slice produces no synthesizeable observer candidates.
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
+    allow_empty: bool,
     #[arg(long)]
     json: bool,
 }
@@ -1153,6 +1157,7 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
         BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
         BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,
         BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,
+        BenchmarkAdapterProfileArg::MtAgentrisk => BenchmarkAdapterProfile::MtAgentRisk,
         BenchmarkAdapterProfileArg::Pint => BenchmarkAdapterProfile::Pint,
     }
 }

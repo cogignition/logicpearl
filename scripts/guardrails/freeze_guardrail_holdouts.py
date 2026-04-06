@@ -25,6 +25,7 @@ class DatasetSpec:
     dataset_id: str
     profile: str
     raw_path: Path
+    optional: bool = False
 
 
 DATASETS: tuple[DatasetSpec, ...] = (
@@ -58,6 +59,12 @@ DATASETS: tuple[DatasetSpec, ...] = (
         "rogue_security_prompt_injections",
         "rogue-security-prompt-injections",
         DEFAULT_DATASETS_ROOT / "rogue_security" / "prompt_injections_benchmark.json",
+    ),
+    DatasetSpec(
+        "mt_agentrisk",
+        "mt-agentrisk",
+        DEFAULT_DATASETS_ROOT / "mt_agentrisk" / "full_repo",
+        optional=True,
     ),
 )
 
@@ -135,12 +142,23 @@ def main() -> int:
         raise SystemExit("no matching datasets selected")
 
     manifests: list[dict[str, Any]] = []
+    skipped_datasets: list[dict[str, Any]] = []
     for spec in DATASETS:
         if spec.dataset_id not in selected_ids:
             continue
 
         raw_path = (datasets_root / spec.raw_path.relative_to(DEFAULT_DATASETS_ROOT)).resolve()
         if not raw_path.exists():
+            if spec.optional:
+                skipped_datasets.append(
+                    {
+                        "dataset_id": spec.dataset_id,
+                        "profile": spec.profile,
+                        "raw_path": str(raw_path),
+                        "reason": "optional dataset root not staged locally",
+                    }
+                )
+                continue
             raise SystemExit(f"missing raw dataset input: {raw_path}")
 
         splits_dir = split_dir_for(datasets_root, spec)
@@ -191,7 +209,11 @@ def main() -> int:
         write_json(splits_dir / "split_manifest.json", manifest)
         manifests.append(manifest)
 
-    payload = {"dev_fraction": args.dev_fraction, "datasets": manifests}
+    payload = {
+        "dev_fraction": args.dev_fraction,
+        "datasets": manifests,
+        "skipped_datasets": skipped_datasets,
+    }
     print(json.dumps(payload, indent=2))
     return 0
 
