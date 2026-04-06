@@ -1,0 +1,87 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "route_status",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "request_abuse_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "instruction_boundary_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "data_exfiltration_bitmask",
+        "type": "int"
+      },
+      {
+        "id": "risk_score",
+        "type": "float"
+      },
+      {
+        "id": "likely_benign_request",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_if_any_prior_guardrail_fired",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "any": [
+          {
+            "feature": "request_abuse_bitmask",
+            "op": ">",
+            "value": 0
+          },
+          {
+            "feature": "instruction_boundary_bitmask",
+            "op": ">",
+            "value": 0
+          },
+          {
+            "feature": "data_exfiltration_bitmask",
+            "op": ">",
+            "value": 0
+          }
+        ]
+      },
+      "message": "One or more edge guardrails fired."
+    },
+    {
+      "id": "review_high_risk_probe",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "all": [
+          {
+            "feature": "risk_score",
+            "op": ">=",
+            "value": 0.78
+          },
+          {
+            "feature": "likely_benign_request",
+            "op": "==",
+            "value": false
+          }
+        ]
+      },
+      "message": "High-risk but non-decisive requests are routed for review."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example WAF edge route pearl."
+  },
+  "provenance": {
+    "generator": "logicpearl.waf_edge_example",
+    "generator_version": "0.1.1"
+  }
+}

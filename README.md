@@ -530,6 +530,17 @@ That file covers:
 
 A compact artifact-first demo for learning the pearl format and runtime shape.
 
+### WAF / AI Edge Demo
+
+A full raw-request demo showing:
+
+- custom observer plugins for domain semantics
+- grouped pearls for independent denial reasons
+- a collective route pearl for `allow`, `deny`, and `review`
+
+See:
+- [examples/waf_edge/README.md](./examples/waf_edge/README.md)
+
 ### OPA / Rego Demo
 
 A parity/import demo that starts from an existing Rego policy and emits LogicPearl artifacts.

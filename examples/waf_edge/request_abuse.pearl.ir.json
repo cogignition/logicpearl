@@ -1,0 +1,65 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "request_abuse",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "contains_injection_signature",
+        "type": "bool"
+      },
+      {
+        "id": "targets_sensitive_route",
+        "type": "bool"
+      },
+      {
+        "id": "origin_outside_trust_zone",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_injection_signature",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "contains_injection_signature",
+        "op": "==",
+        "value": true
+      },
+      "message": "Request contains an injection or traversal signature."
+    },
+    {
+      "id": "deny_sensitive_route_from_untrusted_zone",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "all": [
+          {
+            "feature": "targets_sensitive_route",
+            "op": "==",
+            "value": true
+          },
+          {
+            "feature": "origin_outside_trust_zone",
+            "op": "==",
+            "value": true
+          }
+        ]
+      },
+      "message": "Sensitive export or admin routes are blocked outside the trusted zone."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example WAF edge guardrail request-abuse pearl."
+  },
+  "provenance": {
+    "generator": "logicpearl.waf_edge_example",
+    "generator_version": "0.1.1"
+  }
+}

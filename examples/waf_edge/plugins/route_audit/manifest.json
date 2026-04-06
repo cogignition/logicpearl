@@ -1,0 +1,15 @@
+{
+  "name": "waf-edge-route-audit",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "verify",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "route_status_summary",
+    "pipeline_audit_summary",
+    "counterfactual_output"
+  ]
+}

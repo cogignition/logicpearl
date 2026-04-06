@@ -279,12 +279,16 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         )
         summary_path = output_dir / "summary.json"
         if completed.returncode != 0 and not summary_path.exists():
-            raise subprocess.CalledProcessError(
-                completed.returncode,
-                cmd,
-                output=completed.stdout,
-                stderr=completed.stderr,
+            reason = completed.stderr.strip() or completed.stdout.strip() or (
+                f"guardrail sampled benchmark failed with exit code {completed.returncode}"
             )
+            return {
+                "status": "unavailable",
+                "reason": reason,
+                "bundle_dir": stable_path(DEFAULT_GUARDRAIL_BUNDLE),
+                "baseline": stable_path(baseline_path),
+                "target_goal": target_goal,
+            }, {}
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         benchmarks = {
             item["benchmark"]: item["summary"] for item in summary["benchmarks"]

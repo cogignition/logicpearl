@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/v1/agents/support/search",
+  "source_zone": "trusted_app",
+  "headers": {
+    "tenant_scope": "support:acme",
+    "content_type": "application/json"
+  },
+  "query": {},
+  "body": {
+    "prompt": "Summarize the outage note for a new support engineer and list the three most important takeaways.",
+    "requested_tool": "browser",
+    "requested_action": "search_docs",
+    "scope": "tenant"
+  }
+}

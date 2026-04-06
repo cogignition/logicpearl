@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LogicPearl WAF Edge Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">LP</div>
+          <div>
+            <div class="brand-name">LogicPearl</div>
+            <div class="brand-subtitle">AI Edge WAF Demo</div>
+          </div>
+        </div>
+        <p class="sidebar-copy">
+          A custom WAF observer plugin maps raw HTTP traffic into explicit features. Grouped pearls
+          make the denial and review logic deterministic.
+        </p>
+        <nav class="case-nav" id="case-nav"></nav>
+      </aside>
+      <main class="main-content">
+        <section class="hero-card">
+          <div>
+            <div class="eyebrow">Flagship Example</div>
+            <h1 id="demo-title"></h1>
+            <p class="subtitle" id="demo-subtitle"></p>
+            <p class="tagline" id="demo-tagline"></p>
+          </div>
+          <div class="stats-grid" id="stats-grid"></div>
+        </section>
+
+        <section class="content-card">
+          <div class="section-header">
+            <div>
+              <div class="meta-label">Execution Shape</div>
+              <h2>Request In, Route Out</h2>
+            </div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-step">
+              <div class="flow-kicker">1</div>
+              <strong>Raw request</strong>
+              <span>Method, path, query, headers, and body arrive exactly as the edge sees them.</span>
+            </div>
+            <div class="flow-step">
+              <div class="flow-kicker">2</div>
+              <strong>Custom observer plugin</strong>
+              <span>WAF semantics live in the plugin, not in the generic engine.</span>
+            </div>
+            <div class="flow-step">
+              <div class="flow-kicker">3</div>
+              <strong>Grouped pearls</strong>
+              <span>Independent denial pearls evaluate request abuse, instruction hijack, and exfiltration.</span>
+            </div>
+            <div class="flow-step">
+              <div class="flow-kicker">4</div>
+              <strong>Route pearl</strong>
+              <span>The collective grouped pearl decides allow, deny, or review.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <section class="content-card workspace-primary">
+            <div class="section-header">
+              <div>
+                <div class="meta-label">Selected Request</div>
+                <h2 id="case-title"></h2>
+              </div>
+              <div class="route-pill" id="route-pill"></div>
+            </div>
+            <p class="focus-summary" id="case-summary"></p>
+            <div class="request-grid">
+              <article class="signal-card">
+                <div class="meta-label">HTTP Request</div>
+                <pre id="request-view"></pre>
+              </article>
+              <article class="signal-card">
+                <div class="meta-label">Observer Signals</div>
+                <div class="risk-panel">
+                  <div class="risk-label">Risk score</div>
+                  <div class="risk-value" id="risk-score"></div>
+                </div>
+                <div class="chip-section">
+                  <div class="chip-label">Triggered</div>
+                  <div class="chip-row" id="positive-features"></div>
+                </div>
+                <div class="chip-section">
+                  <div class="chip-label">Quiet</div>
+                  <div class="chip-row" id="negative-features"></div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="content-card workspace-secondary">
+            <div class="section-header">
+              <div>
+                <div class="meta-label">Grouped Pearl Evaluation</div>
+                <h2>Stage Results</h2>
+              </div>
+            </div>
+            <div class="stage-grid" id="stage-grid"></div>
+          </section>
+
+          <section class="focus-card workspace-verdict">
+            <div class="section-header">
+              <div>
+                <div class="meta-label">Final Route</div>
+                <h2 id="verdict-title"></h2>
+              </div>
+            </div>
+            <p class="focus-summary" id="verdict-summary"></p>
+            <div class="verdict-grid">
+              <article class="verdict-panel">
+                <div class="meta-label">Decision Basis</div>
+                <div class="verdict-value" id="decision-basis"></div>
+              </article>
+              <article class="verdict-panel">
+                <div class="meta-label">Counterfactual</div>
+                <div class="verdict-copy" id="counterfactual"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section class="content-card">
+          <div class="section-header">
+            <div>
+              <div class="meta-label">Artifacts</div>
+              <h2>Versioned Bundle, Not Just A Binary</h2>
+            </div>
+          </div>
+          <div class="artifact-grid" id="artifact-grid"></div>
+        </section>
+
+        <section class="content-card">
+          <div class="section-header">
+            <div>
+              <div class="meta-label">Boundary</div>
+              <h2>What Lives In Core Vs. Plugins</h2>
+            </div>
+          </div>
+          <ul class="principle-list" id="principles"></ul>
+        </section>
+      </main>
+    </div>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

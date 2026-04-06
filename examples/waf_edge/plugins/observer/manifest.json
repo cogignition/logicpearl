@@ -1,0 +1,15 @@
+{
+  "name": "waf-edge-observer",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "observer",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "capabilities": [
+    "raw_json_input",
+    "feature_output",
+    "waf_request_mapping"
+  ]
+}

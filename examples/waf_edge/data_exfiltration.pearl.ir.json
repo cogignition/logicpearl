@@ -1,0 +1,52 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "data_exfiltration",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requests_secret_exfiltration",
+        "type": "bool"
+      },
+      {
+        "id": "requests_bulk_export",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_secret_exfiltration",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requests_secret_exfiltration",
+        "op": "==",
+        "value": true
+      },
+      "message": "Secrets, credentials, and tokens cannot be extracted through the edge."
+    },
+    {
+      "id": "deny_bulk_export",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "requests_bulk_export",
+        "op": "==",
+        "value": true
+      },
+      "message": "Bulk export and download requests are blocked on the public edge."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example WAF edge exfiltration pearl."
+  },
+  "provenance": {
+    "generator": "logicpearl.waf_edge_example",
+    "generator_version": "0.1.1"
+  }
+}

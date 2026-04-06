@@ -1,0 +1,132 @@
+{
+  "pipeline_version": "1.0",
+  "pipeline_id": "waf_edge_guardrail_v1",
+  "entrypoint": "input",
+  "stages": [
+    {
+      "id": "observer",
+      "kind": "observer_plugin",
+      "plugin_manifest": "./plugins/observer/manifest.json",
+      "input": {
+        "method": "$.method",
+        "path": "$.path",
+        "source_zone": "$.source_zone",
+        "headers": "$.headers",
+        "query": "$.query",
+        "body": "$.body"
+      },
+      "export": {
+        "contains_injection_signature": "$.features.contains_injection_signature",
+        "targets_sensitive_route": "$.features.targets_sensitive_route",
+        "requests_instruction_override": "$.features.requests_instruction_override",
+        "targets_system_prompt": "$.features.targets_system_prompt",
+        "requests_secret_exfiltration": "$.features.requests_secret_exfiltration",
+        "requests_bulk_export": "$.features.requests_bulk_export",
+        "origin_outside_trust_zone": "$.features.origin_outside_trust_zone",
+        "uses_wrapper_obfuscation": "$.features.uses_wrapper_obfuscation",
+        "likely_benign_request": "$.features.likely_benign_request",
+        "risk_score": "$.features.risk_score"
+      }
+    },
+    {
+      "id": "request_abuse",
+      "kind": "pearl",
+      "artifact": "./request_abuse.pearl.ir.json",
+      "input": {
+        "contains_injection_signature": "@observer.contains_injection_signature",
+        "targets_sensitive_route": "@observer.targets_sensitive_route",
+        "origin_outside_trust_zone": "@observer.origin_outside_trust_zone"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "instruction_boundary",
+      "kind": "pearl",
+      "artifact": "./instruction_boundary.pearl.ir.json",
+      "input": {
+        "requests_instruction_override": "@observer.requests_instruction_override",
+        "targets_system_prompt": "@observer.targets_system_prompt",
+        "uses_wrapper_obfuscation": "@observer.uses_wrapper_obfuscation"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "data_exfiltration",
+      "kind": "pearl",
+      "artifact": "./data_exfiltration.pearl.ir.json",
+      "input": {
+        "requests_secret_exfiltration": "@observer.requests_secret_exfiltration",
+        "requests_bulk_export": "@observer.requests_bulk_export"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "route_status",
+      "kind": "pearl",
+      "artifact": "./route_status.pearl.ir.json",
+      "input": {
+        "request_abuse_bitmask": "@request_abuse.bitmask",
+        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "risk_score": "@observer.risk_score",
+        "likely_benign_request": "@observer.likely_benign_request"
+      },
+      "export": {
+        "bitmask": "$.bitmask",
+        "allow": "$.allow"
+      }
+    },
+    {
+      "id": "audit",
+      "kind": "verify_plugin",
+      "plugin_manifest": "./plugins/route_audit/manifest.json",
+      "input": {
+        "allow": "@route_status.allow",
+        "bitmask": "@route_status.bitmask",
+        "request_abuse_bitmask": "@request_abuse.bitmask",
+        "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+        "data_exfiltration_bitmask": "@data_exfiltration.bitmask",
+        "risk_score": "@observer.risk_score",
+        "likely_benign_request": "@observer.likely_benign_request"
+      },
+      "export": {
+        "route_status": "$.route_status",
+        "decision_basis": "$.decision_basis",
+        "explanation": "$.explanation",
+        "counterfactual": "$.counterfactual",
+        "consistent": "$.summary.consistent"
+      }
+    }
+  ],
+  "output": {
+    "allow": "@route_status.allow",
+    "bitmask": "@route_status.bitmask",
+    "route_status": "@audit.route_status",
+    "decision_basis": "@audit.decision_basis",
+    "explanation": "@audit.explanation",
+    "counterfactual": "@audit.counterfactual",
+    "consistent": "@audit.consistent",
+    "risk_score": "@observer.risk_score",
+    "contains_injection_signature": "@observer.contains_injection_signature",
+    "targets_sensitive_route": "@observer.targets_sensitive_route",
+    "requests_instruction_override": "@observer.requests_instruction_override",
+    "targets_system_prompt": "@observer.targets_system_prompt",
+    "requests_secret_exfiltration": "@observer.requests_secret_exfiltration",
+    "requests_bulk_export": "@observer.requests_bulk_export",
+    "origin_outside_trust_zone": "@observer.origin_outside_trust_zone",
+    "uses_wrapper_obfuscation": "@observer.uses_wrapper_obfuscation",
+    "likely_benign_request": "@observer.likely_benign_request",
+    "request_abuse_bitmask": "@request_abuse.bitmask",
+    "instruction_boundary_bitmask": "@instruction_boundary.bitmask",
+    "data_exfiltration_bitmask": "@data_exfiltration.bitmask"
+  }
+}

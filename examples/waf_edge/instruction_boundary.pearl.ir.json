@@ -1,0 +1,74 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "instruction_boundary",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requests_instruction_override",
+        "type": "bool"
+      },
+      {
+        "id": "targets_system_prompt",
+        "type": "bool"
+      },
+      {
+        "id": "uses_wrapper_obfuscation",
+        "type": "bool"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "deny_instruction_override",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "any": [
+          {
+            "feature": "requests_instruction_override",
+            "op": "==",
+            "value": true
+          },
+          {
+            "feature": "targets_system_prompt",
+            "op": "==",
+            "value": true
+          }
+        ]
+      },
+      "message": "Prompt tries to override trusted instructions or inspect hidden behavior."
+    },
+    {
+      "id": "deny_wrapped_override_probe",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "all": [
+          {
+            "feature": "uses_wrapper_obfuscation",
+            "op": "==",
+            "value": true
+          },
+          {
+            "feature": "requests_instruction_override",
+            "op": "==",
+            "value": true
+          }
+        ]
+      },
+      "message": "Obfuscated wrapper text cannot be used to smuggle instruction overrides."
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "correctness_scope": "Example WAF edge instruction-boundary pearl."
+  },
+  "provenance": {
+    "generator": "logicpearl.waf_edge_example",
+    "generator_version": "0.1.1"
+  }
+}
