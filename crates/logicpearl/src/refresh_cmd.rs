@@ -297,8 +297,17 @@ pub(crate) fn run_refresh_benchmarks(args: RefreshBenchmarksArgs) -> Result<()> 
         observer_target_goal_name(&args.target_goal)
     );
 
-    for step in build_refresh_steps(&repo_root, &args)? {
-        run_refresh_step(&repo_root, &logs_dir, &step, args.verbose)?;
+    let steps = build_refresh_steps(&repo_root, &args)?;
+    let total_steps = steps.len();
+    for (index, step) in steps.iter().enumerate() {
+        run_refresh_step(
+            &repo_root,
+            &logs_dir,
+            step,
+            args.verbose,
+            index + 1,
+            total_steps,
+        )?;
     }
 
     println!();
@@ -1691,10 +1700,18 @@ fn run_refresh_step(
     logs_dir: &Path,
     step: &RefreshStep,
     verbose: bool,
+    step_index: usize,
+    total_steps: usize,
 ) -> Result<()> {
     let log_path = logs_dir.join(format!("{}.log", step.id));
     println!();
-    println!("[{}] {}", simple_timestamp(), step.title.bold());
+    println!(
+        "[{}] ({}/{}) {}",
+        simple_timestamp(),
+        step_index,
+        total_steps,
+        step.title.bold()
+    );
     println!("  {} {}", "Log".bright_black(), log_path.display());
 
     if verbose {
@@ -1745,11 +1762,21 @@ fn run_refresh_step(
         }
         let elapsed = started.elapsed();
         if elapsed >= last_heartbeat + HEARTBEAT_INTERVAL {
-            println!(
-                "  {} {}s",
-                "Still running".bright_black(),
-                elapsed.as_secs()
-            );
+            let progress = refresh_progress_snapshot(step, &log_path)?;
+            if let Some(progress) = progress {
+                println!(
+                    "  {} {}s  {}",
+                    "Still running".bright_black(),
+                    elapsed.as_secs(),
+                    progress.bright_black()
+                );
+            } else {
+                println!(
+                    "  {} {}s",
+                    "Still running".bright_black(),
+                    elapsed.as_secs()
+                );
+            }
             last_heartbeat = elapsed;
         }
         thread::sleep(Duration::from_secs(1));
@@ -1786,6 +1813,107 @@ fn tail_lines(path: &Path, max_lines: usize) -> Result<Vec<String>> {
         .into_diagnostic()?;
     let start = lines.len().saturating_sub(max_lines);
     Ok(lines[start..].to_vec())
+}
+
+fn refresh_progress_snapshot(step: &RefreshStep, log_path: &Path) -> Result<Option<String>> {
+    if !log_path.exists() {
+        return Ok(None);
+    }
+    let lines = tail_lines(log_path, 400)?;
+    match step.id {
+        "04_guardrails_build" => Ok(guardrails_build_progress(&lines)),
+        "05_guardrails_eval" => Ok(last_meaningful_log_line(&lines)),
+        "06_waf_cases" => Ok(last_meaningful_log_line(&lines)),
+        "07_waf_build" => Ok(last_meaningful_log_line(&lines)),
+        _ => Ok(last_meaningful_log_line(&lines)),
+    }
+}
+
+fn guardrails_build_progress(lines: &[String]) -> Option<String> {
+    let mut selected_signals = BTreeSet::new();
+    let mut current_signal = None::<String>;
+    let mut current_mode = None::<String>;
+    let mut current_cap = None::<String>;
+
+    for line in lines {
+        if let Some(signal) = extract_between(line, "signal=", " ") {
+            current_signal = Some(signal.to_string());
+        }
+        if let Some(mode) = extract_between(line, "mode=", " ") {
+            current_mode = Some(
+                mode.trim_matches(|c| c == '{' || c == '}' || c == ',')
+                    .to_string(),
+            );
+        }
+        if let Some(cap) = extract_between(line, "cap=", " ") {
+            current_cap = Some(cap.to_string());
+        }
+        if line.contains("selected cap=") {
+            if let Some(signal) = extract_between(line, "signal=", " ") {
+                selected_signals.insert(signal.to_string());
+            }
+        }
+    }
+
+    let selected = selected_signals.len();
+    if selected >= GUARDRAIL_SIGNALS.len() {
+        return Some("phase=post-synthesis finalize".to_string());
+    }
+
+    if let Some(signal) = current_signal {
+        let mut parts = vec![format!(
+            "phase=synthesize signal={}/{}:{}",
+            selected + 1,
+            GUARDRAIL_SIGNALS.len(),
+            signal
+        )];
+        if let Some(mode) = current_mode {
+            parts.push(format!("mode={mode}"));
+        }
+        if let Some(cap) = current_cap {
+            parts.push(format!("cap={cap}"));
+        }
+        return Some(parts.join("  "));
+    }
+
+    if selected > 0 {
+        return Some(format!(
+            "phase=synthesize completed_signals={}/{}",
+            selected,
+            GUARDRAIL_SIGNALS.len()
+        ));
+    }
+
+    last_meaningful_log_line(lines)
+}
+
+fn last_meaningful_log_line(lines: &[String]) -> Option<String> {
+    lines.iter().rev().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if trimmed == "{" || trimmed == "}" || trimmed == "[" || trimmed == "]" {
+            return None;
+        }
+        if trimmed.starts_with('"') || trimmed.starts_with("},") || trimmed.starts_with("],") {
+            return None;
+        }
+        if trimmed.starts_with("[logicpearl ") || trimmed.starts_with("Compiling ") {
+            return Some(trimmed.to_string());
+        }
+        if trimmed.starts_with("Running `") || trimmed.starts_with("Finished `") {
+            return Some(trimmed.to_string());
+        }
+        None
+    })
+}
+
+fn extract_between<'a>(line: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let start_index = line.find(start)? + start.len();
+    let remainder = &line[start_index..];
+    let end_index = remainder.find(end).unwrap_or(remainder.len());
+    Some(&remainder[..end_index])
 }
 
 fn require_repo_root() -> Result<PathBuf> {

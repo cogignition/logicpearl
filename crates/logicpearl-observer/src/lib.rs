@@ -759,7 +759,7 @@ fn spans_are_near(left: (usize, usize), right: (usize, usize)) -> bool {
     let gap = if left.1 <= right.0 {
         right.0 - left.1
     } else if right.1 <= left.0 {
-        left.0 - right.1
+        left.0.saturating_sub(right.1)
     } else {
         0
     };
