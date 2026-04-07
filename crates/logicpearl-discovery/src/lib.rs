@@ -1,5 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{ComparisonOperator, ComparisonValue, RuleDefinition, RuleVerificationStatus};
+use logicpearl_ir::{
+    ComparisonOperator, ComparisonValue, FeatureGovernance, RuleDefinition, RuleVerificationStatus,
+};
 use logicpearl_runtime::evaluate_gate;
 use serde::Serialize;
 use serde_json::Value;
@@ -40,6 +42,7 @@ pub struct BuildOptions {
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
+    pub feature_governance: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -73,6 +76,15 @@ pub struct DiscoverOptions {
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
+    pub feature_governance: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+pub struct FeatureGovernanceConfig {
+    #[serde(default = "default_feature_governance_version")]
+    pub feature_governance_version: String,
+    #[serde(default)]
+    pub features: BTreeMap<String, FeatureGovernance>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -219,6 +231,10 @@ fn default_rule_set_version() -> String {
     "1.0".to_string()
 }
 
+fn default_feature_governance_version() -> String {
+    "1.0".to_string()
+}
+
 fn default_rule_set_id() -> String {
     "pinned_rules".to_string()
 }
@@ -269,6 +285,8 @@ fn build_cache_manifest(
         refine: bool,
         pinned_rules_path: Option<String>,
         pinned_rules_fingerprint: Option<String>,
+        feature_governance_path: Option<String>,
+        feature_governance_fingerprint: Option<String>,
     }
 
     let rows_fingerprint: Vec<BuildFingerprintRow<'_>> = rows
@@ -284,6 +302,11 @@ fn build_cache_manifest(
         .collect();
     let pinned_rules_fingerprint = options
         .pinned_rules
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
+    let feature_governance_fingerprint = options
+        .feature_governance
         .as_ref()
         .map(|path| fingerprint_file(path))
         .transpose()?;
@@ -305,6 +328,11 @@ fn build_cache_manifest(
                 .as_ref()
                 .map(|path| path.display().to_string()),
             pinned_rules_fingerprint,
+            feature_governance_path: options
+                .feature_governance
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            feature_governance_fingerprint,
         })?,
     })
 }
@@ -318,10 +346,17 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         refine: bool,
         pinned_rules_path: Option<String>,
         pinned_rules_fingerprint: Option<String>,
+        feature_governance_path: Option<String>,
+        feature_governance_fingerprint: Option<String>,
     }
 
     let pinned_rules_fingerprint = options
         .pinned_rules
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
+    let feature_governance_fingerprint = options
+        .feature_governance
         .as_ref()
         .map(|path| fingerprint_file(path))
         .transpose()?;
@@ -340,6 +375,11 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
                 .as_ref()
                 .map(|path| path.display().to_string()),
             pinned_rules_fingerprint,
+            feature_governance_path: options
+                .feature_governance
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            feature_governance_fingerprint,
         })?,
     })
 }
@@ -349,6 +389,11 @@ fn fingerprint_file(path: &Path) -> Result<String> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     Ok(format!("{:016x}", hasher.finish()))
+}
+
+pub fn load_feature_governance(path: &Path) -> Result<FeatureGovernanceConfig> {
+    let payload = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&payload)?)
 }
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
@@ -367,6 +412,7 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         residual_pass: options.residual_pass,
         refine: options.refine,
         pinned_rules: options.pinned_rules.clone(),
+        feature_governance: options.feature_governance.clone(),
     };
     build_pearl_from_rows(
         &loaded.rows,
@@ -527,6 +573,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 residual_pass: options.residual_pass,
                 refine: options.refine,
                 pinned_rules: options.pinned_rules.clone(),
+                feature_governance: options.feature_governance.clone(),
             },
         ) {
             Ok(build) => build,
@@ -616,6 +663,12 @@ pub fn build_pearl_from_rows(
     }
 
     let (augmented_rows, derived_features) = augment_rows_with_numeric_interactions(rows);
+    let feature_governance = options
+        .feature_governance
+        .as_deref()
+        .map(load_feature_governance)
+        .transpose()?
+        .unwrap_or_default();
     let residual_options = options
         .residual_pass
         .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
@@ -632,6 +685,7 @@ pub fn build_pearl_from_rows(
             &augmented_rows,
             rows,
             &derived_features,
+            &feature_governance.features,
             &options.gate_id,
             residual_options.as_ref(),
             refinement_options.as_ref(),
@@ -730,7 +784,7 @@ mod tests {
         RuleKind, RuleVerificationStatus,
     };
     use serde_json::{Number, Value};
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
 
     #[test]
@@ -908,6 +962,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -941,6 +996,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1060,6 +1116,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1095,6 +1152,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1126,6 +1184,7 @@ mod tests {
             &rows,
             &rows,
             &[],
+            &BTreeMap::new(),
             "residual_gate",
             vec![rule_from_candidate(
                 0,
@@ -1186,6 +1245,7 @@ mod tests {
                 residual_pass: false,
                 refine: true,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1222,6 +1282,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1263,6 +1324,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1322,6 +1384,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();
@@ -1434,6 +1497,7 @@ mod tests {
             residual_pass: false,
             refine: false,
             pinned_rules: None,
+            feature_governance: None,
         };
 
         let first = build_pearl_from_csv(&csv_path, &options).unwrap();
@@ -1557,6 +1621,7 @@ mod tests {
             residual_pass: false,
             refine: false,
             pinned_rules: None,
+            feature_governance: None,
         };
 
         let first = discover_from_csv(&csv_path, &options).unwrap();
@@ -1640,6 +1705,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_governance: None,
             },
         )
         .unwrap();

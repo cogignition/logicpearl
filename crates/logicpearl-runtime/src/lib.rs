@@ -191,6 +191,7 @@ mod tests {
                     min: None,
                     max: None,
                     editable: None,
+                    governance: None,
                     derived: None,
                 }],
             },
@@ -280,6 +281,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        governance: None,
                         derived: None,
                     },
                     FeatureDefinition {
@@ -290,6 +292,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        governance: None,
                         derived: None,
                     },
                     FeatureDefinition {
@@ -300,6 +303,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        governance: None,
                         derived: Some(logicpearl_ir::DerivedFeatureDefinition {
                             op: logicpearl_ir::DerivedFeatureOperator::Ratio,
                             left_feature: "debt".to_string(),

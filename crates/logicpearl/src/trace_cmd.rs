@@ -1,9 +1,9 @@
 use super::*;
-use logicpearl_discovery::load_decision_traces_auto;
+use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
 use logicpearl_ir::{
-    validate_expression_against_schema, ComparisonValue, EvaluationConfig, Expression,
-    FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, Provenance, RuleDefinition,
-    RuleKind,
+    validate_expression_against_schema, BooleanEvidencePolicy, ComparisonValue, EvaluationConfig,
+    Expression, FeatureDefinition, FeatureGovernance, FeatureType, InputSchema, LogicPearlGateIr,
+    Provenance, RuleDefinition, RuleKind,
 };
 use logicpearl_runtime::evaluate_gate;
 use rand::prelude::*;
@@ -126,7 +126,15 @@ struct TraceAuditReport {
     nuisance_field_count: usize,
     suspicious_nuisance_fields: Vec<String>,
     max_nuisance_drift: Option<f64>,
+    governance_suggestions: Vec<TraceGovernanceSuggestion>,
     fields: Vec<TraceFieldAudit>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TraceGovernanceSuggestion {
+    field: String,
+    deny_boolean_evidence: String,
+    reason: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -248,6 +256,10 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
         args.drift_threshold,
     )?;
 
+    if let Some(path) = &args.write_feature_governance {
+        write_feature_governance_suggestions(path, &report.governance_suggestions)?;
+    }
+
     if args.fail_on_skew && !report.suspicious_nuisance_fields.is_empty() {
         if args.json {
             println!(
@@ -305,6 +317,31 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
                     field.field,
                     field.drift_score
                 );
+            }
+        }
+        if report.governance_suggestions.is_empty() {
+            println!(
+                "  {} {}",
+                "Governance".bright_black(),
+                "no automatic suggestions".bright_black()
+            );
+        } else {
+            println!(
+                "  {} {}",
+                "Governance".bright_black(),
+                format!("{} suggestion(s)", report.governance_suggestions.len()).bold()
+            );
+            for suggestion in report.governance_suggestions.iter().take(5) {
+                println!(
+                    "  {} {} -> {} ({})",
+                    "Suggest".bright_black(),
+                    suggestion.field,
+                    suggestion.deny_boolean_evidence,
+                    suggestion.reason
+                );
+            }
+            if let Some(path) = &args.write_feature_governance {
+                println!("  {} {}", "Wrote".bright_black(), path.display());
             }
         }
     }
@@ -484,6 +521,7 @@ fn spec_input_schema(spec: &TraceGenerationSpec) -> Result<InputSchema> {
                     min,
                     max,
                     editable: Some(true),
+                    governance: None,
                     derived: None,
                 })
             })
@@ -788,6 +826,7 @@ fn audit_generated_rows(
     }
 
     let mut fields = Vec::new();
+    let mut governance_suggestions = Vec::new();
     for field in field_names {
         let allowed_values = rows
             .iter()
@@ -810,6 +849,15 @@ fn audit_generated_rows(
             .get(&field)
             .cloned()
             .unwrap_or(TraceFieldRole::Unknown);
+        if let Some(suggestion) = suggest_feature_governance(
+            &field,
+            &role,
+            &feature_type,
+            &allowed_values,
+            &denied_values,
+        )? {
+            governance_suggestions.push(suggestion);
+        }
         let audit = match feature_type {
             FeatureType::Int | FeatureType::Float => audit_numeric_field(
                 &field,
@@ -861,8 +909,133 @@ fn audit_generated_rows(
             .count(),
         suspicious_nuisance_fields,
         max_nuisance_drift,
+        governance_suggestions,
         fields,
     })
+}
+
+fn suggest_feature_governance(
+    field: &str,
+    role: &TraceFieldRole,
+    feature_type: &FeatureType,
+    allowed_values: &[&Value],
+    denied_values: &[&Value],
+) -> Result<Option<TraceGovernanceSuggestion>> {
+    if *feature_type != FeatureType::Bool {
+        return Ok(None);
+    }
+
+    let field_lower = field.to_ascii_lowercase();
+    let allowed_true_share = boolean_true_share(allowed_values)?;
+    let denied_true_share = boolean_true_share(denied_values)?;
+
+    let suggestion = if matches!(role, TraceFieldRole::Nuisance) {
+        Some((
+            BooleanEvidencePolicy::Never,
+            "marked as nuisance/background".to_string(),
+        ))
+    } else if is_never_candidate(&field_lower) {
+        Some((
+            BooleanEvidencePolicy::Never,
+            "request-shape or bookkeeping signal".to_string(),
+        ))
+    } else if is_true_only_candidate(&field_lower) {
+        Some((
+            BooleanEvidencePolicy::TrueOnly,
+            format!(
+                "detection-style signal; true is meaningful, false is usually just not observed (allow_true={:.2}, deny_true={:.2})",
+                allowed_true_share, denied_true_share
+            ),
+        ))
+    } else {
+        None
+    };
+
+    Ok(
+        suggestion.map(|(policy, reason)| TraceGovernanceSuggestion {
+            field: field.to_string(),
+            deny_boolean_evidence: boolean_policy_name(&policy).to_string(),
+            reason,
+        }),
+    )
+}
+
+fn boolean_true_share(values: &[&Value]) -> Result<f64> {
+    let true_count = values
+        .iter()
+        .map(|value| {
+            value.as_bool().ok_or_else(|| {
+                trace_error("boolean governance suggestion encountered a non-boolean value")
+            })
+        })
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|value| *value)
+        .count();
+    Ok(true_count as f64 / values.len() as f64)
+}
+
+fn is_true_only_candidate(field: &str) -> bool {
+    let prefixes = [
+        "contains_",
+        "has_",
+        "meta_reports_",
+        "targets_",
+        "path_targets_",
+    ];
+    prefixes.iter().any(|prefix| field.starts_with(prefix)) && !is_never_candidate(field)
+}
+
+fn is_never_candidate(field: &str) -> bool {
+    field.starts_with("request_has_")
+        || field.starts_with("likely_")
+        || field.contains("benign")
+        || matches!(field, "contains_quote")
+}
+
+fn boolean_policy_name(policy: &BooleanEvidencePolicy) -> &'static str {
+    match policy {
+        BooleanEvidencePolicy::Either => "either",
+        BooleanEvidencePolicy::TrueOnly => "true_only",
+        BooleanEvidencePolicy::FalseOnly => "false_only",
+        BooleanEvidencePolicy::Never => "never",
+    }
+}
+
+fn write_feature_governance_suggestions(
+    path: &Path,
+    suggestions: &[TraceGovernanceSuggestion],
+) -> Result<()> {
+    let config = FeatureGovernanceConfig {
+        feature_governance_version: "1".to_string(),
+        features: suggestions
+            .iter()
+            .map(|suggestion| {
+                let policy = match suggestion.deny_boolean_evidence.as_str() {
+                    "true_only" => BooleanEvidencePolicy::TrueOnly,
+                    "false_only" => BooleanEvidencePolicy::FalseOnly,
+                    "never" => BooleanEvidencePolicy::Never,
+                    _ => BooleanEvidencePolicy::Either,
+                };
+                (
+                    suggestion.field.clone(),
+                    FeatureGovernance {
+                        deny_boolean_evidence: Some(policy),
+                    },
+                )
+            })
+            .collect(),
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| trace_error("governance output path must have a parent directory"))?;
+    fs::create_dir_all(parent).into_diagnostic()?;
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&config).into_diagnostic()? + "\n",
+    )
+    .into_diagnostic()?;
+    Ok(())
 }
 
 fn audit_numeric_field(
@@ -1393,5 +1566,65 @@ mod tests {
             report.suspicious_nuisance_fields,
             vec!["device".to_string()]
         );
+    }
+
+    #[test]
+    fn governance_audit_suggests_true_only_for_detection_boolean() {
+        let rows = vec![
+            DecisionTraceRow {
+                features: HashMap::from([("contains_xss_signature".to_string(), json!(false))]),
+                allowed: true,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("contains_xss_signature".to_string(), json!(false))]),
+                allowed: true,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("contains_xss_signature".to_string(), json!(true))]),
+                allowed: false,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("contains_xss_signature".to_string(), json!(true))]),
+                allowed: false,
+            },
+        ];
+        let report = audit_generated_rows(&rows, "allowed", &HashMap::new(), &HashMap::new(), 0.15)
+            .expect("audit should succeed");
+        let suggestion = report
+            .governance_suggestions
+            .iter()
+            .find(|suggestion| suggestion.field == "contains_xss_signature")
+            .expect("should emit governance suggestion");
+        assert_eq!(suggestion.deny_boolean_evidence, "true_only");
+    }
+
+    #[test]
+    fn governance_audit_suggests_never_for_bookkeeping_boolean() {
+        let rows = vec![
+            DecisionTraceRow {
+                features: HashMap::from([("request_has_body".to_string(), json!(false))]),
+                allowed: true,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("request_has_body".to_string(), json!(true))]),
+                allowed: true,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("request_has_body".to_string(), json!(true))]),
+                allowed: false,
+            },
+            DecisionTraceRow {
+                features: HashMap::from([("request_has_body".to_string(), json!(false))]),
+                allowed: false,
+            },
+        ];
+        let report = audit_generated_rows(&rows, "allowed", &HashMap::new(), &HashMap::new(), 0.15)
+            .expect("audit should succeed");
+        let suggestion = report
+            .governance_suggestions
+            .iter()
+            .find(|suggestion| suggestion.field == "request_has_body")
+            .expect("should emit governance suggestion");
+        assert_eq!(suggestion.deny_boolean_evidence, "never");
     }
 }

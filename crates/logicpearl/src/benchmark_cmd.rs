@@ -297,6 +297,7 @@ pub(crate) fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
                     residual_pass: false,
                     refine: false,
                     pinned_rules: None,
+                    feature_governance: None,
                 },
             )
             .into_diagnostic()

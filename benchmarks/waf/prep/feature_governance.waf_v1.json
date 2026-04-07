@@ -1,0 +1,92 @@
+{
+  "feature_governance_version": "1",
+  "features": {
+    "contains_sqli_signature": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_xss_signature": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_path_traversal": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_server_include": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_php_injection": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "targets_sensitive_route": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "path_targets_admin": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "path_targets_hidden": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_restricted_extension": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "origin_outside_trust_zone": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "has_scanner_fingerprint": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "has_malformed_encoding": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_sqli": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_xss": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_restricted_resource": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_bad_bot": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_protocol_violation": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_command_injection": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "meta_reports_php_injection": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_waitfor_delay": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_union_select": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_comment_sequence": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_script_tag": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_event_handler": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_dotdot": {
+      "deny_boolean_evidence": "true_only"
+    },
+    "contains_quote": {
+      "deny_boolean_evidence": "never"
+    },
+    "request_has_query": {
+      "deny_boolean_evidence": "never"
+    },
+    "request_has_body": {
+      "deny_boolean_evidence": "never"
+    },
+    "likely_benign_request": {
+      "deny_boolean_evidence": "never"
+    }
+  }
+}

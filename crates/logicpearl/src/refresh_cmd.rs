@@ -26,6 +26,7 @@ const BENCHMARK_BATCH_SAMPLE: usize = 200;
 const TRACE_PROJECTION_GUARDRAILS: &str =
     "benchmarks/guardrails/prep/trace_projection.guardrails_v1.json";
 const TRACE_PROJECTION_WAF: &str = "benchmarks/waf/prep/trace_projection.waf_v1.json";
+const FEATURE_GOVERNANCE_WAF: &str = "benchmarks/waf/prep/feature_governance.waf_v1.json";
 const OBSERVER_MANIFEST_WAF: &str = "examples/waf_edge/plugins/observer/manifest.json";
 const ROUTE_AUDIT_MANIFEST_WAF: &str = "examples/waf_edge/plugins/route_audit/manifest.json";
 const SCORE_MODEL_PATH: &str = "scripts/scoreboard/score_model.json";
@@ -1060,6 +1061,7 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
     let observer_manifest = repo_root.join(OBSERVER_MANIFEST_WAF);
     let route_audit_manifest = repo_root.join(ROUTE_AUDIT_MANIFEST_WAF);
     let trace_projection = repo_root.join(TRACE_PROJECTION_WAF);
+    let feature_governance = repo_root.join(FEATURE_GOVERNANCE_WAF);
 
     let train_observed = train_dir.join("observed.jsonl");
     cached_waf_observe(
@@ -1087,6 +1089,7 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         args.residual_pass,
         args.refine,
         args.skip_compile,
+        &feature_governance,
     )?;
 
     let copied_observer_manifest = copy_plugin_bundle(
@@ -3600,6 +3603,7 @@ fn read_jsonl_rows<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
     Ok(rows)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_waf_target_artifact_set(
     repo_root: &Path,
     cli: &[String],
@@ -3608,6 +3612,7 @@ fn build_waf_target_artifact_set(
     residual_pass: bool,
     refine: bool,
     skip_compile: bool,
+    feature_governance: &Path,
 ) -> Result<ArtifactSet> {
     let artifacts_dir = discovered_dir.join("artifacts");
     fs::create_dir_all(&artifacts_dir).into_diagnostic()?;
@@ -3630,6 +3635,8 @@ fn build_waf_target_artifact_set(
                     "allowed",
                     "--output-dir",
                     &target_output_dir.display().to_string(),
+                    "--feature-governance",
+                    &feature_governance.display().to_string(),
                     "--json",
                 ],
             );

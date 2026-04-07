@@ -156,6 +156,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             residual_pass: args.residual_pass,
             refine: args.refine,
             pinned_rules: args.pinned_rules.clone(),
+            feature_governance: args.feature_governance.clone(),
         },
     )
     .into_diagnostic()
@@ -420,6 +421,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         residual_pass: args.residual_pass,
         refine: args.refine,
         pinned_rules: args.pinned_rules.clone(),
+        feature_governance: args.feature_governance.clone(),
     };
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {

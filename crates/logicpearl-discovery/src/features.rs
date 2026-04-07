@@ -129,6 +129,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
                         min: None,
                         max: None,
                         editable: Some(false),
+                        governance: None,
                         derived: Some(DerivedFeatureDefinition {
                             op,
                             left_feature: left_feature.clone(),

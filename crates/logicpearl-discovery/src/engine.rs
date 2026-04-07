@@ -1,8 +1,9 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
-    FeatureDefinition, InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind,
-    RuleVerificationStatus, VerificationConfig,
+    BooleanEvidencePolicy, ComparisonExpression, ComparisonOperator, ComparisonValue,
+    EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, InputSchema,
+    LogicPearlGateIr, Provenance, RuleDefinition, RuleKind, RuleVerificationStatus,
+    VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
 use logicpearl_verify::{
@@ -53,20 +54,28 @@ struct DiscoveryValidationSplit {
     validation_indices: Vec<usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_gate(
     rows: &[DecisionTraceRow],
     source_rows: &[DecisionTraceRow],
     derived_features: &[FeatureDefinition],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
     gate_id: &str,
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
     pinned_rules: Option<&PinnedRuleSet>,
 ) -> Result<(LogicPearlGateIr, usize, usize, usize)> {
-    let mut rules = discover_rules(rows)?;
+    let mut rules = discover_rules(rows, feature_governance)?;
     let mut residual_rules_discovered = 0usize;
     if let Some(options) = residual_options {
-        let first_pass_gate =
-            gate_from_rules(rows, source_rows, derived_features, gate_id, rules.clone())?;
+        let first_pass_gate = gate_from_rules(
+            rows,
+            source_rows,
+            derived_features,
+            feature_governance,
+            gate_id,
+            rules.clone(),
+        )?;
         match discover_residual_rules(rows, &first_pass_gate, options) {
             Ok(residual_rules) => {
                 residual_rules_discovered = residual_rules.len();
@@ -105,7 +114,14 @@ pub(super) fn build_gate(
     }
 
     Ok((
-        gate_from_rules(rows, source_rows, derived_features, gate_id, rules)?,
+        gate_from_rules(
+            rows,
+            source_rows,
+            derived_features,
+            feature_governance,
+            gate_id,
+            rules,
+        )?,
         residual_rules_discovered,
         refined_rules_applied,
         pinned_rules_applied,
@@ -116,6 +132,7 @@ pub(super) fn gate_from_rules(
     rows: &[DecisionTraceRow],
     source_rows: &[DecisionTraceRow],
     derived_features: &[FeatureDefinition],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
     gate_id: &str,
     rules: Vec<RuleDefinition>,
 ) -> Result<LogicPearlGateIr> {
@@ -130,6 +147,7 @@ pub(super) fn gate_from_rules(
             min: None,
             max: None,
             editable: None,
+            governance: feature_governance.get(&feature).cloned(),
             derived: None,
         })
         .collect::<Vec<_>>();
@@ -259,7 +277,10 @@ fn rule_signature(rule: &RuleDefinition) -> String {
     serde_json::to_string(&normalized).expect("rule signature serialization")
 }
 
-pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefinition>> {
+pub(super) fn discover_rules(
+    rows: &[DecisionTraceRow],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
+) -> Result<Vec<RuleDefinition>> {
     let denied_indices: Vec<usize> = rows
         .iter()
         .enumerate()
@@ -282,7 +303,12 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
             None => (denied_indices.clone(), allowed_indices.clone(), None),
         };
 
-    let all_candidates = candidate_rules(rows, &train_denied_indices, &train_allowed_indices);
+    let all_candidates = candidate_rules(
+        rows,
+        &train_denied_indices,
+        &train_allowed_indices,
+        feature_governance,
+    );
     if all_candidates.is_empty() {
         return Err(LogicPearlError::message("no recoverable deny rule found"));
     }
@@ -292,6 +318,7 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
         &train_denied_indices,
         &train_allowed_indices,
         validation_indices,
+        feature_governance,
     )?;
     let shortlist = exact_selection_shortlist(
         &all_candidates,
@@ -321,6 +348,7 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
         &train_allowed_indices,
         validation_indices,
         selected_candidates,
+        feature_governance,
     );
 
     Ok(selected_candidates
@@ -404,6 +432,7 @@ fn recover_rare_rules(
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
     selected_candidates: Vec<CandidateRule>,
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> Vec<CandidateRule> {
     let mut recovered = selected_candidates;
     for _ in 0..RARE_RULE_RECOVERY_MAX_PASSES {
@@ -424,11 +453,12 @@ fn recover_rare_rules(
             .iter()
             .map(CandidateRule::signature)
             .collect::<BTreeSet<_>>();
-        let rescue_shortlist = candidate_rules(rows, &uncovered_denied, allowed_indices)
-            .into_iter()
-            .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
-            .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
-            .collect::<Vec<_>>();
+        let rescue_shortlist =
+            candidate_rules(rows, &uncovered_denied, allowed_indices, feature_governance)
+                .into_iter()
+                .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
+                .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
+                .collect::<Vec<_>>();
         if rescue_shortlist.is_empty() {
             break;
         }
@@ -481,13 +511,19 @@ fn discover_rules_greedy(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> Result<Vec<CandidateRule>> {
     let mut remaining_denied = denied_indices.to_vec();
     let mut discovered = Vec::new();
     while !remaining_denied.is_empty() {
-        let candidate =
-            select_candidate_rule(rows, &remaining_denied, allowed_indices, validation_indices)
-                .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
+        let candidate = select_candidate_rule(
+            rows,
+            &remaining_denied,
+            allowed_indices,
+            validation_indices,
+            feature_governance,
+        )
+        .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
             break;
         }
@@ -834,8 +870,9 @@ fn select_candidate_rule(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> Option<CandidateRule> {
-    let mut candidates = candidate_rules(rows, denied_indices, allowed_indices);
+    let mut candidates = candidate_rules(rows, denied_indices, allowed_indices, feature_governance);
     if candidates.is_empty() {
         return None;
     }
@@ -850,6 +887,7 @@ fn select_candidate_rule(
             allowed_indices,
             validation_indices,
             &candidate,
+            feature_governance,
         );
         let better = match &best {
             None => true,
@@ -871,6 +909,7 @@ fn simulate_candidate_plan(
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
     first_candidate: &CandidateRule,
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> CandidatePlanScore {
     let mut rules = vec![first_candidate.clone()];
     let mut remaining_denied: Vec<usize> = denied_indices
@@ -881,9 +920,12 @@ fn simulate_candidate_plan(
 
     if first_candidate.false_positives == 0 {
         while !remaining_denied.is_empty() {
-            let Some(next) =
-                best_immediate_candidate_rule(rows, &remaining_denied, allowed_indices)
-            else {
+            let Some(next) = best_immediate_candidate_rule(
+                rows,
+                &remaining_denied,
+                allowed_indices,
+                feature_governance,
+            ) else {
                 break;
             };
             if next.denied_coverage == 0 {
@@ -1110,6 +1152,7 @@ fn candidate_rules(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> Vec<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
     let numeric_features = numeric_feature_names(rows)
@@ -1162,6 +1205,9 @@ fn candidate_rules(
                 .filter_map(Value::as_bool)
                 .collect();
             for boolean in unique_values {
+                if !boolean_candidate_allowed(feature_governance.get(&feature), boolean) {
+                    continue;
+                }
                 let candidate = CandidateRule {
                     feature: feature.clone(),
                     op: ComparisonOperator::Eq,
@@ -1246,12 +1292,22 @@ fn candidate_rules(
     candidates
 }
 
+fn boolean_candidate_allowed(governance: Option<&FeatureGovernance>, value: bool) -> bool {
+    match governance.and_then(|governance| governance.deny_boolean_evidence.as_ref()) {
+        None | Some(BooleanEvidencePolicy::Either) => true,
+        Some(BooleanEvidencePolicy::TrueOnly) => value,
+        Some(BooleanEvidencePolicy::FalseOnly) => !value,
+        Some(BooleanEvidencePolicy::Never) => false,
+    }
+}
+
 fn best_immediate_candidate_rule(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
 ) -> Option<CandidateRule> {
-    candidate_rules(rows, denied_indices, allowed_indices)
+    candidate_rules(rows, denied_indices, allowed_indices, feature_governance)
         .into_iter()
         .next()
 }
@@ -1436,7 +1492,7 @@ mod tests {
     use crate::DecisionTraceRow;
     use logicpearl_ir::{ComparisonOperator, ComparisonValue};
     use serde_json::{Number, Value};
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     #[test]
     fn exact_selection_prefers_minimal_general_rule_over_equal_singletons() {
@@ -1527,7 +1583,8 @@ mod tests {
         ];
         let denied_indices = vec![0usize, 1usize];
         let allowed_indices = vec![2usize, 3usize];
-        let candidates = candidate_rules(&rows, &denied_indices, &allowed_indices);
+        let candidates =
+            candidate_rules(&rows, &denied_indices, &allowed_indices, &BTreeMap::new());
         assert!(
             !candidates
                 .iter()
@@ -1546,7 +1603,8 @@ mod tests {
         ];
         let denied_indices = vec![0usize, 1usize];
         let allowed_indices = vec![2usize, 3usize];
-        let candidates = candidate_rules(&rows, &denied_indices, &allowed_indices);
+        let candidates =
+            candidate_rules(&rows, &denied_indices, &allowed_indices, &BTreeMap::new());
         assert!(
             candidates
                 .iter()
@@ -1583,8 +1641,14 @@ mod tests {
             false_positives: 1,
         }];
 
-        let recovered =
-            recover_rare_rules(&rows, &denied_indices, &allowed_indices, None, selected);
+        let recovered = recover_rare_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            None,
+            selected,
+            &BTreeMap::new(),
+        );
         assert_eq!(recovered.len(), 2);
         let score = score_candidate_set(&rows, &recovered, None);
         assert_eq!(score.false_negatives, 0);
@@ -1612,8 +1676,14 @@ mod tests {
             false_positives: 1,
         }];
 
-        let recovered =
-            recover_rare_rules(&rows, &denied_indices, &allowed_indices, None, selected);
+        let recovered = recover_rare_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            None,
+            selected,
+            &BTreeMap::new(),
+        );
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].feature, "score");
         let score = score_candidate_set(&rows, &recovered, None);

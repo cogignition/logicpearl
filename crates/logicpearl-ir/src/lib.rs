@@ -33,7 +33,24 @@ pub struct FeatureDefinition {
     pub max: Option<f64>,
     pub editable: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance: Option<FeatureGovernance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub derived: Option<DerivedFeatureDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeatureGovernance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny_boolean_evidence: Option<BooleanEvidencePolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BooleanEvidencePolicy {
+    Either,
+    TrueOnly,
+    FalseOnly,
+    Never,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -311,6 +328,17 @@ impl FeatureDefinition {
             if min > max {
                 return Err(LogicPearlError::message("feature min cannot exceed max"));
             }
+        }
+        if self
+            .governance
+            .as_ref()
+            .and_then(|governance| governance.deny_boolean_evidence.as_ref())
+            .is_some()
+            && !matches!(self.feature_type, FeatureType::Bool)
+        {
+            return Err(LogicPearlError::message(
+                "deny_boolean_evidence governance requires bool feature type",
+            ));
         }
         Ok(())
     }
@@ -593,6 +621,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        governance: None,
                         derived: None,
                     },
                     FeatureDefinition {
@@ -603,6 +632,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        governance: None,
                         derived: None,
                     },
                 ],

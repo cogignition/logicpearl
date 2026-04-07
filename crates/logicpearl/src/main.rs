@@ -360,7 +360,7 @@ struct TraceGenerateArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json\n  logicpearl traces audit traces.csv --label-column allowed --nuisance-fields session_age_minutes,request_id --fail-on-skew --json"
+    after_help = "Examples:\n  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json\n  logicpearl traces audit traces.csv --label-column allowed --nuisance-fields session_age_minutes,request_id --fail-on-skew --json\n  logicpearl traces audit traces.jsonl --write-feature-governance /tmp/feature_governance.json"
 )]
 struct TraceAuditArgs {
     /// Decision trace dataset to inspect.
@@ -380,6 +380,9 @@ struct TraceAuditArgs {
     /// Exit non-zero when any nuisance field exceeds the drift threshold.
     #[arg(long)]
     fail_on_skew: bool,
+    /// Write a starter feature-governance JSON file with automatic suggestions.
+    #[arg(long)]
+    write_feature_governance: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -663,6 +666,9 @@ struct BuildArgs {
     /// JSON file of pinned rules to merge after discovery and refinement.
     #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
+    /// JSON file declaring feature governance such as one-sided boolean evidence.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    feature_governance: Option<PathBuf>,
     /// Skip native and Wasm compilation and emit only the pearl artifact bundle.
     #[arg(long, help_heading = "Advanced")]
     skip_compile: bool,
@@ -705,6 +711,9 @@ struct DiscoverArgs {
     /// JSON file of pinned rules to merge after discovery and refinement.
     #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
+    /// JSON file declaring feature governance such as one-sided boolean evidence.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    feature_governance: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,

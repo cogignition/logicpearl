@@ -147,12 +147,60 @@ You can also ask the public builder to do a second pass:
 - `--residual-pass` adds solver-backed recovery for missed denied slices
 - `--refine` tightens uniquely over-broad rules
 - `--pinned-rules rules.json` merges a maintained rule layer after discovery
+- `--feature-governance governance.json` constrains how discovery may use specific features
 
 Example:
 
 ```bash
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --residual-pass --refine
 ```
+
+### Constrain one-sided evidence with feature governance
+
+Some signals only mean something when they appear.
+
+Examples:
+- `contains_xss_signature == true` can be a reason to block
+- `contains_xss_signature == false` is usually not a reason to allow or deny
+- `likely_benign_request == true` may be useful for routing or audit, but should not become a deny rule
+
+If you let discovery treat every boolean feature both ways, it can learn nonsense from quirks in the data instead of real policy. The fix is not to blacklist one bad learned rule after the fact. The fix is to tell LogicPearl what kind of signal it is allowed to use.
+
+LogicPearl supports that through `--feature-governance`:
+
+```bash
+logicpearl build traces.jsonl \
+  --output-dir /tmp/pearl \
+  --feature-governance benchmarks/waf/prep/feature_governance.waf_v1.json
+```
+
+That governance file is just JSON. For boolean features, the most important control is whether deny evidence is:
+- `either`
+- `true_only`
+- `false_only`
+- `never`
+
+When should you use it?
+
+- Use `true_only` when `true` is meaningful but `false` mostly means "not observed"
+- Use `never` when the feature is just context, bookkeeping, or a weak hint
+- Leave it as `either` when you would be comfortable writing both directions as a real human policy rule
+
+Rule of thumb:
+
+- pattern detections, signatures, alerts, and analyst flags are usually one-sided
+- request-shape fields and weak context hints usually should not become deny rules on their own
+- if you would never write "absence of this signal means danger" as a policy rule, do not let discovery learn that inversion
+
+The WAF example uses this to mark features like `contains_sqli_signature` and `meta_reports_xss` as one-sided positive signals, while bookkeeping features like `request_has_body`, `request_has_query`, `contains_quote`, and `likely_benign_request` are not allowed to become deny rules.
+
+If you are not sure where to start, ask LogicPearl to suggest a governance file from your traces:
+
+```bash
+logicpearl traces audit traces.jsonl --write-feature-governance /tmp/feature_governance.json
+```
+
+That suggestion pass is conservative. It uses feature names, types, and audit context to produce a starter file you can review, not hidden automatic policy.
 
 ### Generate clean synthetic traces
 
@@ -182,6 +230,7 @@ The important boundary is:
 - policy fields can drive the generated label through declarative deny rules
 - nuisance fields are sampled independently and then audited for label skew
 - discovery still runs on the emitted traces, not on hidden handwritten runtime logic
+- optional feature governance can further constrain one-sided evidence if some generated features should only be usable in one direction
 
 Inspect the artifact:
 
