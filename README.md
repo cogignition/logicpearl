@@ -411,12 +411,14 @@ That gives you a full public chain:
 
 ```bash
 logicpearl inspect fixtures/ir/valid/auth-demo-v1.json
+logicpearl diff fixtures/ir/valid/auth-demo-v1.json fixtures/ir/valid/auth-demo-v1.json
 logicpearl run fixtures/ir/valid/auth-demo-v1.json fixtures/ir/eval/auth-demo-v1-deny-multiple-rules-input.json
 ```
 
 What you should see:
 - a deterministic evaluation result
 - a compact artifact summary
+- a semantic diff path that does not treat raw bit reordering as the main event
 - behavior that is explicit instead of buried in service code
 
 That small output shows the core shape:
@@ -543,6 +545,13 @@ LogicPearl is a different shape:
 The point is not “yet another rules engine.”
 The point is a new execution shape for decision logic.
 
+When artifacts change over time, the important question is:
+- which rule was added
+- which rule was removed
+- which rule changed meaning
+
+That is why `logicpearl diff` compares artifacts semantically instead of treating raw bit positions as the source of truth.
+
 The old shape is:
 - logic hidden in applications
 - changes made by editing fragile mazes
@@ -656,6 +665,7 @@ The goal is to generate the deterministic middle artifact, then let you inspect 
 ## What You Can Do Here
 
 - inspect and validate `pearl.ir.json` artifacts
+- diff two artifacts semantically, even when rule bits moved
 - run pearls through the Rust runtime
 - compile small pearls to WASM
 - reproduce the auth demo

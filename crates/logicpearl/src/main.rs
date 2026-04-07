@@ -46,6 +46,7 @@ mod artifact_cmd;
 mod basic_cmd;
 mod benchmark_cmd;
 mod conformance_cmd;
+mod diff_cmd;
 mod observer_cmd;
 mod pipeline_cmd;
 mod plugin_cmd;
@@ -73,6 +74,7 @@ use conformance_cmd::{
     run_conformance_runtime_parity, run_conformance_spec_verify,
     run_conformance_validate_artifacts, run_conformance_write_manifest,
 };
+use diff_cmd::run_diff;
 use observer_cmd::{
     run_observer_detect, run_observer_list, run_observer_repair, run_observer_run,
     run_observer_scaffold, run_observer_synthesize, run_observer_validate,
@@ -171,6 +173,12 @@ Examples:
   logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json
   logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json";
 
+const DIFF_AFTER_HELP: &str = "\
+Examples:
+  logicpearl diff old_output new_output
+  logicpearl diff old_output/artifact.json new_output/artifact.json --json
+  logicpearl diff old_output/pearl.ir.json new_output/pearl.ir.json";
+
 const REFRESH_AFTER_HELP: &str = "\
 Examples:
   logicpearl refresh benchmarks
@@ -214,6 +222,8 @@ enum Commands {
     },
     /// Inspect a pearl and see what it does.
     Inspect(InspectArgs),
+    /// Compare two artifacts semantically instead of by raw bit position.
+    Diff(DiffArgs),
     /// Run a pearl on an input file.
     Run(RunArgs),
     /// Work with string-of-pearls pipelines.
@@ -1124,6 +1134,18 @@ struct InspectArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = DIFF_AFTER_HELP)]
+struct DiffArgs {
+    /// Older artifact bundle directory, artifact.json, or pearl.ir.json path.
+    old_artifact: PathBuf,
+    /// Newer artifact bundle directory, artifact.json, or pearl.ir.json path.
+    new_artifact: PathBuf,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 #[command(
     after_help = "Examples:\n  logicpearl verify examples/getting_started/output --plugin-manifest examples/plugins/python_verify/manifest.json --json\n  logicpearl verify examples/getting_started/output/pearl.ir.json --plugin-manifest examples/plugins/python_verify/manifest.json --json"
 )]
@@ -1528,6 +1550,7 @@ fn main() -> Result<()> {
         Commands::Conformance {
             command: ConformanceCommand::SpecVerify(args),
         } => run_conformance_spec_verify(args),
+        Commands::Diff(args) => run_diff(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),
