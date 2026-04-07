@@ -1,7 +1,11 @@
 const WASM_ERROR_SENTINEL = 18446744073709551615n;
 
 export async function loadArtifact(reference, options = {}) {
-  const { fetchImpl = globalThis.fetch, instantiateWasm = defaultInstantiateWasm } = options;
+  const {
+    fetchImpl = globalThis.fetch,
+    instantiateWasm = defaultInstantiateWasm,
+    layout = 'auto',
+  } = options;
   if (typeof fetchImpl !== 'function') {
     throw new Error(
       'loadArtifact requires a fetch implementation. Pass { fetchImpl } in non-browser environments.'
@@ -10,11 +14,13 @@ export async function loadArtifact(reference, options = {}) {
 
   const { manifestUrl, artifactBaseUrl } = normalizeArtifactReference(reference);
   let manifest = null;
-  try {
-    manifest = await fetchJson(fetchImpl, manifestUrl);
-  } catch (error) {
-    if (!isMissingResourceError(error)) {
-      throw error;
+  if (layout !== 'conventional') {
+    try {
+      manifest = await fetchJson(fetchImpl, manifestUrl);
+    } catch (error) {
+      if (!isMissingResourceError(error)) {
+        throw error;
+      }
     }
   }
 

@@ -140,3 +140,33 @@ test('loadArtifact falls back to conventional pearl.wasm layout when artifact.js
   assert.equal(summary.gateId, 'demo_gate');
   assert.equal(summary.primaryRuntime, 'wasm_module');
 });
+
+test('loadArtifact skips artifact.json entirely when conventional layout is requested', async () => {
+  const seen = [];
+  await loadArtifact('/demo', {
+    layout: 'conventional',
+    fetchImpl: async (url) => {
+      seen.push(url);
+      if (url === '/demo/artifact.json') {
+        throw new Error('artifact.json should not be requested');
+      }
+      if (url === '/demo/pearl.wasm') {
+        return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+      }
+      if (url === '/demo/pearl.wasm.meta.json') {
+        return { ok: true, json: async () => sampleMetadata };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+    instantiateWasm: async () => ({
+      exports: {
+        memory: new WebAssembly.Memory({ initial: 1 }),
+        logicpearl_alloc() { return 0; },
+        logicpearl_dealloc() {},
+        logicpearl_eval_bitmask_slots_f64() { return 0n; },
+      },
+    }),
+  });
+
+  assert.deepEqual(seen, ['/demo/pearl.wasm', '/demo/pearl.wasm.meta.json']);
+});
