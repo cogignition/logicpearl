@@ -1,9 +1,0 @@
-{
-  "packs": [
-    {
-      "label": "OPA / Rego Parity",
-      "manifest": "./packs/opa_rego.demo_manifest.json",
-      "description": "Parity/import benchmark showing portable policy artifacts and runtime outputs."
-    }
-  ]
-}

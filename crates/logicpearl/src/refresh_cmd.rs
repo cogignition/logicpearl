@@ -3002,7 +3002,7 @@ fn measure_guardrails(
     let temp_dir = unique_temp_dir("logicpearl_scores_guardrails");
     fs::create_dir_all(&temp_dir).into_diagnostic()?;
     let output_dir = temp_dir.join("guardrails");
-    let summary = run_json_command(
+    let summary = match run_json_command(
         repo_root,
         &build_nested_command(
             cli,
@@ -3023,7 +3023,20 @@ fn measure_guardrails(
                 "",
             ],
         ),
-    )?;
+    ) {
+        Ok(summary) => summary,
+        Err(err) => {
+            return Ok((
+                json!({
+                    "status": "unavailable",
+                    "reason": err.to_string(),
+                    "bundle_dir": stable_path(repo_root, bundle_dir),
+                    "target_goal": target_goal,
+                }),
+                json!({}),
+            ));
+        }
+    };
     let benchmarks = summary["benchmarks"]
         .as_array()
         .cloned()

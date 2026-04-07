@@ -280,7 +280,7 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
         println!(
             "  {} {}",
             "Wasm metadata".bright_black(),
-            output.sidecar_path.display()
+            output.metadata_path.display()
         );
     } else {
         let output_path = compile_native_runner(
@@ -480,16 +480,16 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             .clone()
             .map(PathBuf::from)
             .unwrap_or_else(|| wasm_artifact_output_path(&artifact_dir, &artifact_name));
-        let wasm_sidecar_path = result
+        let wasm_metadata_path = result
             .output_files
-            .wasm_sidecar
+            .wasm_metadata
             .clone()
             .map(PathBuf::from)
-            .unwrap_or_else(|| wasm_sidecar_output_path(&artifact_dir, &artifact_name));
+            .unwrap_or_else(|| wasm_metadata_output_path(&artifact_dir, &artifact_name));
         Some(if wasm_output_path.exists() {
             WasmArtifactOutput {
                 module_path: wasm_output_path,
-                sidecar_path: wasm_sidecar_path,
+                metadata_path: wasm_metadata_path,
             }
         } else {
             compile_wasm_module(
@@ -506,9 +506,9 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     result.output_files.wasm_module = wasm_output
         .as_ref()
         .map(|output| output.module_path.display().to_string());
-    result.output_files.wasm_sidecar = wasm_output
+    result.output_files.wasm_metadata = wasm_output
         .as_ref()
-        .map(|output| output.sidecar_path.display().to_string());
+        .map(|output| output.metadata_path.display().to_string());
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
@@ -588,8 +588,8 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         }
         if let Some(wasm_module) = &result.output_files.wasm_module {
             println!("  {} {}", "Deployable".bright_black(), wasm_module);
-            if let Some(wasm_sidecar) = &result.output_files.wasm_sidecar {
-                println!("  {} {}", "Wasm metadata".bright_black(), wasm_sidecar);
+            if let Some(wasm_metadata) = &result.output_files.wasm_metadata {
+                println!("  {} {}", "Wasm metadata".bright_black(), wasm_metadata);
             }
         } else {
             println!(
@@ -684,11 +684,11 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
                     resolved.artifact_dir.join(&deployable.path).display()
                 );
             }
-            for sidecar in &bundle.metadata_sidecars {
+            for metadata_file in &bundle.metadata_files {
                 println!(
                     "  {} {}",
                     "Wasm metadata".bright_black(),
-                    resolved.artifact_dir.join(&sidecar.path).display()
+                    resolved.artifact_dir.join(&metadata_file.path).display()
                 );
             }
             println!();

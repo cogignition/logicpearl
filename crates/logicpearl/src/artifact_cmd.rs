@@ -27,7 +27,7 @@ struct NamedArtifactFiles {
     build_report: String,
     native_binary: Option<String>,
     wasm_module: Option<String>,
-    wasm_sidecar: Option<String>,
+    wasm_metadata: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,7 +39,7 @@ pub(crate) struct ArtifactBundleDescriptor {
     #[serde(default)]
     pub(crate) deployables: Vec<ArtifactDeployable>,
     #[serde(default)]
-    pub(crate) metadata_sidecars: Vec<ArtifactSidecar>,
+    pub(crate) metadata_files: Vec<ArtifactSidecar>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +57,7 @@ pub(crate) struct ArtifactSidecar {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WasmArtifactSidecar {
+struct WasmArtifactMetadata {
     artifact_version: String,
     gate_id: String,
     entrypoint: String,
@@ -109,7 +109,7 @@ struct WasmRuleMetadata {
 #[derive(Debug, Clone)]
 pub(crate) struct WasmArtifactOutput {
     pub(crate) module_path: PathBuf,
-    pub(crate) sidecar_path: PathBuf,
+    pub(crate) metadata_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -191,7 +191,7 @@ pub(crate) fn wasm_artifact_output_path(artifact_dir: &Path, artifact_name: &str
     artifact_dir.join(format!("{}.pearl.wasm", artifact_file_stem(artifact_name)))
 }
 
-pub(crate) fn wasm_sidecar_output_path(artifact_dir: &Path, artifact_name: &str) -> PathBuf {
+pub(crate) fn wasm_metadata_output_path(artifact_dir: &Path, artifact_name: &str) -> PathBuf {
     artifact_dir.join(format!(
         "{}.pearl.wasm.meta.json",
         artifact_file_stem(artifact_name)
@@ -229,7 +229,7 @@ pub(crate) fn write_named_artifact_manifest(
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
             }),
-            wasm_sidecar: output_files.wasm_sidecar.as_ref().and_then(|path| {
+            wasm_metadata: output_files.wasm_metadata.as_ref().and_then(|path| {
                 PathBuf::from(path)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
@@ -276,7 +276,7 @@ fn build_artifact_bundle_descriptor(output_files: &OutputFiles) -> ArtifactBundl
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
         }),
-        wasm_sidecar: output_files.wasm_sidecar.as_ref().and_then(|path| {
+        wasm_metadata: output_files.wasm_metadata.as_ref().and_then(|path| {
             PathBuf::from(path)
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -302,9 +302,9 @@ fn build_bundle_descriptor_from_named_files(
         });
     }
 
-    let mut metadata_sidecars = Vec::new();
-    if let Some(path) = &files.wasm_sidecar {
-        metadata_sidecars.push(ArtifactSidecar {
+    let mut metadata_files = Vec::new();
+    if let Some(path) = &files.wasm_metadata {
+        metadata_files.push(ArtifactSidecar {
             kind: "wasm_metadata".to_string(),
             path: path.clone(),
             companion_to: files.wasm_module.clone(),
@@ -325,7 +325,7 @@ fn build_bundle_descriptor_from_named_files(
                     .map(|_| "wasm_module".to_string())
             }),
         deployables,
-        metadata_sidecars,
+        metadata_files,
     }
 }
 
@@ -452,7 +452,7 @@ pub(crate) fn compile_wasm_module(
     let pearl_name = name.unwrap_or_else(|| gate_id.to_string());
     let output_path =
         output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pearl_name));
-    let sidecar_path = wasm_sidecar_output_path(artifact_dir, &pearl_name);
+    let metadata_path = wasm_metadata_output_path(artifact_dir, &pearl_name);
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
     let crate_name = format!(
@@ -487,7 +487,7 @@ pub(crate) fn compile_wasm_module(
     fs::write(src_dir.join("lib.rs"), lib_rs)
         .into_diagnostic()
         .wrap_err("failed to write generated wasm runner source")?;
-    write_wasm_sidecar(&sidecar_path, &gate)?;
+    write_wasm_metadata(&metadata_path, &gate)?;
 
     let status = std::process::Command::new("cargo")
         .arg("build")
@@ -519,11 +519,11 @@ pub(crate) fn compile_wasm_module(
         .wrap_err("failed to copy compiled pearl wasm module")?;
     Ok(WasmArtifactOutput {
         module_path: output_path,
-        sidecar_path,
+        metadata_path,
     })
 }
 
-fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
+fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
     let string_codes = build_string_codes(gate);
     let input_features = gate
         .input_schema
@@ -531,7 +531,7 @@ fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
         .iter()
         .filter(|feature| feature.derived.is_none())
         .collect::<Vec<_>>();
-    let sidecar = WasmArtifactSidecar {
+    let metadata = WasmArtifactMetadata {
         artifact_version: "1.0".to_string(),
         gate_id: gate.gate_id.clone(),
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
@@ -584,10 +584,10 @@ fn write_wasm_sidecar(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
     };
     fs::write(
         path,
-        serde_json::to_string_pretty(&sidecar).into_diagnostic()? + "\n",
+        serde_json::to_string_pretty(&metadata).into_diagnostic()? + "\n",
     )
     .into_diagnostic()
-    .wrap_err("failed to write wasm sidecar metadata")?;
+    .wrap_err("failed to write wasm metadata")?;
     Ok(())
 }
 
@@ -896,7 +896,7 @@ fn emit_literal_value(
             let key = string_key(literal);
             let code = string_codes
                 .get(&key)
-                .expect("string literal should have been assigned a sidecar code");
+                .expect("string literal should have been assigned a wasm metadata code");
             rust_f64_literal(*code as f64)
         }
     }

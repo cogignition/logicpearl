@@ -1,27 +1,1347 @@
 {
-  "schema_version": "1.0",
-  "generated_by": "scripts/scoreboard/compute_contributor_points.py",
-  "participation_points_per_commit": 1.0,
-  "scoring_terms": {
-    "participation_points": {
-      "display_name": "shells",
-      "description": "Base credit for anything that lands on main."
+  "commits": [
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T15:58:57-04:00",
+      "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
     },
-    "improvement_points": {
-      "display_name": "pearls",
-      "description": "Extra credit earned by improving measured scores."
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:02:41-04:00",
+      "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
     },
-    "total_points": {
-      "display_name": "treasure",
-      "description": "Total score, combining shells and pearls."
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:06:14-04:00",
+      "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:17:18-04:00",
+      "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:20:41-04:00",
+      "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:31:10-04:00",
+      "commit": "8ac80a4efd906fd092fda931dbb55917da50a114",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T16:44:43-04:00",
+      "commit": "8ab83fb0b0fa6eef7d7d22552d1466d5759ba0f2",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:24:16-04:00",
+      "commit": "d248147e32890e6fc5645fcd286c29eefcbd3520",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:26:55-04:00",
+      "commit": "a42b846366e227152b3617d26e28b9c3838ff155",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:27:16-04:00",
+      "commit": "55d64da29ff163d2314e0437a7a98b8436442ac8",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:40:04-04:00",
+      "commit": "59110d60beaa70392fbc40dc3ad2ffffe0c9dd84",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:47:06-04:00",
+      "commit": "7befa303486b820f19e7b01c83ad05c69cdf0e23",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:51:43-04:00",
+      "commit": "69439423add88c453ded6d97e58aa53990aa518a",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T17:54:13-04:00",
+      "commit": "b4b59563c546ef1c94b42eac2df3a8cdd427bc99",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T18:05:15-04:00",
+      "commit": "236732f4b11daed19c3013d1b21711d781428086",
+      "github_login": null,
+      "improvement_points": 2.500000000350011,
+      "participation_points": 1.0,
+      "pearls": 2.500000000350011,
+      "shells": 1.0,
+      "suite_changes": {
+        "guardrails": {
+          "current_score": 0.5599999999995,
+          "delta": 0.008333333334500037,
+          "metrics": [
+            {
+              "id": "guardrails.jailbreakbench.exact_match_rate",
+              "weight": 0.3333333333
+            },
+            {
+              "id": "guardrails.promptshield.exact_match_rate",
+              "weight": 0.3333333333
+            },
+            {
+              "id": "guardrails.rogue-security-prompt-injections.exact_match_rate",
+              "weight": 0.3333333334
+            }
+          ],
+          "points_budget": 300.0,
+          "previous_score": 0.551666666665,
+          "target_goal": null,
+          "weighted_points": 2.500000000350011
+        }
+      },
+      "total_points": 3.500000000350011,
+      "treasure": 3.500000000350011
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T18:13:52-04:00",
+      "commit": "91c442ceb9cd085e24bb2e9551f80cefc1a50ab8",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T20:28:05-04:00",
+      "commit": "cd267d36d19433294eaa5aff6de03ed6cb845b6d",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T20:55:23-04:00",
+      "commit": "52a88d8ed9b0167c5158c517e27c7b6ee49f9a81",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T21:02:07-04:00",
+      "commit": "15cb0c3c1c2bc370f936023830b70fb8a0b64bd3",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T21:40:54-04:00",
+      "commit": "0e1e3b1084adae3c393560f1f8c3caef5b398791",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T21:50:12-04:00",
+      "commit": "9f87d6cda484978db6c76c5b8d3aa8eb1ada7ecd",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-05T22:30:30-04:00",
+      "commit": "07e2dd81323da0403df0c3ba75efaa0b506c912b",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T00:28:11-04:00",
+      "commit": "c5b06dba82b7a52607337750a0d9309044eb1aac",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T00:31:29-04:00",
+      "commit": "848748617444c11b91c5d14d4c8ed87850e8b944",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T00:38:32-04:00",
+      "commit": "d247f925ab5c10a6d239f95c3a8a4379ede85f79",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T00:58:19-04:00",
+      "commit": "0cc564350a39b5af618e7098df23e2b7e72b2139",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T01:28:02-04:00",
+      "commit": "49661c7a6499785d61856885710bf9d4ebbf0be2",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T11:37:38-04:00",
+      "commit": "e1e84d678da2aa793ba5ccf147fc3f8eac459e28",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:05:09-04:00",
+      "commit": "014af062077c7f91cacf9944c0567f2156505d0d",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:11:50-04:00",
+      "commit": "1d9647538b67fbfe74d388c02c487ca9a3fd6a78",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:24:59-04:00",
+      "commit": "7fea117063ff9d26c37b0c0a5051d5e70094ab7e",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:25:52-04:00",
+      "commit": "94c49caba493a6f568774ffb958ea96629b81815",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:31:12-04:00",
+      "commit": "a0765523b7e29b747214a511c359b1b7c51c0ecd",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T12:59:24-04:00",
+      "commit": "7997c17854a3a5a4845e88f747ca82255cea7d7d",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T13:13:23-04:00",
+      "commit": "7d63c2da60a8a79d211e9595fb7c3d75adbc141d",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T13:50:01-04:00",
+      "commit": "012b72238ed571815223d4ba317857bfacddf84a",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {
+        "guardrails": {
+          "current_score": 0.0,
+          "delta": -0.5599999999995,
+          "metrics": [
+            {
+              "id": "guardrails.jailbreakbench.exact_match_rate",
+              "weight": 0.3333333333
+            },
+            {
+              "id": "guardrails.promptshield.exact_match_rate",
+              "weight": 0.3333333333
+            },
+            {
+              "id": "guardrails.rogue-security-prompt-injections.exact_match_rate",
+              "weight": 0.3333333334
+            }
+          ],
+          "points_budget": 300.0,
+          "previous_score": 0.5599999999995,
+          "target_goal": null,
+          "weighted_points": 0.0
+        }
+      },
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T14:19:37-04:00",
+      "commit": "81d58082191396525937827b02055ce180b1b9ce",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T15:35:17-04:00",
+      "commit": "7692c271a10b43995cba2595c644769f28abd42e",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T15:54:56-04:00",
+      "commit": "f63b024910727b9c9bc832cebf87c0fb27f25b47",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T17:09:31-04:00",
+      "commit": "91f844df5d865c0e389d0c3e044159e000d8ceb8",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T17:24:07-04:00",
+      "commit": "ac5c54042358a13f7a99ddbde1f0569f8143e912",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T17:48:35-04:00",
+      "commit": "f8891ee695d2a5a7ddfd54aa322033177a6162f2",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T17:55:16-04:00",
+      "commit": "0edce5da90f4d31b2c0785f9403abb747d57fd27",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T18:06:20-04:00",
+      "commit": "0491d7e890e68b2288e21f5ca353a97cf530985a",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T18:12:02-04:00",
+      "commit": "84278a43ace0cea0b3c20140a96d8b42c195c2e6",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T18:17:34-04:00",
+      "commit": "bf0ecc189bc21f95904eb3093cb82ff3c6b2a017",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T19:58:45-04:00",
+      "commit": "f0b163bf1099d440d3d66094adf8bf344a777510",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T20:05:01-04:00",
+      "commit": "137faab01015559ff82bf6e1f9efb1b2ac855f68",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T20:09:49-04:00",
+      "commit": "65e32d097a50fe49871378cf7caec2b6935684a9",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T20:15:27-04:00",
+      "commit": "d93aa68a3fcd623ddc95732efe34c6c62a42ae2b",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T20:22:43-04:00",
+      "commit": "2f69b6b2a99543245d02b3a31512124ab071a866",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T21:26:47-04:00",
+      "commit": "37547360d5459f2774461b9eb22d80b720ecbc34",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
+    },
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "authored_at": "2026-04-06T21:27:36-04:00",
+      "commit": "77af6d69a7f978461c9edcfa956187630a0b8254",
+      "github_login": null,
+      "improvement_points": 0.0,
+      "participation_points": 1.0,
+      "pearls": 0.0,
+      "shells": 1.0,
+      "suite_changes": {},
+      "total_points": 1.0,
+      "treasure": 1.0
     }
-  },
+  ],
+  "contributors": [
+    {
+      "author_email": "ken@devopslibrary.com",
+      "author_name": "Ken Erwin",
+      "commits": [
+        {
+          "authored_at": "2026-04-05T15:58:57-04:00",
+          "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:02:41-04:00",
+          "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:06:14-04:00",
+          "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:17:18-04:00",
+          "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:20:41-04:00",
+          "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:31:10-04:00",
+          "commit": "8ac80a4efd906fd092fda931dbb55917da50a114",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T16:44:43-04:00",
+          "commit": "8ab83fb0b0fa6eef7d7d22552d1466d5759ba0f2",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:24:16-04:00",
+          "commit": "d248147e32890e6fc5645fcd286c29eefcbd3520",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:26:55-04:00",
+          "commit": "a42b846366e227152b3617d26e28b9c3838ff155",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:27:16-04:00",
+          "commit": "55d64da29ff163d2314e0437a7a98b8436442ac8",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:40:04-04:00",
+          "commit": "59110d60beaa70392fbc40dc3ad2ffffe0c9dd84",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:47:06-04:00",
+          "commit": "7befa303486b820f19e7b01c83ad05c69cdf0e23",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:51:43-04:00",
+          "commit": "69439423add88c453ded6d97e58aa53990aa518a",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T17:54:13-04:00",
+          "commit": "b4b59563c546ef1c94b42eac2df3a8cdd427bc99",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T18:05:15-04:00",
+          "commit": "236732f4b11daed19c3013d1b21711d781428086",
+          "improvement_points": 2.500000000350011,
+          "participation_points": 1.0,
+          "pearls": 2.500000000350011,
+          "shells": 1.0,
+          "total_points": 3.500000000350011,
+          "treasure": 3.500000000350011
+        },
+        {
+          "authored_at": "2026-04-05T18:13:52-04:00",
+          "commit": "91c442ceb9cd085e24bb2e9551f80cefc1a50ab8",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T20:28:05-04:00",
+          "commit": "cd267d36d19433294eaa5aff6de03ed6cb845b6d",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T20:55:23-04:00",
+          "commit": "52a88d8ed9b0167c5158c517e27c7b6ee49f9a81",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T21:02:07-04:00",
+          "commit": "15cb0c3c1c2bc370f936023830b70fb8a0b64bd3",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T21:40:54-04:00",
+          "commit": "0e1e3b1084adae3c393560f1f8c3caef5b398791",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T21:50:12-04:00",
+          "commit": "9f87d6cda484978db6c76c5b8d3aa8eb1ada7ecd",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-05T22:30:30-04:00",
+          "commit": "07e2dd81323da0403df0c3ba75efaa0b506c912b",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T00:28:11-04:00",
+          "commit": "c5b06dba82b7a52607337750a0d9309044eb1aac",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T00:31:29-04:00",
+          "commit": "848748617444c11b91c5d14d4c8ed87850e8b944",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T00:38:32-04:00",
+          "commit": "d247f925ab5c10a6d239f95c3a8a4379ede85f79",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T00:58:19-04:00",
+          "commit": "0cc564350a39b5af618e7098df23e2b7e72b2139",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T01:28:02-04:00",
+          "commit": "49661c7a6499785d61856885710bf9d4ebbf0be2",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T11:37:38-04:00",
+          "commit": "e1e84d678da2aa793ba5ccf147fc3f8eac459e28",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:05:09-04:00",
+          "commit": "014af062077c7f91cacf9944c0567f2156505d0d",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:11:50-04:00",
+          "commit": "1d9647538b67fbfe74d388c02c487ca9a3fd6a78",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:24:59-04:00",
+          "commit": "7fea117063ff9d26c37b0c0a5051d5e70094ab7e",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:25:52-04:00",
+          "commit": "94c49caba493a6f568774ffb958ea96629b81815",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:31:12-04:00",
+          "commit": "a0765523b7e29b747214a511c359b1b7c51c0ecd",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T12:59:24-04:00",
+          "commit": "7997c17854a3a5a4845e88f747ca82255cea7d7d",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T13:13:23-04:00",
+          "commit": "7d63c2da60a8a79d211e9595fb7c3d75adbc141d",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T13:50:01-04:00",
+          "commit": "012b72238ed571815223d4ba317857bfacddf84a",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T14:19:37-04:00",
+          "commit": "81d58082191396525937827b02055ce180b1b9ce",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T15:35:17-04:00",
+          "commit": "7692c271a10b43995cba2595c644769f28abd42e",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T15:54:56-04:00",
+          "commit": "f63b024910727b9c9bc832cebf87c0fb27f25b47",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T17:09:31-04:00",
+          "commit": "91f844df5d865c0e389d0c3e044159e000d8ceb8",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T17:24:07-04:00",
+          "commit": "ac5c54042358a13f7a99ddbde1f0569f8143e912",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T17:48:35-04:00",
+          "commit": "f8891ee695d2a5a7ddfd54aa322033177a6162f2",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T17:55:16-04:00",
+          "commit": "0edce5da90f4d31b2c0785f9403abb747d57fd27",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T18:06:20-04:00",
+          "commit": "0491d7e890e68b2288e21f5ca353a97cf530985a",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T18:12:02-04:00",
+          "commit": "84278a43ace0cea0b3c20140a96d8b42c195c2e6",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T18:17:34-04:00",
+          "commit": "bf0ecc189bc21f95904eb3093cb82ff3c6b2a017",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T19:58:45-04:00",
+          "commit": "f0b163bf1099d440d3d66094adf8bf344a777510",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T20:05:01-04:00",
+          "commit": "137faab01015559ff82bf6e1f9efb1b2ac855f68",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T20:09:49-04:00",
+          "commit": "65e32d097a50fe49871378cf7caec2b6935684a9",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T20:15:27-04:00",
+          "commit": "d93aa68a3fcd623ddc95732efe34c6c62a42ae2b",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T20:22:43-04:00",
+          "commit": "2f69b6b2a99543245d02b3a31512124ab071a866",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T21:26:47-04:00",
+          "commit": "37547360d5459f2774461b9eb22d80b720ecbc34",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        },
+        {
+          "authored_at": "2026-04-06T21:27:36-04:00",
+          "commit": "77af6d69a7f978461c9edcfa956187630a0b8254",
+          "improvement_points": 0.0,
+          "participation_points": 1.0,
+          "pearls": 0.0,
+          "shells": 1.0,
+          "total_points": 1.0,
+          "treasure": 1.0
+        }
+      ],
+      "github_login": null,
+      "improvement_points": 2.500000000350011,
+      "participation_points": 53.0,
+      "pearls": 2.500000000350011,
+      "points": 55.50000000035001,
+      "shells": 53.0,
+      "total_points": 55.50000000035001,
+      "treasure": 55.50000000035001
+    }
+  ],
+  "generated_by": "logicpearl refresh contributor-points",
+  "participation_points_per_commit": 1.0,
+  "schema_version": "1.0",
   "score_model": {
-    "version": "1.0",
     "suites": [
       {
         "id": "onboarding",
-        "points_budget": 200.0,
         "metrics": [
           {
             "id": "getting_started.training_parity",
@@ -43,11 +1363,11 @@
             "id": "demos.loan_approval.training_parity",
             "weight": 0.2
           }
-        ]
+        ],
+        "points_budget": 200.0
       },
       {
         "id": "guardrails",
-        "points_budget": 300.0,
         "metrics": [
           {
             "id": "guardrails.jailbreakbench.exact_match_rate",
@@ -61,146 +1381,24 @@
             "id": "guardrails.rogue-security-prompt-injections.exact_match_rate",
             "weight": 0.3333333334
           }
-        ]
+        ],
+        "points_budget": 300.0
       }
-    ]
+    ],
+    "version": "1.0"
   },
-  "commits": [
-    {
-      "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "authored_at": "2026-04-05T15:58:57-04:00",
-      "participation_points": 1.0,
-      "improvement_points": 0.0,
-      "total_points": 1.0,
-      "shells": 1.0,
-      "pearls": 0.0,
-      "treasure": 1.0,
-      "suite_changes": {}
+  "scoring_terms": {
+    "improvement_points": {
+      "description": "Extra credit earned by improving measured scores.",
+      "display_name": "pearls"
     },
-    {
-      "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "authored_at": "2026-04-05T16:02:41-04:00",
-      "participation_points": 1.0,
-      "improvement_points": 0.0,
-      "total_points": 1.0,
-      "shells": 1.0,
-      "pearls": 0.0,
-      "treasure": 1.0,
-      "suite_changes": {}
+    "participation_points": {
+      "description": "Base credit for anything that lands on main.",
+      "display_name": "shells"
     },
-    {
-      "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "authored_at": "2026-04-05T16:06:14-04:00",
-      "participation_points": 1.0,
-      "improvement_points": 0.0,
-      "total_points": 1.0,
-      "shells": 1.0,
-      "pearls": 0.0,
-      "treasure": 1.0,
-      "suite_changes": {}
-    },
-    {
-      "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "authored_at": "2026-04-05T16:17:18-04:00",
-      "participation_points": 1.0,
-      "improvement_points": 0.0,
-      "total_points": 1.0,
-      "shells": 1.0,
-      "pearls": 0.0,
-      "treasure": 1.0,
-      "suite_changes": {}
-    },
-    {
-      "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "authored_at": "2026-04-05T16:20:41-04:00",
-      "participation_points": 1.0,
-      "improvement_points": 0.0,
-      "total_points": 1.0,
-      "shells": 1.0,
-      "pearls": 0.0,
-      "treasure": 1.0,
-      "suite_changes": {}
+    "total_points": {
+      "description": "Total score, combining shells and pearls.",
+      "display_name": "treasure"
     }
-  ],
-  "contributors": [
-    {
-      "author_name": "Ken Erwin",
-      "author_email": "ken@devopslibrary.com",
-      "github_login": null,
-      "participation_points": 5.0,
-      "improvement_points": 0.0,
-      "total_points": 5.0,
-      "commits": [
-        {
-          "commit": "ba195e861310217d61d48c255f261fb1c6fe27ec",
-          "authored_at": "2026-04-05T15:58:57-04:00",
-          "participation_points": 1.0,
-          "improvement_points": 0.0,
-          "total_points": 1.0,
-          "shells": 1.0,
-          "pearls": 0.0,
-          "treasure": 1.0
-        },
-        {
-          "commit": "0d080d8bba35a97368cf9aafcf006cc38f052baa",
-          "authored_at": "2026-04-05T16:02:41-04:00",
-          "participation_points": 1.0,
-          "improvement_points": 0.0,
-          "total_points": 1.0,
-          "shells": 1.0,
-          "pearls": 0.0,
-          "treasure": 1.0
-        },
-        {
-          "commit": "387a85baa7fa3d40f618a4acc4bfc473c066ed91",
-          "authored_at": "2026-04-05T16:06:14-04:00",
-          "participation_points": 1.0,
-          "improvement_points": 0.0,
-          "total_points": 1.0,
-          "shells": 1.0,
-          "pearls": 0.0,
-          "treasure": 1.0
-        },
-        {
-          "commit": "f37c8ce8ca11ef6020e650f7ffd42385fbc1bad7",
-          "authored_at": "2026-04-05T16:17:18-04:00",
-          "participation_points": 1.0,
-          "improvement_points": 0.0,
-          "total_points": 1.0,
-          "shells": 1.0,
-          "pearls": 0.0,
-          "treasure": 1.0
-        },
-        {
-          "commit": "48c4fbb99e970c9518abd2ff5b00051d81137d99",
-          "authored_at": "2026-04-05T16:20:41-04:00",
-          "participation_points": 1.0,
-          "improvement_points": 0.0,
-          "total_points": 1.0,
-          "shells": 1.0,
-          "pearls": 0.0,
-          "treasure": 1.0
-        }
-      ],
-      "shells": 5.0,
-      "pearls": 0.0,
-      "treasure": 5.0,
-      "points": 5.0
-    }
-  ]
+  }
 }

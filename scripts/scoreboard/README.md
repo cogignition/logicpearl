@@ -2,6 +2,14 @@
 
 These scripts keep a small public score ledger for LogicPearl.
 
+The preferred public entrypoint is now the Rust CLI:
+- `logicpearl refresh benchmarks`
+- `logicpearl refresh scoreboard-update`
+- `logicpearl refresh contributor-points`
+- `logicpearl refresh contributor-summary`
+
+The Python files in this folder remain as compatibility/reference tooling.
+
 ## Files
 
 - `update_scores.py`
@@ -58,13 +66,14 @@ That wrapper runs workspace validation, guardrail rebuild/eval, WAF rebuild/eval
 Refresh the root score ledger:
 
 ```bash
-python3 scripts/scoreboard/update_scores.py
+logicpearl refresh scoreboard-update
 ```
 
 Rebuild contributor points from git history:
 
 ```bash
-python3 scripts/scoreboard/compute_contributor_points.py
+logicpearl refresh contributor-points
+logicpearl refresh contributor-summary
 ```
 
 ## Notes

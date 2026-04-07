@@ -158,17 +158,21 @@ logicpearl benchmark score-artifacts \
   --json
 ```
 
-For the full frozen guardrail bundle path, use the checked-in public scripts:
+For the full frozen guardrail bundle path, use the Rust public front door:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle
 
-python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_bundle \
-  --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output-dir /tmp/guardrails_bundle/pint_eval
+logicpearl benchmark adapt-pint \
+  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --output /tmp/pint_cases.jsonl
+
+logicpearl benchmark run \
+  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
+  /tmp/pint_cases.jsonl \
+  --collapse-non-allow-to-deny \
+  --json
 ```
 
 That bundle path freezes:

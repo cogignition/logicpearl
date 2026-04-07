@@ -61,21 +61,23 @@ Suggested rule:
 Build and commit the frozen guardrail bundle first:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
-Then evaluate raw `PINT` against that frozen bundle:
+Then adapt raw `PINT` and run the frozen pipeline:
 
 ```bash
-python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_bundle \
-  --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output-dir /tmp/guardrails_bundle/pint_eval
-```
+logicpearl benchmark adapt-pint \
+  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --output /tmp/pint_cases.jsonl
 
-That evaluator adapts raw `PINT`, runs the frozen observer, evaluates the frozen combined pearl, and then collapses rich internal routes into final `allow` / `deny`.
+logicpearl benchmark run \
+  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
+  /tmp/pint_cases.jsonl \
+  --collapse-non-allow-to-deny \
+  --json
+```
 
 ## Lower-Level Public CLI Path
 

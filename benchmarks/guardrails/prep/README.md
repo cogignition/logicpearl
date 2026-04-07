@@ -105,7 +105,21 @@ logicpearl prepare guardrails \
   --output-dir /tmp/logicpearl-guardrails
 ```
 
-This command is not implemented yet.
+The public Rust front door today is:
+
+```bash
+logicpearl refresh benchmarks
+```
+
+or, for the guardrail lane only:
+
+```bash
+logicpearl refresh guardrails-freeze
+logicpearl refresh guardrails-build --output-dir /tmp/guardrails_bundle
+logicpearl refresh guardrails-eval --bundle-dir /tmp/guardrails_bundle --input-split final_holdout
+```
+
+That full `prepare guardrails` command is not implemented yet.
 
 Today, the public pieces already in place are:
 - `logicpearl discover`
@@ -382,7 +396,7 @@ For the public proof flow, the preferred source-of-truth is still a string of pe
 To make that easy to rerun and audit, the repo also ships a higher-level builder:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 

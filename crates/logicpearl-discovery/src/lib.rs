@@ -128,7 +128,7 @@ pub struct OutputFiles {
     #[serde(default)]
     pub wasm_module: Option<String>,
     #[serde(default)]
-    pub wasm_sidecar: Option<String>,
+    pub wasm_metadata: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -677,7 +677,7 @@ pub fn build_pearl_from_rows(
             build_report: build_report_path.display().to_string(),
             native_binary: None,
             wasm_module: None,
-            wasm_sidecar: None,
+            wasm_metadata: None,
         },
     };
 

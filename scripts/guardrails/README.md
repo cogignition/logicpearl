@@ -2,6 +2,14 @@
 
 These scripts make the public guardrail workflow reproducible.
 
+The preferred public entrypoint is now the Rust CLI:
+- `logicpearl refresh benchmarks`
+- `logicpearl refresh guardrails-freeze`
+- `logicpearl refresh guardrails-build`
+- `logicpearl refresh guardrails-eval`
+
+The Python files in this folder remain as compatibility/reference tooling.
+
 Dataset sources, expected local staging paths, and the full split/build/eval flow are documented in:
 - [DATASETS.md](../../DATASETS.md)
 
@@ -72,14 +80,14 @@ If you only want the guardrail lane, use the commands below.
 Build the frozen guardrail bundle:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
 Build the same bundle with a guardrail-specific synthesis goal:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle \
   --target-goal protective-gate
 ```
@@ -87,7 +95,7 @@ python3 scripts/guardrails/build_guardrail_bundle.py \
 Build a faster deterministic subset bundle for quick iteration:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle_sample \
   --target-goal protective-gate \
   --dev-case-limit 20000 \
@@ -105,17 +113,21 @@ Use `--resume` with the same output directory if the long synthesis step has alr
 Evaluate untouched `PINT` against that bundle:
 
 ```bash
-python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_bundle \
-  --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output-dir /tmp/guardrails_bundle/pint_eval
+logicpearl benchmark adapt-pint \
+  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --output /tmp/pint_cases.jsonl
+
+logicpearl benchmark run \
+  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
+  /tmp/pint_cases.jsonl \
+  --collapse-non-allow-to-deny \
+  --json
 ```
 
 Run the same frozen bundle against the staged open post-freeze benchmarks:
 
 ```bash
-python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+logicpearl refresh guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --output-dir /tmp/guardrails_bundle/open_benchmarks
 ```
@@ -123,13 +135,13 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
 Freeze development and final-holdout splits for all staged guardrail datasets:
 
 ```bash
-python3 scripts/guardrails/freeze_guardrail_holdouts.py
+logicpearl refresh guardrails-freeze
 ```
 
 Later, when you are ready for a final untouched external check, run the frozen holdout split explicitly:
 
 ```bash
-python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+logicpearl refresh guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
@@ -138,7 +150,7 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
 For a faster regression check that avoids a full rebuild and avoids scoring every case on large benchmarks:
 
 ```bash
-python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+logicpearl refresh guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \

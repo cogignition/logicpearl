@@ -42,7 +42,7 @@ $LOGICPEARL_DATASETS/
 ## Build Adapted Cases
 
 ```bash
-python3 scripts/waf/build_waf_benchmark_cases.py \
+logicpearl refresh waf-cases \
   --output-dir /tmp/waf_benchmark
 ```
 

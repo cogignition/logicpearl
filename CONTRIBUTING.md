@@ -86,14 +86,14 @@ cargo test --workspace
 Refresh the public score ledger:
 
 ```bash
-python3 scripts/scoreboard/update_scores.py
+logicpearl refresh scoreboard-update
 ```
 
 Rebuild contributor totals:
 
 ```bash
-python3 scripts/scoreboard/compute_contributor_points.py
-python3 scripts/scoreboard/build_contributor_summary.py
+logicpearl refresh contributor-points
+logicpearl refresh contributor-summary
 ```
 
 ## Attribution

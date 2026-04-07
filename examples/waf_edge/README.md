@@ -139,7 +139,7 @@ The clean public path is:
 Build the larger public benchmark cases with:
 
 ```bash
-python3 scripts/waf/build_waf_benchmark_cases.py \
+logicpearl refresh waf-cases \
   --output-dir /tmp/waf_benchmark
 ```
 
@@ -149,6 +149,8 @@ Then regenerate the checked-in readable slice with:
 python3 scripts/waf/build_waf_demo_slice.py \
   --input /tmp/waf_benchmark/dev.jsonl
 ```
+
+That second command is still an example-maintenance helper. The public product surface for corpus adaptation is the Rust CLI.
 
 ## Open The Walkthrough Page
 

@@ -6,11 +6,11 @@ It answers four things:
 - where the datasets come from
 - where LogicPearl expects them locally
 - how to freeze deterministic `dev` and `final_holdout` splits
-- how to evaluate the frozen bundle reproducibly with the checked-in scripts
+- how to evaluate the frozen bundle reproducibly with the Rust CLI front door
 
 ## Local Staging Root
 
-The public guardrail scripts resolve staged datasets from:
+The public refresh flow resolves staged datasets from:
 
 ```text
 $LOGICPEARL_DATASETS
@@ -25,10 +25,12 @@ export LOGICPEARL_DATASETS="$HOME/logicpearl-datasets/public"
 If `LOGICPEARL_DATASETS` is unset, the scripts fall back to `../datasets/public` relative to the cloned `logicpearl/` repo directory.
 
 That is the root used by:
-- [scripts/guardrails/freeze_guardrail_holdouts.py](./scripts/guardrails/freeze_guardrail_holdouts.py)
-- [scripts/guardrails/build_guardrail_bundle.py](./scripts/guardrails/build_guardrail_bundle.py)
-- [scripts/guardrails/run_open_guardrail_benchmarks.py](./scripts/guardrails/run_open_guardrail_benchmarks.py)
-- [scripts/guardrails/evaluate_guardrail_bundle.py](./scripts/guardrails/evaluate_guardrail_bundle.py)
+- `logicpearl refresh benchmarks`
+- `logicpearl refresh guardrails-freeze`
+- `logicpearl refresh guardrails-build`
+- `logicpearl refresh guardrails-eval`
+
+The checked-in Python scripts still exist as compatibility/reference tooling, but the public product surface is now Rust-first.
 
 ## Development Corpora
 
@@ -77,7 +79,7 @@ These are relevant to the same workflow but may require explicit access approval
 Once the raw datasets are staged under the expected local paths, freeze deterministic per-dataset splits with:
 
 ```bash
-python3 scripts/guardrails/freeze_guardrail_holdouts.py
+logicpearl refresh guardrails-freeze
 ```
 
 That writes:
@@ -99,7 +101,7 @@ This is the cleanest public protocol:
 After the per-dataset splits exist:
 
 ```bash
-python3 scripts/guardrails/build_guardrail_bundle.py \
+logicpearl refresh guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
@@ -120,7 +122,7 @@ That script:
 ### Run the open external evaluation corpora
 
 ```bash
-python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+logicpearl refresh guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
@@ -129,7 +131,7 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
 For a faster sampled regression check:
 
 ```bash
-python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
+logicpearl refresh guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \
@@ -139,11 +141,15 @@ python3 scripts/guardrails/run_open_guardrail_benchmarks.py \
 ### Run a raw benchmark file such as `PINT`
 
 ```bash
-python3 scripts/guardrails/evaluate_guardrail_bundle.py \
-  --bundle-dir /tmp/guardrails_bundle \
-  --raw-benchmark "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output-dir /tmp/guardrails_bundle/pint_eval
+logicpearl benchmark adapt-pint \
+  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --output /tmp/pint_cases.jsonl
+
+logicpearl benchmark run \
+  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
+  /tmp/pint_cases.jsonl \
+  --collapse-non-allow-to-deny \
+  --json
 ```
 
 That:
@@ -158,7 +164,7 @@ The public repo does not vendor these external datasets into git.
 
 Instead it provides:
 - adapter profiles
-- deterministic split and evaluation scripts
+- deterministic split and evaluation commands
 - expected local paths
 - reproducible commands
 

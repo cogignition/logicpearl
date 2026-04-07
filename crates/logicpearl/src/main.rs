@@ -50,7 +50,7 @@ mod refresh_cmd;
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
     load_artifact_bundle_descriptor, native_artifact_output_path, persist_build_report,
-    resolve_artifact_input, wasm_artifact_output_path, wasm_sidecar_output_path,
+    resolve_artifact_input, wasm_artifact_output_path, wasm_metadata_output_path,
     write_named_artifact_manifest, WasmArtifactOutput,
 };
 use basic_cmd::{
