@@ -1,9 +1,7 @@
 use super::*;
 use logicpearl_benchmark::{load_benchmark_cases, write_benchmark_cases_jsonl};
 use logicpearl_discovery::ArtifactSet;
-use logicpearl_ir::{
-    EvaluationConfig, LogicPearlGateIr, Provenance, VerificationConfig,
-};
+use logicpearl_ir::{EvaluationConfig, LogicPearlGateIr, Provenance, VerificationConfig};
 use logicpearl_runtime::evaluate_gate;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
@@ -37,15 +35,14 @@ const PARTICIPATION_POINTS_PER_COMMIT: f64 = 1.0;
 
 const DEMO_CASES: [(&str, &str); 3] = [
     ("access_control", "examples/demos/access_control/traces.csv"),
-    ("content_moderation", "examples/demos/content_moderation/traces.csv"),
+    (
+        "content_moderation",
+        "examples/demos/content_moderation/traces.csv",
+    ),
     ("loan_approval", "examples/demos/loan_approval/traces.csv"),
 ];
 
-const GUARDRAIL_SIGNALS: [&str; 3] = [
-    "instruction-override",
-    "secret-exfiltration",
-    "tool-misuse",
-];
+const GUARDRAIL_SIGNALS: [&str; 3] = ["instruction-override", "secret-exfiltration", "tool-misuse"];
 
 const WAF_TARGETS: [(&str, &str); 3] = [
     (
@@ -268,7 +265,10 @@ pub(crate) fn run_refresh_benchmarks(args: RefreshBenchmarksArgs) -> Result<()> 
                 "Run `logicpearl refresh benchmarks` from inside the checked-out LogicPearl repo.",
             )
         })?;
-    let logs_dir = args.logs_dir.clone().unwrap_or_else(default_refresh_logs_dir);
+    let logs_dir = args
+        .logs_dir
+        .clone()
+        .unwrap_or_else(default_refresh_logs_dir);
     fs::create_dir_all(&logs_dir)
         .into_diagnostic()
         .wrap_err("failed to create refresh log directory")?;
@@ -512,7 +512,10 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
             &load_benchmark_cases(&merged_dev_path).into_diagnostic()?,
             args.dev_case_limit,
         );
-        working_dev_path = output_dir.join(format!("guardrail_dev_sampled_{}.jsonl", args.dev_case_limit));
+        working_dev_path = output_dir.join(format!(
+            "guardrail_dev_sampled_{}.jsonl",
+            args.dev_case_limit
+        ));
         write_benchmark_cases_jsonl(&sampled.rows, &working_dev_path).into_diagnostic()?;
         dev_sample_report = sampled.report;
     }
@@ -528,7 +531,8 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
             "guardrail_final_holdout_sampled_{}.jsonl",
             args.final_holdout_case_limit
         ));
-        write_benchmark_cases_jsonl(&sampled.rows, &working_final_holdout_path).into_diagnostic()?;
+        write_benchmark_cases_jsonl(&sampled.rows, &working_final_holdout_path)
+            .into_diagnostic()?;
         final_holdout_sample_report = sampled.report;
     }
 
@@ -555,7 +559,8 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
     let mut synthesis_reports = Vec::new();
 
     for (index, signal) in GUARDRAIL_SIGNALS.iter().enumerate() {
-        let output_path = synthesized_dir.join(format!("{:02}_{}.observer.json", index + 1, signal));
+        let output_path =
+            synthesized_dir.join(format!("{:02}_{}.observer.json", index + 1, signal));
         let mut report = if args.resume && output_path.exists() {
             json!({
                 "status": "resumed",
@@ -607,7 +612,10 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
                 "--observer-artifact",
                 &observer_artifact_path.display().to_string(),
                 "--config",
-                &repo_root.join(TRACE_PROJECTION_GUARDRAILS).display().to_string(),
+                &repo_root
+                    .join(TRACE_PROJECTION_GUARDRAILS)
+                    .display()
+                    .to_string(),
                 "--output-dir",
                 &train_prep_dir.display().to_string(),
                 "--json",
@@ -643,7 +651,10 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
                 "emit-traces",
                 &final_holdout_observed_path.display().to_string(),
                 "--config",
-                &repo_root.join(TRACE_PROJECTION_GUARDRAILS).display().to_string(),
+                &repo_root
+                    .join(TRACE_PROJECTION_GUARDRAILS)
+                    .display()
+                    .to_string(),
                 "--output-dir",
                 &final_holdout_traces_dir.display().to_string(),
                 "--json",
@@ -664,7 +675,10 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
                     .join("artifact_set.json")
                     .display()
                     .to_string(),
-                &final_holdout_traces_dir.join("multi_target.csv").display().to_string(),
+                &final_holdout_traces_dir
+                    .join("multi_target.csv")
+                    .display()
+                    .to_string(),
                 "--output",
                 &score_report_path.display().to_string(),
                 "--json",
@@ -752,8 +766,14 @@ pub(crate) fn run_refresh_guardrails_build(args: RefreshGuardrailsBuildArgs) -> 
         "final_holdout_artifact_score": score_report,
     });
     write_json_pretty(&output_dir.join("bundle_manifest.json"), &bundle_manifest)?;
-    write_json_pretty(&output_dir.join("artifact_hashes.json"), &build_artifact_hashes(&freeze_dir)?)?;
-    println!("{}", serde_json::to_string_pretty(&bundle_manifest).into_diagnostic()?);
+    write_json_pretty(
+        &output_dir.join("artifact_hashes.json"),
+        &build_artifact_hashes(&freeze_dir)?,
+    )?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&bundle_manifest).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -776,7 +796,9 @@ pub(crate) fn run_refresh_guardrails_eval(args: RefreshGuardrailsEvalArgs) -> Re
         let benchmark_input = match args.input_split.as_str() {
             "raw" => datasets_root.join(benchmark.raw_rel),
             "dev" => datasets_root.join(benchmark.splits_rel).join("dev.jsonl"),
-            "final_holdout" => datasets_root.join(benchmark.splits_rel).join("final_holdout.jsonl"),
+            "final_holdout" => datasets_root
+                .join(benchmark.splits_rel)
+                .join("final_holdout.jsonl"),
             other => {
                 return Err(guidance(
                     format!("unsupported --input-split `{other}`"),
@@ -863,7 +885,10 @@ pub(crate) fn run_refresh_guardrails_eval(args: RefreshGuardrailsEvalArgs) -> Re
         }
     }
 
-    println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -979,7 +1004,10 @@ pub(crate) fn run_refresh_waf_benchmark_cases(args: RefreshWafBenchmarkCasesArgs
         }
     });
     write_json_pretty(&output_dir.join("summary.json"), &summary)?;
-    println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -1059,10 +1087,14 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         args.refine,
     )?;
 
-    let copied_observer_manifest =
-        copy_plugin_bundle(&observer_manifest, &freeze_dir.join("plugins").join("observer"))?;
-    let copied_route_manifest =
-        copy_plugin_bundle(&route_audit_manifest, &freeze_dir.join("plugins").join("route_audit"))?;
+    let copied_observer_manifest = copy_plugin_bundle(
+        &observer_manifest,
+        &freeze_dir.join("plugins").join("observer"),
+    )?;
+    let copied_route_manifest = copy_plugin_bundle(
+        &route_audit_manifest,
+        &freeze_dir.join("plugins").join("route_audit"),
+    )?;
 
     let rewritten_artifact_set_path = freeze_dir.join("artifact_set.json");
     for descriptor in &artifact_set.binary_targets {
@@ -1073,7 +1105,10 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         }
         fs::copy(&source, &destination).into_diagnostic()?;
     }
-    write_json_pretty(&rewritten_artifact_set_path, &serde_json::to_value(&artifact_set).into_diagnostic()?)?;
+    write_json_pretty(
+        &rewritten_artifact_set_path,
+        &serde_json::to_value(&artifact_set).into_diagnostic()?,
+    )?;
 
     let learned_pipeline_path = freeze_dir.join("waf_edge.learned.pipeline.json");
     let learned_pipeline = build_waf_learned_pipeline(
@@ -1125,9 +1160,16 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
                 "benchmark",
                 "score-artifacts",
                 &rewritten_artifact_set_path.display().to_string(),
-                &holdout_dir.join("traces").join("multi_target.csv").display().to_string(),
+                &holdout_dir
+                    .join("traces")
+                    .join("multi_target.csv")
+                    .display()
+                    .to_string(),
                 "--output",
-                &holdout_dir.join("artifact_score.json").display().to_string(),
+                &holdout_dir
+                    .join("artifact_score.json")
+                    .display()
+                    .to_string(),
                 "--json",
             ],
         ),
@@ -1158,7 +1200,10 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
                 &final_holdout_cases.display().to_string(),
                 "--collapse-non-allow-to-deny",
                 "--output",
-                &holdout_dir.join("collapsed_allow_deny.json").display().to_string(),
+                &holdout_dir
+                    .join("collapsed_allow_deny.json")
+                    .display()
+                    .to_string(),
                 "--json",
             ],
         ),
@@ -1176,7 +1221,10 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         "collapsed_allow_deny": collapsed["summary"].clone(),
     });
     write_json_pretty(&output_dir.join("summary.json"), &summary)?;
-    println!("{}", serde_json::to_string_pretty(&summary).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -1214,7 +1262,8 @@ pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -
         .unwrap()
         .iter()
         .filter_map(|(suite_id, suite)| {
-            (suite.get("status") == Some(&Value::String("ok".to_string()))).then_some(suite_id.clone())
+            (suite.get("status") == Some(&Value::String("ok".to_string())))
+                .then_some(suite_id.clone())
         })
         .collect::<Vec<_>>();
 
@@ -1234,7 +1283,10 @@ pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -
     });
     write_json_pretty(&output_path, &payload)?;
     let _ = args.pretty;
-    println!("{}", serde_json::to_string_pretty(&payload).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&payload).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -1244,10 +1296,13 @@ pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs)
         .output
         .unwrap_or_else(|| repo_root.join(CONTRIBUTOR_POINTS_PATH));
     let score_model: Value = read_json(&repo_root.join(SCORE_MODEL_PATH))?;
-    let score_commits = git_output(&repo_root, &["log", "--reverse", "--format=%H", "--", SCORES_PATH])?
-        .lines()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    let score_commits = git_output(
+        &repo_root,
+        &["log", "--reverse", "--format=%H", "--", SCORES_PATH],
+    )?
+    .lines()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
     if score_commits.is_empty() {
         return Err(miette::miette!("no SCORES.json history found"));
     }
@@ -1273,10 +1328,9 @@ pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs)
         let author_email = parts.next().unwrap_or_default().to_string();
         let authored_at = parts.next().unwrap_or_default().to_string();
         let github_login = infer_github_login(&author_email);
-        let contributor_key = github_login
-            .clone()
-            .unwrap_or_else(|| author_email.clone());
-        let current_scores = load_scores_for_commit(&repo_root, &commit)?.or(previous_scores.clone());
+        let contributor_key = github_login.clone().unwrap_or_else(|| author_email.clone());
+        let current_scores =
+            load_scores_for_commit(&repo_root, &commit)?.or(previous_scores.clone());
 
         let mut suite_changes = Map::new();
         let mut improvement_points = 0.0;
@@ -1343,26 +1397,27 @@ pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs)
         contributor["author_name"] = Value::String(author_name);
         contributor["author_email"] = Value::String(author_email);
         contributor["github_login"] = github_login.map(Value::String).unwrap_or(Value::Null);
-        contributor["participation_points"] = json!(contributor["participation_points"].as_f64().unwrap_or(0.0) + participation_points);
-        contributor["improvement_points"] = json!(contributor["improvement_points"].as_f64().unwrap_or(0.0) + improvement_points);
-        contributor["total_points"] = json!(contributor["total_points"].as_f64().unwrap_or(0.0) + total_points);
+        contributor["participation_points"] = json!(
+            contributor["participation_points"].as_f64().unwrap_or(0.0) + participation_points
+        );
+        contributor["improvement_points"] =
+            json!(contributor["improvement_points"].as_f64().unwrap_or(0.0) + improvement_points);
+        contributor["total_points"] =
+            json!(contributor["total_points"].as_f64().unwrap_or(0.0) + total_points);
         contributor["shells"] = contributor["participation_points"].clone();
         contributor["pearls"] = contributor["improvement_points"].clone();
         contributor["treasure"] = contributor["total_points"].clone();
         contributor["points"] = contributor["total_points"].clone();
-        contributor["commits"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({
-                "commit": commit,
-                "authored_at": authored_at,
-                "participation_points": participation_points,
-                "improvement_points": improvement_points,
-                "total_points": total_points,
-                "shells": participation_points,
-                "pearls": improvement_points,
-                "treasure": total_points,
-            }));
+        contributor["commits"].as_array_mut().unwrap().push(json!({
+            "commit": commit,
+            "authored_at": authored_at,
+            "participation_points": participation_points,
+            "improvement_points": improvement_points,
+            "total_points": total_points,
+            "shells": participation_points,
+            "pearls": improvement_points,
+            "treasure": total_points,
+        }));
 
         if let Some(current_scores) = current_scores {
             previous_scores = Some(current_scores);
@@ -1399,7 +1454,10 @@ pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs)
         "contributors": contributor_rows,
     });
     write_json_pretty(&output_path, &payload)?;
-    println!("{}", serde_json::to_string_pretty(&payload).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&payload).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -1419,7 +1477,10 @@ pub(crate) fn run_refresh_contributor_summary(args: RefreshContributorSummaryArg
 
     let mut summary_rows = Vec::new();
     for (index, contributor) in contributors.iter().enumerate() {
-        let commits = contributor["commits"].as_array().cloned().unwrap_or_default();
+        let commits = contributor["commits"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let latest_commit = commits.last().cloned().unwrap_or(Value::Null);
         summary_rows.push(json!({
             "rank": index + 1,
@@ -1445,7 +1506,10 @@ pub(crate) fn run_refresh_contributor_summary(args: RefreshContributorSummaryArg
         "contributors": summary_rows,
     });
     write_json_pretty(&output_path, &payload)?;
-    println!("{}", serde_json::to_string_pretty(&payload).into_diagnostic()?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&payload).into_diagnostic()?
+    );
     Ok(())
 }
 
@@ -1471,16 +1535,17 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
         steps.push(RefreshStep {
             id: "02_tests",
             title: "Workspace tests",
-            command: vec!["cargo".to_string(), "test".to_string(), "--workspace".to_string()],
+            command: vec![
+                "cargo".to_string(),
+                "test".to_string(),
+                "--workspace".to_string(),
+            ],
             env: Vec::new(),
         });
     }
 
     let mut guardrails_freeze = refresh_cli.clone();
-    guardrails_freeze.extend([
-        "refresh".to_string(),
-        "guardrails-freeze".to_string(),
-    ]);
+    guardrails_freeze.extend(["refresh".to_string(), "guardrails-freeze".to_string()]);
     if args.use_installed_cli {
         guardrails_freeze.push("--use-installed-cli".to_string());
     }
@@ -1600,10 +1665,7 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     });
 
     let mut contributor_points = refresh_cli.clone();
-    contributor_points.extend([
-        "refresh".to_string(),
-        "contributor-points".to_string(),
-    ]);
+    contributor_points.extend(["refresh".to_string(), "contributor-points".to_string()]);
     steps.push(RefreshStep {
         id: "09_contributor_points",
         title: "Rebuild contributor points",
@@ -1612,10 +1674,7 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     });
 
     let mut contributor_summary = refresh_cli;
-    contributor_summary.extend([
-        "refresh".to_string(),
-        "contributor-summary".to_string(),
-    ]);
+    contributor_summary.extend(["refresh".to_string(), "contributor-summary".to_string()]);
     steps.push(RefreshStep {
         id: "10_contributor_summary",
         title: "Rebuild contributor summary",
@@ -1651,7 +1710,11 @@ fn run_refresh_step(
         }
         let status = command.status().into_diagnostic()?;
         ensure_step_success(step, status, &log_path)?;
-        println!("  {} {}", "Status".bright_black(), "completed".bright_green());
+        println!(
+            "  {} {}",
+            "Status".bright_black(),
+            "completed".bright_green()
+        );
         return Ok(());
     }
 
@@ -1682,7 +1745,11 @@ fn run_refresh_step(
         }
         let elapsed = started.elapsed();
         if elapsed >= last_heartbeat + HEARTBEAT_INTERVAL {
-            println!("  {} {}s", "Still running".bright_black(), elapsed.as_secs());
+            println!(
+                "  {} {}s",
+                "Still running".bright_black(),
+                elapsed.as_secs()
+            );
             last_heartbeat = elapsed;
         }
         thread::sleep(Duration::from_secs(1));
@@ -1695,12 +1762,20 @@ fn ensure_step_success(step: &RefreshStep, status: ExitStatus, log_path: &Path) 
     }
     eprintln!("  {} {}", "Failed".bright_red(), step.title);
     if log_path.exists() {
-        eprintln!("  {} {}", "Last log lines".bright_black(), log_path.display());
+        eprintln!(
+            "  {} {}",
+            "Last log lines".bright_black(),
+            log_path.display()
+        );
         for line in tail_lines(log_path, FAILURE_TAIL_LINES)? {
             eprintln!("    {line}");
         }
     }
-    Err(miette::miette!("{} failed with status {}", step.title, status))
+    Err(miette::miette!(
+        "{} failed with status {}",
+        step.title,
+        status
+    ))
 }
 
 fn tail_lines(path: &Path, max_lines: usize) -> Result<Vec<String>> {
@@ -1757,12 +1832,10 @@ fn refresh_front_door(use_installed_cli: bool) -> Result<Vec<String>> {
     if use_installed_cli {
         Ok(vec!["logicpearl".to_string()])
     } else {
-        Ok(vec![
-            std::env::current_exe()
-                .into_diagnostic()?
-                .display()
-                .to_string(),
-        ])
+        Ok(vec![std::env::current_exe()
+            .into_diagnostic()?
+            .display()
+            .to_string()])
     }
 }
 
@@ -1838,7 +1911,11 @@ fn datasets_root_from_args(repo_root: &Path, value: Option<&PathBuf>) -> PathBuf
 }
 
 fn guardrail_split_dir(datasets_root: &Path, spec: GuardrailDatasetSpec) -> PathBuf {
-    let parent = datasets_root.join(spec.raw_rel).parent().unwrap().to_path_buf();
+    let parent = datasets_root
+        .join(spec.raw_rel)
+        .parent()
+        .unwrap()
+        .to_path_buf();
     parent.join("logicpearl_splits").join(spec.dataset_id)
 }
 
@@ -1885,7 +1962,10 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
 
 fn copy_plugin_bundle(source_manifest: &Path, dest_dir: &Path) -> Result<PathBuf> {
     let source_dir = source_manifest.parent().ok_or_else(|| {
-        miette::miette!("plugin manifest has no parent: {}", source_manifest.display())
+        miette::miette!(
+            "plugin manifest has no parent: {}",
+            source_manifest.display()
+        )
     })?;
     if dest_dir.exists() {
         fs::remove_dir_all(dest_dir).into_diagnostic()?;
@@ -1894,14 +1974,13 @@ fn copy_plugin_bundle(source_manifest: &Path, dest_dir: &Path) -> Result<PathBuf
     Ok(dest_dir.join("manifest.json"))
 }
 
-fn route_stratified_sample_cases(
-    rows: &[BenchmarkCase],
-    max_cases: usize,
-) -> SampledCases {
+fn route_stratified_sample_cases(rows: &[BenchmarkCase], max_cases: usize) -> SampledCases {
     if max_cases == 0 || rows.len() <= max_cases {
         let mut route_counts = BTreeMap::new();
         for row in rows {
-            *route_counts.entry(row.expected_route.clone()).or_insert(0usize) += 1;
+            *route_counts
+                .entry(row.expected_route.clone())
+                .or_insert(0usize) += 1;
         }
         return SampledCases {
             rows: rows.to_vec(),
@@ -1978,17 +2057,26 @@ fn route_stratified_sample_cases(
 
     let mut sampled = Vec::new();
     for (route, bucket) in &grouped {
-        sampled.extend(bucket.iter().take(allocations.get(route).copied().unwrap_or(0)).cloned());
+        sampled.extend(
+            bucket
+                .iter()
+                .take(allocations.get(route).copied().unwrap_or(0))
+                .cloned(),
+        );
     }
     sampled.sort_by_key(|row| stable_case_sort_key(&row.id));
 
     let mut input_counts = BTreeMap::new();
     let mut output_counts = BTreeMap::new();
     for row in rows {
-        *input_counts.entry(row.expected_route.clone()).or_insert(0usize) += 1;
+        *input_counts
+            .entry(row.expected_route.clone())
+            .or_insert(0usize) += 1;
     }
     for row in &sampled {
-        *output_counts.entry(row.expected_route.clone()).or_insert(0usize) += 1;
+        *output_counts
+            .entry(row.expected_route.clone())
+            .or_insert(0usize) += 1;
     }
 
     let output_count = sampled.len();
@@ -2060,7 +2148,10 @@ fn build_guardrails_combined_pearl(
     let mut ordered_features = Vec::new();
     let mut appended = BTreeSet::new();
     for feature_id in &artifact_set.features {
-        if let Some(feature) = combined_features.iter().find(|feature| feature.id == *feature_id) {
+        if let Some(feature) = combined_features
+            .iter()
+            .find(|feature| feature.id == *feature_id)
+        {
             ordered_features.push(feature.clone());
             appended.insert(feature.id.clone());
         }
@@ -2175,13 +2266,12 @@ fn canonical_target_goal(value: &str) -> String {
     value.trim().to_lowercase().replace('_', "-")
 }
 
-fn compare_against_baseline(
-    aggregate: &[Value],
-    baseline: &Value,
-    tolerance: f64,
-) -> Vec<String> {
+fn compare_against_baseline(aggregate: &[Value], baseline: &Value, tolerance: f64) -> Vec<String> {
     let mut failures = Vec::new();
-    let expected = baseline["benchmarks"].as_object().cloned().unwrap_or_default();
+    let expected = baseline["benchmarks"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
     for item in aggregate {
         let benchmark_id = item["benchmark"].as_str().unwrap_or_default();
         let Some(baseline_summary) = expected.get(benchmark_id) else {
@@ -2198,7 +2288,9 @@ fn compare_against_baseline(
             }
         }
         let actual_fp = summary["false_positive_rate"].as_f64().unwrap_or(0.0);
-        let expected_fp = baseline_summary["false_positive_rate"].as_f64().unwrap_or(0.0);
+        let expected_fp = baseline_summary["false_positive_rate"]
+            .as_f64()
+            .unwrap_or(0.0);
         if actual_fp - tolerance > expected_fp {
             failures.push(format!(
                 "{benchmark_id} false_positive_rate regressed: {actual_fp:.6} > {expected_fp:.6}"
@@ -2269,12 +2361,12 @@ fn evaluate_guardrail_benchmark(
         .join("guardrails_v1.observer.json");
     let observed_path = benchmark_output_dir.join("observed.jsonl");
     let observe_report = run_json_command(
-            run.repo_root,
-            &build_nested_command(
-                run.cli,
-                &[
-                    "benchmark",
-                    "observe",
+        run.repo_root,
+        &build_nested_command(
+            run.cli,
+            &[
+                "benchmark",
+                "observe",
                 &cases_path.display().to_string(),
                 "--observer-artifact",
                 &observer_artifact.display().to_string(),
@@ -2286,18 +2378,21 @@ fn evaluate_guardrail_benchmark(
     )?;
     let traces_dir = benchmark_output_dir.join("traces");
     let emit_report = run_json_command(
-            run.repo_root,
-            &build_nested_command(
-                run.cli,
-                &[
-                    "benchmark",
-                    "emit-traces",
-                    &observed_path.display().to_string(),
-                    "--config",
-                    &run.repo_root.join(TRACE_PROJECTION_GUARDRAILS).display().to_string(),
-                    "--output-dir",
-                    &traces_dir.display().to_string(),
-                    "--json",
+        run.repo_root,
+        &build_nested_command(
+            run.cli,
+            &[
+                "benchmark",
+                "emit-traces",
+                &observed_path.display().to_string(),
+                "--config",
+                &run.repo_root
+                    .join(TRACE_PROJECTION_GUARDRAILS)
+                    .display()
+                    .to_string(),
+                "--output-dir",
+                &traces_dir.display().to_string(),
+                "--json",
             ],
         ),
     )?;
@@ -2314,8 +2409,7 @@ fn evaluate_guardrail_benchmark(
             .join("guardrails_combined.pearl.ir.json"),
     )
     .into_diagnostic()?;
-    let route_policy: Value =
-        read_json(&run.bundle_dir.join("freeze").join("route_policy.json"))?;
+    let route_policy: Value = read_json(&run.bundle_dir.join("freeze").join("route_policy.json"))?;
     let collapse_non_allow_to = route_policy["collapse_non_allow_to"]
         .as_str()
         .unwrap_or("deny");
@@ -2354,7 +2448,9 @@ fn evaluate_guardrail_benchmark(
         let matched = actual_route == case.expected_route;
         total_cases += 1;
         matched_cases += usize::from(matched);
-        *route_distribution.entry(route_status.clone()).or_insert(0usize) += 1;
+        *route_distribution
+            .entry(route_status.clone())
+            .or_insert(0usize) += 1;
         if case.expected_route == "deny" {
             attack_cases += 1;
             caught_attacks += usize::from(actual_route == "deny");
@@ -2407,7 +2503,10 @@ fn evaluate_guardrail_benchmark(
         },
         "cases": case_results,
     });
-    write_json_pretty(&benchmark_output_dir.join("evaluation_report.json"), &report)?;
+    write_json_pretty(
+        &benchmark_output_dir.join("evaluation_report.json"),
+        &report,
+    )?;
     Ok(json!({
         "benchmark": benchmark.id,
         "profile": benchmark.profile,
@@ -2435,7 +2534,9 @@ fn sample_cases_for_eval(cases: &[BenchmarkCase], sample_size: usize) -> Vec<Ben
     let mut remaining_groups = by_route.len().max(1);
     for route_cases in by_route.values_mut() {
         route_cases.sort_by_key(|case| deterministic_bucket(&case.id));
-        let quota = (remaining_budget / remaining_groups).max(1).min(route_cases.len());
+        let quota = (remaining_budget / remaining_groups)
+            .max(1)
+            .min(route_cases.len());
         selected.extend(route_cases.iter().take(quota).cloned());
         remaining_budget = remaining_budget.saturating_sub(quota);
         remaining_groups = remaining_groups.saturating_sub(1).max(1);
@@ -2585,7 +2686,10 @@ fn build_waf_target_artifact_set(
         &discovered_dir.join("artifact_set.json"),
         &serde_json::to_value(&artifact_set).into_diagnostic()?,
     )?;
-    write_json_pretty(&discovered_dir.join("discover_report.json"), &discover_report)?;
+    write_json_pretty(
+        &discovered_dir.join("discover_report.json"),
+        &discover_report,
+    )?;
     Ok(artifact_set)
 }
 
@@ -2854,17 +2958,36 @@ fn measure_demos(repo_root: &Path, cli: &[String]) -> Result<(Value, Value)> {
         );
         metrics.insert(
             format!("demos.{demo_id}.training_parity"),
-            metric(build["training_parity"].as_f64().unwrap_or(0.0), "max", 100.0, "demos", None),
+            metric(
+                build["training_parity"].as_f64().unwrap_or(0.0),
+                "max",
+                100.0,
+                "demos",
+                None,
+            ),
         );
         metrics.insert(
             format!("demos.{demo_id}.rules_discovered"),
-            metric(build["rules_discovered"].as_f64().unwrap_or(0.0), "max", 5.0, "demos", None),
+            metric(
+                build["rules_discovered"].as_f64().unwrap_or(0.0),
+                "max",
+                5.0,
+                "demos",
+                None,
+            ),
         );
     }
-    Ok((json!({"status": "ok", "cases": cases}), Value::Object(metrics)))
+    Ok((
+        json!({"status": "ok", "cases": cases}),
+        Value::Object(metrics),
+    ))
 }
 
-fn measure_guardrails(repo_root: &Path, cli: &[String], bundle_dir: &Path) -> Result<(Value, Value)> {
+fn measure_guardrails(
+    repo_root: &Path,
+    cli: &[String],
+    bundle_dir: &Path,
+) -> Result<(Value, Value)> {
     if !bundle_dir.exists() {
         return Ok((
             json!({
@@ -2918,7 +3041,9 @@ fn measure_guardrails(repo_root: &Path, cli: &[String], bundle_dir: &Path) -> Re
         metrics.insert(
             format!("{prefix}.exact_match_rate"),
             metric(
-                benchmark_summary["exact_match_rate"].as_f64().unwrap_or(0.0),
+                benchmark_summary["exact_match_rate"]
+                    .as_f64()
+                    .unwrap_or(0.0),
                 "max",
                 100.0,
                 "guardrails",
@@ -2928,7 +3053,9 @@ fn measure_guardrails(repo_root: &Path, cli: &[String], bundle_dir: &Path) -> Re
         metrics.insert(
             format!("{prefix}.attack_catch_rate"),
             metric(
-                benchmark_summary["attack_catch_rate"].as_f64().unwrap_or(0.0),
+                benchmark_summary["attack_catch_rate"]
+                    .as_f64()
+                    .unwrap_or(0.0),
                 "max",
                 125.0,
                 "guardrails",
@@ -2938,7 +3065,9 @@ fn measure_guardrails(repo_root: &Path, cli: &[String], bundle_dir: &Path) -> Re
         metrics.insert(
             format!("{prefix}.benign_pass_rate"),
             metric(
-                benchmark_summary["benign_pass_rate"].as_f64().unwrap_or(0.0),
+                benchmark_summary["benign_pass_rate"]
+                    .as_f64()
+                    .unwrap_or(0.0),
                 "max",
                 60.0,
                 "guardrails",
@@ -2948,7 +3077,9 @@ fn measure_guardrails(repo_root: &Path, cli: &[String], bundle_dir: &Path) -> Re
         metrics.insert(
             format!("{prefix}.false_positive_rate"),
             metric(
-                benchmark_summary["false_positive_rate"].as_f64().unwrap_or(0.0),
+                benchmark_summary["false_positive_rate"]
+                    .as_f64()
+                    .unwrap_or(0.0),
                 "min",
                 80.0,
                 "guardrails",
@@ -3015,7 +3146,10 @@ fn run_binary(binary_path: &Path, input_path: &Path) -> Result<String> {
             binary_path.display()
         ));
     }
-    Ok(String::from_utf8(completed.stdout).into_diagnostic()?.trim().to_string())
+    Ok(String::from_utf8(completed.stdout)
+        .into_diagnostic()?
+        .trim()
+        .to_string())
 }
 
 fn metric(value: f64, goal: &str, weight: f64, suite: &str, target_goal: Option<&str>) -> Value {
@@ -3055,7 +3189,10 @@ fn author_identity(repo_root: &Path) -> Result<Value> {
         .output()
         .into_diagnostic()?;
     let raw = if git_var.status.success() {
-        String::from_utf8(git_var.stdout).into_diagnostic()?.trim().to_string()
+        String::from_utf8(git_var.stdout)
+            .into_diagnostic()?
+            .trim()
+            .to_string()
     } else {
         String::new()
     };
@@ -3103,9 +3240,16 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Result<String> {
         .output()
         .into_diagnostic()?;
     if !completed.status.success() {
-        return Err(miette::miette!("git command failed: git -C {} {}", repo_root.display(), args.join(" ")));
+        return Err(miette::miette!(
+            "git command failed: git -C {} {}",
+            repo_root.display(),
+            args.join(" ")
+        ));
     }
-    Ok(String::from_utf8(completed.stdout).into_diagnostic()?.trim().to_string())
+    Ok(String::from_utf8(completed.stdout)
+        .into_diagnostic()?
+        .trim()
+        .to_string())
 }
 
 fn load_scores_for_commit(repo_root: &Path, commit: &str) -> Result<Option<Value>> {
@@ -3161,8 +3305,8 @@ fn suite_score(scores: &Value, suite_model: &Value) -> f64 {
                 }
             }
         }
-        total += metric["value"].as_f64().unwrap_or(0.0)
-            * metric_spec["weight"].as_f64().unwrap_or(0.0);
+        total +=
+            metric["value"].as_f64().unwrap_or(0.0) * metric_spec["weight"].as_f64().unwrap_or(0.0);
     }
     total
 }
