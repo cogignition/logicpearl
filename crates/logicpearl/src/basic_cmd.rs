@@ -30,6 +30,12 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
             );
             println!(
                 "  {} {}",
+                "Traces".bold(),
+                "generate clean synthetic traces from declarative policy".bright_black()
+            );
+            println!("    logicpearl quickstart traces");
+            println!(
+                "  {} {}",
                 "Build".bold(),
                 "learn one pearl from labeled traces".bright_black()
             );
@@ -46,6 +52,25 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
                 "score a guardrail benchmark slice".bright_black()
             );
             println!("    logicpearl quickstart benchmark");
+        }
+        Some(QuickstartTopic::Traces) => {
+            println!("{}", "Quickstart: Traces".bold().bright_green());
+            println!(
+                "  {}",
+                "Generate synthetic traces with nuisance fields balanced by construction:"
+                    .bright_black()
+            );
+            println!(
+                "  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl"
+            );
+            println!("  {}", "Audit the generated traces:".bright_black());
+            println!(
+                "  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json"
+            );
+            println!("  {}", "Then build a pearl from them:".bright_black());
+            println!(
+                "  logicpearl build /tmp/synthetic_traces.jsonl --output-dir /tmp/synthetic_access_policy"
+            );
         }
         Some(QuickstartTopic::Build) => {
             println!("{}", "Quickstart: Build".bold().bright_green());

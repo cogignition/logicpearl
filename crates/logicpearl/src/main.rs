@@ -46,6 +46,7 @@ mod conformance_cmd;
 mod observer_cmd;
 mod pipeline_cmd;
 mod refresh_cmd;
+mod trace_cmd;
 
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -80,6 +81,7 @@ use refresh_cmd::{
     run_refresh_guardrails_build, run_refresh_guardrails_eval, run_refresh_guardrails_freeze,
     run_refresh_scoreboard_update, run_refresh_waf_benchmark_cases, run_refresh_waf_build,
 };
+use trace_cmd::{run_traces_audit, run_traces_generate};
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -93,6 +95,7 @@ Use this CLI to:
 
 The main public path is:
 - quickstart
+- traces
 - build
 - inspect
 - run
@@ -146,6 +149,7 @@ Examples:
 const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
   logicpearl quickstart
+  logicpearl quickstart traces
   logicpearl quickstart build
   logicpearl quickstart pipeline
   logicpearl quickstart benchmark";
@@ -162,6 +166,12 @@ Examples:
   logicpearl refresh benchmarks --resume
   logicpearl refresh benchmarks --guardrail-sample-size 2000
   logicpearl refresh benchmarks --skip-validate";
+
+const TRACES_AFTER_HELP: &str = "\
+Examples:
+  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl
+  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json
+  logicpearl traces audit examples/getting_started/decision_traces.csv --label-column allowed --json";
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
@@ -186,6 +196,11 @@ enum Commands {
     Quickstart(QuickstartArgs),
     /// Turn labeled examples into a pearl.
     Build(BuildArgs),
+    /// Generate and audit labeled decision traces.
+    Traces {
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
     /// Inspect a pearl and see what it does.
     Inspect(InspectArgs),
     /// Run a pearl on an input file.
@@ -301,6 +316,73 @@ enum RefreshCommand {
     ContributorPoints(RefreshContributorPointsArgs),
     #[command(hide = true)]
     ContributorSummary(RefreshContributorSummaryArgs),
+}
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = TRACES_AFTER_HELP)]
+enum TraceCommand {
+    /// Generate labeled synthetic decision traces from a declarative spec.
+    Generate(TraceGenerateArgs),
+    /// Audit feature-label skew in a trace dataset and flag nuisance leakage.
+    Audit(TraceAuditArgs),
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum TraceFormatArg {
+    Csv,
+    Jsonl,
+    Json,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl\n  logicpearl traces generate spec.yaml --output /tmp/traces.csv --format csv --rows 500 --seed 7 --json"
+)]
+struct TraceGenerateArgs {
+    /// Trace-generation spec in JSON, JSON5-style JSON, YAML, or YML form.
+    spec: PathBuf,
+    /// Where to write the generated trace dataset.
+    #[arg(long)]
+    output: PathBuf,
+    /// Output format. If omitted, LogicPearl infers it from the output extension.
+    #[arg(long, value_enum)]
+    format: Option<TraceFormatArg>,
+    /// Override the spec row count.
+    #[arg(long)]
+    rows: Option<usize>,
+    /// Override the spec RNG seed.
+    #[arg(long)]
+    seed: Option<u64>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json\n  logicpearl traces audit traces.csv --label-column allowed --nuisance-fields session_age_minutes,request_id --fail-on-skew --json"
+)]
+struct TraceAuditArgs {
+    /// Decision trace dataset to inspect.
+    traces: PathBuf,
+    /// Optional generation spec to reuse label-column and field-role metadata.
+    #[arg(long)]
+    spec: Option<PathBuf>,
+    /// Explicit label column when not using a spec.
+    #[arg(long)]
+    label_column: Option<String>,
+    /// Comma-delimited list of nuisance/background fields that should not drift by label.
+    #[arg(long, value_delimiter = ',')]
+    nuisance_fields: Vec<String>,
+    /// Drift score threshold above which a field is considered suspicious.
+    #[arg(long, default_value_t = 0.15)]
+    drift_threshold: f64,
+    /// Exit non-zero when any nuisance field exceeds the drift threshold.
+    #[arg(long)]
+    fail_on_skew: bool,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -469,6 +551,7 @@ struct BenchmarkDetectProfileArgs {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum QuickstartTopic {
+    Traces,
     Build,
     Pipeline,
     Benchmark,
@@ -1319,6 +1402,12 @@ fn main() -> Result<()> {
         Commands::Refresh {
             command: RefreshCommand::ContributorSummary(args),
         } => run_refresh_contributor_summary(args),
+        Commands::Traces {
+            command: TraceCommand::Generate(args),
+        } => run_traces_generate(args),
+        Commands::Traces {
+            command: TraceCommand::Audit(args),
+        } => run_traces_audit(args),
         Commands::Build(args) => run_build(args),
         Commands::Quickstart(args) => run_quickstart(args),
         Commands::Discover(args) => run_discover(args),

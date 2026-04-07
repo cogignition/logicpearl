@@ -147,6 +147,35 @@ Example:
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --residual-pass --refine
 ```
 
+### Generate clean synthetic traces
+
+If you want LogicPearl to learn from synthetic behavior instead of a checked-in dataset, start from a declarative trace-generation spec:
+
+- [synthetic_access_policy.tracegen.json](./examples/getting_started/synthetic_access_policy.tracegen.json)
+
+Generate traces:
+
+```bash
+logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_access_policy.jsonl
+```
+
+Audit the result for nuisance-feature leakage:
+
+```bash
+logicpearl traces audit /tmp/synthetic_access_policy.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json
+```
+
+Then build from the generated traces exactly like any other dataset:
+
+```bash
+logicpearl build /tmp/synthetic_access_policy.jsonl --output-dir /tmp/synthetic_access_policy
+```
+
+The important boundary is:
+- policy fields can drive the generated label through declarative deny rules
+- nuisance fields are sampled independently and then audited for label skew
+- discovery still runs on the emitted traces, not on hidden handwritten runtime logic
+
 Inspect the artifact:
 
 ```bash

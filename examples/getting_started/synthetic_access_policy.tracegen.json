@@ -1,0 +1,107 @@
+{
+  "trace_spec_version": "1.0",
+  "dataset_id": "synthetic_access_policy",
+  "label_column": "allowed",
+  "row_count": 240,
+  "seed": 7,
+  "minimum_allowed_rows": 80,
+  "minimum_denied_rows": 80,
+  "fields": [
+    {
+      "id": "age",
+      "type": "int",
+      "role": "policy",
+      "min": 16,
+      "max": 70,
+      "description": "User age in years."
+    },
+    {
+      "id": "role",
+      "type": "enum",
+      "role": "policy",
+      "values": ["viewer", "editor", "admin"],
+      "weights": [0.45, 0.4, 0.15],
+      "description": "Access role requested by the user."
+    },
+    {
+      "id": "action",
+      "type": "enum",
+      "role": "policy",
+      "values": ["read", "write"],
+      "weights": [0.7, 0.3],
+      "description": "Requested action."
+    },
+    {
+      "id": "clearance_level",
+      "type": "int",
+      "role": "policy",
+      "min": 1,
+      "max": 5,
+      "description": "User clearance level."
+    },
+    {
+      "id": "resource_sensitivity",
+      "type": "int",
+      "role": "policy",
+      "min": 1,
+      "max": 5,
+      "description": "Sensitivity level required by the resource."
+    },
+    {
+      "id": "session_age_minutes",
+      "type": "int",
+      "role": "nuisance",
+      "min": 1,
+      "max": 180,
+      "description": "Background session age that should not drive policy."
+    },
+    {
+      "id": "device",
+      "type": "enum",
+      "role": "nuisance",
+      "values": ["web", "mobile", "tablet"],
+      "weights": [0.6, 0.3, 0.1],
+      "description": "Client device type."
+    }
+  ],
+  "rules": [
+    {
+      "id": "minor_denied",
+      "deny_when": {
+        "feature": "age",
+        "op": "<",
+        "value": 18
+      },
+      "label": "Underage access is denied"
+    },
+    {
+      "id": "viewer_cannot_write",
+      "deny_when": {
+        "all": [
+          {
+            "feature": "role",
+            "op": "==",
+            "value": "viewer"
+          },
+          {
+            "feature": "action",
+            "op": "==",
+            "value": "write"
+          }
+        ]
+      },
+      "label": "Viewer write requests are denied"
+    },
+    {
+      "id": "insufficient_clearance",
+      "deny_when": {
+        "feature": "clearance_level",
+        "op": "<",
+        "value": {
+          "feature_ref": "resource_sensitivity"
+        }
+      },
+      "label": "Clearance must meet or exceed sensitivity"
+    }
+  ]
+}

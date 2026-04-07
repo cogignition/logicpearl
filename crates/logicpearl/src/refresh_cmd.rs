@@ -85,6 +85,12 @@ struct RefreshStep {
     env: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone)]
+struct RefreshProgress {
+    detail: String,
+    eta: Option<Duration>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct GuardrailDatasetSpec {
     dataset_id: &'static str,
@@ -1762,14 +1768,25 @@ fn run_refresh_step(
         }
         let elapsed = started.elapsed();
         if elapsed >= last_heartbeat + HEARTBEAT_INTERVAL {
-            let progress = refresh_progress_snapshot(step, &log_path)?;
+            let progress = refresh_progress_snapshot(step, &log_path, elapsed)?;
             if let Some(progress) = progress {
-                println!(
-                    "  {} {}s  {}",
-                    "Still running".bright_black(),
-                    elapsed.as_secs(),
-                    progress.bright_black()
-                );
+                if let Some(eta) = progress.eta {
+                    println!(
+                        "  {} {}s  {}  {}~{}",
+                        "Still running".bright_black(),
+                        elapsed.as_secs(),
+                        progress.detail.bright_black(),
+                        "eta".bright_black(),
+                        format_short_duration(eta).bright_black()
+                    );
+                } else {
+                    println!(
+                        "  {} {}s  {}",
+                        "Still running".bright_black(),
+                        elapsed.as_secs(),
+                        progress.detail.bright_black()
+                    );
+                }
             } else {
                 println!(
                     "  {} {}s",
@@ -1815,13 +1832,17 @@ fn tail_lines(path: &Path, max_lines: usize) -> Result<Vec<String>> {
     Ok(lines[start..].to_vec())
 }
 
-fn refresh_progress_snapshot(step: &RefreshStep, log_path: &Path) -> Result<Option<String>> {
+fn refresh_progress_snapshot(
+    step: &RefreshStep,
+    log_path: &Path,
+    elapsed: Duration,
+) -> Result<Option<RefreshProgress>> {
     if !log_path.exists() {
         return Ok(None);
     }
     let lines = tail_lines(log_path, 400)?;
     match step.id {
-        "04_guardrails_build" => Ok(guardrails_build_progress(&lines)),
+        "04_guardrails_build" => Ok(guardrails_build_progress(&lines, elapsed)),
         "05_guardrails_eval" => Ok(last_meaningful_log_line(&lines)),
         "06_waf_cases" => Ok(last_meaningful_log_line(&lines)),
         "07_waf_build" => Ok(last_meaningful_log_line(&lines)),
@@ -1829,11 +1850,12 @@ fn refresh_progress_snapshot(step: &RefreshStep, log_path: &Path) -> Result<Opti
     }
 }
 
-fn guardrails_build_progress(lines: &[String]) -> Option<String> {
+fn guardrails_build_progress(lines: &[String], elapsed: Duration) -> Option<RefreshProgress> {
     let mut selected_signals = BTreeSet::new();
     let mut current_signal = None::<String>;
     let mut current_mode = None::<String>;
     let mut current_cap = None::<String>;
+    let mut last_phase = None::<&str>;
 
     for line in lines {
         if let Some(signal) = extract_between(line, "signal=", " ") {
@@ -1853,11 +1875,45 @@ fn guardrails_build_progress(lines: &[String]) -> Option<String> {
                 selected_signals.insert(signal.to_string());
             }
         }
+        if line.contains(" benchmark prepare ") {
+            last_phase = Some("prepare");
+        } else if line.contains(" benchmark observe ") {
+            last_phase = Some("observe");
+        } else if line.contains(" benchmark emit-traces ") {
+            last_phase = Some("emit-traces");
+        } else if line.contains(" benchmark score-artifacts ") {
+            last_phase = Some("score-artifacts");
+        } else if line.contains(" -- compile ") && line.contains(".pearl.wasm") {
+            last_phase = Some("compile-wasm");
+        } else if line.contains(" -- compile ") {
+            last_phase = Some("compile-native");
+        }
     }
 
     let selected = selected_signals.len();
     if selected >= GUARDRAIL_SIGNALS.len() {
-        return Some("phase=post-synthesis finalize".to_string());
+        let detail = match last_phase {
+            Some("prepare") => "phase=prepare projected traces".to_string(),
+            Some("observe") => "phase=observe final holdout".to_string(),
+            Some("emit-traces") => "phase=emit traces".to_string(),
+            Some("score-artifacts") => "phase=score artifacts".to_string(),
+            Some("compile-native") => "phase=compile native artifact".to_string(),
+            Some("compile-wasm") => "phase=compile wasm artifact".to_string(),
+            _ => "phase=post-synthesis finalize".to_string(),
+        };
+        let fraction = match last_phase {
+            Some("prepare") => 0.86,
+            Some("observe") => 0.96,
+            Some("emit-traces") => 0.98,
+            Some("score-artifacts") => 0.985,
+            Some("compile-native") => 0.99,
+            Some("compile-wasm") => 0.995,
+            _ => 0.82,
+        };
+        return Some(RefreshProgress {
+            detail,
+            eta: estimate_remaining(elapsed, fraction),
+        });
     }
 
     if let Some(signal) = current_signal {
@@ -1873,21 +1929,40 @@ fn guardrails_build_progress(lines: &[String]) -> Option<String> {
         if let Some(cap) = current_cap {
             parts.push(format!("cap={cap}"));
         }
-        return Some(parts.join("  "));
+        let fraction = match selected {
+            0 => 0.33,
+            1 => 0.70,
+            2 => 0.80,
+            _ => 0.82,
+        };
+        return Some(RefreshProgress {
+            detail: parts.join("  "),
+            eta: estimate_remaining(elapsed, fraction),
+        });
     }
 
     if selected > 0 {
-        return Some(format!(
-            "phase=synthesize completed_signals={}/{}",
-            selected,
-            GUARDRAIL_SIGNALS.len()
-        ));
+        return Some(RefreshProgress {
+            detail: format!(
+                "phase=synthesize completed_signals={}/{}",
+                selected,
+                GUARDRAIL_SIGNALS.len()
+            ),
+            eta: estimate_remaining(
+                elapsed,
+                match selected {
+                    1 => 0.68,
+                    2 => 0.79,
+                    _ => 0.82,
+                },
+            ),
+        });
     }
 
     last_meaningful_log_line(lines)
 }
 
-fn last_meaningful_log_line(lines: &[String]) -> Option<String> {
+fn last_meaningful_log_line(lines: &[String]) -> Option<RefreshProgress> {
     lines.iter().rev().find_map(|line| {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -1900,13 +1975,49 @@ fn last_meaningful_log_line(lines: &[String]) -> Option<String> {
             return None;
         }
         if trimmed.starts_with("[logicpearl ") || trimmed.starts_with("Compiling ") {
-            return Some(trimmed.to_string());
+            return Some(RefreshProgress {
+                detail: trimmed.to_string(),
+                eta: None,
+            });
         }
         if trimmed.starts_with("Running `") || trimmed.starts_with("Finished `") {
-            return Some(trimmed.to_string());
+            return Some(RefreshProgress {
+                detail: trimmed.to_string(),
+                eta: None,
+            });
         }
         None
     })
+}
+
+fn estimate_remaining(elapsed: Duration, fraction_complete: f64) -> Option<Duration> {
+    if elapsed < Duration::from_secs(90) {
+        return None;
+    }
+    if !(0.05..0.995).contains(&fraction_complete) {
+        return None;
+    }
+    let elapsed_secs = elapsed.as_secs_f64();
+    let remaining_secs = (elapsed_secs * (1.0 - fraction_complete) / fraction_complete).round();
+    if remaining_secs <= 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(remaining_secs))
+}
+
+fn format_short_duration(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+    if total_secs >= 3600 {
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        format!("{hours}h{minutes:02}m")
+    } else if total_secs >= 60 {
+        let minutes = total_secs / 60;
+        let seconds = total_secs % 60;
+        format!("{minutes}m{seconds:02}s")
+    } else {
+        format!("{total_secs}s")
+    }
 }
 
 fn extract_between<'a>(line: &'a str, start: &str, end: &str) -> Option<&'a str> {
