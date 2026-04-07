@@ -21,6 +21,28 @@ def normalize_text(value: str) -> str:
     return collapsed.strip()
 
 
+def flatten_text(value) -> str:
+    parts = []
+
+    def visit(node) -> None:
+        if isinstance(node, dict):
+            for key, child in sorted(node.items()):
+                visit(str(key))
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+        elif node is None:
+            return
+        else:
+            text = normalize_text(str(node))
+            if text:
+                parts.append(text)
+
+    visit(value)
+    return " ".join(parts)
+
+
 def observe_raw_input(raw) -> dict:
     method = normalize_text(str(raw.get("method", "")))
     path = normalize_text(str(raw.get("path", "")))
@@ -33,8 +55,8 @@ def observe_raw_input(raw) -> dict:
 
     tenant_scope = normalize_text(str(headers.get("tenant_scope", "")))
     user_agent = normalize_text(str(headers.get("user_agent", headers.get("user-agent", ""))))
-    query_text = normalize_text(json.dumps(query, sort_keys=True))
-    body_text = normalize_text(json.dumps(body, sort_keys=True))
+    query_text = flatten_text(query)
+    body_text = flatten_text(body)
     combined_text = " ".join(
         part
         for part in (

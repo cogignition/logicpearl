@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1167,62 +1168,78 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         ),
     )?;
 
-    let artifact_score = run_json_command(
+    let mut scored = run_json_commands_parallel(
         &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "score-artifacts",
-                &rewritten_artifact_set_path.display().to_string(),
-                &holdout_dir
-                    .join("traces")
-                    .join("multi_target.csv")
-                    .display()
-                    .to_string(),
-                "--output",
-                &holdout_dir
-                    .join("artifact_score.json")
-                    .display()
-                    .to_string(),
-                "--json",
-            ],
-        ),
-    )?;
-    let exact = run_json_command(
-        &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "run",
-                &learned_pipeline_path.display().to_string(),
-                &final_holdout_cases.display().to_string(),
-                "--output",
-                &holdout_dir.join("exact_routes.json").display().to_string(),
-                "--json",
-            ],
-        ),
-    )?;
-    let collapsed = run_json_command(
-        &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "run",
-                &learned_pipeline_path.display().to_string(),
-                &final_holdout_cases.display().to_string(),
-                "--collapse-non-allow-to-deny",
-                "--output",
-                &holdout_dir
-                    .join("collapsed_allow_deny.json")
-                    .display()
-                    .to_string(),
-                "--json",
-            ],
-        ),
-    )?;
+        vec![
+            (
+                "artifact_score".to_string(),
+                build_nested_command(
+                    &cli,
+                    &[
+                        "benchmark",
+                        "score-artifacts",
+                        &rewritten_artifact_set_path.display().to_string(),
+                        &holdout_dir
+                            .join("traces")
+                            .join("multi_target.csv")
+                            .display()
+                            .to_string(),
+                        "--output",
+                        &holdout_dir
+                            .join("artifact_score.json")
+                            .display()
+                            .to_string(),
+                        "--json",
+                    ],
+                ),
+            ),
+            (
+                "exact".to_string(),
+                build_nested_command(
+                    &cli,
+                    &[
+                        "benchmark",
+                        "run",
+                        &learned_pipeline_path.display().to_string(),
+                        &final_holdout_cases.display().to_string(),
+                        "--output",
+                        &holdout_dir.join("exact_routes.json").display().to_string(),
+                        "--json",
+                    ],
+                ),
+            ),
+            (
+                "collapsed".to_string(),
+                build_nested_command(
+                    &cli,
+                    &[
+                        "benchmark",
+                        "run",
+                        &learned_pipeline_path.display().to_string(),
+                        &final_holdout_cases.display().to_string(),
+                        "--collapse-non-allow-to-deny",
+                        "--output",
+                        &holdout_dir
+                            .join("collapsed_allow_deny.json")
+                            .display()
+                            .to_string(),
+                        "--json",
+                    ],
+                ),
+            ),
+        ],
+    )?
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    let artifact_score = scored
+        .remove("artifact_score")
+        .ok_or_else(|| miette::miette!("missing artifact_score result"))?;
+    let exact = scored
+        .remove("exact")
+        .ok_or_else(|| miette::miette!("missing exact result"))?;
+    let collapsed = scored
+        .remove("collapsed")
+        .ok_or_else(|| miette::miette!("missing collapsed result"))?;
 
     let summary = json!({
         "benchmark_dir": args.benchmark_dir.display().to_string(),
@@ -2126,6 +2143,42 @@ fn run_json_command(repo_root: &Path, command: &[String]) -> Result<Value> {
         .wrap_err_with(|| format!("command returned invalid JSON: {}", command.join(" ")))
 }
 
+fn run_json_commands_parallel(
+    repo_root: &Path,
+    commands: Vec<(String, Vec<String>)>,
+) -> Result<Vec<(String, Value)>> {
+    if commands.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let repo_root = repo_root.to_path_buf();
+    for (index, (label, command)) in commands.into_iter().enumerate() {
+        let tx = tx.clone();
+        let repo_root = repo_root.clone();
+        thread::spawn(move || {
+            let result = run_json_command(&repo_root, &command)
+                .map(|value| (index, label, value))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(result);
+        });
+    }
+    drop(tx);
+
+    let mut completed = Vec::new();
+    for message in rx {
+        match message {
+            Ok(item) => completed.push(item),
+            Err(message) => return Err(miette::miette!(message)),
+        }
+    }
+    completed.sort_by_key(|(index, _, _)| *index);
+    Ok(completed
+        .into_iter()
+        .map(|(_, label, value)| (label, value))
+        .collect())
+}
+
 fn run_plain_command(repo_root: &Path, command: &[String]) -> Result<()> {
     let status = Command::new(&command[0])
         .args(&command[1..])
@@ -2859,33 +2912,38 @@ fn build_waf_target_artifact_set(
     let mut descriptors = Vec::new();
     let mut build_reports = Vec::new();
 
-    for (target, trace_file) in WAF_TARGETS {
-        let trace_path = train_traces_dir.join(trace_file);
-        let target_output_dir = artifacts_dir.join(target);
-        let mut command = build_nested_command(
-            cli,
-            &[
-                "build",
-                &trace_path.display().to_string(),
-                "--gate-id",
-                target,
-                "--label-column",
-                "allowed",
-                "--output-dir",
-                &target_output_dir.display().to_string(),
-                "--json",
-            ],
-        );
-        if residual_pass {
-            command.push("--residual-pass".to_string());
-        }
-        if refine {
-            command.push("--refine".to_string());
-        }
-        let build_report = run_json_command(repo_root, &command)?;
+    let commands = WAF_TARGETS
+        .iter()
+        .map(|(target, trace_file)| {
+            let trace_path = train_traces_dir.join(trace_file);
+            let target_output_dir = artifacts_dir.join(target);
+            let mut command = build_nested_command(
+                cli,
+                &[
+                    "build",
+                    &trace_path.display().to_string(),
+                    "--gate-id",
+                    target,
+                    "--label-column",
+                    "allowed",
+                    "--output-dir",
+                    &target_output_dir.display().to_string(),
+                    "--json",
+                ],
+            );
+            if residual_pass {
+                command.push("--residual-pass".to_string());
+            }
+            if refine {
+                command.push("--refine".to_string());
+            }
+            ((*target).to_string(), command)
+        })
+        .collect::<Vec<_>>();
+    for (target, build_report) in run_json_commands_parallel(repo_root, commands)? {
         build_reports.push(build_report);
         descriptors.push(logicpearl_discovery::ArtifactDescriptor {
-            name: target.to_string(),
+            name: target.clone(),
             artifact: Path::new("artifacts")
                 .join(target)
                 .join("pearl.ir.json")

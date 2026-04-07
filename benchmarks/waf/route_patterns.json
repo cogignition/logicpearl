@@ -37,11 +37,11 @@
       "category": "waf:data-exfiltration"
     },
     "modsecurity_default": {
-      "expected_route": "deny_injection_payload",
+      "expected_route": "review_suspicious_request",
       "category": "waf:modsecurity-deny"
     },
     "csic_default": {
-      "expected_route": "deny_injection_payload",
+      "expected_route": "review_suspicious_request",
       "category": "waf:anomalous-request"
     }
   },

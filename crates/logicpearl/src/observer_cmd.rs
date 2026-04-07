@@ -3,6 +3,8 @@ use logicpearl_observer::guardrails_signal_phrases;
 use logicpearl_observer_synthesis::{evaluate_guardrails_artifact_signal, ObserverSynthesisReport};
 use std::io::{BufRead, Write};
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
 const MIN_AUTO_SYNTHESIS_CASES: usize = 40;
@@ -240,6 +242,7 @@ pub(crate) fn observe_benchmark_cases(
 
     let mut rows = 0_usize;
     let mut chunk = Vec::with_capacity(PLUGIN_BATCH_SIZE);
+    let mut cases = Vec::new();
 
     for (line_no, line) in reader.lines().enumerate() {
         let line = line
@@ -255,15 +258,27 @@ pub(crate) fn observe_benchmark_cases(
                 "invalid benchmark case JSON on line {}. Each line must contain id, input, and expected_route",
                 line_no + 1
             ))?;
-        chunk.push(case);
-        if chunk.len() >= PLUGIN_BATCH_SIZE {
-            rows += observe_case_chunk(observer, &chunk, &mut writer)?;
-            chunk.clear();
-        }
+        cases.push(case);
     }
 
-    if !chunk.is_empty() {
-        rows += observe_case_chunk(observer, &chunk, &mut writer)?;
+    if matches!(observer, ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests"))
+    {
+        let observed = observe_case_chunks_parallel(observer, &cases)?;
+        rows = observed.len();
+        for item in &observed {
+            write_observed_case(&mut writer, item)?;
+        }
+    } else {
+        for case in cases {
+            chunk.push(case);
+            if chunk.len() >= PLUGIN_BATCH_SIZE {
+                rows += observe_case_chunk(observer, &chunk, &mut writer)?;
+                chunk.clear();
+            }
+        }
+        if !chunk.is_empty() {
+            rows += observe_case_chunk(observer, &chunk, &mut writer)?;
+        }
     }
 
     if rows == 0 {
@@ -280,11 +295,59 @@ pub(crate) fn observe_benchmark_cases(
     Ok(rows)
 }
 
-fn observe_case_chunk(
+fn observe_case_chunks_parallel(
+    observer: &ResolvedObserver,
+    cases: &[BenchmarkCase],
+) -> Result<Vec<ObservedBenchmarkCase>> {
+    let worker_count = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .max(1);
+    let chunked = cases
+        .chunks(PLUGIN_BATCH_SIZE)
+        .map(|chunk| chunk.to_vec())
+        .collect::<Vec<_>>();
+    if chunked.len() <= 1 || worker_count == 1 {
+        let mut observed = Vec::with_capacity(cases.len());
+        for chunk in &chunked {
+            observed.extend(process_case_chunk(observer, chunk)?);
+        }
+        return Ok(observed);
+    }
+
+    let concurrency = worker_count.min(chunked.len());
+    let (tx, rx) = mpsc::channel();
+    let observer = observer.clone();
+    let chunked = std::sync::Arc::new(chunked);
+    for worker in 0..concurrency {
+        let tx = tx.clone();
+        let observer = observer.clone();
+        let chunked = chunked.clone();
+        thread::spawn(move || {
+            for index in (worker..chunked.len()).step_by(concurrency) {
+                let result = process_case_chunk(&observer, &chunked[index])
+                    .map(|cases| (index, cases))
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(result);
+            }
+        });
+    }
+    drop(tx);
+
+    let mut ordered = vec![Vec::new(); chunked.len()];
+    for message in rx {
+        match message {
+            Ok((index, observed)) => ordered[index] = observed,
+            Err(message) => return Err(miette::miette!(message)),
+        }
+    }
+    Ok(ordered.into_iter().flatten().collect())
+}
+
+fn process_case_chunk(
     observer: &ResolvedObserver,
     chunk: &[BenchmarkCase],
-    writer: &mut std::io::BufWriter<fs::File>,
-) -> Result<usize> {
+) -> Result<Vec<ObservedBenchmarkCase>> {
     match observer {
         ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests") => {
             let payloads = chunk
@@ -298,46 +361,55 @@ fn observe_case_chunk(
             let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
                 .into_diagnostic()
                 .wrap_err("observer plugin batch execution failed")?;
-            for (case, response) in chunk.iter().zip(responses) {
-                let features = response
-                    .extra
-                    .get("features")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| {
-                        guidance(
-                            "observer plugin batch response is missing `features`",
-                            "An observer plugin used for benchmark observation must return a top-level features object.",
-                        )
-                    })?;
-                write_observed_case(
-                    writer,
-                    &ObservedBenchmarkCase {
+            chunk
+                .iter()
+                .zip(responses)
+                .map(|(case, response)| {
+                    let features = response
+                        .extra
+                        .get("features")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .ok_or_else(|| {
+                            guidance(
+                                "observer plugin batch response is missing `features`",
+                                "An observer plugin used for benchmark observation must return a top-level features object.",
+                            )
+                        })?;
+                    Ok(ObservedBenchmarkCase {
                         id: case.id.clone(),
                         input: case.input.clone(),
                         expected_route: case.expected_route.clone(),
                         category: case.category.clone(),
                         features,
-                    },
-                )?;
-            }
+                    })
+                })
+                .collect()
         }
-        _ => {
-            for case in chunk {
+        _ => chunk
+            .iter()
+            .map(|case| {
                 let features = observe_features(observer, &case.input)
                     .wrap_err(format!("observer execution failed for case {}", case.id))?;
-                write_observed_case(
-                    writer,
-                    &ObservedBenchmarkCase {
-                        id: case.id.clone(),
-                        input: case.input.clone(),
-                        expected_route: case.expected_route.clone(),
-                        category: case.category.clone(),
-                        features,
-                    },
-                )?;
-            }
-        }
+                Ok(ObservedBenchmarkCase {
+                    id: case.id.clone(),
+                    input: case.input.clone(),
+                    expected_route: case.expected_route.clone(),
+                    category: case.category.clone(),
+                    features,
+                })
+            })
+            .collect(),
+    }
+}
+
+fn observe_case_chunk(
+    observer: &ResolvedObserver,
+    chunk: &[BenchmarkCase],
+    writer: &mut std::io::BufWriter<fs::File>,
+) -> Result<usize> {
+    for observed in process_case_chunk(observer, chunk)? {
+        write_observed_case(writer, &observed)?;
     }
     Ok(chunk.len())
 }

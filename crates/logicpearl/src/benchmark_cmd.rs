@@ -6,7 +6,7 @@ use crate::observer_cmd::{
 use logicpearl_benchmark::{
     adapt_csic_http_2010_dataset, adapt_jailbreakbench_dataset,
     adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
-    adapt_rogue_security_prompt_injections_dataset,
+    adapt_rogue_security_prompt_injections_dataset, BenchmarkCase,
 };
 use logicpearl_core::LogicPearlError;
 use logicpearl_discovery::ArtifactSet;
@@ -16,6 +16,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
 
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkCaseResult {
@@ -1074,44 +1076,8 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     }
 
     let collapse_non_allow_to_deny = args.collapse_non_allow_to_deny;
-    let mut results = Vec::with_capacity(cases.len());
-    for chunk in cases.chunks(BENCHMARK_BATCH_SIZE) {
-        let inputs = chunk
-            .iter()
-            .map(|case| case.input.clone())
-            .collect::<Vec<_>>();
-        let executions = prepared_pipeline
-            .run_batch(&inputs)
-            .into_diagnostic()
-            .wrap_err("benchmark pipeline batch execution failed")?;
-        for (case, execution) in chunk.iter().zip(executions) {
-            let actual_route_raw = execution
-                .output
-                .get("route_status")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    guidance(
-                        "benchmark pipeline output is missing `route_status`",
-                        "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
-                    )
-                })?;
-            let actual_route = collapse_route(actual_route_raw, collapse_non_allow_to_deny);
-            let expected_route = collapse_route(&case.expected_route, collapse_non_allow_to_deny);
-            let matched = actual_route == expected_route;
-            let attack_confidence = execution
-                .output
-                .get("attack_confidence")
-                .and_then(Value::as_f64);
-            results.push(BenchmarkCaseResult {
-                id: case.id.clone(),
-                expected_route,
-                actual_route,
-                matched,
-                category: case.category.clone(),
-                attack_confidence,
-            });
-        }
-    }
+    let results =
+        benchmark_case_results_parallel(&prepared_pipeline, &cases, collapse_non_allow_to_deny)?;
 
     let mut matched_cases = 0_usize;
     let mut attack_cases = 0_usize;
@@ -1226,6 +1192,110 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn benchmark_case_results_parallel(
+    prepared_pipeline: &logicpearl_pipeline::PreparedPipeline,
+    cases: &[BenchmarkCase],
+    collapse_non_allow_to_deny: bool,
+) -> Result<Vec<BenchmarkCaseResult>> {
+    let chunked = cases
+        .chunks(BENCHMARK_BATCH_SIZE)
+        .map(|chunk| chunk.to_vec())
+        .collect::<Vec<_>>();
+    if chunked.is_empty() {
+        return Ok(Vec::new());
+    }
+    let worker_count = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .max(1)
+        .min(chunked.len());
+    if worker_count == 1 {
+        let mut results = Vec::with_capacity(cases.len());
+        for chunk in &chunked {
+            results.extend(run_benchmark_chunk(
+                prepared_pipeline,
+                chunk,
+                collapse_non_allow_to_deny,
+            )?);
+        }
+        return Ok(results);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let prepared_pipeline = prepared_pipeline.clone();
+    let chunked = std::sync::Arc::new(chunked);
+    for worker in 0..worker_count {
+        let tx = tx.clone();
+        let pipeline = prepared_pipeline.clone();
+        let chunked = chunked.clone();
+        thread::spawn(move || {
+            for index in (worker..chunked.len()).step_by(worker_count) {
+                let result =
+                    run_benchmark_chunk(&pipeline, &chunked[index], collapse_non_allow_to_deny)
+                        .map(|rows| (index, rows))
+                        .map_err(|err| err.to_string());
+                let _ = tx.send(result);
+            }
+        });
+    }
+    drop(tx);
+
+    let mut ordered = vec![Vec::new(); chunked.len()];
+    for message in rx {
+        match message {
+            Ok((index, rows)) => ordered[index] = rows,
+            Err(message) => return Err(miette::miette!(message)),
+        }
+    }
+    Ok(ordered.into_iter().flatten().collect())
+}
+
+fn run_benchmark_chunk(
+    prepared_pipeline: &logicpearl_pipeline::PreparedPipeline,
+    chunk: &[BenchmarkCase],
+    collapse_non_allow_to_deny: bool,
+) -> Result<Vec<BenchmarkCaseResult>> {
+    let inputs = chunk
+        .iter()
+        .map(|case| case.input.clone())
+        .collect::<Vec<_>>();
+    let executions = prepared_pipeline
+        .run_batch(&inputs)
+        .into_diagnostic()
+        .wrap_err("benchmark pipeline batch execution failed")?;
+    chunk
+        .iter()
+        .zip(executions)
+        .map(|(case, execution)| {
+            let actual_route_raw = execution
+                .output
+                .get("route_status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    guidance(
+                        "benchmark pipeline output is missing `route_status`",
+                        "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
+                    )
+                })?;
+            let actual_route = collapse_route(actual_route_raw, collapse_non_allow_to_deny);
+            let expected_route = collapse_route(&case.expected_route, collapse_non_allow_to_deny);
+            let matched = actual_route == expected_route;
+            let attack_confidence = execution
+                .output
+                .get("attack_confidence")
+                .and_then(Value::as_f64);
+            Ok(BenchmarkCaseResult {
+                id: case.id.clone(),
+                expected_route,
+                actual_route,
+                matched,
+                category: case.category.clone(),
+                attack_confidence,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn run_benchmark_score_artifacts(args: BenchmarkScoreArtifactsArgs) -> Result<()> {
