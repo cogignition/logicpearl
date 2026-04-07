@@ -10,6 +10,8 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactManifest {
@@ -361,7 +363,10 @@ pub(crate) fn compile_native_runner(
     });
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
-    let crate_name = format!("logicpearl_compiled_{}", sanitize_identifier(&pearl_name));
+    let crate_name = unique_generated_crate_name(&format!(
+        "logicpearl_compiled_{}",
+        sanitize_identifier(&pearl_name)
+    ));
     let build_dir = generated_root.join(&crate_name);
     let src_dir = build_dir.join("src");
     fs::create_dir_all(&src_dir)
@@ -455,10 +460,10 @@ pub(crate) fn compile_wasm_module(
     let metadata_path = wasm_metadata_output_path(artifact_dir, &pearl_name);
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
-    let crate_name = format!(
+    let crate_name = unique_generated_crate_name(&format!(
         "logicpearl_compiled_{}_wasm",
         sanitize_identifier(&pearl_name)
-    );
+    ));
     let gate = LogicPearlGateIr::from_path(pearl_ir)
         .into_diagnostic()
         .wrap_err("failed to load pearl IR for wasm compilation")?;
@@ -1038,6 +1043,17 @@ fn generated_build_root(workspace_root: &Path) -> PathBuf {
     }
 }
 
+fn unique_generated_crate_name(prefix: &str) -> String {
+    static NEXT_GENERATED_BUILD_ID: AtomicU64 = AtomicU64::new(0);
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let counter = NEXT_GENERATED_BUILD_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{}_{}_{}", std::process::id(), nanos, counter)
+}
+
 fn dependency_spec(workspace_root: &Path, crate_name: &str, relative_path: &str) -> String {
     let local_path = workspace_root.join(relative_path);
     if has_workspace_sources(workspace_root) && local_path.exists() {
@@ -1068,4 +1084,18 @@ fn target_is_windows(target_triple: Option<&str>) -> bool {
     target_triple
         .map(|target| target.contains("windows"))
         .unwrap_or(cfg!(target_os = "windows"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_generated_crate_name;
+
+    #[test]
+    fn generated_crate_names_are_isolated_per_invocation() {
+        let first = unique_generated_crate_name("logicpearl_compiled_demo");
+        let second = unique_generated_crate_name("logicpearl_compiled_demo");
+        assert_ne!(first, second);
+        assert!(first.starts_with("logicpearl_compiled_demo_"));
+        assert!(second.starts_with("logicpearl_compiled_demo_"));
+    }
 }
