@@ -1,12 +1,12 @@
 {
   "name": "@logicpearl/browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Official browser/runtime loader for LogicPearl Wasm artifact bundles.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LogicPearlHQ/logicpearl.git",
+    "url": "git+https://github.com/LogicPearlHQ/logicpearl.git",
     "directory": "packages/logicpearl-browser"
   },
   "homepage": "https://logicpearl.com",

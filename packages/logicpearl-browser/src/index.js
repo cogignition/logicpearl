@@ -9,18 +9,27 @@ export async function loadArtifact(reference, options = {}) {
   }
 
   const { manifestUrl, artifactBaseUrl } = normalizeArtifactReference(reference);
-  const manifest = await fetchJson(fetchImpl, manifestUrl);
+  let manifest = null;
+  try {
+    manifest = await fetchJson(fetchImpl, manifestUrl);
+  } catch (error) {
+    if (!isMissingResourceError(error)) {
+      throw error;
+    }
+  }
 
   const wasmModulePath =
     manifest?.files?.wasm_module ??
-    manifest?.bundle?.deployables?.find((item) => item.kind === 'wasm_module')?.path;
+    manifest?.bundle?.deployables?.find((item) => item.kind === 'wasm_module')?.path ??
+    'pearl.wasm';
   if (!wasmModulePath) {
     throw new Error('Artifact manifest does not declare a wasm_module deployable.');
   }
 
   const wasmMetadataPath =
     manifest?.files?.wasm_metadata ??
-    manifest?.bundle?.metadata_files?.find((item) => item.kind === 'wasm_metadata')?.path;
+    manifest?.bundle?.metadata_files?.find((item) => item.kind === 'wasm_metadata')?.path ??
+    'pearl.wasm.meta.json';
   if (!wasmMetadataPath) {
     throw new Error('Artifact manifest does not declare wasm metadata.');
   }
@@ -36,7 +45,7 @@ export async function loadArtifact(reference, options = {}) {
       wasmModule,
       wasmMetadata,
       artifactBaseUrl,
-      manifestUrl,
+      manifestUrl: manifest ? manifestUrl : null,
     },
     { instantiateWasm }
   );
@@ -45,19 +54,21 @@ export async function loadArtifact(reference, options = {}) {
 export async function loadArtifactFromBundle(bundle, options = {}) {
   const { instantiateWasm = defaultInstantiateWasm } = options;
   const { manifest, wasmModule, wasmMetadata } = bundle ?? {};
-  if (!manifest) {
-    throw new Error('loadArtifactFromBundle requires a manifest object.');
-  }
   if (!wasmModule) {
     throw new Error('loadArtifactFromBundle requires wasmModule bytes.');
   }
   if (!wasmMetadata) {
     throw new Error('loadArtifactFromBundle requires wasmMetadata.');
   }
+  const resolvedManifest =
+    manifest ??
+    buildFallbackManifest({
+      gateId: wasmMetadata.gate_id,
+    });
 
   const instance = await instantiateWasm(wasmModule);
   return new LogicPearlBrowserArtifact({
-    manifest,
+    manifest: resolvedManifest,
     wasmMetadata,
     instance,
     artifactBaseUrl: bundle.artifactBaseUrl ?? null,
@@ -225,6 +236,36 @@ async function fetchArrayBuffer(fetchImpl, url) {
     throw new Error(`Failed to load ${url}: ${response?.status ?? 'unknown status'}`);
   }
   return response.arrayBuffer();
+}
+
+function buildFallbackManifest({ gateId }) {
+  return {
+    artifact_version: '1.0',
+    artifact_name: gateId ?? 'logicpearl_artifact',
+    gate_id: gateId ?? 'logicpearl_artifact',
+    files: {
+      pearl_ir: 'pearl.ir.json',
+      build_report: 'build_report.json',
+      native_binary: null,
+      wasm_module: 'pearl.wasm',
+      wasm_metadata: 'pearl.wasm.meta.json',
+    },
+    bundle: {
+      bundle_kind: 'conventional_directory_bundle',
+      cli_entrypoint: 'artifact.json',
+      primary_runtime: 'wasm_module',
+      deployables: [
+        { kind: 'wasm_module', path: 'pearl.wasm' },
+      ],
+      metadata_files: [
+        { kind: 'wasm_metadata', path: 'pearl.wasm.meta.json', companion_to: 'pearl.wasm' },
+      ],
+    },
+  };
+}
+
+function isMissingResourceError(error) {
+  return error instanceof Error && /Failed to load .*: 404\b/.test(error.message);
 }
 
 async function defaultInstantiateWasm(bytes) {

@@ -5,6 +5,7 @@ import {
   decodeFiredRules,
   encodeFeatureSlots,
   loadArtifactFromBundle,
+  loadArtifact,
   normalizeArtifactReference,
 } from '../src/index.js';
 
@@ -110,4 +111,32 @@ test('loadArtifactFromBundle evaluates through the stable browser API', async ()
   assert.deepEqual(result.firedRuleIds, ['rule_a', 'rule_b']);
   assert.equal(result.primaryReason?.id, 'rule_a');
   assert.deepEqual(result.counterfactualHints, ['Change A', 'Change B']);
+});
+
+test('loadArtifact falls back to conventional pearl.wasm layout when artifact.json is absent', async () => {
+  const responses = new Map([
+    ['/demo/artifact.json', { ok: false, status: 404 }],
+    ['/demo/pearl.wasm', { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }],
+    ['/demo/pearl.wasm.meta.json', { ok: true, json: async () => sampleMetadata }],
+  ]);
+
+  const artifact = await loadArtifact('/demo', {
+    fetchImpl: async (url) => {
+      const response = responses.get(url);
+      if (!response) throw new Error(`unexpected url ${url}`);
+      return response;
+    },
+    instantiateWasm: async () => ({
+      exports: {
+        memory: new WebAssembly.Memory({ initial: 1 }),
+        logicpearl_alloc() { return 0; },
+        logicpearl_dealloc() {},
+        logicpearl_eval_bitmask_slots_f64() { return 0n; },
+      },
+    }),
+  });
+
+  const summary = artifact.inspect();
+  assert.equal(summary.gateId, 'demo_gate');
+  assert.equal(summary.primaryRuntime, 'wasm_module');
 });
