@@ -1,0 +1,33 @@
+{
+  "name": "@logicpearl/browser",
+  "version": "0.1.1",
+  "description": "Official browser/runtime loader for LogicPearl Wasm artifact bundles.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LogicPearlHQ/logicpearl.git",
+    "directory": "packages/logicpearl-browser"
+  },
+  "homepage": "https://logicpearl.com",
+  "keywords": [
+    "logicpearl",
+    "wasm",
+    "browser",
+    "policy",
+    "rules"
+  ],
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

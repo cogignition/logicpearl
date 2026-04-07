@@ -1,0 +1,55 @@
+# `@logicpearl/browser`
+
+Official browser/runtime loader for LogicPearl Wasm artifact bundles.
+
+This package is the supported JavaScript entrypoint for browser-facing LogicPearl usage.
+
+It exists so application code does **not** need to know about:
+- raw Wasm export names
+- `BigInt` bitmask decoding
+- feature-slot packing
+- wasm metadata lookup
+
+## Intended Usage
+
+```js
+import { loadArtifact } from '@logicpearl/browser';
+
+const artifact = await loadArtifact('/artifacts/authz');
+const result = artifact.evaluate({
+  account_age_days: 12,
+  email_verified: true,
+  risk_band: 'low',
+});
+
+console.log(result.allow);
+console.log(result.primaryReason);
+console.log(result.counterfactualHints);
+```
+
+## Supported Inputs
+
+`loadArtifact(...)` accepts:
+- an artifact directory path or URL
+- an `artifact.json` path or URL
+
+`loadArtifactFromBundle(...)` accepts:
+- a manifest object
+- Wasm module bytes
+- wasm metadata JSON
+
+That second form is useful for tests, preloaded assets, and custom caching layers.
+
+## Current Scope
+
+This v1 package supports:
+- one compiled LogicPearl artifact bundle
+- Wasm evaluation
+- rule decoding from wasm metadata
+
+It does **not** yet support:
+- full string-of-pearls pipeline orchestration
+- observer/plugin execution
+- automatic pipeline route evaluation
+
+Those should be added later on top of this single-artifact runtime, not instead of it.

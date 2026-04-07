@@ -127,6 +127,25 @@ The wasm artifact is intentionally split:
 - `*.pearl.wasm` is a tiny compiled evaluator
 - `*.pearl.wasm.meta.json` is the wasm metadata file with bit-to-rule metadata, messages, and counterfactual hints
 
+For JavaScript and browser integrations, the intended public surface is an official loader/runtime package.
+Frontend code should not call raw Wasm exports directly.
+
+The planned package surface is:
+
+```js
+import { loadArtifact } from '@logicpearl/browser';
+
+const artifact = await loadArtifact('/artifacts/authz');
+const result = artifact.evaluate(input);
+```
+
+That runtime layer is responsible for:
+- Wasm loading
+- feature-slot packing
+- `BigInt` bitmask decoding
+- wasm metadata lookup
+- returning fired rules and hints in a browser-friendly shape
+
 By default, `build` accepts labeled decision traces in `.csv`, `.jsonl` / `.ndjson`, or `.json` form. For JSON inputs, nested objects and arrays are flattened into dotted feature paths such as `account.age_days` or `claims.0.code`.
 
 It also infers the binary label column when there is one unambiguous candidate and normalizes common human-formatted scalar values such as:
@@ -653,6 +672,8 @@ The current public repo is organized around one primary Rust-first surface:
   The user-facing CLI published as `logicpearl`.
 - `crates/logicpearl-*`
   Core public libraries for IR, runtime, discovery, observers, pipelines, verification, rendering, conformance, and benchmark adaptation.
+- `packages/`
+  JavaScript-facing public packages, including the browser runtime for Wasm artifact bundles.
 - `examples/`
   Small public examples and demos you can actually run.
 - `benchmarks/`
@@ -670,6 +691,7 @@ The current public repo is organized around one primary Rust-first surface:
 
 If you are new here, the important directories are:
 - `crates/logicpearl`
+- `packages/logicpearl-browser`
 - `examples/`
 - `benchmarks/`
 - `fixtures/`
