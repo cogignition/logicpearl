@@ -1,4 +1,6 @@
 use super::*;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -134,7 +136,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
         ));
     }
 
-    let output_dir = args.output_dir.unwrap_or_else(|| {
+    let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.dataset_csv
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
@@ -328,14 +330,14 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
 }
 
 pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
-    let output_dir = args.output_dir.unwrap_or_else(|| {
+    let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
             .as_deref()
             .and_then(|path| path.parent())
             .unwrap_or_else(|| std::path::Path::new("."))
             .join("output")
     });
-    let gate_id = args.gate_id.unwrap_or_else(|| {
+    let gate_id = args.gate_id.clone().unwrap_or_else(|| {
         args.decision_traces
             .as_deref()
             .map(default_gate_id_from_path)
@@ -354,7 +356,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
                 .label_column
                 .clone()
                 .unwrap_or_else(|| "allowed".to_string());
-            let source = args.trace_plugin_input.ok_or_else(|| {
+            let source = args.trace_plugin_input.clone().ok_or_else(|| {
                 guidance(
                     "--trace-plugin-manifest was provided without --trace-plugin-input",
                     "Pass the raw source string or path with --trace-plugin-input when using a trace_source plugin.",
@@ -363,12 +365,13 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             let request = PluginRequest {
                 protocol_version: "1".to_string(),
                 stage: PluginStage::TraceSource,
-                payload: serde_json::json!({
-                    "source": source,
-                    "options": {
+                payload: logicpearl_plugin::build_canonical_payload(
+                    &PluginStage::TraceSource,
+                    Value::String(source.clone()),
+                    Some(serde_json::json!({
                         "label_column": plugin_label_column,
-                    }
-                }),
+                    })),
+                ),
             };
             let response = run_plugin(&manifest, &request)
                 .into_diagnostic()
@@ -413,10 +416,12 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         }
     };
 
+    let build_provenance = build_build_provenance(&args, &resolved_label_column)?;
+
     let build_options = BuildOptions {
         output_dir,
         gate_id,
-        label_column: resolved_label_column,
+        label_column: resolved_label_column.clone(),
         positive_label: args.positive_label.clone(),
         negative_label: args.negative_label.clone(),
         residual_pass: args.residual_pass,
@@ -442,9 +447,11 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         let request = PluginRequest {
             protocol_version: "1".to_string(),
             stage: PluginStage::Enricher,
-            payload: serde_json::json!({
-                "records": rows,
-            }),
+            payload: logicpearl_plugin::build_canonical_payload(
+                &PluginStage::Enricher,
+                serde_json::to_value(&rows).into_diagnostic()?,
+                None,
+            ),
         };
         let response = run_plugin(&manifest, &request)
             .into_diagnostic()
@@ -478,6 +485,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     let mut result = build_pearl_from_rows(&rows, source_name, &build_options)
         .into_diagnostic()
         .wrap_err("failed to build pearl from decision traces")?;
+    result.provenance = build_provenance;
 
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
@@ -637,6 +645,125 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     Ok(())
 }
 
+fn build_build_provenance(
+    args: &BuildArgs,
+    resolved_label_column: &str,
+) -> Result<Option<BuildProvenance>> {
+    let source_references = parse_key_value_entries(&args.source_references, "source-ref")?;
+    let decision_trace_source = if let Some(path) = &args.decision_traces {
+        Some(BuildInputProvenance {
+            kind: "decision_traces_path".to_string(),
+            value: path.display().to_string(),
+        })
+    } else {
+        args.trace_plugin_manifest
+            .as_ref()
+            .map(|manifest| BuildInputProvenance {
+                kind: "trace_plugin".to_string(),
+                value: manifest.display().to_string(),
+            })
+    };
+
+    let trace_plugin = if let Some(manifest_path) = &args.trace_plugin_manifest {
+        let manifest = PluginManifest::from_path(manifest_path)
+            .into_diagnostic()
+            .wrap_err("failed to reload trace plugin manifest for build provenance")?;
+        let input = args
+            .trace_plugin_input
+            .as_ref()
+            .map(|value| BuildInputProvenance {
+                kind: classify_source_value(value).to_string(),
+                value: value.clone(),
+            });
+        let mut options = BTreeMap::new();
+        options.insert(
+            "label_column".to_string(),
+            resolved_label_column.to_string(),
+        );
+        Some(PluginBuildProvenance {
+            name: manifest.name,
+            stage: "trace_source".to_string(),
+            manifest_path: manifest_path.display().to_string(),
+            manifest_sha256: Some(sha256_file(manifest_path)?),
+            input,
+            options,
+        })
+    } else {
+        None
+    };
+
+    let enricher_plugin = if let Some(manifest_path) = &args.enricher_plugin_manifest {
+        let manifest = PluginManifest::from_path(manifest_path)
+            .into_diagnostic()
+            .wrap_err("failed to reload enricher plugin manifest for build provenance")?;
+        Some(PluginBuildProvenance {
+            name: manifest.name,
+            stage: "enricher".to_string(),
+            manifest_path: manifest_path.display().to_string(),
+            manifest_sha256: Some(sha256_file(manifest_path)?),
+            input: None,
+            options: BTreeMap::new(),
+        })
+    } else {
+        None
+    };
+
+    if decision_trace_source.is_none()
+        && trace_plugin.is_none()
+        && enricher_plugin.is_none()
+        && source_references.is_empty()
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(BuildProvenance {
+        decision_trace_source,
+        trace_plugin,
+        enricher_plugin,
+        source_references,
+    }))
+}
+
+fn parse_key_value_entries(
+    entries: &[String],
+    flag_name: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut parsed = BTreeMap::new();
+    for entry in entries {
+        let Some((key, value)) = entry.split_once('=') else {
+            return Err(guidance(
+                format!("invalid --{flag_name} entry: {entry:?}"),
+                format!("Use repeated --{flag_name} key=value entries."),
+            ));
+        };
+        if key.trim().is_empty() || value.trim().is_empty() {
+            return Err(guidance(
+                format!("invalid --{flag_name} entry: {entry:?}"),
+                format!("Use repeated --{flag_name} key=value entries."),
+            ));
+        }
+        parsed.insert(key.trim().to_string(), value.trim().to_string());
+    }
+    Ok(parsed)
+}
+
+fn classify_source_value(value: &str) -> &'static str {
+    if std::path::Path::new(value).exists() {
+        "path"
+    } else {
+        "inline"
+    }
+}
+
+fn sha256_file(path: &PathBuf) -> Result<String> {
+    let bytes = fs::read(path)
+        .into_diagnostic()
+        .wrap_err("failed to read file for sha256")?;
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
     let resolved = resolve_artifact_input(&args.pearl_ir)?;
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
@@ -766,14 +893,19 @@ pub(crate) fn run_verify(args: VerifyArgs) -> Result<()> {
         ),
         None => None,
     };
+    let mut payload =
+        logicpearl_plugin::build_canonical_payload(&PluginStage::Verify, pearl_ir, None);
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "fixtures".to_string(),
+            fixtures.clone().unwrap_or(Value::Null),
+        );
+        object.insert("constraints".to_string(), Value::Array(Vec::new()));
+    }
     let request = PluginRequest {
         protocol_version: "1".to_string(),
         stage: PluginStage::Verify,
-        payload: serde_json::json!({
-            "pearl_ir": pearl_ir,
-            "fixtures": fixtures,
-            "constraints": [],
-        }),
+        payload,
     };
     let response = run_plugin(&manifest, &request)
         .into_diagnostic()

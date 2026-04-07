@@ -31,7 +31,9 @@ def parse_scalar(raw: str):
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
-    source = payload["source"]
+    source = payload.get("input", payload.get("source"))
+    if source is None:
+        raise KeyError("payload.input")
     options = payload.get("options", {})
     label_column = options.get("label_column", "allowed")
 

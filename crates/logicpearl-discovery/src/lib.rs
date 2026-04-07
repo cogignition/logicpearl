@@ -74,7 +74,40 @@ pub struct BuildResult {
     pub training_parity: f64,
     #[serde(default)]
     pub cache_hit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<BuildProvenance>,
     pub output_files: OutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
+pub struct BuildProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_trace_source: Option<BuildInputProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_plugin: Option<PluginBuildProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enricher_plugin: Option<PluginBuildProvenance>,
+    #[serde(default)]
+    pub source_references: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct BuildInputProvenance {
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct PluginBuildProvenance {
+    pub name: String,
+    pub stage: String,
+    pub manifest_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<BuildInputProvenance>,
+    #[serde(default)]
+    pub options: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -737,6 +770,7 @@ pub fn build_pearl_from_rows(
             .collect(),
         training_parity,
         cache_hit: false,
+        provenance: None,
         output_files: OutputFiles {
             artifact_dir: options.output_dir.display().to_string(),
             artifact_manifest: options

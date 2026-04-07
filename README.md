@@ -425,10 +425,37 @@ That small output shows the core shape:
 - explicit reasons
 - behavior that does not disappear into service code
 
+### Validate and smoke-test a plugin
+
+Use the generic plugin surface first:
+
+```bash
+logicpearl plugin validate examples/plugins/python_observer/manifest.json
+logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
+```
+
+What you should see:
+- the plugin stage and canonical contract
+- the exact JSON request envelope LogicPearl sent
+- the exact JSON response the plugin returned
+
+This is the fastest way to develop adapters safely:
+- you can validate any plugin stage, not just observers
+- you do not need to guess the request shape
+- the process boundary stays explicit and inspectable
+
+The canonical rule is simple:
+- LogicPearl now treats `payload.input` as the generic input field
+- stage-specific aliases still exist for compatibility:
+  - observer: `payload.raw_input`
+  - trace_source: `payload.source`
+  - enricher: `payload.records`
+  - verify: `payload.pearl_ir`
+
 ### Use a Python observer plugin at the edge
 
 ```bash
-logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
+logicpearl plugin validate examples/plugins/python_observer/manifest.json
 logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json
 ```
 
@@ -455,6 +482,7 @@ Use a Python trace-source plugin:
 logicpearl build \
   --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
   --trace-plugin-input examples/getting_started/decision_traces.csv \
+  --source-ref dataset=decision_traces_sample \
   --output-dir examples/getting_started/output-plugin
 ```
 
@@ -480,6 +508,12 @@ That is the intended plugin shape:
 - Rust owns the core CLI and artifact model
 - Python can plug into explicit stages
 - the contracts stay JSON-based and inspectable
+
+The emitted `build_report.json` now records plugin provenance too:
+- which trace-source plugin ran
+- which enricher plugin ran
+- whether the trace-source input was a path or an inline value
+- any `--source-ref key=value` entries you want to preserve as source references
 
 ### 5. See the bitmask visually
 
@@ -596,7 +630,7 @@ The observer fixtures are there to make the boundary inspectable and testable, n
 Run:
 
 ```bash
-logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest
+logicpearl plugin validate examples/plugins/python_observer/manifest.json
 ```
 
 That shows the intended observer loop:

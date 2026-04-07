@@ -353,9 +353,11 @@ fn process_case_chunk(
             let payloads = chunk
                 .iter()
                 .map(|case| {
-                    serde_json::json!({
-                        "raw_input": case.input
-                    })
+                    logicpearl_plugin::build_canonical_payload(
+                        &PluginStage::Observer,
+                        case.input.clone(),
+                        None,
+                    )
                 })
                 .collect::<Vec<_>>();
             let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
@@ -444,9 +446,11 @@ pub(crate) fn observe_features(
             let request = PluginRequest {
                 protocol_version: "1".to_string(),
                 stage: PluginStage::Observer,
-                payload: serde_json::json!({
-                    "raw_input": raw_input,
-                }),
+                payload: logicpearl_plugin::build_canonical_payload(
+                    &PluginStage::Observer,
+                    raw_input.clone(),
+                    None,
+                ),
             };
             let response = run_plugin(manifest, &request)
                 .into_diagnostic()

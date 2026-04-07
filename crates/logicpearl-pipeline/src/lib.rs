@@ -637,14 +637,15 @@ fn run_prepared_stage(
             stage: plugin_stage,
         } => {
             let payload = match plugin_stage {
-                PluginStage::Observer => Value::Object(Map::from_iter([(
-                    "raw_input".to_string(),
+                PluginStage::Observer => logicpearl_plugin::build_canonical_payload(
+                    plugin_stage,
                     Value::Object(
                         build_stage_input_object(&stage.input, root_input, stage_exports)?
                             .into_iter()
                             .collect(),
                     ),
-                )])),
+                    None,
+                ),
                 _ => Value::Object(
                     build_stage_input_object(&stage.input, root_input, stage_exports)?
                         .into_iter()
@@ -695,8 +696,8 @@ fn run_prepared_stage_batch(
             let payloads: Vec<Value> = runnable_indexes
                 .iter()
                 .map(|index| match plugin_stage {
-                    PluginStage::Observer => Ok(Value::Object(Map::from_iter([(
-                        "raw_input".to_string(),
+                    PluginStage::Observer => Ok(logicpearl_plugin::build_canonical_payload(
+                        plugin_stage,
                         Value::Object(
                             build_stage_input_object(
                                 &stage.input,
@@ -706,7 +707,8 @@ fn run_prepared_stage_batch(
                             .into_iter()
                             .collect(),
                         ),
-                    )]))),
+                        None,
+                    )),
                     _ => Ok(Value::Object(
                         build_stage_input_object(
                             &stage.input,

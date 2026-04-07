@@ -1,6 +1,6 @@
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -70,6 +70,33 @@ pub struct PluginBatchResponse {
     pub error: Option<PluginErrorPayload>,
     #[serde(default)]
     pub responses: Vec<PluginResponse>,
+}
+
+pub fn build_canonical_payload(stage: &PluginStage, input: Value, options: Option<Value>) -> Value {
+    let mut payload = Map::new();
+    payload.insert("input".to_string(), input.clone());
+
+    match stage {
+        PluginStage::Observer => {
+            payload.insert("raw_input".to_string(), input);
+        }
+        PluginStage::TraceSource => {
+            payload.insert("source".to_string(), input);
+        }
+        PluginStage::Enricher => {
+            payload.insert("records".to_string(), input);
+        }
+        PluginStage::Verify => {
+            payload.insert("pearl_ir".to_string(), input);
+        }
+        PluginStage::Render => {}
+    }
+
+    if let Some(options) = options {
+        payload.insert("options".to_string(), options);
+    }
+
+    Value::Object(payload)
 }
 
 impl PluginManifest {

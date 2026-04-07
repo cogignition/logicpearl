@@ -15,6 +15,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_getting_started
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_benchmark_heldout
 cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_demos
+cargo test --manifest-path Cargo.toml -p logicpearl --test e2e_plugins
+node --test packages/logicpearl-browser/test/browser-runtime.test.mjs
 
 echo "Refreshing LogicPearl score ledger..."
 python3 scripts/scoreboard/update_scores.py >/dev/null

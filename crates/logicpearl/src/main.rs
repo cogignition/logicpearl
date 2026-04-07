@@ -13,8 +13,9 @@ use logicpearl_benchmark::{
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildOptions,
-    DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
+    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildInputProvenance,
+    BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
+    PluginBuildProvenance,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -29,7 +30,9 @@ use logicpearl_observer_synthesis::{
     ObserverTargetGoal,
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
-use logicpearl_plugin::{run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginStage};
+use logicpearl_plugin::{
+    run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginResponse, PluginStage,
+};
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -45,6 +48,7 @@ mod benchmark_cmd;
 mod conformance_cmd;
 mod observer_cmd;
 mod pipeline_cmd;
+mod plugin_cmd;
 mod refresh_cmd;
 mod trace_cmd;
 
@@ -76,6 +80,7 @@ use observer_cmd::{
 use pipeline_cmd::{
     run_pipeline_inspect, run_pipeline_run, run_pipeline_trace, run_pipeline_validate,
 };
+use plugin_cmd::{run_plugin_run, run_plugin_validate};
 use refresh_cmd::{
     run_refresh_benchmarks, run_refresh_contributor_points, run_refresh_contributor_summary,
     run_refresh_guardrails_build, run_refresh_guardrails_eval, run_refresh_guardrails_freeze,
@@ -146,6 +151,12 @@ Examples:
   logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_observed.jsonl --signal instruction-override --bootstrap observed-feature --output /tmp/guardrails_observer.synthesized.json
   logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
 
+const PLUGIN_AFTER_HELP: &str = "\
+Examples:
+  logicpearl plugin validate examples/plugins/python_observer/manifest.json
+  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-literal examples/getting_started/decision_traces.csv --option label_column=allowed --json";
+
 const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
   logicpearl quickstart
@@ -209,6 +220,11 @@ enum Commands {
     Pipeline {
         #[command(subcommand)]
         command: PipelineCommand,
+    },
+    /// Validate and smoke-test JSON plugin stages.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
     },
     /// Test a pipeline against a benchmark dataset and see how it performs.
     Benchmark {
@@ -663,6 +679,9 @@ struct BuildArgs {
     /// Plugin manifest for an enricher plugin that transforms decision traces over JSON.
     #[arg(long, help_heading = "Advanced")]
     enricher_plugin_manifest: Option<PathBuf>,
+    /// Repeated key=value source references to record in build_report.json, such as document_id=claim_1234.
+    #[arg(long = "source-ref", help_heading = "Advanced")]
+    source_references: Vec<String>,
     /// Run a second solver-backed residual pass to recover missed deny slices from binary features.
     #[arg(long, help_heading = "Advanced Discovery")]
     residual_pass: bool,
@@ -1200,6 +1219,61 @@ enum ObserverCommand {
     Repair(ObserverRepairArgs),
 }
 
+#[derive(Debug, Subcommand)]
+#[command(after_help = PLUGIN_AFTER_HELP)]
+enum PluginCommand {
+    /// Check that a plugin manifest is valid. Optionally run a smoke request too.
+    Validate(PluginValidateArgs),
+    /// Run a plugin manifest against a JSON input or an explicit payload.
+    Run(PluginRunArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+)]
+struct PluginValidateArgs {
+    manifest: PathBuf,
+    /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
+    #[arg(long, conflicts_with_all = ["input_literal", "payload"])]
+    input: Option<PathBuf>,
+    /// Literal input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "payload"])]
+    input_literal: Option<String>,
+    /// Exact JSON payload to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_literal"])]
+    payload: Option<PathBuf>,
+    /// Repeated key=value options to include in the canonical payload.
+    #[arg(long = "option")]
+    options: Vec<String>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-literal examples/getting_started/decision_traces.csv --option label_column=allowed --json"
+)]
+struct PluginRunArgs {
+    manifest: PathBuf,
+    /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
+    #[arg(long, conflicts_with_all = ["input_literal", "payload"])]
+    input: Option<PathBuf>,
+    /// Literal input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "payload"])]
+    input_literal: Option<String>,
+    /// Exact JSON payload to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_literal"])]
+    payload: Option<PathBuf>,
+    /// Repeated key=value options to include in the canonical payload.
+    #[arg(long = "option")]
+    options: Vec<String>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Args)]
 struct ObserverListArgs {
     #[arg(long)]
@@ -1469,6 +1543,12 @@ fn main() -> Result<()> {
         Commands::Pipeline {
             command: PipelineCommand::Trace(args),
         } => run_pipeline_trace(args),
+        Commands::Plugin {
+            command: PluginCommand::Validate(args),
+        } => run_plugin_validate(args),
+        Commands::Plugin {
+            command: PluginCommand::Run(args),
+        } => run_plugin_run(args),
         Commands::Observer {
             command: ObserverCommand::List(args),
         } => run_observer_list(args),
