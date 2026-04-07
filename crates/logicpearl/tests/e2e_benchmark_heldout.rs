@@ -6,7 +6,7 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
-        .expect("logicpearl-cli crate should live under workspace/crates/logicpearl-cli")
+        .expect("logicpearl crate should live under workspace/crates/logicpearl")
         .to_path_buf()
 }
 

@@ -19,7 +19,7 @@ Software should run as artifact, not fog.
 <p align="center">
   <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a.svg?style=flat-square"></a>
   <a href="./Cargo.toml"><img alt="Workspace" src="https://img.shields.io/badge/workspace-Rust-173053.svg?style=flat-square"></a>
-  <a href="./crates/logicpearl-cli/Cargo.toml"><img alt="CLI" src="https://img.shields.io/badge/cli-logicpearl-173053.svg?style=flat-square"></a>
+  <a href="./crates/logicpearl/Cargo.toml"><img alt="CLI" src="https://img.shields.io/badge/cli-logicpearl-173053.svg?style=flat-square"></a>
   <a href="./benchmarks/opa_rego/README.md"><img alt="Demo" src="https://img.shields.io/badge/demo-OPA%20parity-173053.svg?style=flat-square"></a>
   <a href="./schema"><img alt="Schema" src="https://img.shields.io/badge/artifact-Pearl%20IR-173053.svg?style=flat-square"></a>
 </p>
@@ -79,7 +79,7 @@ cargo install logicpearl
 If you are developing from a local checkout instead of crates.io:
 
 ```bash
-cargo install --path crates/logicpearl-cli
+cargo install --path crates/logicpearl
 ```
 
 For local development inside the repo, the equivalent form is:

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "crates/logicpearl-cli",
+  "crates/logicpearl",
   "crates/logicpearl-benchmark",
   "crates/logicpearl-core",
   "crates/logicpearl-ir",
@@ -14,7 +14,7 @@ members = [
   "crates/logicpearl-render",
   "crates/logicpearl-conformance",
 ]
-default-members = ["crates/logicpearl-cli"]
+default-members = ["crates/logicpearl"]
 exclude = [
   "reserved-crates/logicpearl-explain",
   "reserved-crates/logicpearl-policy",

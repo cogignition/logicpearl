@@ -5,7 +5,7 @@ This directory contains the older runtime package that preceded the new Rust wor
 The active public direction now lives at the workspace root:
 
 - `Cargo.toml`
-- `crates/logicpearl-cli` published as the `logicpearl` crate
+- `crates/logicpearl` published as the `logicpearl` crate
 - `crates/logicpearl-ir`
 - `crates/logicpearl-runtime`
 - `crates/logicpearl-discovery`

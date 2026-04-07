@@ -45,7 +45,7 @@ If you add sophistication internally, keep the public command surface simple.
 ## Repository Boundaries
 
 Keep these boundaries intact:
-- `crates/logicpearl-cli`: user-facing Rust CLI crate, published as `logicpearl`
+- `crates/logicpearl`: user-facing Rust CLI crate, published as `logicpearl`
 - `crates/logicpearl-ir`: public artifact structures
 - `crates/logicpearl-runtime`: deterministic evaluation
 - `crates/logicpearl-discovery`: discovery and refinement

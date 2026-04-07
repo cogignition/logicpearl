@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
     adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
@@ -73,7 +75,11 @@ use observer_cmd::{
 use pipeline_cmd::{
     run_pipeline_inspect, run_pipeline_run, run_pipeline_trace, run_pipeline_validate,
 };
-use refresh_cmd::run_refresh_benchmarks;
+use refresh_cmd::{
+    run_refresh_benchmarks, run_refresh_contributor_points, run_refresh_contributor_summary,
+    run_refresh_guardrails_build, run_refresh_guardrails_eval, run_refresh_guardrails_freeze,
+    run_refresh_scoreboard_update, run_refresh_waf_benchmark_cases, run_refresh_waf_build,
+};
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -279,6 +285,22 @@ enum BenchmarkCommand {
 enum RefreshCommand {
     /// Run the full public benchmark refresh flow with cleaner progress output.
     Benchmarks(RefreshBenchmarksArgs),
+    #[command(hide = true)]
+    GuardrailsFreeze(RefreshGuardrailsFreezeArgs),
+    #[command(hide = true)]
+    GuardrailsBuild(RefreshGuardrailsBuildArgs),
+    #[command(hide = true)]
+    GuardrailsEval(RefreshGuardrailsEvalArgs),
+    #[command(hide = true)]
+    WafCases(RefreshWafBenchmarkCasesArgs),
+    #[command(hide = true)]
+    WafBuild(RefreshWafBuildArgs),
+    #[command(hide = true)]
+    ScoreboardUpdate(RefreshScoreboardUpdateArgs),
+    #[command(hide = true)]
+    ContributorPoints(RefreshContributorPointsArgs),
+    #[command(hide = true)]
+    ContributorSummary(RefreshContributorSummaryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -289,7 +311,7 @@ struct RefreshBenchmarksArgs {
     /// Skip cargo clippy and cargo test.
     #[arg(long)]
     skip_validate: bool,
-    /// Ask the Python bundle builders to use `logicpearl` from PATH.
+    /// Use `logicpearl` from PATH for nested refresh steps instead of the current binary.
     #[arg(long)]
     use_installed_cli: bool,
     /// Guardrail target goal to use during frozen bundle synthesis.
@@ -313,6 +335,120 @@ struct RefreshBenchmarksArgs {
     /// Stream full child command output instead of concise phase logging.
     #[arg(long)]
     verbose: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshGuardrailsFreezeArgs {
+    #[arg(long)]
+    datasets_root: Option<PathBuf>,
+    #[arg(long, default_value_t = 0.9)]
+    dev_fraction: f64,
+    #[arg(long)]
+    use_installed_cli: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshGuardrailsBuildArgs {
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long)]
+    datasets_root: Option<PathBuf>,
+    #[arg(long, default_value_t = 0.9)]
+    dev_fraction: f64,
+    #[arg(long)]
+    use_installed_cli: bool,
+    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ParityFirst)]
+    target_goal: ObserverTargetGoalArg,
+    #[arg(long)]
+    resume: bool,
+    #[arg(long, default_value_t = 0)]
+    dev_case_limit: usize,
+    #[arg(long, default_value_t = 0)]
+    final_holdout_case_limit: usize,
+}
+
+#[derive(Debug, Args)]
+struct RefreshGuardrailsEvalArgs {
+    #[arg(long)]
+    bundle_dir: PathBuf,
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long)]
+    datasets_root: Option<PathBuf>,
+    #[arg(long)]
+    use_installed_cli: bool,
+    #[arg(long, default_value = "final_holdout")]
+    input_split: String,
+    #[arg(long, default_value_t = 0)]
+    sample_size: usize,
+    #[arg(long, default_value = "")]
+    baseline: String,
+    #[arg(long, default_value_t = 0.0)]
+    tolerance: f64,
+    #[arg(long, default_value = "")]
+    target_goal: String,
+}
+
+#[derive(Debug, Args)]
+struct RefreshWafBenchmarkCasesArgs {
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long)]
+    datasets_root: Option<PathBuf>,
+    #[arg(long)]
+    csic_root: Option<PathBuf>,
+    #[arg(long)]
+    modsecurity_root: Option<PathBuf>,
+    #[arg(long, default_value_t = 0.8)]
+    dev_fraction: f64,
+    #[arg(long)]
+    use_installed_cli: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshWafBuildArgs {
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long)]
+    benchmark_dir: PathBuf,
+    #[arg(long)]
+    datasets_root: Option<PathBuf>,
+    #[arg(long, default_value_t = 0.8)]
+    dev_fraction: f64,
+    #[arg(long)]
+    use_installed_cli: bool,
+    #[arg(long)]
+    resume: bool,
+    #[arg(long, default_value_t = true)]
+    residual_pass: bool,
+    #[arg(long, default_value_t = true)]
+    refine: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshScoreboardUpdateArgs {
+    #[arg(long)]
+    output: Option<PathBuf>,
+    #[arg(long)]
+    pretty: bool,
+    #[arg(long)]
+    guardrail_bundle_dir: Option<PathBuf>,
+    #[arg(long)]
+    use_installed_cli: bool,
+}
+
+#[derive(Debug, Args)]
+struct RefreshContributorPointsArgs {
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct RefreshContributorSummaryArgs {
+    #[arg(long)]
+    input: Option<PathBuf>,
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1159,6 +1295,30 @@ fn main() -> Result<()> {
         Commands::Refresh {
             command: RefreshCommand::Benchmarks(args),
         } => run_refresh_benchmarks(args),
+        Commands::Refresh {
+            command: RefreshCommand::GuardrailsFreeze(args),
+        } => run_refresh_guardrails_freeze(args),
+        Commands::Refresh {
+            command: RefreshCommand::GuardrailsBuild(args),
+        } => run_refresh_guardrails_build(args),
+        Commands::Refresh {
+            command: RefreshCommand::GuardrailsEval(args),
+        } => run_refresh_guardrails_eval(args),
+        Commands::Refresh {
+            command: RefreshCommand::WafCases(args),
+        } => run_refresh_waf_benchmark_cases(args),
+        Commands::Refresh {
+            command: RefreshCommand::WafBuild(args),
+        } => run_refresh_waf_build(args),
+        Commands::Refresh {
+            command: RefreshCommand::ScoreboardUpdate(args),
+        } => run_refresh_scoreboard_update(args),
+        Commands::Refresh {
+            command: RefreshCommand::ContributorPoints(args),
+        } => run_refresh_contributor_points(args),
+        Commands::Refresh {
+            command: RefreshCommand::ContributorSummary(args),
+        } => run_refresh_contributor_summary(args),
         Commands::Build(args) => run_build(args),
         Commands::Quickstart(args) => run_quickstart(args),
         Commands::Discover(args) => run_discover(args),

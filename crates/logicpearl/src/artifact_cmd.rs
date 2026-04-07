@@ -1024,7 +1024,7 @@ fn workspace_root() -> PathBuf {
         .parent()
         .and_then(|path| path.parent())
         .map(PathBuf::from)
-        .expect("logicpearl-cli crate should live under workspace/crates/logicpearl-cli")
+        .expect("logicpearl crate should live under workspace/crates/logicpearl")
 }
 
 fn generated_build_root(workspace_root: &Path) -> PathBuf {
