@@ -49,18 +49,21 @@ const DEMO_CASES: [(&str, &str); 3] = [
 
 const GUARDRAIL_SIGNALS: [&str; 3] = ["instruction-override", "secret-exfiltration", "tool-misuse"];
 
-const WAF_TARGETS: [(&str, &str); 3] = [
+const WAF_TARGETS: [(&str, &str, &str); 3] = [
     (
         "target_injection_payload",
         "target_injection_payload_traces.csv",
+        "standard",
     ),
     (
         "target_sensitive_surface",
         "target_sensitive_surface_traces.csv",
+        "standard",
     ),
     (
         "target_suspicious_request",
         "target_suspicious_request_traces.csv",
+        "review",
     ),
 ];
 
@@ -3621,7 +3624,7 @@ fn build_waf_target_artifact_set(
 
     let commands = WAF_TARGETS
         .iter()
-        .map(|(target, trace_file)| {
+        .map(|(target, trace_file, decision_mode)| {
             let trace_path = train_traces_dir.join(trace_file);
             let target_output_dir = artifacts_dir.join(target);
             let mut command = build_nested_command(
@@ -3637,6 +3640,8 @@ fn build_waf_target_artifact_set(
                     &target_output_dir.display().to_string(),
                     "--feature-governance",
                     &feature_governance.display().to_string(),
+                    "--decision-mode",
+                    decision_mode,
                     "--json",
                 ],
             );
@@ -3681,7 +3686,10 @@ fn build_waf_target_artifact_set(
         "artifact_set_id": artifact_set.artifact_set_id,
         "rows": build_reports.iter().map(|report| report["rows"].as_u64().unwrap_or(0)).sum::<u64>() / build_reports.len().max(1) as u64,
         "features": artifact_set.features,
-        "targets": WAF_TARGETS.iter().map(|(target, _)| *target).collect::<Vec<_>>(),
+        "targets": WAF_TARGETS
+            .iter()
+            .map(|(target, _, _)| *target)
+            .collect::<Vec<_>>(),
         "cached_artifacts": build_reports.iter().filter(|report| report["cache_hit"].as_bool().unwrap_or(false)).count(),
         "cache_hit": build_reports.iter().all(|report| report["cache_hit"].as_bool().unwrap_or(false)),
         "artifacts": build_reports,

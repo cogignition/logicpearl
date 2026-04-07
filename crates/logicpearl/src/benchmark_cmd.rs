@@ -298,6 +298,7 @@ pub(crate) fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
                     refine: false,
                     pinned_rules: None,
                     feature_governance: None,
+                    decision_mode: logicpearl_discovery::DiscoveryDecisionMode::Standard,
                 },
             )
             .into_diagnostic()

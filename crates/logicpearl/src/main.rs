@@ -14,7 +14,7 @@ use logicpearl_benchmark::{
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildOptions,
-    DecisionTraceRow, DiscoverOptions,
+    DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -626,6 +626,12 @@ enum BenchmarkAdapterProfileArg {
     Pint,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum DiscoveryDecisionModeArg {
+    Standard,
+    Review,
+}
+
 #[derive(Debug, Args)]
 #[command(
     after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
@@ -669,6 +675,9 @@ struct BuildArgs {
     /// JSON file declaring feature governance such as one-sided boolean evidence.
     #[arg(long, help_heading = "Advanced Discovery")]
     feature_governance: Option<PathBuf>,
+    /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
+    #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
+    decision_mode: DiscoveryDecisionModeArg,
     /// Skip native and Wasm compilation and emit only the pearl artifact bundle.
     #[arg(long, help_heading = "Advanced")]
     skip_compile: bool,
@@ -714,6 +723,9 @@ struct DiscoverArgs {
     /// JSON file declaring feature governance such as one-sided boolean evidence.
     #[arg(long, help_heading = "Advanced Discovery")]
     feature_governance: Option<PathBuf>,
+    /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
+    #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
+    decision_mode: DiscoveryDecisionModeArg,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1521,6 +1533,13 @@ fn to_observer_bootstrap_strategy(arg: ObserverBootstrapArg) -> ObserverBootstra
         ObserverBootstrapArg::ObservedFeature => ObserverBootstrapStrategy::ObservedFeature,
         ObserverBootstrapArg::Route => ObserverBootstrapStrategy::Route,
         ObserverBootstrapArg::Seed => ObserverBootstrapStrategy::Seed,
+    }
+}
+
+fn to_discovery_decision_mode(arg: DiscoveryDecisionModeArg) -> DiscoveryDecisionMode {
+    match arg {
+        DiscoveryDecisionModeArg::Standard => DiscoveryDecisionMode::Standard,
+        DiscoveryDecisionModeArg::Review => DiscoveryDecisionMode::Review,
     }
 }
 

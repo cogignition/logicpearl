@@ -43,6 +43,15 @@ pub struct BuildOptions {
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
+    pub decision_mode: DiscoveryDecisionMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryDecisionMode {
+    #[default]
+    Standard,
+    Review,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -77,6 +86,7 @@ pub struct DiscoverOptions {
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
+    pub decision_mode: DiscoveryDecisionMode,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
@@ -287,6 +297,7 @@ fn build_cache_manifest(
         pinned_rules_fingerprint: Option<String>,
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
+        decision_mode: DiscoveryDecisionMode,
     }
 
     let rows_fingerprint: Vec<BuildFingerprintRow<'_>> = rows
@@ -333,6 +344,7 @@ fn build_cache_manifest(
                 .as_ref()
                 .map(|path| path.display().to_string()),
             feature_governance_fingerprint,
+            decision_mode: options.decision_mode,
         })?,
     })
 }
@@ -348,6 +360,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         pinned_rules_fingerprint: Option<String>,
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
+        decision_mode: DiscoveryDecisionMode,
     }
 
     let pinned_rules_fingerprint = options
@@ -380,6 +393,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
                 .as_ref()
                 .map(|path| path.display().to_string()),
             feature_governance_fingerprint,
+            decision_mode: options.decision_mode,
         })?,
     })
 }
@@ -413,6 +427,7 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         refine: options.refine,
         pinned_rules: options.pinned_rules.clone(),
         feature_governance: options.feature_governance.clone(),
+        decision_mode: options.decision_mode,
     };
     build_pearl_from_rows(
         &loaded.rows,
@@ -574,6 +589,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 refine: options.refine,
                 pinned_rules: options.pinned_rules.clone(),
                 feature_governance: options.feature_governance.clone(),
+                decision_mode: options.decision_mode,
             },
         ) {
             Ok(build) => build,
@@ -687,6 +703,7 @@ pub fn build_pearl_from_rows(
             &derived_features,
             &feature_governance.features,
             &options.gate_id,
+            options.decision_mode,
             residual_options.as_ref(),
             refinement_options.as_ref(),
             pinned_rules.as_ref(),
@@ -777,7 +794,7 @@ mod tests {
         discover_from_csv, discover_residual_rules, gate_from_rules, load_decision_traces,
         load_decision_traces_auto, merge_discovered_and_pinned_rules, prune_redundant_rules,
         rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
-        DiscoverOptions, PinnedRuleSet, ResidualPassOptions,
+        DiscoverOptions, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
     };
     use logicpearl_ir::{
         ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition,
@@ -963,6 +980,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -997,6 +1015,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1117,6 +1136,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1153,6 +1173,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1246,6 +1267,7 @@ mod tests {
                 refine: true,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1283,6 +1305,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1325,6 +1348,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1385,6 +1409,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();
@@ -1498,6 +1523,7 @@ mod tests {
             refine: false,
             pinned_rules: None,
             feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
         };
 
         let first = build_pearl_from_csv(&csv_path, &options).unwrap();
@@ -1622,6 +1648,7 @@ mod tests {
             refine: false,
             pinned_rules: None,
             feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
         };
 
         let first = discover_from_csv(&csv_path, &options).unwrap();
@@ -1706,6 +1733,7 @@ mod tests {
                 refine: false,
                 pinned_rules: None,
                 feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
             },
         )
         .unwrap();

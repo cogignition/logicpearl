@@ -25,7 +25,7 @@ use super::features::{
 };
 use super::rule_text::generate_rule_text;
 use super::{
-    CandidateRule, DecisionTraceRow, PinnedRuleSet, ResidualPassOptions,
+    CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
     UniqueCoverageRefinementOptions,
 };
 
@@ -61,11 +61,12 @@ pub(super) fn build_gate(
     derived_features: &[FeatureDefinition],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     gate_id: &str,
+    decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
     pinned_rules: Option<&PinnedRuleSet>,
 ) -> Result<(LogicPearlGateIr, usize, usize, usize)> {
-    let mut rules = discover_rules(rows, feature_governance)?;
+    let mut rules = discover_rules(rows, feature_governance, decision_mode)?;
     let mut residual_rules_discovered = 0usize;
     if let Some(options) = residual_options {
         let first_pass_gate = gate_from_rules(
@@ -280,6 +281,7 @@ fn rule_signature(rule: &RuleDefinition) -> String {
 pub(super) fn discover_rules(
     rows: &[DecisionTraceRow],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Result<Vec<RuleDefinition>> {
     let denied_indices: Vec<usize> = rows
         .iter()
@@ -308,6 +310,7 @@ pub(super) fn discover_rules(
         &train_denied_indices,
         &train_allowed_indices,
         feature_governance,
+        decision_mode,
     );
     if all_candidates.is_empty() {
         return Err(LogicPearlError::message("no recoverable deny rule found"));
@@ -319,6 +322,7 @@ pub(super) fn discover_rules(
         &train_allowed_indices,
         validation_indices,
         feature_governance,
+        decision_mode,
     )?;
     let shortlist = exact_selection_shortlist(
         &all_candidates,
@@ -349,6 +353,7 @@ pub(super) fn discover_rules(
         validation_indices,
         selected_candidates,
         feature_governance,
+        decision_mode,
     );
 
     Ok(selected_candidates
@@ -433,6 +438,7 @@ fn recover_rare_rules(
     validation_indices: Option<&[usize]>,
     selected_candidates: Vec<CandidateRule>,
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Vec<CandidateRule> {
     let mut recovered = selected_candidates;
     for _ in 0..RARE_RULE_RECOVERY_MAX_PASSES {
@@ -453,12 +459,17 @@ fn recover_rare_rules(
             .iter()
             .map(CandidateRule::signature)
             .collect::<BTreeSet<_>>();
-        let rescue_shortlist =
-            candidate_rules(rows, &uncovered_denied, allowed_indices, feature_governance)
-                .into_iter()
-                .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
-                .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
-                .collect::<Vec<_>>();
+        let rescue_shortlist = candidate_rules(
+            rows,
+            &uncovered_denied,
+            allowed_indices,
+            feature_governance,
+            decision_mode,
+        )
+        .into_iter()
+        .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
+        .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
+        .collect::<Vec<_>>();
         if rescue_shortlist.is_empty() {
             break;
         }
@@ -512,6 +523,7 @@ fn discover_rules_greedy(
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Result<Vec<CandidateRule>> {
     let mut remaining_denied = denied_indices.to_vec();
     let mut discovered = Vec::new();
@@ -522,6 +534,7 @@ fn discover_rules_greedy(
             allowed_indices,
             validation_indices,
             feature_governance,
+            decision_mode,
         )
         .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
@@ -656,7 +669,8 @@ struct CandidateSubsetScore {
 }
 
 fn candidate_total_penalty(candidate: &CandidateRule) -> usize {
-    candidate_complexity_penalty(candidate) + candidate_memorization_penalty(candidate)
+    candidate_complexity_penalty(candidate, DiscoveryDecisionMode::Standard)
+        + candidate_memorization_penalty(candidate)
 }
 
 fn select_candidate_rules_exact(
@@ -871,8 +885,15 @@ fn select_candidate_rule(
     allowed_indices: &[usize],
     validation_indices: Option<&[usize]>,
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Option<CandidateRule> {
-    let mut candidates = candidate_rules(rows, denied_indices, allowed_indices, feature_governance);
+    let mut candidates = candidate_rules(
+        rows,
+        denied_indices,
+        allowed_indices,
+        feature_governance,
+        decision_mode,
+    );
     if candidates.is_empty() {
         return None;
     }
@@ -888,6 +909,7 @@ fn select_candidate_rule(
             validation_indices,
             &candidate,
             feature_governance,
+            decision_mode,
         );
         let better = match &best {
             None => true,
@@ -910,6 +932,7 @@ fn simulate_candidate_plan(
     validation_indices: Option<&[usize]>,
     first_candidate: &CandidateRule,
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> CandidatePlanScore {
     let mut rules = vec![first_candidate.clone()];
     let mut remaining_denied: Vec<usize> = denied_indices
@@ -925,6 +948,7 @@ fn simulate_candidate_plan(
                 &remaining_denied,
                 allowed_indices,
                 feature_governance,
+                decision_mode,
             ) else {
                 break;
             };
@@ -1153,6 +1177,7 @@ fn candidate_rules(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Vec<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
     let numeric_features = numeric_feature_names(rows)
@@ -1195,7 +1220,9 @@ fn candidate_rules(
                         false_positives: candidate_coverage(rows, allowed_indices, &candidate),
                         ..candidate
                     };
-                    candidates.push(candidate);
+                    if candidate_allowed_for_mode(&candidate, decision_mode) {
+                        candidates.push(candidate);
+                    }
                 }
             }
         } else if values.iter().all(|value| value.is_boolean()) {
@@ -1235,7 +1262,9 @@ fn candidate_rules(
                         },
                     ),
                 };
-                candidates.push(candidate);
+                if candidate_allowed_for_mode(&candidate, decision_mode) {
+                    candidates.push(candidate);
+                }
             }
         } else {
             let unique_values: BTreeSet<String> = rows
@@ -1251,7 +1280,9 @@ fn candidate_rules(
                     denied_coverage: string_coverage_for(rows, denied_indices, &feature, &text),
                     false_positives: string_coverage_for(rows, allowed_indices, &feature, &text),
                 };
-                candidates.push(candidate);
+                if candidate_allowed_for_mode(&candidate, decision_mode) {
+                    candidates.push(candidate);
+                }
             }
         }
     }
@@ -1281,7 +1312,9 @@ fn candidate_rules(
                     false_positives: candidate_coverage(rows, allowed_indices, &candidate),
                     ..candidate
                 };
-                candidates.push(candidate);
+                if candidate_allowed_for_mode(&candidate, decision_mode) {
+                    candidates.push(candidate);
+                }
             }
         }
     }
@@ -1306,10 +1339,17 @@ fn best_immediate_candidate_rule(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
 ) -> Option<CandidateRule> {
-    candidate_rules(rows, denied_indices, allowed_indices, feature_governance)
-        .into_iter()
-        .next()
+    candidate_rules(
+        rows,
+        denied_indices,
+        allowed_indices,
+        feature_governance,
+        decision_mode,
+    )
+    .into_iter()
+    .next()
 }
 
 fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
@@ -1319,14 +1359,27 @@ fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Or
         .cmp(&left_net)
         .then_with(|| left.false_positives.cmp(&right.false_positives))
         .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
-        .then_with(|| candidate_complexity_penalty(left).cmp(&candidate_complexity_penalty(right)))
+        .then_with(|| {
+            candidate_complexity_penalty(left, DiscoveryDecisionMode::Standard).cmp(
+                &candidate_complexity_penalty(right, DiscoveryDecisionMode::Standard),
+            )
+        })
         .then_with(|| {
             candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
         })
         .then_with(|| left.signature().cmp(&right.signature()))
 }
 
-fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
+fn candidate_complexity_penalty(
+    candidate: &CandidateRule,
+    decision_mode: DiscoveryDecisionMode,
+) -> usize {
+    if decision_mode == DiscoveryDecisionMode::Review
+        && candidate.op == ComparisonOperator::Eq
+        && candidate.value.literal().and_then(Value::as_f64).is_some()
+    {
+        return usize::MAX / 4;
+    }
     match candidate.value {
         ComparisonValue::Literal(ref value)
             if candidate.op == ComparisonOperator::Eq && value.as_f64().is_some() =>
@@ -1337,6 +1390,15 @@ fn candidate_complexity_penalty(candidate: &CandidateRule) -> usize {
         ComparisonValue::Literal(_) if is_derived_feature_name(&candidate.feature) => 2,
         ComparisonValue::Literal(_) => 0,
     }
+}
+
+fn candidate_allowed_for_mode(
+    candidate: &CandidateRule,
+    decision_mode: DiscoveryDecisionMode,
+) -> bool {
+    !(decision_mode == DiscoveryDecisionMode::Review
+        && candidate.op == ComparisonOperator::Eq
+        && candidate.value.literal().and_then(Value::as_f64).is_some())
 }
 
 fn candidate_memorization_penalty(candidate: &CandidateRule) -> usize {
@@ -1485,11 +1547,11 @@ fn matches_candidate(features: &HashMap<String, Value>, candidate: &CandidateRul
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_complexity_penalty, candidate_rules, compare_candidate_set_score,
-        recover_rare_rules, rule_from_candidate, score_candidate_set, select_candidate_rules_exact,
-        CandidateRule, CandidateSetScore,
+        candidate_allowed_for_mode, candidate_complexity_penalty, candidate_rules,
+        compare_candidate_set_score, recover_rare_rules, rule_from_candidate, score_candidate_set,
+        select_candidate_rules_exact, CandidateRule, CandidateSetScore,
     };
-    use crate::DecisionTraceRow;
+    use crate::{DecisionTraceRow, DiscoveryDecisionMode};
     use logicpearl_ir::{ComparisonOperator, ComparisonValue};
     use serde_json::{Number, Value};
     use std::collections::{BTreeMap, HashMap};
@@ -1583,8 +1645,13 @@ mod tests {
         ];
         let denied_indices = vec![0usize, 1usize];
         let allowed_indices = vec![2usize, 3usize];
-        let candidates =
-            candidate_rules(&rows, &denied_indices, &allowed_indices, &BTreeMap::new());
+        let candidates = candidate_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
+        );
         assert!(
             !candidates
                 .iter()
@@ -1603,8 +1670,13 @@ mod tests {
         ];
         let denied_indices = vec![0usize, 1usize];
         let allowed_indices = vec![2usize, 3usize];
-        let candidates =
-            candidate_rules(&rows, &denied_indices, &allowed_indices, &BTreeMap::new());
+        let candidates = candidate_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
+        );
         assert!(
             candidates
                 .iter()
@@ -1648,6 +1720,7 @@ mod tests {
             None,
             selected,
             &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
         );
         assert_eq!(recovered.len(), 2);
         let score = score_candidate_set(&rows, &recovered, None);
@@ -1683,6 +1756,7 @@ mod tests {
             None,
             selected,
             &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
         );
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].feature, "score");
@@ -1756,7 +1830,53 @@ mod tests {
             false_positives: 0,
         };
 
-        assert!(candidate_complexity_penalty(&exact) > candidate_complexity_penalty(&threshold));
+        assert!(
+            candidate_complexity_penalty(&exact, DiscoveryDecisionMode::Standard)
+                > candidate_complexity_penalty(&threshold, DiscoveryDecisionMode::Standard)
+        );
+    }
+
+    #[test]
+    fn review_mode_rejects_numeric_exact_matches() {
+        let exact = CandidateRule {
+            feature: "suspicious_token_count".to_string(),
+            op: ComparisonOperator::Eq,
+            value: ComparisonValue::Literal(Value::Number(Number::from(13))),
+            denied_coverage: 5,
+            false_positives: 0,
+        };
+        let threshold = CandidateRule {
+            feature: "suspicious_token_count".to_string(),
+            op: ComparisonOperator::Gte,
+            value: ComparisonValue::Literal(Value::Number(Number::from(13))),
+            denied_coverage: 5,
+            false_positives: 0,
+        };
+
+        assert!(!candidate_allowed_for_mode(
+            &exact,
+            DiscoveryDecisionMode::Review
+        ));
+        assert!(candidate_allowed_for_mode(
+            &threshold,
+            DiscoveryDecisionMode::Review
+        ));
+    }
+
+    #[test]
+    fn review_mode_still_allows_derived_numeric_thresholds() {
+        let candidate = CandidateRule {
+            feature: "derived__query_key_count__minus__suspicious_token_count".to_string(),
+            op: ComparisonOperator::Gte,
+            value: ComparisonValue::Literal(Value::Number(Number::from(13))),
+            denied_coverage: 5,
+            false_positives: 0,
+        };
+
+        assert!(candidate_allowed_for_mode(
+            &candidate,
+            DiscoveryDecisionMode::Review
+        ));
     }
 
     fn row(score: f64, allowed: bool) -> DecisionTraceRow {
