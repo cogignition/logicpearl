@@ -41,6 +41,14 @@ These scripts keep a small public score ledger for LogicPearl.
 
 ## Usage
 
+Run the full public refresh flow in one command:
+
+```bash
+scripts/refresh_all_benchmarks.sh
+```
+
+That wrapper runs workspace validation, guardrail rebuild/eval, WAF rebuild/eval, and the scoreboard refresh.
+
 Refresh the root score ledger:
 
 ```bash

@@ -55,6 +55,14 @@ If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agen
 
 ## Usage
 
+For the full public refresh path, including guardrails, WAF, and scoreboard updates:
+
+```bash
+scripts/refresh_all_benchmarks.sh
+```
+
+If you only want the guardrail lane, use the commands below.
+
 Build the frozen guardrail bundle:
 
 ```bash
