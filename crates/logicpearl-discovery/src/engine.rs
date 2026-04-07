@@ -32,13 +32,25 @@ const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
 const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
 const RARE_RULE_RECOVERY_FRONTIER_LIMIT: usize = 24;
 const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
+const DISCOVERY_VALIDATION_MIN_CLASS_ROWS: usize = 20;
+const DISCOVERY_VALIDATION_FRACTION_NUMERATOR: usize = 1;
+const DISCOVERY_VALIDATION_FRACTION_DENOMINATOR: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 struct CandidatePlanScore {
-    training_parity: f64,
-    total_false_positives: usize,
+    training_total_errors: usize,
+    training_false_positives: usize,
+    validation_total_errors: usize,
+    validation_false_positives: usize,
     uncovered_denied: usize,
     rule_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct DiscoveryValidationSplit {
+    train_denied_indices: Vec<usize>,
+    train_allowed_indices: Vec<usize>,
+    validation_indices: Vec<usize>,
 }
 
 pub(super) fn build_gate(
@@ -259,32 +271,57 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
         .filter_map(|(index, row)| row.allowed.then_some(index))
         .collect();
 
-    let all_candidates = candidate_rules(rows, &denied_indices, &allowed_indices);
+    let validation_split = discovery_validation_split(rows, &denied_indices, &allowed_indices);
+    let (train_denied_indices, train_allowed_indices, validation_indices) =
+        match validation_split.as_ref() {
+            Some(split) => (
+                split.train_denied_indices.clone(),
+                split.train_allowed_indices.clone(),
+                Some(split.validation_indices.as_slice()),
+            ),
+            None => (denied_indices.clone(), allowed_indices.clone(), None),
+        };
+
+    let all_candidates = candidate_rules(rows, &train_denied_indices, &train_allowed_indices);
     if all_candidates.is_empty() {
         return Err(LogicPearlError::message("no recoverable deny rule found"));
     }
 
-    let greedy_plan = discover_rules_greedy(rows, &denied_indices, &allowed_indices)?;
+    let greedy_plan = discover_rules_greedy(
+        rows,
+        &train_denied_indices,
+        &train_allowed_indices,
+        validation_indices,
+    )?;
     let shortlist = exact_selection_shortlist(
         &all_candidates,
         &greedy_plan,
         EXACT_SELECTION_FRONTIER_LIMIT,
     );
-    let selected_candidates =
-        match select_candidate_rules_exact(rows, &denied_indices, &allowed_indices, &shortlist) {
-            Some(exact_plan) if !exact_plan.is_empty() => {
-                let greedy_score = score_candidate_set(rows, &greedy_plan);
-                let exact_score = score_candidate_set(rows, &exact_plan);
-                if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
-                    exact_plan
-                } else {
-                    greedy_plan
-                }
+    let selected_candidates = match select_candidate_rules_exact(
+        rows,
+        &train_denied_indices,
+        &train_allowed_indices,
+        &shortlist,
+    ) {
+        Some(exact_plan) if !exact_plan.is_empty() => {
+            let greedy_score = score_candidate_set(rows, &greedy_plan, validation_indices);
+            let exact_score = score_candidate_set(rows, &exact_plan, validation_indices);
+            if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
+                exact_plan
+            } else {
+                greedy_plan
             }
-            _ => greedy_plan,
-        };
-    let selected_candidates =
-        recover_rare_rules(rows, &denied_indices, &allowed_indices, selected_candidates);
+        }
+        _ => greedy_plan,
+    };
+    let selected_candidates = recover_rare_rules(
+        rows,
+        &train_denied_indices,
+        &train_allowed_indices,
+        validation_indices,
+        selected_candidates,
+    );
 
     Ok(selected_candidates
         .iter()
@@ -293,10 +330,79 @@ pub(super) fn discover_rules(rows: &[DecisionTraceRow]) -> Result<Vec<RuleDefini
         .collect())
 }
 
+fn discovery_validation_split(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+) -> Option<DiscoveryValidationSplit> {
+    if denied_indices.len() < DISCOVERY_VALIDATION_MIN_CLASS_ROWS
+        || allowed_indices.len() < DISCOVERY_VALIDATION_MIN_CLASS_ROWS
+    {
+        return None;
+    }
+
+    let (train_denied_indices, validation_denied_indices) =
+        stratified_train_validation_indices(rows, denied_indices);
+    let (train_allowed_indices, validation_allowed_indices) =
+        stratified_train_validation_indices(rows, allowed_indices);
+    if train_denied_indices.is_empty()
+        || train_allowed_indices.is_empty()
+        || validation_denied_indices.is_empty()
+        || validation_allowed_indices.is_empty()
+    {
+        return None;
+    }
+
+    let mut validation_indices = validation_denied_indices;
+    validation_indices.extend(validation_allowed_indices);
+    validation_indices.sort_unstable();
+
+    Some(DiscoveryValidationSplit {
+        train_denied_indices,
+        train_allowed_indices,
+        validation_indices,
+    })
+}
+
+fn stratified_train_validation_indices(
+    rows: &[DecisionTraceRow],
+    indices: &[usize],
+) -> (Vec<usize>, Vec<usize>) {
+    let mut sorted = indices.to_vec();
+    sorted.sort_by_key(|index| stable_row_bucket(&rows[*index]));
+
+    let validation_count = std::cmp::max(
+        1,
+        (sorted.len() * DISCOVERY_VALIDATION_FRACTION_NUMERATOR)
+            / DISCOVERY_VALIDATION_FRACTION_DENOMINATOR,
+    )
+    .min(sorted.len().saturating_sub(1));
+
+    let validation = sorted[..validation_count].to_vec();
+    let train = sorted[validation_count..].to_vec();
+    (train, validation)
+}
+
+fn stable_row_bucket(row: &DecisionTraceRow) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    row.allowed.hash(&mut hasher);
+    let sorted_features = row.features.iter().collect::<BTreeMap<_, _>>();
+    for (key, value) in sorted_features {
+        key.hash(&mut hasher);
+        serde_json::to_string(value)
+            .expect("stable row bucket serialization")
+            .hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 fn recover_rare_rules(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    validation_indices: Option<&[usize]>,
     selected_candidates: Vec<CandidateRule>,
 ) -> Vec<CandidateRule> {
     let mut recovered = selected_candidates;
@@ -343,8 +449,8 @@ fn recover_rare_rules(
         candidate_combined.extend(rescue_plan);
         candidate_combined = dedupe_candidate_rules_by_signature(candidate_combined);
 
-        let current_score = score_candidate_set(rows, &recovered);
-        let combined_score = score_candidate_set(rows, &candidate_combined);
+        let current_score = score_candidate_set(rows, &recovered, validation_indices);
+        let combined_score = score_candidate_set(rows, &candidate_combined, validation_indices);
         let improved = compare_candidate_set_score(&combined_score, &current_score)
             == Ordering::Less
             || (combined_score.false_negatives < current_score.false_negatives
@@ -374,12 +480,14 @@ fn discover_rules_greedy(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    validation_indices: Option<&[usize]>,
 ) -> Result<Vec<CandidateRule>> {
     let mut remaining_denied = denied_indices.to_vec();
     let mut discovered = Vec::new();
     while !remaining_denied.is_empty() {
-        let candidate = select_candidate_rule(rows, &remaining_denied, allowed_indices)
-            .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
+        let candidate =
+            select_candidate_rule(rows, &remaining_denied, allowed_indices, validation_indices)
+                .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
             break;
         }
@@ -417,6 +525,9 @@ struct CandidateSetScore {
     total_errors: usize,
     false_positives: usize,
     false_negatives: usize,
+    validation_total_errors: usize,
+    validation_false_positives: usize,
+    validation_false_negatives: usize,
     rule_count: usize,
     complexity_penalty: usize,
 }
@@ -424,42 +535,88 @@ struct CandidateSetScore {
 fn compare_candidate_set_score(left: &CandidateSetScore, right: &CandidateSetScore) -> Ordering {
     left.total_errors
         .cmp(&right.total_errors)
+        .then_with(|| {
+            left.validation_total_errors
+                .cmp(&right.validation_total_errors)
+        })
         .then_with(|| left.false_positives.cmp(&right.false_positives))
+        .then_with(|| {
+            left.validation_false_positives
+                .cmp(&right.validation_false_positives)
+        })
         .then_with(|| left.rule_count.cmp(&right.rule_count))
         .then_with(|| left.complexity_penalty.cmp(&right.complexity_penalty))
         .then_with(|| left.false_negatives.cmp(&right.false_negatives))
+        .then_with(|| {
+            left.validation_false_negatives
+                .cmp(&right.validation_false_negatives)
+        })
 }
 
 fn score_candidate_set(
     rows: &[DecisionTraceRow],
     candidates: &[CandidateRule],
+    validation_indices: Option<&[usize]>,
 ) -> CandidateSetScore {
-    let false_positives = rows
+    let validation_set = validation_indices
+        .map(|indices| indices.iter().copied().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    let training_indices = rows
         .iter()
-        .filter(|row| {
-            row.allowed
-                && candidates
-                    .iter()
-                    .any(|rule| matches_candidate(&row.features, rule))
-        })
-        .count();
-    let false_negatives = rows
-        .iter()
-        .filter(|row| {
-            !row.allowed
-                && !candidates
-                    .iter()
-                    .any(|rule| matches_candidate(&row.features, rule))
-        })
-        .count();
+        .enumerate()
+        .filter_map(|(index, _)| (!validation_set.contains(&index)).then_some(index))
+        .collect::<Vec<_>>();
+    let training_score = score_candidate_subset(rows, candidates, &training_indices);
+    let validation_score =
+        score_candidate_subset(rows, candidates, validation_indices.unwrap_or(&[]));
     let complexity_penalty = candidates.iter().map(candidate_total_penalty).sum();
     CandidateSetScore {
-        total_errors: false_positives + false_negatives,
-        false_positives,
-        false_negatives,
+        total_errors: training_score.total_errors,
+        false_positives: training_score.false_positives,
+        false_negatives: training_score.false_negatives,
+        validation_total_errors: validation_score.total_errors,
+        validation_false_positives: validation_score.false_positives,
+        validation_false_negatives: validation_score.false_negatives,
         rule_count: candidates.len(),
         complexity_penalty,
     }
+}
+
+fn score_candidate_subset(
+    rows: &[DecisionTraceRow],
+    candidates: &[CandidateRule],
+    indices: &[usize],
+) -> CandidateSubsetScore {
+    let false_positives = indices
+        .iter()
+        .filter(|index| {
+            rows[**index].allowed
+                && candidates
+                    .iter()
+                    .any(|rule| matches_candidate(&rows[**index].features, rule))
+        })
+        .count();
+    let false_negatives = indices
+        .iter()
+        .filter(|index| {
+            !rows[**index].allowed
+                && !candidates
+                    .iter()
+                    .any(|rule| matches_candidate(&rows[**index].features, rule))
+        })
+        .count();
+    CandidateSubsetScore {
+        total_errors: false_positives + false_negatives,
+        false_positives,
+        false_negatives,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CandidateSubsetScore {
+    total_errors: usize,
+    false_positives: usize,
+    false_negatives: usize,
 }
 
 fn candidate_total_penalty(candidate: &CandidateRule) -> usize {
@@ -676,6 +833,7 @@ fn select_candidate_rule(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    validation_indices: Option<&[usize]>,
 ) -> Option<CandidateRule> {
     let mut candidates = candidate_rules(rows, denied_indices, allowed_indices);
     if candidates.is_empty() {
@@ -686,7 +844,13 @@ fn select_candidate_rule(
 
     let mut best: Option<(CandidateRule, CandidatePlanScore)> = None;
     for candidate in candidates {
-        let score = simulate_candidate_plan(rows, denied_indices, allowed_indices, &candidate);
+        let score = simulate_candidate_plan(
+            rows,
+            denied_indices,
+            allowed_indices,
+            validation_indices,
+            &candidate,
+        );
         let better = match &best {
             None => true,
             Some((current_candidate, current_score)) => {
@@ -705,6 +869,7 @@ fn simulate_candidate_plan(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
+    validation_indices: Option<&[usize]>,
     first_candidate: &CandidateRule,
 ) -> CandidatePlanScore {
     let mut rules = vec![first_candidate.clone()];
@@ -733,27 +898,22 @@ fn simulate_candidate_plan(
         }
     }
 
-    let total_false_positives = allowed_indices
+    let validation_set = validation_indices
+        .map(|indices| indices.iter().copied().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    let training_indices = rows
         .iter()
-        .filter(|index| {
-            rules
-                .iter()
-                .any(|rule| matches_candidate(&rows[**index].features, rule))
-        })
-        .count();
-    let correct = rows
-        .iter()
-        .filter(|row| {
-            let predicted_deny = rules
-                .iter()
-                .any(|rule| matches_candidate(&row.features, rule));
-            predicted_deny != row.allowed
-        })
-        .count();
+        .enumerate()
+        .filter_map(|(index, _)| (!validation_set.contains(&index)).then_some(index))
+        .collect::<Vec<_>>();
+    let training_score = score_candidate_subset(rows, &rules, &training_indices);
+    let validation_score = score_candidate_subset(rows, &rules, validation_indices.unwrap_or(&[]));
 
     CandidatePlanScore {
-        training_parity: correct as f64 / rows.len() as f64,
-        total_false_positives,
+        training_total_errors: training_score.total_errors,
+        training_false_positives: training_score.false_positives,
+        validation_total_errors: validation_score.total_errors,
+        validation_false_positives: validation_score.false_positives,
         uncovered_denied: remaining_denied.len(),
         rule_count: rules.len(),
     }
@@ -765,13 +925,23 @@ fn compare_candidate_plan(
     current_candidate: &CandidateRule,
     current_score: &CandidatePlanScore,
 ) -> Ordering {
-    current_score
-        .training_parity
-        .total_cmp(&score.training_parity)
+    score
+        .training_total_errors
+        .cmp(&current_score.training_total_errors)
         .then_with(|| {
             score
-                .total_false_positives
-                .cmp(&current_score.total_false_positives)
+                .validation_total_errors
+                .cmp(&current_score.validation_total_errors)
+        })
+        .then_with(|| {
+            score
+                .training_false_positives
+                .cmp(&current_score.training_false_positives)
+        })
+        .then_with(|| {
+            score
+                .validation_false_positives
+                .cmp(&current_score.validation_false_positives)
         })
         .then_with(|| score.uncovered_denied.cmp(&current_score.uncovered_denied))
         .then_with(|| score.rule_count.cmp(&current_score.rule_count))
@@ -1309,6 +1479,9 @@ mod tests {
             total_errors: 2,
             false_positives: 0,
             false_negatives: 2,
+            validation_total_errors: 0,
+            validation_false_positives: 0,
+            validation_false_negatives: 0,
             rule_count: 2,
             complexity_penalty: 0,
         };
@@ -1316,6 +1489,9 @@ mod tests {
             total_errors: 2,
             false_positives: 1,
             false_negatives: 1,
+            validation_total_errors: 0,
+            validation_false_positives: 0,
+            validation_false_negatives: 0,
             rule_count: 1,
             complexity_penalty: 0,
         };
@@ -1335,7 +1511,7 @@ mod tests {
         ];
         let candidate_a = numeric_candidate("score", ComparisonOperator::Eq, 1.0);
         let candidate_b = numeric_candidate("score", ComparisonOperator::Gte, 3.0);
-        let score = score_candidate_set(&rows, &[candidate_a, candidate_b]);
+        let score = score_candidate_set(&rows, &[candidate_a, candidate_b], None);
         assert_eq!(score.false_negatives, 1);
         assert_eq!(score.false_positives, 2);
         assert_eq!(score.total_errors, 3);
@@ -1407,9 +1583,10 @@ mod tests {
             false_positives: 1,
         }];
 
-        let recovered = recover_rare_rules(&rows, &denied_indices, &allowed_indices, selected);
+        let recovered =
+            recover_rare_rules(&rows, &denied_indices, &allowed_indices, None, selected);
         assert_eq!(recovered.len(), 2);
-        let score = score_candidate_set(&rows, &recovered);
+        let score = score_candidate_set(&rows, &recovered, None);
         assert_eq!(score.false_negatives, 0);
         assert_eq!(score.false_positives, 1);
     }
@@ -1435,12 +1612,41 @@ mod tests {
             false_positives: 1,
         }];
 
-        let recovered = recover_rare_rules(&rows, &denied_indices, &allowed_indices, selected);
+        let recovered =
+            recover_rare_rules(&rows, &denied_indices, &allowed_indices, None, selected);
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].feature, "score");
-        let score = score_candidate_set(&rows, &recovered);
+        let score = score_candidate_set(&rows, &recovered, None);
         assert_eq!(score.false_negatives, 1);
         assert_eq!(score.false_positives, 1);
+    }
+
+    #[test]
+    fn candidate_set_score_prefers_better_validation_when_training_is_equal() {
+        let better = CandidateSetScore {
+            total_errors: 1,
+            false_positives: 0,
+            false_negatives: 1,
+            validation_total_errors: 0,
+            validation_false_positives: 0,
+            validation_false_negatives: 0,
+            rule_count: 2,
+            complexity_penalty: 0,
+        };
+        let worse = CandidateSetScore {
+            total_errors: 1,
+            false_positives: 0,
+            false_negatives: 1,
+            validation_total_errors: 1,
+            validation_false_positives: 1,
+            validation_false_negatives: 0,
+            rule_count: 1,
+            complexity_penalty: 0,
+        };
+        assert_eq!(
+            compare_candidate_set_score(&better, &worse),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]
