@@ -1,9 +1,12 @@
 use super::*;
-use logicpearl_benchmark::{load_benchmark_cases, write_benchmark_cases_jsonl};
+use logicpearl_benchmark::{
+    load_benchmark_cases, write_benchmark_cases_jsonl, BenchmarkCase, ObservedBenchmarkCase,
+};
 use logicpearl_discovery::ArtifactSet;
 use logicpearl_ir::{EvaluationConfig, LogicPearlGateIr, Provenance, VerificationConfig};
 use logicpearl_runtime::evaluate_gate;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -11,7 +14,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::sync::{mpsc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1059,37 +1062,19 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
     let trace_projection = repo_root.join(TRACE_PROJECTION_WAF);
 
     let train_observed = train_dir.join("observed.jsonl");
-    run_json_command(
+    cached_waf_observe(
         &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "observe",
-                &dev_cases.display().to_string(),
-                "--plugin-manifest",
-                &observer_manifest.display().to_string(),
-                "--output",
-                &train_observed.display().to_string(),
-                "--json",
-            ],
-        ),
+        &dev_cases,
+        &train_observed,
+        &train_dir.join("observe.cache.json"),
     )?;
-    run_json_command(
+    cached_emit_traces(
         &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "emit-traces",
-                &train_observed.display().to_string(),
-                "--config",
-                &trace_projection.display().to_string(),
-                "--output-dir",
-                &train_dir.join("traces").display().to_string(),
-                "--json",
-            ],
-        ),
+        &cli,
+        &train_observed,
+        &trace_projection,
+        &train_dir.join("traces"),
+        &train_dir.join("emit_traces.cache.json"),
     )?;
 
     let discovered_dir = train_dir.join("discovered");
@@ -1101,6 +1086,7 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         &discovered_dir,
         args.residual_pass,
         args.refine,
+        args.skip_compile,
     )?;
 
     let copied_observer_manifest = copy_plugin_bundle(
@@ -1135,111 +1121,58 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
     write_json_pretty(&learned_pipeline_path, &learned_pipeline)?;
 
     let holdout_observed = holdout_dir.join("observed.jsonl");
-    run_json_command(
+    cached_waf_observe(
         &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "observe",
-                &final_holdout_cases.display().to_string(),
-                "--plugin-manifest",
-                &observer_manifest.display().to_string(),
-                "--output",
-                &holdout_observed.display().to_string(),
-                "--json",
-            ],
-        ),
+        &final_holdout_cases,
+        &holdout_observed,
+        &holdout_dir.join("observe.cache.json"),
     )?;
-    run_json_command(
+    cached_emit_traces(
         &repo_root,
-        &build_nested_command(
-            &cli,
-            &[
-                "benchmark",
-                "emit-traces",
-                &holdout_observed.display().to_string(),
-                "--config",
-                &trace_projection.display().to_string(),
-                "--output-dir",
-                &holdout_dir.join("traces").display().to_string(),
-                "--json",
-            ],
-        ),
+        &cli,
+        &holdout_observed,
+        &trace_projection,
+        &holdout_dir.join("traces"),
+        &holdout_dir.join("emit_traces.cache.json"),
     )?;
 
-    let mut scored = run_json_commands_parallel(
+    let artifact_score = run_json_command(
         &repo_root,
-        vec![
-            (
-                "artifact_score".to_string(),
-                build_nested_command(
-                    &cli,
-                    &[
-                        "benchmark",
-                        "score-artifacts",
-                        &rewritten_artifact_set_path.display().to_string(),
-                        &holdout_dir
-                            .join("traces")
-                            .join("multi_target.csv")
-                            .display()
-                            .to_string(),
-                        "--output",
-                        &holdout_dir
-                            .join("artifact_score.json")
-                            .display()
-                            .to_string(),
-                        "--json",
-                    ],
-                ),
-            ),
-            (
-                "exact".to_string(),
-                build_nested_command(
-                    &cli,
-                    &[
-                        "benchmark",
-                        "run",
-                        &learned_pipeline_path.display().to_string(),
-                        &final_holdout_cases.display().to_string(),
-                        "--output",
-                        &holdout_dir.join("exact_routes.json").display().to_string(),
-                        "--json",
-                    ],
-                ),
-            ),
-            (
-                "collapsed".to_string(),
-                build_nested_command(
-                    &cli,
-                    &[
-                        "benchmark",
-                        "run",
-                        &learned_pipeline_path.display().to_string(),
-                        &final_holdout_cases.display().to_string(),
-                        "--collapse-non-allow-to-deny",
-                        "--output",
-                        &holdout_dir
-                            .join("collapsed_allow_deny.json")
-                            .display()
-                            .to_string(),
-                        "--json",
-                    ],
-                ),
-            ),
-        ],
-    )?
-    .into_iter()
-    .collect::<HashMap<_, _>>();
-    let artifact_score = scored
-        .remove("artifact_score")
-        .ok_or_else(|| miette::miette!("missing artifact_score result"))?;
-    let exact = scored
-        .remove("exact")
-        .ok_or_else(|| miette::miette!("missing exact result"))?;
-    let collapsed = scored
-        .remove("collapsed")
-        .ok_or_else(|| miette::miette!("missing collapsed result"))?;
+        &build_nested_command(
+            &cli,
+            &[
+                "benchmark",
+                "score-artifacts",
+                &rewritten_artifact_set_path.display().to_string(),
+                &holdout_dir
+                    .join("traces")
+                    .join("multi_target.csv")
+                    .display()
+                    .to_string(),
+                "--output",
+                &holdout_dir
+                    .join("artifact_score.json")
+                    .display()
+                    .to_string(),
+                "--json",
+            ],
+        ),
+    )?;
+    let observed_cases = load_observed_benchmark_cases(&holdout_observed)?;
+    let exact = evaluate_waf_routes_from_observed(
+        &observed_cases,
+        &freeze_dir,
+        &final_holdout_cases,
+        false,
+        &holdout_dir.join("exact_routes.json"),
+    )?;
+    let collapsed = evaluate_waf_routes_from_observed(
+        &observed_cases,
+        &freeze_dir,
+        &final_holdout_cases,
+        true,
+        &holdout_dir.join("collapsed_allow_deny.json"),
+    )?;
 
     let summary = json!({
         "benchmark_dir": args.benchmark_dir.display().to_string(),
@@ -1668,6 +1601,9 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     ]);
     if args.resume {
         waf_build.push("--resume".to_string());
+    }
+    if args.waf_skip_compile {
+        waf_build.push("--skip-compile".to_string());
     }
     if args.use_installed_cli {
         waf_build.push("--use-installed-cli".to_string());
@@ -2193,6 +2129,771 @@ fn run_plain_command(repo_root: &Path, command: &[String]) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct WafRefreshCache {
+    version: String,
+    inputs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WafObserverPatterns {
+    sqli_patterns: Vec<String>,
+    xss_patterns: Vec<String>,
+    traversal_patterns: Vec<String>,
+    server_include_patterns: Vec<String>,
+    php_injection_patterns: Vec<String>,
+    sensitive_route_patterns: Vec<String>,
+    benign_patterns: Vec<String>,
+    scanner_patterns: Vec<String>,
+    sensitive_meta_markers: Vec<String>,
+    sqli_meta_patterns: Vec<String>,
+    xss_meta_patterns: Vec<String>,
+    bad_bot_meta_patterns: Vec<String>,
+    protocol_meta_patterns: Vec<String>,
+    command_injection_meta_patterns: Vec<String>,
+    php_injection_meta_patterns: Vec<String>,
+    restricted_extensions: Vec<String>,
+}
+
+static WAF_OBSERVER_PATTERNS: OnceLock<WafObserverPatterns> = OnceLock::new();
+
+fn cached_waf_observe(
+    repo_root: &Path,
+    dataset_jsonl: &Path,
+    output: &Path,
+    cache_path: &Path,
+) -> Result<()> {
+    let cache = WafRefreshCache {
+        version: "1".to_string(),
+        inputs: BTreeMap::from([
+            ("dataset_sha256".to_string(), sha256_file(dataset_jsonl)?),
+            (
+                "observer_plugin_sha256".to_string(),
+                sha256_file(&repo_root.join("examples/waf_edge/plugins/observer/plugin.py"))?,
+            ),
+            (
+                "observer_patterns_sha256".to_string(),
+                sha256_file(&repo_root.join("examples/waf_edge/plugins/observer/patterns.json"))?,
+            ),
+            (
+                "route_patterns_sha256".to_string(),
+                sha256_file(&repo_root.join("benchmarks/waf/route_patterns.json"))?,
+            ),
+        ]),
+    };
+    if output.exists()
+        && cache_path.exists()
+        && read_json::<WafRefreshCache>(cache_path).ok().as_ref() == Some(&cache)
+    {
+        return Ok(());
+    }
+
+    let config = load_waf_observer_patterns(repo_root)?.clone();
+    let cases = load_benchmark_cases(dataset_jsonl)
+        .into_diagnostic()
+        .wrap_err("failed to load WAF benchmark cases for native observation")?;
+    let worker_count = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(cases.len().max(1));
+    let chunk_size = cases.len().max(1).div_ceil(worker_count.max(1));
+    let indexed_cases = cases
+        .into_iter()
+        .enumerate()
+        .collect::<Vec<(usize, BenchmarkCase)>>();
+    let mut handles = Vec::new();
+    for chunk in indexed_cases.chunks(chunk_size.max(1)) {
+        let config = config.clone();
+        let owned_chunk = chunk.to_vec();
+        handles.push(thread::spawn(
+            move || -> Result<Vec<(usize, ObservedBenchmarkCase)>> {
+                owned_chunk
+                    .into_iter()
+                    .map(|(index, case)| {
+                        Ok((
+                            index,
+                            ObservedBenchmarkCase {
+                                id: case.id,
+                                input: case.input.clone(),
+                                expected_route: case.expected_route,
+                                category: case.category,
+                                features: observe_waf_features(&config, &case.input)?,
+                            },
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            },
+        ));
+    }
+    let mut observed_rows = Vec::new();
+    for handle in handles {
+        let mut chunk_rows = handle
+            .join()
+            .map_err(|_| miette::miette!("native WAF observation worker panicked"))??;
+        observed_rows.append(&mut chunk_rows);
+    }
+    observed_rows.sort_by_key(|(index, _)| *index);
+    let mut writer = std::io::BufWriter::new(
+        File::create(output)
+            .into_diagnostic()
+            .wrap_err("failed to create cached WAF observed output")?,
+    );
+    for (_, observed) in observed_rows {
+        serde_json::to_writer(&mut writer, &observed).into_diagnostic()?;
+        use std::io::Write as _;
+        writer.write_all(b"\n").into_diagnostic()?;
+    }
+    use std::io::Write as _;
+    writer.flush().into_diagnostic()?;
+    write_json_pretty(cache_path, &serde_json::to_value(&cache).into_diagnostic()?)?;
+    Ok(())
+}
+
+fn cached_emit_traces(
+    repo_root: &Path,
+    cli: &[String],
+    observed_jsonl: &Path,
+    trace_projection: &Path,
+    output_dir: &Path,
+    cache_path: &Path,
+) -> Result<()> {
+    let cache = WafRefreshCache {
+        version: "1".to_string(),
+        inputs: BTreeMap::from([
+            ("observed_sha256".to_string(), sha256_file(observed_jsonl)?),
+            (
+                "trace_projection_sha256".to_string(),
+                sha256_file(trace_projection)?,
+            ),
+        ]),
+    };
+    if output_dir.join("multi_target.csv").exists()
+        && cache_path.exists()
+        && read_json::<WafRefreshCache>(cache_path).ok().as_ref() == Some(&cache)
+    {
+        return Ok(());
+    }
+    run_json_command(
+        repo_root,
+        &build_nested_command(
+            cli,
+            &[
+                "benchmark",
+                "emit-traces",
+                &observed_jsonl.display().to_string(),
+                "--config",
+                &trace_projection.display().to_string(),
+                "--output-dir",
+                &output_dir.display().to_string(),
+                "--json",
+            ],
+        ),
+    )?;
+    write_json_pretty(cache_path, &serde_json::to_value(&cache).into_diagnostic()?)?;
+    Ok(())
+}
+
+fn load_observed_benchmark_cases(path: &Path) -> Result<Vec<ObservedBenchmarkCase>> {
+    let file = File::open(path).into_diagnostic()?;
+    let reader = BufReader::new(file);
+    let mut rows = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line.into_diagnostic()?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        rows.push(
+            serde_json::from_str(trimmed)
+                .into_diagnostic()
+                .wrap_err(format!(
+                    "invalid observed benchmark JSON on line {}",
+                    line_no + 1
+                ))?,
+        );
+    }
+    Ok(rows)
+}
+
+fn evaluate_waf_routes_from_observed(
+    observed_cases: &[ObservedBenchmarkCase],
+    freeze_dir: &Path,
+    dataset_path: &Path,
+    collapse_non_allow_to_deny: bool,
+    output_path: &Path,
+) -> Result<Value> {
+    let injection_gate = LogicPearlGateIr::from_path(
+        freeze_dir.join("artifacts/target_injection_payload/pearl.ir.json"),
+    )
+    .into_diagnostic()?;
+    let sensitive_gate = LogicPearlGateIr::from_path(
+        freeze_dir.join("artifacts/target_sensitive_surface/pearl.ir.json"),
+    )
+    .into_diagnostic()?;
+    let suspicious_gate = LogicPearlGateIr::from_path(
+        freeze_dir.join("artifacts/target_suspicious_request/pearl.ir.json"),
+    )
+    .into_diagnostic()?;
+
+    let mut matched_cases = 0_usize;
+    let mut attack_cases = 0_usize;
+    let mut benign_cases = 0_usize;
+    let mut caught_attacks = 0_usize;
+    let mut benign_passes = 0_usize;
+    let mut false_positives = 0_usize;
+    let mut category_totals: BTreeMap<String, usize> = BTreeMap::new();
+    let mut category_matches: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cases = Vec::with_capacity(observed_cases.len());
+
+    for observed in observed_cases {
+        let features = observed
+            .features
+            .clone()
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        let injection_payload = evaluate_gate(&injection_gate, &features).into_diagnostic()?;
+        let sensitive_surface = evaluate_gate(&sensitive_gate, &features).into_diagnostic()?;
+        let suspicious_request = evaluate_gate(&suspicious_gate, &features).into_diagnostic()?;
+        let route_status =
+            evaluate_waf_route_status(&injection_payload, &sensitive_surface, &suspicious_request);
+
+        let actual_route = collapse_route(&route_status, collapse_non_allow_to_deny);
+        let expected_route = collapse_route(&observed.expected_route, collapse_non_allow_to_deny);
+        let matched = actual_route == expected_route;
+        if matched {
+            matched_cases += 1;
+        }
+        let is_attack = expected_route != "allow";
+        if is_attack {
+            attack_cases += 1;
+            if actual_route != "allow" {
+                caught_attacks += 1;
+            }
+        } else {
+            benign_cases += 1;
+            if actual_route == "allow" {
+                benign_passes += 1;
+            } else {
+                false_positives += 1;
+            }
+        }
+        if let Some(category) = &observed.category {
+            *category_totals.entry(category.clone()).or_default() += 1;
+            if matched {
+                *category_matches.entry(category.clone()).or_default() += 1;
+            }
+        }
+        cases.push(json!({
+            "id": observed.id,
+            "expected_route": expected_route,
+            "actual_route": actual_route,
+            "matched": matched,
+            "category": observed.category,
+        }));
+    }
+
+    let category_accuracy = category_totals
+        .into_iter()
+        .map(|(category, total)| {
+            let matches = category_matches.get(&category).copied().unwrap_or(0);
+            (category, matches as f64 / total.max(1) as f64)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let summary = json!({
+        "total_cases": observed_cases.len(),
+        "matched_cases": matched_cases,
+        "exact_match_rate": matched_cases as f64 / observed_cases.len().max(1) as f64,
+        "attack_cases": attack_cases,
+        "benign_cases": benign_cases,
+        "attack_catch_rate": caught_attacks as f64 / attack_cases.max(1) as f64,
+        "benign_pass_rate": benign_passes as f64 / benign_cases.max(1) as f64,
+        "false_positive_rate": false_positives as f64 / benign_cases.max(1) as f64,
+        "category_accuracy": category_accuracy,
+    });
+    let payload = json!({
+        "pipeline_id": "waf_edge_learned_v1",
+        "dataset_path": dataset_path.display().to_string(),
+        "summary": summary,
+        "cases": cases,
+    });
+    write_json_pretty(output_path, &payload)?;
+    Ok(payload)
+}
+
+fn evaluate_waf_route_status(
+    injection_payload: &logicpearl_core::RuleMask,
+    sensitive_surface: &logicpearl_core::RuleMask,
+    suspicious_request: &logicpearl_core::RuleMask,
+) -> String {
+    let allow =
+        injection_payload.is_zero() && sensitive_surface.is_zero() && suspicious_request.is_zero();
+
+    if allow {
+        "allow".to_string()
+    } else if !injection_payload.is_zero() {
+        "deny_injection_payload".to_string()
+    } else if !sensitive_surface.is_zero() {
+        "deny_sensitive_surface".to_string()
+    } else if !suspicious_request.is_zero() {
+        "review_suspicious_request".to_string()
+    } else {
+        "deny".to_string()
+    }
+}
+
+fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
+    if collapse_non_allow_to_deny && route != "allow" {
+        "deny".to_string()
+    } else {
+        route.to_string()
+    }
+}
+
+fn load_waf_observer_patterns(repo_root: &Path) -> Result<&'static WafObserverPatterns> {
+    if let Some(config) = WAF_OBSERVER_PATTERNS.get() {
+        return Ok(config);
+    }
+    let config: WafObserverPatterns = serde_json::from_str(
+        &fs::read_to_string(repo_root.join("examples/waf_edge/plugins/observer/patterns.json"))
+            .into_diagnostic()?,
+    )
+    .into_diagnostic()?;
+    let _ = WAF_OBSERVER_PATTERNS.set(config);
+    WAF_OBSERVER_PATTERNS
+        .get()
+        .ok_or_else(|| miette::miette!("failed to initialize WAF observer patterns"))
+}
+
+fn observe_waf_features(
+    config: &WafObserverPatterns,
+    raw_input: &Value,
+) -> Result<Map<String, Value>> {
+    let object = raw_input
+        .as_object()
+        .ok_or_else(|| miette::miette!("WAF observer expects object input"))?;
+    let path = normalize_waf_text(object.get("path"));
+    let source_zone = normalize_waf_text(object.get("source_zone"));
+    let raw_request = normalize_waf_text(object.get("raw_request"));
+    let modsecurity_meta = normalize_waf_text(object.get("modsecurity_meta"));
+    let headers = object
+        .get("headers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let query = object
+        .get("query")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let body = object
+        .get("body")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let tenant_scope = normalize_waf_text(headers.get("tenant_scope"));
+    let user_agent = normalize_waf_text(
+        headers
+            .get("user_agent")
+            .or_else(|| headers.get("user-agent")),
+    );
+    let query_text = flatten_waf_text_value(&Value::Object(query.clone()));
+    let body_text = flatten_waf_text_value(&Value::Object(body.clone()));
+    let combined_text = [
+        path.as_str(),
+        query_text.as_str(),
+        body_text.as_str(),
+        tenant_scope.as_str(),
+        user_agent.as_str(),
+        raw_request.as_str(),
+        modsecurity_meta.as_str(),
+    ]
+    .iter()
+    .filter(|value| !value.is_empty())
+    .copied()
+    .collect::<Vec<_>>()
+    .join(" ");
+
+    let contains_sqli_signature = contains_any_text(&combined_text, &config.sqli_patterns);
+    let contains_xss_signature = contains_any_text(&combined_text, &config.xss_patterns);
+    let contains_path_traversal = contains_any_text(&combined_text, &config.traversal_patterns);
+    let contains_server_include =
+        contains_any_text(&combined_text, &config.server_include_patterns);
+    let contains_php_injection = contains_any_text(&combined_text, &config.php_injection_patterns);
+    let sqli_marker_count = count_matches_text(&combined_text, &config.sqli_patterns);
+    let xss_marker_count = count_matches_text(&combined_text, &config.xss_patterns);
+    let traversal_marker_count = count_matches_text(&combined_text, &config.traversal_patterns);
+    let php_injection_marker_count =
+        count_matches_text(&combined_text, &config.php_injection_patterns);
+    let sensitive_route_marker_count = count_matches_text(&path, &config.sensitive_route_patterns);
+    let scanner_marker_count = count_matches_text(&user_agent, &config.scanner_patterns);
+    let targets_sensitive_route = path.starts_with("/admin")
+        || path.starts_with("/internal")
+        || contains_any_text(&path, &config.sensitive_route_patterns)
+        || contains_any_text(&combined_text, &config.sensitive_meta_markers);
+    let path_targets_admin = path.starts_with("/admin") || path.starts_with("/internal");
+    let path_targets_hidden = ["/.git", "/.env", "/phpmyadmin", "/wp-admin"]
+        .iter()
+        .any(|marker| path.contains(marker));
+    let contains_restricted_extension = config
+        .restricted_extensions
+        .iter()
+        .any(|ext| path.ends_with(ext));
+    let origin_outside_trust_zone =
+        source_zone == "public_web" || source_zone == "untrusted_browser";
+    let has_scanner_fingerprint = contains_any_text(&user_agent, &config.scanner_patterns)
+        || path == "/.env"
+        || path == "/wp-admin/install.php"
+        || path == "/phpmyadmin";
+    let has_malformed_encoding = combined_text.contains("%25")
+        || combined_text.contains("%2f%2e")
+        || combined_text.contains("%%");
+    let meta_reports_sqli = contains_any_text(&modsecurity_meta, &config.sqli_meta_patterns);
+    let meta_reports_xss = contains_any_text(&modsecurity_meta, &config.xss_meta_patterns);
+    let meta_reports_restricted_resource =
+        contains_any_text(&modsecurity_meta, &config.sensitive_meta_markers);
+    let meta_reports_bad_bot = contains_any_text(&modsecurity_meta, &config.bad_bot_meta_patterns);
+    let meta_reports_protocol_violation =
+        contains_any_text(&modsecurity_meta, &config.protocol_meta_patterns);
+    let meta_reports_command_injection =
+        contains_any_text(&modsecurity_meta, &config.command_injection_meta_patterns);
+    let meta_reports_php_injection =
+        contains_any_text(&modsecurity_meta, &config.php_injection_meta_patterns);
+    let contains_waitfor_delay =
+        combined_text.contains("waitfor delay") || combined_text.contains("sleep(");
+    let contains_union_select = combined_text.contains("union select");
+    let contains_quote = combined_text.contains('\'') || combined_text.contains('"');
+    let contains_comment_sequence = combined_text.contains("--")
+        || combined_text.contains("/*")
+        || combined_text.contains("*/")
+        || combined_text.contains('#');
+    let contains_script_tag =
+        combined_text.contains("<script") || combined_text.contains("javascript:");
+    let contains_event_handler =
+        combined_text.contains("onerror=") || combined_text.contains("onload=");
+    let contains_dotdot = combined_text.contains("../")
+        || combined_text.contains("..\\")
+        || combined_text.contains("%2e%2e");
+    let request_has_query = !query.is_empty();
+    let request_has_body = !body.is_empty();
+    let path_depth = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .count() as i64;
+    let query_key_count = query.len() as i64;
+    let body_key_count = body.len() as i64;
+    let percent_encoding_count = raw_request.matches('%').count() as i64;
+    let suspicious_token_count = [
+        contains_sqli_signature,
+        contains_xss_signature,
+        contains_path_traversal,
+        contains_server_include,
+        contains_php_injection,
+        targets_sensitive_route,
+        has_scanner_fingerprint,
+        has_malformed_encoding,
+        meta_reports_sqli,
+        meta_reports_xss,
+        meta_reports_restricted_resource,
+        meta_reports_bad_bot,
+        meta_reports_protocol_violation,
+        meta_reports_command_injection,
+        meta_reports_php_injection,
+    ]
+    .into_iter()
+    .filter(|flag| *flag)
+    .count() as i64;
+    let likely_benign_request = contains_any_text(&combined_text, &config.benign_patterns)
+        && !contains_sqli_signature
+        && !contains_xss_signature
+        && !contains_path_traversal
+        && !targets_sensitive_route;
+    let mut risk_score = 0.03_f64;
+    if contains_sqli_signature {
+        risk_score += 0.24;
+    }
+    if contains_xss_signature {
+        risk_score += 0.22;
+    }
+    if contains_path_traversal {
+        risk_score += 0.24;
+    }
+    if contains_server_include {
+        risk_score += 0.20;
+    }
+    if contains_php_injection {
+        risk_score += 0.24;
+    }
+    if targets_sensitive_route {
+        risk_score += 0.14;
+    }
+    if origin_outside_trust_zone {
+        risk_score += 0.10;
+    }
+    if has_scanner_fingerprint {
+        risk_score += 0.46;
+    }
+    if has_malformed_encoding {
+        risk_score += 0.28;
+    }
+    if meta_reports_command_injection {
+        risk_score += 0.28;
+    }
+    if meta_reports_php_injection {
+        risk_score += 0.24;
+    }
+    if likely_benign_request {
+        risk_score = risk_score.min(0.12);
+    }
+    risk_score = (risk_score.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+
+    Ok(Map::from_iter([
+        (
+            "contains_sqli_signature".to_string(),
+            Value::Bool(contains_sqli_signature),
+        ),
+        (
+            "contains_xss_signature".to_string(),
+            Value::Bool(contains_xss_signature),
+        ),
+        (
+            "contains_path_traversal".to_string(),
+            Value::Bool(contains_path_traversal),
+        ),
+        (
+            "contains_server_include".to_string(),
+            Value::Bool(contains_server_include),
+        ),
+        (
+            "contains_php_injection".to_string(),
+            Value::Bool(contains_php_injection),
+        ),
+        (
+            "sqli_marker_count".to_string(),
+            Value::from(sqli_marker_count),
+        ),
+        (
+            "xss_marker_count".to_string(),
+            Value::from(xss_marker_count),
+        ),
+        (
+            "traversal_marker_count".to_string(),
+            Value::from(traversal_marker_count),
+        ),
+        (
+            "php_injection_marker_count".to_string(),
+            Value::from(php_injection_marker_count),
+        ),
+        (
+            "contains_waitfor_delay".to_string(),
+            Value::Bool(contains_waitfor_delay),
+        ),
+        (
+            "contains_union_select".to_string(),
+            Value::Bool(contains_union_select),
+        ),
+        ("contains_quote".to_string(), Value::Bool(contains_quote)),
+        (
+            "contains_comment_sequence".to_string(),
+            Value::Bool(contains_comment_sequence),
+        ),
+        (
+            "contains_script_tag".to_string(),
+            Value::Bool(contains_script_tag),
+        ),
+        (
+            "contains_event_handler".to_string(),
+            Value::Bool(contains_event_handler),
+        ),
+        ("contains_dotdot".to_string(), Value::Bool(contains_dotdot)),
+        (
+            "targets_sensitive_route".to_string(),
+            Value::Bool(targets_sensitive_route),
+        ),
+        (
+            "sensitive_route_marker_count".to_string(),
+            Value::from(sensitive_route_marker_count),
+        ),
+        (
+            "path_targets_admin".to_string(),
+            Value::Bool(path_targets_admin),
+        ),
+        (
+            "path_targets_hidden".to_string(),
+            Value::Bool(path_targets_hidden),
+        ),
+        (
+            "contains_restricted_extension".to_string(),
+            Value::Bool(contains_restricted_extension),
+        ),
+        (
+            "origin_outside_trust_zone".to_string(),
+            Value::Bool(origin_outside_trust_zone),
+        ),
+        (
+            "has_scanner_fingerprint".to_string(),
+            Value::Bool(has_scanner_fingerprint),
+        ),
+        (
+            "scanner_marker_count".to_string(),
+            Value::from(scanner_marker_count),
+        ),
+        (
+            "has_malformed_encoding".to_string(),
+            Value::Bool(has_malformed_encoding),
+        ),
+        (
+            "meta_reports_sqli".to_string(),
+            Value::Bool(meta_reports_sqli),
+        ),
+        (
+            "meta_reports_xss".to_string(),
+            Value::Bool(meta_reports_xss),
+        ),
+        (
+            "meta_reports_restricted_resource".to_string(),
+            Value::Bool(meta_reports_restricted_resource),
+        ),
+        (
+            "meta_reports_bad_bot".to_string(),
+            Value::Bool(meta_reports_bad_bot),
+        ),
+        (
+            "meta_reports_protocol_violation".to_string(),
+            Value::Bool(meta_reports_protocol_violation),
+        ),
+        (
+            "meta_reports_command_injection".to_string(),
+            Value::Bool(meta_reports_command_injection),
+        ),
+        (
+            "meta_reports_php_injection".to_string(),
+            Value::Bool(meta_reports_php_injection),
+        ),
+        (
+            "request_has_query".to_string(),
+            Value::Bool(request_has_query),
+        ),
+        (
+            "request_has_body".to_string(),
+            Value::Bool(request_has_body),
+        ),
+        ("path_depth".to_string(), Value::from(path_depth)),
+        ("query_key_count".to_string(), Value::from(query_key_count)),
+        ("body_key_count".to_string(), Value::from(body_key_count)),
+        (
+            "percent_encoding_count".to_string(),
+            Value::from(percent_encoding_count),
+        ),
+        (
+            "suspicious_token_count".to_string(),
+            Value::from(suspicious_token_count),
+        ),
+        (
+            "likely_benign_request".to_string(),
+            Value::Bool(likely_benign_request),
+        ),
+        ("risk_score".to_string(), Value::from(risk_score)),
+    ]))
+}
+
+fn normalize_waf_text(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    let decoded = decode_plus(value.as_str().unwrap_or(&value.to_string()));
+    decoded
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn flatten_waf_text_value(value: &Value) -> String {
+    let mut parts = Vec::new();
+    flatten_waf_value_into(value, &mut parts);
+    parts.join(" ")
+}
+
+fn flatten_waf_value_into(value: &Value, parts: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            let mut keys = object.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                let key_text = normalize_waf_text(Some(&Value::String(key.clone())));
+                if !key_text.is_empty() {
+                    parts.push(key_text);
+                }
+                if let Some(child) = object.get(&key) {
+                    flatten_waf_value_into(child, parts);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                flatten_waf_value_into(item, parts);
+            }
+        }
+        Value::Null => {}
+        other => {
+            let text = normalize_waf_text(Some(other));
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+}
+
+fn decode_plus(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hi = decode_hex(bytes[index + 1]);
+                let lo = decode_hex(bytes[index + 2]);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    decoded.push((hi << 4) | lo);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn decode_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn contains_any_text(text: &str, phrases: &[String]) -> bool {
+    phrases.iter().any(|phrase| text.contains(phrase))
+}
+
+fn count_matches_text(text: &str, phrases: &[String]) -> i64 {
+    phrases
+        .iter()
+        .filter(|phrase| text.contains(phrase.as_str()))
+        .count() as i64
 }
 
 fn datasets_root_from_args(repo_root: &Path, value: Option<&PathBuf>) -> PathBuf {
@@ -2906,6 +3607,7 @@ fn build_waf_target_artifact_set(
     discovered_dir: &Path,
     residual_pass: bool,
     refine: bool,
+    skip_compile: bool,
 ) -> Result<ArtifactSet> {
     let artifacts_dir = discovered_dir.join("artifacts");
     fs::create_dir_all(&artifacts_dir).into_diagnostic()?;
@@ -2936,6 +3638,9 @@ fn build_waf_target_artifact_set(
             }
             if refine {
                 command.push("--refine".to_string());
+            }
+            if skip_compile {
+                command.push("--skip-compile".to_string());
             }
             ((*target).to_string(), command)
         })

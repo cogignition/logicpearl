@@ -408,6 +408,9 @@ struct RefreshBenchmarksArgs {
     /// Directory for the learned WAF bundle.
     #[arg(long, default_value = "/private/tmp/waf_learned_bundle")]
     waf_bundle_dir: PathBuf,
+    /// Skip native and Wasm compilation during the WAF learned bundle build.
+    #[arg(long)]
+    waf_skip_compile: bool,
     /// Optional sampled guardrail eval size instead of the full final-holdout run.
     #[arg(long)]
     guardrail_sample_size: Option<usize>,
@@ -505,6 +508,8 @@ struct RefreshWafBuildArgs {
     residual_pass: bool,
     #[arg(long, default_value_t = true)]
     refine: bool,
+    #[arg(long)]
+    skip_compile: bool,
 }
 
 #[derive(Debug, Args)]
@@ -658,6 +663,9 @@ struct BuildArgs {
     /// JSON file of pinned rules to merge after discovery and refinement.
     #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
+    /// Skip native and Wasm compilation and emit only the pearl artifact bundle.
+    #[arg(long, help_heading = "Advanced")]
+    skip_compile: bool,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,

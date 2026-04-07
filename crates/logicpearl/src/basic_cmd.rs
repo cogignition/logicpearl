@@ -478,62 +478,68 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
     let artifact_name = result.gate_id.clone();
-    let native_binary_path = result
-        .output_files
-        .native_binary
-        .clone()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| native_artifact_output_path(&artifact_dir, &artifact_name, None));
-    let native_binary = if native_binary_path.exists() {
-        native_binary_path
-    } else {
-        compile_native_runner(
-            &pearl_ir_path,
-            &artifact_dir,
-            &result.gate_id,
-            Some(artifact_name.clone()),
-            None,
-            Some(native_binary_path),
-        )?
-    };
-    result.output_files.native_binary = Some(native_binary.display().to_string());
-
-    let wasm_output = if is_rust_target_installed("wasm32-unknown-unknown") {
-        let wasm_output_path = result
+    if !args.skip_compile {
+        let native_binary_path = result
             .output_files
-            .wasm_module
+            .native_binary
             .clone()
             .map(PathBuf::from)
-            .unwrap_or_else(|| wasm_artifact_output_path(&artifact_dir, &artifact_name));
-        let wasm_metadata_path = result
-            .output_files
-            .wasm_metadata
-            .clone()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| wasm_metadata_output_path(&artifact_dir, &artifact_name));
-        Some(if wasm_output_path.exists() {
-            WasmArtifactOutput {
-                module_path: wasm_output_path,
-                metadata_path: wasm_metadata_path,
-            }
+            .unwrap_or_else(|| native_artifact_output_path(&artifact_dir, &artifact_name, None));
+        let native_binary = if native_binary_path.exists() {
+            native_binary_path
         } else {
-            compile_wasm_module(
+            compile_native_runner(
                 &pearl_ir_path,
                 &artifact_dir,
                 &result.gate_id,
                 Some(artifact_name.clone()),
-                Some(wasm_output_path),
+                None,
+                Some(native_binary_path),
             )?
-        })
+        };
+        result.output_files.native_binary = Some(native_binary.display().to_string());
+
+        let wasm_output = if is_rust_target_installed("wasm32-unknown-unknown") {
+            let wasm_output_path = result
+                .output_files
+                .wasm_module
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| wasm_artifact_output_path(&artifact_dir, &artifact_name));
+            let wasm_metadata_path = result
+                .output_files
+                .wasm_metadata
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| wasm_metadata_output_path(&artifact_dir, &artifact_name));
+            Some(if wasm_output_path.exists() {
+                WasmArtifactOutput {
+                    module_path: wasm_output_path,
+                    metadata_path: wasm_metadata_path,
+                }
+            } else {
+                compile_wasm_module(
+                    &pearl_ir_path,
+                    &artifact_dir,
+                    &result.gate_id,
+                    Some(artifact_name.clone()),
+                    Some(wasm_output_path),
+                )?
+            })
+        } else {
+            None
+        };
+        result.output_files.wasm_module = wasm_output
+            .as_ref()
+            .map(|output| output.module_path.display().to_string());
+        result.output_files.wasm_metadata = wasm_output
+            .as_ref()
+            .map(|output| output.metadata_path.display().to_string());
     } else {
-        None
-    };
-    result.output_files.wasm_module = wasm_output
-        .as_ref()
-        .map(|output| output.module_path.display().to_string());
-    result.output_files.wasm_metadata = wasm_output
-        .as_ref()
-        .map(|output| output.metadata_path.display().to_string());
+        result.output_files.native_binary = None;
+        result.output_files.wasm_module = None;
+        result.output_files.wasm_metadata = None;
+    }
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
