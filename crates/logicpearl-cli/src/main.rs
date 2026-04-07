@@ -43,6 +43,7 @@ mod benchmark_cmd;
 mod conformance_cmd;
 mod observer_cmd;
 mod pipeline_cmd;
+mod refresh_cmd;
 
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -72,6 +73,7 @@ use observer_cmd::{
 use pipeline_cmd::{
     run_pipeline_inspect, run_pipeline_run, run_pipeline_trace, run_pipeline_validate,
 };
+use refresh_cmd::run_refresh_benchmarks;
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -89,7 +91,8 @@ The main public path is:
 - inspect
 - run
 - pipeline
-- benchmark";
+- benchmark
+- refresh";
 
 const CLI_AFTER_HELP: &str = "\
 Examples:
@@ -100,6 +103,7 @@ Examples:
   logicpearl run examples/getting_started/output examples/getting_started/new_input.json
   logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json
+  logicpearl refresh benchmarks --resume
 
 For more advanced surfaces, run:
   logicpearl <command> --help";
@@ -146,6 +150,13 @@ Examples:
   logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json
   logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json";
 
+const REFRESH_AFTER_HELP: &str = "\
+Examples:
+  logicpearl refresh benchmarks
+  logicpearl refresh benchmarks --resume
+  logicpearl refresh benchmarks --guardrail-sample-size 2000
+  logicpearl refresh benchmarks --skip-validate";
+
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
 }
@@ -182,6 +193,11 @@ enum Commands {
     Benchmark {
         #[command(subcommand)]
         command: BenchmarkCommand,
+    },
+    /// Refresh public benchmark bundles, evals, and score ledgers.
+    Refresh {
+        #[command(subcommand)]
+        command: RefreshCommand,
     },
     /// Learn multiple pearls from one dataset.
     Discover(DiscoverArgs),
@@ -256,6 +272,47 @@ enum BenchmarkCommand {
     AdaptPint(BenchmarkAdaptPintArgs),
     /// Run a benchmark dataset through a pipeline and compute metrics.
     Run(BenchmarkRunArgs),
+}
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = REFRESH_AFTER_HELP)]
+enum RefreshCommand {
+    /// Run the full public benchmark refresh flow with cleaner progress output.
+    Benchmarks(RefreshBenchmarksArgs),
+}
+
+#[derive(Debug, Args)]
+struct RefreshBenchmarksArgs {
+    /// Resume long-running bundle rebuilds where supported.
+    #[arg(long)]
+    resume: bool,
+    /// Skip cargo clippy and cargo test.
+    #[arg(long)]
+    skip_validate: bool,
+    /// Ask the Python bundle builders to use `logicpearl` from PATH.
+    #[arg(long)]
+    use_installed_cli: bool,
+    /// Guardrail target goal to use during frozen bundle synthesis.
+    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ProtectiveGate)]
+    target_goal: ObserverTargetGoalArg,
+    /// Directory for the frozen guardrail bundle.
+    #[arg(long, default_value = "/private/tmp/guardrails_bundle")]
+    guardrail_bundle_dir: PathBuf,
+    /// Directory for the adapted WAF benchmark corpus.
+    #[arg(long, default_value = "/private/tmp/waf_benchmark")]
+    waf_benchmark_dir: PathBuf,
+    /// Directory for the learned WAF bundle.
+    #[arg(long, default_value = "/private/tmp/waf_learned_bundle")]
+    waf_bundle_dir: PathBuf,
+    /// Optional sampled guardrail eval size instead of the full final-holdout run.
+    #[arg(long)]
+    guardrail_sample_size: Option<usize>,
+    /// Directory to write per-step refresh logs into.
+    #[arg(long)]
+    logs_dir: Option<PathBuf>,
+    /// Stream full child command output instead of concise phase logging.
+    #[arg(long)]
+    verbose: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1099,6 +1156,9 @@ fn main() -> Result<()> {
         Commands::Benchmark {
             command: BenchmarkCommand::Run(args),
         } => run_benchmark(args),
+        Commands::Refresh {
+            command: RefreshCommand::Benchmarks(args),
+        } => run_refresh_benchmarks(args),
         Commands::Build(args) => run_build(args),
         Commands::Quickstart(args) => run_quickstart(args),
         Commands::Discover(args) => run_discover(args),

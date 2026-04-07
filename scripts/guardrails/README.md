@@ -58,6 +58,12 @@ If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agen
 For the full public refresh path, including guardrails, WAF, and scoreboard updates:
 
 ```bash
+logicpearl refresh benchmarks
+```
+
+or from the repo checkout:
+
+```bash
 scripts/refresh_all_benchmarks.sh
 ```
 

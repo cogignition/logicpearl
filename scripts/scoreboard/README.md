@@ -44,6 +44,12 @@ These scripts keep a small public score ledger for LogicPearl.
 Run the full public refresh flow in one command:
 
 ```bash
+logicpearl refresh benchmarks
+```
+
+or from the repo checkout:
+
+```bash
 scripts/refresh_all_benchmarks.sh
 ```
 
