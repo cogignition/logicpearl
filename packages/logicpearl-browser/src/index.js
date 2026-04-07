@@ -208,7 +208,12 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
     return Number.NaN;
   }
 
-  switch (feature.encoding) {
+  const encodingKind =
+    typeof feature.encoding === 'string'
+      ? feature.encoding
+      : feature.encoding?.kind;
+
+  switch (encodingKind) {
     case 'boolean':
       return rawValue === true || rawValue === 1 || rawValue === 'true' ? 1 : 0;
     case 'numeric': {

@@ -45,6 +45,14 @@ const sampleMetadata = {
   ],
 };
 
+const sampleMetadataWithObjectEncodings = {
+  ...sampleMetadata,
+  features: sampleMetadata.features.map((feature) => ({
+    ...feature,
+    encoding: { kind: feature.encoding },
+  })),
+};
+
 test('normalizeArtifactReference handles bundle dirs and artifact manifests', () => {
   assert.deepEqual(normalizeArtifactReference('/demo/authz'), {
     manifestUrl: '/demo/authz/artifact.json',
@@ -60,6 +68,16 @@ test('encodeFeatureSlots maps booleans, numerics, and string codes', () => {
   const slots = encodeFeatureSlots(
     { is_admin: true, risk_score: '42', risk_band: 'high' },
     sampleMetadata
+  );
+  assert.equal(slots[0], 1);
+  assert.equal(slots[1], 42);
+  assert.equal(slots[2], 3);
+});
+
+test('encodeFeatureSlots supports object-form metadata encodings from wasm metadata', () => {
+  const slots = encodeFeatureSlots(
+    { is_admin: true, risk_score: '42', risk_band: 'high' },
+    sampleMetadataWithObjectEncodings
   );
   assert.equal(slots[0], 1);
   assert.equal(slots[1], 42);
