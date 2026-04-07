@@ -26,13 +26,13 @@ Software should run as artifact, not fog.
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-your-own-pearl) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Agent Guide](./AGENTS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Agent Guide](./AGENTS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
-Quick proof path:
+Quick proof path from a local checkout:
 
 ```bash
-cargo install logicpearl
-logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
+cargo install --path crates/logicpearl
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
 ```
 
 That command takes a small labeled behavior slice and turns it into a deployable artifact bundle you can inspect and run locally.
@@ -76,6 +76,8 @@ Install the public CLI once:
 cargo install logicpearl
 ```
 
+If you want to follow the example paths in this README exactly, run them from a local checkout of this repo. The files under `examples/`, `fixtures/`, and `benchmarks/` are not bundled into the crates.io install.
+
 If you are developing from a local checkout instead of crates.io:
 
 ```bash
@@ -87,6 +89,11 @@ For local development inside the repo, the equivalent form is:
 ```bash
 cargo run --manifest-path Cargo.toml -p logicpearl -- <command>
 ```
+
+Practical rule:
+- `cargo install logicpearl` gives you the CLI anywhere
+- this README's file paths are repo-relative unless stated otherwise
+- if you only installed from crates.io, point `logicpearl` at your own trace dataset or clone this repo for the checked-in examples
 
 The public repo also ships a local `pre-commit` hook under `.githooks/` that runs the getting-started end-to-end CLI test. In this checkout it is already enabled through the repo-local `core.hooksPath` setting.
 
@@ -588,6 +595,36 @@ A parity/import demo that starts from an existing Rego policy and emits LogicPea
 
 See:
 - [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md)
+
+## Repository Layout
+
+The current public repo is organized around one primary Rust-first surface:
+
+- `crates/logicpearl`
+  The user-facing CLI published as `logicpearl`.
+- `crates/logicpearl-*`
+  Core public libraries for IR, runtime, discovery, observers, pipelines, verification, rendering, conformance, and benchmark adaptation.
+- `examples/`
+  Small public examples and demos you can actually run.
+- `benchmarks/`
+  Public benchmark corpora, adapters, and benchmark-specific docs.
+- `fixtures/`
+  Tiny inspection and runtime inputs used by examples and tests.
+- `schema/`
+  Published JSON schemas for public artifact formats.
+- `scripts/`
+  Supporting scripts and reference tooling. The public front door is still the Rust CLI.
+- `docs/`
+  Longer-form public guides and background material.
+- `reserved-crates/`
+  Namespace placeholder crates reserved for future public modules. Most users can ignore this.
+
+If you are new here, the important directories are:
+- `crates/logicpearl`
+- `examples/`
+- `benchmarks/`
+- `fixtures/`
+- `schema/`
 
 ## Reproducible Artifacts
 
