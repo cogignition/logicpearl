@@ -1,0 +1,51 @@
+name: Python Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-linux-wheel:
+    name: Build Linux Wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build manylinux wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          working-directory: reserved-python/logicpearl
+          args: --release --out dist
+          manylinux: auto
+
+      - name: Upload Linux wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logicpearl-linux-wheel
+          path: reserved-python/logicpearl/dist/*.whl
+
+  build-sdist:
+    name: Build Source Distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          working-directory: reserved-python/logicpearl
+          args: --out dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logicpearl-sdist
+          path: reserved-python/logicpearl/dist/*.tar.gz
