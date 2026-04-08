@@ -32,6 +32,7 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
             "timeout_ms": manifest.timeout_ms,
         },
         "canonical_contract": canonical_contract_for_stage(&manifest.stage),
+        "declared_contract": logicpearl_plugin::manifest_contract_summary(&manifest),
         "smoke": smoke,
     });
 
@@ -64,6 +65,13 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
         if smoke.is_some() {
             println!("  {} {}", "Smoke run".bright_black(), "passed".bold());
         }
+        println!(
+            "  {} input={} options={} output={}",
+            "Schemas".bright_black(),
+            schema_presence(&manifest.input_schema),
+            schema_presence(&manifest.options_schema),
+            schema_presence(&manifest.output_schema)
+        );
     }
     Ok(())
 }
@@ -117,6 +125,13 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
                         .join(", ")
                 })
                 .unwrap_or_default()
+        );
+        println!(
+            "  {} input={} options={} output={}",
+            "Schemas".bright_black(),
+            schema_presence(&manifest.input_schema),
+            schema_presence(&manifest.options_schema),
+            schema_presence(&manifest.output_schema)
         );
         println!(
             "{}",
@@ -214,6 +229,7 @@ fn build_plugin_smoke_report(
             "stage": manifest.stage,
         },
         "canonical_contract": canonical_contract_for_stage(&manifest.stage),
+        "declared_contract": logicpearl_plugin::manifest_contract_summary(manifest),
         "request": request,
         "response": response,
         "response_shape": {
@@ -222,6 +238,14 @@ fn build_plugin_smoke_report(
         },
         "warnings": warnings,
     }))
+}
+
+fn schema_presence(schema: &Option<Value>) -> &'static str {
+    if schema.is_some() {
+        "declared"
+    } else {
+        "none"
+    }
 }
 
 fn stage_name(stage: &PluginStage) -> &'static str {

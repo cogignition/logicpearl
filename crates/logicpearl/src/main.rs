@@ -691,7 +691,7 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
     /// Path to labeled decision traces in .csv, .jsonl/.ndjson, or .json form.
@@ -717,6 +717,9 @@ struct BuildArgs {
     /// Source passed to the trace-source plugin.
     #[arg(long, help_heading = "Advanced")]
     trace_plugin_input: Option<String>,
+    /// Repeated key=value options passed through to the trace-source plugin payload.
+    #[arg(long = "trace-plugin-option", help_heading = "Advanced")]
+    trace_plugin_options: Vec<String>,
     /// Plugin manifest for an enricher plugin that transforms decision traces over JSON.
     #[arg(long, help_heading = "Advanced")]
     enricher_plugin_manifest: Option<PathBuf>,

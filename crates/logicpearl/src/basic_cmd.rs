@@ -330,6 +330,15 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
 }
 
 pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
+    if args.trace_plugin_manifest.is_none()
+        && (!args.trace_plugin_options.is_empty() || args.trace_plugin_input.is_some())
+    {
+        return Err(guidance(
+            "trace plugin input/options were provided without a trace plugin manifest",
+            "Pass --trace-plugin-manifest before using --trace-plugin-input or --trace-plugin-option.",
+        ));
+    }
+
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
             .as_deref()
@@ -352,10 +361,14 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             let manifest = PluginManifest::from_path(manifest_path)
                 .into_diagnostic()
                 .wrap_err("failed to load trace plugin manifest")?;
-            let plugin_label_column = args
-                .label_column
-                .clone()
+            let mut trace_plugin_options = build_trace_plugin_options(&args)?;
+            let plugin_label_column = trace_plugin_options
+                .get("label_column")
+                .cloned()
                 .unwrap_or_else(|| "allowed".to_string());
+            trace_plugin_options
+                .entry("label_column".to_string())
+                .or_insert_with(|| plugin_label_column.clone());
             let source = args.trace_plugin_input.clone().ok_or_else(|| {
                 guidance(
                     "--trace-plugin-manifest was provided without --trace-plugin-input",
@@ -368,9 +381,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
                 payload: logicpearl_plugin::build_canonical_payload(
                     &PluginStage::TraceSource,
                     Value::String(source.clone()),
-                    Some(serde_json::json!({
-                        "label_column": plugin_label_column,
-                    })),
+                    Some(serde_json::to_value(&trace_plugin_options).into_diagnostic()?),
                 ),
             };
             let response = run_plugin(&manifest, &request)
@@ -675,11 +686,10 @@ fn build_build_provenance(
                 kind: classify_source_value(value).to_string(),
                 value: value.clone(),
             });
-        let mut options = BTreeMap::new();
-        options.insert(
-            "label_column".to_string(),
-            resolved_label_column.to_string(),
-        );
+        let mut options = build_trace_plugin_options(args)?;
+        options
+            .entry("label_column".to_string())
+            .or_insert_with(|| resolved_label_column.to_string());
         Some(PluginBuildProvenance {
             name: manifest.name,
             stage: "trace_source".to_string(),
@@ -722,6 +732,14 @@ fn build_build_provenance(
         enricher_plugin,
         source_references,
     }))
+}
+
+fn build_trace_plugin_options(args: &BuildArgs) -> Result<BTreeMap<String, String>> {
+    let mut options = parse_key_value_entries(&args.trace_plugin_options, "trace-plugin-option")?;
+    if let Some(label_column) = &args.label_column {
+        options.insert("label_column".to_string(), label_column.clone());
+    }
+    Ok(options)
 }
 
 fn parse_key_value_entries(

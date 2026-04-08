@@ -7,6 +7,42 @@
     "python3",
     "plugin.py"
   ],
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "rules"
+    ],
+    "properties": {
+      "rules": {
+        "type": "array"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "ok",
+      "rule_statuses",
+      "summary"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "rule_statuses": {
+        "type": "array"
+      },
+      "summary": {
+        "type": "object"
+      }
+    }
+  },
   "capabilities": [
     "verification_summary"
   ]

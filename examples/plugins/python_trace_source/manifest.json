@@ -7,6 +7,58 @@
     "python3",
     "plugin.py"
   ],
+  "input_schema": {
+    "type": "string"
+  },
+  "options_schema": {
+    "type": "object",
+    "required": [
+      "label_column"
+    ],
+    "properties": {
+      "label_column": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "ok",
+      "decision_traces"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "decision_traces": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "features",
+            "allowed"
+          ],
+          "properties": {
+            "features": {
+              "type": "object"
+            },
+            "allowed": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  },
   "capabilities": [
     "decision_traces_output"
   ]

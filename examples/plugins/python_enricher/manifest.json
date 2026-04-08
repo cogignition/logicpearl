@@ -7,6 +7,62 @@
     "python3",
     "plugin.py"
   ],
+  "input_schema": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "required": [
+        "features",
+        "allowed"
+      ],
+      "properties": {
+        "features": {
+          "type": "object"
+        },
+        "allowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "ok",
+      "records"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "records": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "features",
+            "allowed"
+          ],
+          "properties": {
+            "features": {
+              "type": "object"
+            },
+            "allowed": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  },
   "capabilities": [
     "record_enrichment"
   ]

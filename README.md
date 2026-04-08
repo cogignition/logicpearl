@@ -411,6 +411,28 @@ That gives you a full public chain:
 - deterministic pearl
 - verify plugin
 
+`trace_source` is now a first-class pipeline stage too. Use `payload` when the plugin input is not naturally an object, and `options` when the plugin needs explicit config instead of smuggling it through a string:
+
+```json
+{
+  "id": "trace_source",
+  "kind": "trace_source_plugin",
+  "plugin_manifest": "../../plugins/python_trace_source/manifest.json",
+  "payload": "$.source",
+  "options": {
+    "label_column": "$.label_column"
+  },
+  "export": {
+    "decision_traces": "$.decision_traces"
+  }
+}
+```
+
+That is generic core plumbing, not domain logic:
+- `payload` carries the stage input
+- `options` carries stage configuration
+- the plugin still owns domain interpretation
+
 ### Run a pearl in under a minute
 
 ```bash
@@ -442,6 +464,7 @@ logicpearl plugin run examples/plugins/python_observer/manifest.json --input exa
 
 What you should see:
 - the plugin stage and canonical contract
+- any declared input/options/output schemas
 - the exact JSON request envelope LogicPearl sent
 - the exact JSON response the plugin returned
 
@@ -457,6 +480,40 @@ The canonical rule is simple:
   - trace_source: `payload.source`
   - enricher: `payload.records`
   - verify: `payload.pearl_ir`
+
+If you want a stricter contract than “arbitrary JSON,” declare schemas directly in the plugin manifest:
+
+```json
+{
+  "name": "python-trace-source-demo",
+  "protocol_version": "1",
+  "stage": "trace_source",
+  "entrypoint": ["python3", "plugin.py"],
+  "input_schema": { "type": "string" },
+  "options_schema": {
+    "type": "object",
+    "required": ["label_column"],
+    "properties": {
+      "label_column": { "type": "string" }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["ok", "decision_traces"]
+  }
+}
+```
+
+LogicPearl validates those schemas in the generic plugin commands and also enforces them when the same plugin runs inside `build` or a pipeline.
+
+Today the supported JSON Schema subset is intentionally small and inspectable:
+- `type`
+- `properties`
+- `required`
+- `items`
+- `enum`
+- `const`
+- `additionalProperties`
 
 ### Use a Python observer plugin at the edge
 
@@ -488,6 +545,7 @@ Use a Python trace-source plugin:
 logicpearl build \
   --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
   --trace-plugin-input examples/getting_started/decision_traces.csv \
+  --trace-plugin-option label_column=allowed \
   --source-ref dataset=decision_traces_sample \
   --output-dir examples/getting_started/output-plugin
 ```
@@ -498,6 +556,7 @@ Add a Python enricher plugin in the same build:
 logicpearl build \
   --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
   --trace-plugin-input examples/getting_started/decision_traces.csv \
+  --trace-plugin-option label_column=allowed \
   --enricher-plugin-manifest examples/plugins/python_enricher/manifest.json \
   --output-dir examples/getting_started/output-plugin-enriched
 ```

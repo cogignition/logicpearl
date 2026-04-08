@@ -24,6 +24,12 @@ pub struct PluginManifest {
     pub language: Option<String>,
     pub capabilities: Option<Vec<String>>,
     pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub input_schema: Option<Value>,
+    #[serde(default)]
+    pub options_schema: Option<Value>,
+    #[serde(default)]
+    pub output_schema: Option<Value>,
     #[serde(skip)]
     pub manifest_dir: Option<PathBuf>,
 }
@@ -126,6 +132,9 @@ impl PluginManifest {
                 "plugin manifest entrypoint must contain at least one command segment",
             ));
         }
+        validate_declared_schema("input_schema", self.input_schema.as_ref())?;
+        validate_declared_schema("options_schema", self.options_schema.as_ref())?;
+        validate_declared_schema("output_schema", self.output_schema.as_ref())?;
         Ok(())
     }
 
@@ -144,6 +153,7 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
             manifest.stage, request.stage
         )));
     }
+    validate_plugin_request_contract(manifest, request)?;
 
     let stdout = run_plugin_raw(manifest, request)?;
     parse_plugin_response(manifest, &stdout)
@@ -167,6 +177,7 @@ pub fn run_plugin_batch(
         return payloads
             .iter()
             .map(|payload| {
+                validate_plugin_payload_contract(manifest, &stage, payload)?;
                 run_plugin(
                     manifest,
                     &PluginRequest {
@@ -177,6 +188,9 @@ pub fn run_plugin_batch(
                 )
             })
             .collect();
+    }
+    for payload in payloads {
+        validate_plugin_payload_contract(manifest, &stage, payload)?;
     }
 
     let stdout = run_plugin_raw(
@@ -217,6 +231,14 @@ pub fn run_plugin_batch(
         validate_ok_plugin_response(manifest, response)?;
     }
     Ok(batch.responses)
+}
+
+pub fn manifest_contract_summary(manifest: &PluginManifest) -> Value {
+    serde_json::json!({
+        "input_schema": manifest.input_schema,
+        "options_schema": manifest.options_schema,
+        "output_schema": manifest.output_schema,
+    })
 }
 
 fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Result<String> {
@@ -295,7 +317,331 @@ fn validate_ok_plugin_response(manifest: &PluginManifest, response: &PluginRespo
             manifest.name
         )));
     }
+    if let Some(schema) = &manifest.output_schema {
+        let response_value = serde_json::to_value(response).map_err(LogicPearlError::from)?;
+        validate_value_against_declared_schema(
+            "output_schema",
+            schema,
+            &response_value,
+            "$response",
+        )?;
+    }
     Ok(())
+}
+
+fn validate_plugin_request_contract(
+    manifest: &PluginManifest,
+    request: &PluginRequest,
+) -> Result<()> {
+    validate_plugin_payload_contract(manifest, &request.stage, &request.payload)
+}
+
+fn validate_plugin_payload_contract(
+    manifest: &PluginManifest,
+    stage: &PluginStage,
+    payload: &Value,
+) -> Result<()> {
+    if let Some(schema) = &manifest.input_schema {
+        let input = extract_payload_input(stage, payload).ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "plugin {} manifest declares input_schema but request payload is missing payload.input",
+                manifest.name
+            ))
+        })?;
+        validate_value_against_declared_schema("input_schema", schema, input, "$payload.input")?;
+    }
+    if let Some(schema) = &manifest.options_schema {
+        let null = Value::Null;
+        let options = extract_payload_options(payload).unwrap_or(&null);
+        validate_value_against_declared_schema(
+            "options_schema",
+            schema,
+            options,
+            "$payload.options",
+        )?;
+    }
+    Ok(())
+}
+
+fn extract_payload_input<'a>(stage: &PluginStage, payload: &'a Value) -> Option<&'a Value> {
+    let object = payload.as_object()?;
+    object
+        .get("input")
+        .or_else(|| compatibility_alias(stage).and_then(|alias| object.get(alias)))
+}
+
+fn extract_payload_options(payload: &Value) -> Option<&Value> {
+    payload.as_object().and_then(|object| object.get("options"))
+}
+
+fn compatibility_alias(stage: &PluginStage) -> Option<&'static str> {
+    match stage {
+        PluginStage::Observer => Some("raw_input"),
+        PluginStage::TraceSource => Some("source"),
+        PluginStage::Enricher => Some("records"),
+        PluginStage::Verify => Some("pearl_ir"),
+        PluginStage::Render => None,
+    }
+}
+
+fn validate_declared_schema(label: &str, schema: Option<&Value>) -> Result<()> {
+    if let Some(schema) = schema {
+        validate_schema_document(label, schema, format!("${label}"))?;
+    }
+    Ok(())
+}
+
+fn validate_schema_document(label: &str, schema: &Value, path: String) -> Result<()> {
+    let Some(object) = schema.as_object() else {
+        return Err(LogicPearlError::message(format!(
+            "{label} must be a JSON object at {path}"
+        )));
+    };
+    if let Some(value) = object.get("type") {
+        validate_schema_type_decl(label, value, &path)?;
+    }
+    if let Some(value) = object.get("properties") {
+        let properties = value.as_object().ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "{label} properties must be an object at {path}.properties"
+            ))
+        })?;
+        for (key, child) in properties {
+            validate_schema_document(label, child, format!("{path}.properties.{key}"))?;
+        }
+    }
+    if let Some(value) = object.get("required") {
+        let required = value.as_array().ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "{label} required must be an array at {path}.required"
+            ))
+        })?;
+        for item in required {
+            if item
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .is_none()
+            {
+                return Err(LogicPearlError::message(format!(
+                    "{label} required entries must be non-empty strings at {path}.required"
+                )));
+            }
+        }
+    }
+    if let Some(value) = object.get("items") {
+        validate_schema_document(label, value, format!("{path}.items"))?;
+    }
+    if let Some(value) = object.get("additionalProperties") {
+        match value {
+            Value::Bool(_) => {}
+            Value::Object(_) => {
+                validate_schema_document(label, value, format!("{path}.additionalProperties"))?
+            }
+            _ => {
+                return Err(LogicPearlError::message(format!(
+                    "{label} additionalProperties must be a boolean or object at {path}.additionalProperties"
+                )));
+            }
+        }
+    }
+    if let Some(value) = object.get("enum") {
+        if value.as_array().filter(|items| !items.is_empty()).is_none() {
+            return Err(LogicPearlError::message(format!(
+                "{label} enum must be a non-empty array at {path}.enum"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_schema_type_decl(label: &str, value: &Value, path: &str) -> Result<()> {
+    match value {
+        Value::String(kind) => validate_schema_type_name(label, kind, path),
+        Value::Array(items) if !items.is_empty() => {
+            for item in items {
+                let kind = item.as_str().ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "{label} type arrays must contain only strings at {path}"
+                    ))
+                })?;
+                validate_schema_type_name(label, kind, path)?;
+            }
+            Ok(())
+        }
+        _ => Err(LogicPearlError::message(format!(
+            "{label} type must be a string or non-empty array of strings at {path}"
+        ))),
+    }
+}
+
+fn validate_schema_type_name(label: &str, kind: &str, path: &str) -> Result<()> {
+    match kind {
+        "null" | "boolean" | "integer" | "number" | "string" | "array" | "object" => Ok(()),
+        _ => Err(LogicPearlError::message(format!(
+            "{label} uses unsupported JSON Schema type {kind:?} at {path}"
+        ))),
+    }
+}
+
+fn validate_value_against_declared_schema(
+    label: &str,
+    schema: &Value,
+    value: &Value,
+    path: &str,
+) -> Result<()> {
+    let object = schema
+        .as_object()
+        .ok_or_else(|| LogicPearlError::message(format!("{label} must be a JSON object")))?;
+
+    if let Some(type_decl) = object.get("type") {
+        let matches = schema_type_names(type_decl)?
+            .iter()
+            .any(|kind| value_matches_type(value, kind));
+        if !matches {
+            return Err(LogicPearlError::message(format!(
+                "{label} rejected {path}: expected type {}, got {}",
+                render_schema_types(type_decl)?,
+                describe_json_type(value)
+            )));
+        }
+    }
+
+    if let Some(expected) = object.get("const") {
+        if value != expected {
+            return Err(LogicPearlError::message(format!(
+                "{label} rejected {path}: value did not match const"
+            )));
+        }
+    }
+
+    if let Some(choices) = object.get("enum").and_then(Value::as_array) {
+        if !choices.iter().any(|choice| choice == value) {
+            return Err(LogicPearlError::message(format!(
+                "{label} rejected {path}: value was not in enum"
+            )));
+        }
+    }
+
+    if let Some(required) = object.get("required").and_then(Value::as_array) {
+        if let Some(map) = value.as_object() {
+            for field in required.iter().filter_map(Value::as_str) {
+                if !map.contains_key(field) {
+                    return Err(LogicPearlError::message(format!(
+                        "{label} rejected {path}: missing required field {field:?}"
+                    )));
+                }
+            }
+        }
+    }
+
+    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+        if let Some(map) = value.as_object() {
+            for (key, child_schema) in properties {
+                if let Some(child_value) = map.get(key) {
+                    validate_value_against_declared_schema(
+                        label,
+                        child_schema,
+                        child_value,
+                        &format!("{path}.{key}"),
+                    )?;
+                }
+            }
+
+            match object.get("additionalProperties") {
+                Some(Value::Bool(false)) => {
+                    for key in map.keys() {
+                        if !properties.contains_key(key) {
+                            return Err(LogicPearlError::message(format!(
+                                "{label} rejected {path}: unexpected field {key:?}"
+                            )));
+                        }
+                    }
+                }
+                Some(Value::Object(_)) => {
+                    let extra_schema = object
+                        .get("additionalProperties")
+                        .expect("checked additionalProperties");
+                    for (key, child_value) in map {
+                        if !properties.contains_key(key) {
+                            validate_value_against_declared_schema(
+                                label,
+                                extra_schema,
+                                child_value,
+                                &format!("{path}.{key}"),
+                            )?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(items_schema) = object.get("items") {
+        if let Some(items) = value.as_array() {
+            for (index, item) in items.iter().enumerate() {
+                validate_value_against_declared_schema(
+                    label,
+                    items_schema,
+                    item,
+                    &format!("{path}[{index}]"),
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn schema_type_names(value: &Value) -> Result<Vec<&str>> {
+    match value {
+        Value::String(kind) => Ok(vec![kind.as_str()]),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                item.as_str().ok_or_else(|| {
+                    LogicPearlError::message("schema type arrays must contain only strings")
+                })
+            })
+            .collect(),
+        _ => Err(LogicPearlError::message(
+            "schema type must be a string or non-empty array of strings",
+        )),
+    }
+}
+
+fn render_schema_types(value: &Value) -> Result<String> {
+    Ok(schema_type_names(value)?.join(" | "))
+}
+
+fn value_matches_type(value: &Value, kind: &str) -> bool {
+    match kind {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "number" => value.is_number(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    }
+}
+
+fn describe_json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) => {
+            if number.as_i64().is_some() || number.as_u64().is_some() {
+                "integer"
+            } else {
+                "number"
+            }
+        }
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 fn resolve_entrypoint_segment(
@@ -318,6 +664,7 @@ fn resolve_entrypoint_segment(
 #[cfg(test)]
 mod tests {
     use super::{PluginManifest, PluginStage};
+    use serde_json::json;
 
     #[test]
     fn validates_basic_manifest() {
@@ -329,8 +676,94 @@ mod tests {
             language: Some("python".to_string()),
             capabilities: None,
             timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
             manifest_dir: None,
         };
         assert!(manifest.validate().is_ok());
+    }
+
+    #[test]
+    fn validates_declared_input_options_and_output_schemas() {
+        let manifest = PluginManifest {
+            name: "demo".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
+            language: Some("python".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: Some(json!({
+                "type": "object",
+                "required": ["age", "member"],
+                "properties": {
+                    "age": { "type": "integer" },
+                    "member": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            })),
+            options_schema: Some(json!({
+                "type": ["object", "null"],
+                "properties": {
+                    "mode": { "type": "string" }
+                },
+                "additionalProperties": false
+            })),
+            output_schema: Some(json!({
+                "type": "object",
+                "required": ["ok", "features"],
+                "properties": {
+                    "ok": { "const": true },
+                    "features": {
+                        "type": "object",
+                        "required": ["age"],
+                        "properties": {
+                            "age": { "type": "integer" }
+                        }
+                    }
+                }
+            })),
+            manifest_dir: None,
+        };
+        assert!(manifest.validate().is_ok());
+
+        let request = super::PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            payload: super::build_canonical_payload(
+                &PluginStage::Observer,
+                json!({"age": 34, "member": true}),
+                Some(json!({"mode": "strict"})),
+            ),
+        };
+        assert!(super::validate_plugin_request_contract(&manifest, &request).is_ok());
+
+        let bad_request = super::PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            payload: super::build_canonical_payload(
+                &PluginStage::Observer,
+                json!({"age": "34", "member": true, "extra": 1}),
+                None,
+            ),
+        };
+        assert!(super::validate_plugin_request_contract(&manifest, &bad_request).is_err());
+
+        let good_response = super::PluginResponse {
+            ok: true,
+            warnings: Vec::new(),
+            error: None,
+            extra: serde_json::Map::from_iter([("features".to_string(), json!({"age": 34}))]),
+        };
+        assert!(super::validate_ok_plugin_response(&manifest, &good_response).is_ok());
+
+        let bad_response = super::PluginResponse {
+            ok: true,
+            warnings: Vec::new(),
+            error: None,
+            extra: serde_json::Map::new(),
+        };
+        assert!(super::validate_ok_plugin_response(&manifest, &bad_response).is_err());
     }
 }

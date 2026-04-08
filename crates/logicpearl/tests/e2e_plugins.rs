@@ -47,6 +47,10 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         Some("payload.input")
     );
     assert_eq!(
+        validate_report["declared_contract"]["input_schema"]["type"].as_str(),
+        Some("object")
+    );
+    assert_eq!(
         validate_report["canonical_contract"]["compatibility_alias"].as_str(),
         Some("payload.raw_input")
     );
@@ -133,6 +137,8 @@ fn build_report_records_plugin_provenance() {
         .arg(&trace_manifest)
         .arg("--trace-plugin-input")
         .arg(&trace_source)
+        .arg("--trace-plugin-option")
+        .arg("dialect=csv")
         .arg("--enricher-plugin-manifest")
         .arg(&enricher_manifest)
         .arg("--source-ref")
@@ -176,6 +182,14 @@ fn build_report_records_plugin_provenance() {
             .and_then(|item| item.options.get("label_column"))
             .map(String::as_str),
         Some("allowed")
+    );
+    assert_eq!(
+        provenance
+            .trace_plugin
+            .as_ref()
+            .and_then(|item| item.options.get("dialect"))
+            .map(String::as_str),
+        Some("csv")
     );
     assert_eq!(
         provenance

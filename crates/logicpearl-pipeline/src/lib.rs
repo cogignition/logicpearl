@@ -28,6 +28,10 @@ pub struct PipelineStage {
     #[serde(default)]
     pub input: HashMap<String, Value>,
     #[serde(default)]
+    pub payload: Option<Value>,
+    #[serde(default)]
+    pub options: Option<Value>,
+    #[serde(default)]
     pub export: HashMap<String, Value>,
     #[serde(default)]
     pub when: Option<Value>,
@@ -40,6 +44,7 @@ pub struct PipelineStage {
 pub enum PipelineStageKind {
     Pearl,
     ObserverPlugin,
+    TraceSourcePlugin,
     EnricherPlugin,
     VerifyPlugin,
 }
@@ -223,6 +228,7 @@ impl PipelineDefinition {
                     PreparedStageExecutable::Pearl(LogicPearlGateIr::from_path(&artifact_path)?)
                 }
                 PipelineStageKind::ObserverPlugin
+                | PipelineStageKind::TraceSourcePlugin
                 | PipelineStageKind::EnricherPlugin
                 | PipelineStageKind::VerifyPlugin => {
                     let manifest_path = resolve_relative_path(
@@ -455,6 +461,8 @@ pub fn compose_pipeline(
             artifact: Some(artifact),
             plugin_manifest: None,
             input,
+            payload: None,
+            options: None,
             export,
             when: None,
             foreach: None,
@@ -517,6 +525,7 @@ impl PipelineStage {
                 LogicPearlGateIr::from_path(&artifact_path)?;
             }
             PipelineStageKind::ObserverPlugin
+            | PipelineStageKind::TraceSourcePlugin
             | PipelineStageKind::EnricherPlugin
             | PipelineStageKind::VerifyPlugin => {
                 let manifest = self.plugin_manifest.as_ref().ok_or_else(|| {
@@ -562,6 +571,12 @@ impl PipelineStage {
                     self.id
                 )));
             }
+            validate_value_reference(value, visible_exports)?;
+        }
+        if let Some(value) = &self.payload {
+            validate_value_reference(value, visible_exports)?;
+        }
+        if let Some(value) = &self.options {
             validate_value_reference(value, visible_exports)?;
         }
         for (field, value) in &self.export {
@@ -610,6 +625,7 @@ fn normalize_path(path: &Path) -> PathBuf {
 fn plugin_stage_for_kind(kind: &PipelineStageKind) -> Option<PluginStage> {
     match kind {
         PipelineStageKind::ObserverPlugin => Some(PluginStage::Observer),
+        PipelineStageKind::TraceSourcePlugin => Some(PluginStage::TraceSource),
         PipelineStageKind::EnricherPlugin => Some(PluginStage::Enricher),
         PipelineStageKind::VerifyPlugin => Some(PluginStage::Verify),
         PipelineStageKind::Pearl => None,
@@ -624,7 +640,7 @@ fn run_prepared_stage(
     let stage = &prepared_stage.stage;
     match &prepared_stage.executable {
         PreparedStageExecutable::Pearl(gate) => {
-            let features = build_stage_input_object(&stage.input, root_input, stage_exports)?;
+            let features = build_stage_input_object(stage, root_input, stage_exports)?;
             let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
             Ok(Value::Object(Map::from_iter([
                 ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
@@ -636,22 +652,11 @@ fn run_prepared_stage(
             manifest,
             stage: plugin_stage,
         } => {
-            let payload = match plugin_stage {
-                PluginStage::Observer => logicpearl_plugin::build_canonical_payload(
-                    plugin_stage,
-                    Value::Object(
-                        build_stage_input_object(&stage.input, root_input, stage_exports)?
-                            .into_iter()
-                            .collect(),
-                    ),
-                    None,
-                ),
-                _ => Value::Object(
-                    build_stage_input_object(&stage.input, root_input, stage_exports)?
-                        .into_iter()
-                        .collect(),
-                ),
-            };
+            let payload = logicpearl_plugin::build_canonical_payload(
+                plugin_stage,
+                build_stage_payload_value(stage, root_input, stage_exports)?,
+                build_stage_options_value(stage, root_input, stage_exports)?,
+            );
             let response = run_plugin(
                 manifest,
                 &PluginRequest {
@@ -676,11 +681,8 @@ fn run_prepared_stage_batch(
         PreparedStageExecutable::Pearl(gate) => runnable_indexes
             .iter()
             .map(|index| {
-                let features = build_stage_input_object(
-                    &stage.input,
-                    &root_inputs[*index],
-                    &stage_exports[*index],
-                )?;
+                let features =
+                    build_stage_input_object(stage, &root_inputs[*index], &stage_exports[*index])?;
                 let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
                 Ok(Value::Object(Map::from_iter([
                     ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
@@ -695,29 +697,20 @@ fn run_prepared_stage_batch(
         } => {
             let payloads: Vec<Value> = runnable_indexes
                 .iter()
-                .map(|index| match plugin_stage {
-                    PluginStage::Observer => Ok(logicpearl_plugin::build_canonical_payload(
+                .map(|index| {
+                    Ok(logicpearl_plugin::build_canonical_payload(
                         plugin_stage,
-                        Value::Object(
-                            build_stage_input_object(
-                                &stage.input,
-                                &root_inputs[*index],
-                                &stage_exports[*index],
-                            )?
-                            .into_iter()
-                            .collect(),
-                        ),
-                        None,
-                    )),
-                    _ => Ok(Value::Object(
-                        build_stage_input_object(
-                            &stage.input,
+                        build_stage_payload_value(
+                            stage,
                             &root_inputs[*index],
                             &stage_exports[*index],
-                        )?
-                        .into_iter()
-                        .collect(),
-                    )),
+                        )?,
+                        build_stage_options_value(
+                            stage,
+                            &root_inputs[*index],
+                            &stage_exports[*index],
+                        )?,
+                    ))
                 })
                 .collect::<Result<Vec<_>>>()?;
             let responses = run_plugin_batch(manifest, plugin_stage.clone(), &payloads)?;
@@ -813,18 +806,56 @@ fn validate_reference(
 }
 
 fn build_stage_input_object(
-    input_map: &HashMap<String, Value>,
+    stage: &PipelineStage,
     root_input: &Value,
     stage_exports: &HashMap<String, HashMap<String, Value>>,
 ) -> Result<HashMap<String, Value>> {
+    let payload = build_stage_payload_value(stage, root_input, stage_exports)?;
+    let object = payload.as_object().ok_or_else(|| {
+        LogicPearlError::message(format!(
+            "stage {} expected an object payload for pearl input",
+            stage.id
+        ))
+    })?;
     let mut resolved = HashMap::new();
-    for (key, value) in input_map {
-        resolved.insert(
-            key.clone(),
-            resolve_stage_input_value(value, root_input, stage_exports)?,
-        );
+    for (key, value) in object {
+        resolved.insert(key.clone(), value.clone());
     }
     Ok(resolved)
+}
+
+fn build_stage_payload_value(
+    stage: &PipelineStage,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Value> {
+    match &stage.payload {
+        Some(payload) => resolve_stage_input_value(payload, root_input, stage_exports),
+        None => Ok(Value::Object(Map::from_iter(
+            stage
+                .input
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        key.clone(),
+                        resolve_stage_input_value(value, root_input, stage_exports)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        ))),
+    }
+}
+
+fn build_stage_options_value(
+    stage: &PipelineStage,
+    root_input: &Value,
+    stage_exports: &HashMap<String, HashMap<String, Value>>,
+) -> Result<Option<Value>> {
+    stage
+        .options
+        .as_ref()
+        .map(|value| resolve_stage_input_value(value, root_input, stage_exports))
+        .transpose()
 }
 
 fn build_stage_exports(
@@ -1219,6 +1250,53 @@ mod tests {
             Some(&json!("clean_pass"))
         );
         assert_eq!(execution.output.get("consistent"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn runs_trace_source_plugin_pipeline() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "trace_source_demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "trace_source",
+                  "kind": "trace_source_plugin",
+                  "plugin_manifest": "../../plugins/python_trace_source/manifest.json",
+                  "payload": "$.source",
+                  "options": {
+                    "label_column": "$.label_column"
+                  },
+                  "export": {
+                    "decision_traces": "$.decision_traces"
+                  }
+                }
+              ],
+              "output": {
+                "decision_traces": "@trace_source.decision_traces"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/pipelines/observer_membership");
+        let input = json!({
+            "source": Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../examples/getting_started/decision_traces.csv")
+                .display()
+                .to_string(),
+            "label_column": "allowed"
+        });
+        let execution = pipeline.run(base_dir, &input).expect("pipeline runs");
+        let rows = execution
+            .output
+            .get("decision_traces")
+            .and_then(|value| value.as_array())
+            .expect("pipeline should export decision traces");
+        assert!(!rows.is_empty());
+        assert!(rows[0].get("features").is_some());
+        assert!(rows[0].get("allowed").is_some());
     }
 
     #[test]
