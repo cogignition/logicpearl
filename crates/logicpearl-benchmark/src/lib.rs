@@ -1774,11 +1774,8 @@ fn contains_any_marker(haystack: &str, markers: &[String]) -> bool {
 fn waf_route_patterns() -> &'static WafRoutePatterns {
     static ROUTE_PATTERNS: std::sync::OnceLock<WafRoutePatterns> = std::sync::OnceLock::new();
     ROUTE_PATTERNS.get_or_init(|| {
-        serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../benchmarks/waf/route_patterns.json"
-        )))
-        .expect("built-in WAF route patterns must be valid JSON")
+        serde_json::from_str(include_str!("../data/route_patterns.json"))
+            .expect("built-in WAF route patterns must be valid JSON")
     })
 }
 

@@ -1,0 +1,226 @@
+{
+  "route_classes": {
+    "automation_probe": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:automation-probe"
+    },
+    "command_injection": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:command-injection"
+    },
+    "php_injection": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:php-injection"
+    },
+    "path_traversal": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:path-traversal"
+    },
+    "sensitive_surface": {
+      "expected_route": "deny_sensitive_surface",
+      "category": "waf:restricted-resource"
+    },
+    "protocol_review": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:protocol-violation"
+    },
+    "sqli": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:sqli"
+    },
+    "xss": {
+      "expected_route": "deny_injection_payload",
+      "category": "waf:xss"
+    },
+    "data_exfiltration": {
+      "expected_route": "deny_data_exfiltration",
+      "category": "waf:data-exfiltration"
+    },
+    "modsecurity_default": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:modsecurity-deny"
+    },
+    "csic_default": {
+      "expected_route": "review_suspicious_request",
+      "category": "waf:anomalous-request"
+    }
+  },
+  "scanner_markers": [
+    "sqlmap",
+    "nikto",
+    "acunetix",
+    "nmap",
+    "masscan",
+    "dirbuster",
+    "dotbot",
+    "ahrefsbot",
+    "blexbot"
+  ],
+  "scanner_meta_markers": [
+    "bad bot",
+    "scanner",
+    "detected and blocked",
+    "matched phrase",
+    "user-agent"
+  ],
+  "protocol_review_meta_markers": [
+    "attack-protocol",
+    "protocol_violation",
+    "invalid_hreq",
+    "header_restricted",
+    "ip_host",
+    "multiple/conflicting connection header data found",
+    "http header is restricted by policy",
+    "request content type is not allowed by policy",
+    "get or head request with body content",
+    "host header is a numeric ip address"
+  ],
+  "command_injection_meta_patterns": [
+    "attack-rce",
+    "remote command execution",
+    "direct unix command execution",
+    "command injection",
+    "web_attack/command_injection",
+    "language-shell"
+  ],
+  "php_injection_markers": [
+    "base64_decode",
+    "gzdecode",
+    "eval(",
+    "assert(",
+    "shell_exec",
+    "passthru(",
+    "system(",
+    "php-cgi.exe",
+    "eval-stdin.php"
+  ],
+  "php_injection_meta_patterns": [
+    "attack-injection-php",
+    "web_attack/php_injection",
+    "php injection attack",
+    "php open tag found",
+    "high-risk php function",
+    "php script file upload",
+    "wrapper scheme detected",
+    "serialized object injection"
+  ],
+  "server_include_patterns": [
+    "<!--#include",
+    "<!--#exec",
+    "<!--#config",
+    "<!--#echo",
+    "#include file=",
+    "#exec cmd="
+  ],
+  "sqli_markers": [
+    "' or 1=1",
+    "\" or \"1\"=\"1",
+    "union select",
+    "drop table",
+    "select * from",
+    "sleep(",
+    "waitfor delay",
+    "information_schema"
+  ],
+  "sqli_meta_markers": [
+    "attack-sqli",
+    "sql injection"
+  ],
+  "xss_markers": [
+    "<script",
+    "javascript:",
+    "onerror=",
+    "onload=",
+    "<img src=x"
+  ],
+  "xss_meta_markers": [
+    "attack-xss",
+    "cross site scripting"
+  ],
+  "restricted_markers": [
+    "/.git",
+    "/.env",
+    "/phpmyadmin",
+    "/wp-admin",
+    "restricted file access"
+  ],
+  "path_traversal_markers": [
+    "../",
+    "..\\",
+    "%2e%2e",
+    "%2e%2e%2f",
+    "%2e%2e/",
+    "/etc/passwd",
+    "/windows/win.ini",
+    "/proc/self/environ",
+    "..;/",
+    "..%2f",
+    "..%5c",
+    "attack-lfi"
+  ],
+  "path_traversal_meta_markers": [
+    "attack-lfi",
+    "path traversal",
+    "local file inclusion",
+    "directory traversal"
+  ],
+  "restricted_meta_markers": [
+    "attack-lfi",
+    "restricted file access",
+    "ext_restricted",
+    "url file extension is restricted by policy"
+  ],
+  "restricted_extensions": [
+    ".asa",
+    ".asax",
+    ".ascx",
+    ".axd",
+    ".asp",
+    ".backup",
+    ".bak",
+    ".bat",
+    ".cfm",
+    ".cfg",
+    ".cmd",
+    ".com",
+    ".config",
+    ".conf",
+    ".cnf",
+    ".csr",
+    ".dat",
+    ".db",
+    ".dbf",
+    ".do",
+    ".dll",
+    ".env",
+    ".htr",
+    ".ini",
+    ".inc",
+    ".java",
+    ".key",
+    ".licx",
+    ".lnk",
+    ".log",
+    ".mdb",
+    ".old",
+    ".nsf",
+    ".orig",
+    ".pass",
+    ".pdb",
+    ".pwd",
+    ".sql",
+    ".swp",
+    ".sys",
+    ".vb",
+    ".vbs",
+    ".webinfo",
+    "~"
+  ],
+  "export_markers": [
+    "download all",
+    "full export",
+    "dump all",
+    "entire tenant",
+    "all customer records"
+  ]
+}
