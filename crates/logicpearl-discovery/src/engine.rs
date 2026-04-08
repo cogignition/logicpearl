@@ -30,6 +30,9 @@ use super::{
 };
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
+const NUMERIC_EQ_MAX_DISTINCT_VALUES: usize = 20;
+const NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE: usize = 3;
+const NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS: usize = 10; // 0.1%
 const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
 const RARE_RULE_RECOVERY_FRONTIER_LIMIT: usize = 24;
 const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
@@ -1198,6 +1201,8 @@ fn candidate_rules(
             .collect();
         if values.iter().all(|value| value.is_number()) {
             let unique_thresholds = numeric_thresholds(rows, denied_indices, &feature);
+            let allow_numeric_eq = numeric_feature_supports_exact_match(rows, &feature);
+            let min_numeric_eq_support = numeric_eq_min_support(denied_indices.len());
             for threshold in unique_thresholds {
                 for op in [
                     ComparisonOperator::Lt,
@@ -1220,6 +1225,12 @@ fn candidate_rules(
                         false_positives: candidate_coverage(rows, allowed_indices, &candidate),
                         ..candidate
                     };
+                    if candidate.op == ComparisonOperator::Eq
+                        && candidate.value.literal().and_then(Value::as_f64).is_some()
+                        && (!allow_numeric_eq || candidate.denied_coverage < min_numeric_eq_support)
+                    {
+                        continue;
+                    }
                     if candidate_allowed_for_mode(&candidate, decision_mode) {
                         candidates.push(candidate);
                     }
@@ -1428,7 +1439,11 @@ fn numeric_thresholds(
         .collect()
 }
 
-fn feature_has_nontrivial_numeric_range(rows: &[DecisionTraceRow], feature: &str) -> bool {
+fn numeric_feature_supports_exact_match(rows: &[DecisionTraceRow], feature: &str) -> bool {
+    numeric_feature_distinct_value_count(rows, feature) <= NUMERIC_EQ_MAX_DISTINCT_VALUES
+}
+
+fn numeric_feature_distinct_value_count(rows: &[DecisionTraceRow], feature: &str) -> usize {
     let mut distinct_values: BTreeSet<i64> = BTreeSet::new();
     for value in rows
         .iter()
@@ -1436,11 +1451,19 @@ fn feature_has_nontrivial_numeric_range(rows: &[DecisionTraceRow], feature: &str
         .filter_map(Value::as_f64)
     {
         distinct_values.insert((value * 1000.0).round() as i64);
-        if distinct_values.len() > 2 {
-            return true;
-        }
     }
-    false
+    distinct_values.len()
+}
+
+fn numeric_eq_min_support(denied_count: usize) -> usize {
+    let proportional = denied_count
+        .saturating_mul(NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS)
+        .div_ceil(10_000);
+    NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE.max(proportional)
+}
+
+fn feature_has_nontrivial_numeric_range(rows: &[DecisionTraceRow], feature: &str) -> bool {
+    numeric_feature_distinct_value_count(rows, feature) > 2
 }
 
 fn candidate_coverage(
@@ -1689,6 +1712,99 @@ mod tests {
                         | ComparisonOperator::Gte
                 )),
             "feature-ref candidates should stay ordered comparisons"
+        );
+    }
+
+    #[test]
+    fn high_cardinality_numeric_features_skip_exact_match_candidates() {
+        let rows = (0..24)
+            .map(|value| row(value as f64, value >= 12))
+            .collect::<Vec<_>>();
+        let denied_indices = (0usize..12usize).collect::<Vec<_>>();
+        let allowed_indices = (12usize..24usize).collect::<Vec<_>>();
+
+        let candidates = candidate_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
+        );
+
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate.feature == "score"
+                    && candidate.op == ComparisonOperator::Eq),
+            "continuous/high-cardinality numeric features should not emit exact-match candidates"
+        );
+    }
+
+    #[test]
+    fn low_cardinality_numeric_features_can_still_emit_exact_match_candidates() {
+        let rows = vec![
+            row(0.0, false),
+            row(0.0, false),
+            row(0.0, false),
+            row(1.0, true),
+            row(1.0, true),
+            row(1.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize, 2usize];
+        let allowed_indices = vec![3usize, 4usize, 5usize];
+
+        let candidates = candidate_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
+        );
+
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate.feature == "score"
+                    && candidate.op == ComparisonOperator::Eq
+                    && candidate.value.literal().and_then(Value::as_f64) == Some(0.0)
+            }),
+            "binary/low-cardinality numeric features should still support exact matches"
+        );
+    }
+
+    #[test]
+    fn numeric_exact_match_candidates_require_minimum_support() {
+        let rows = vec![
+            row(0.0, false),
+            row(1.0, false),
+            row(2.0, false),
+            row(9.0, true),
+            row(9.0, true),
+            row(9.0, true),
+        ];
+        let denied_indices = vec![0usize, 1usize, 2usize];
+        let allowed_indices = vec![3usize, 4usize, 5usize];
+
+        let candidates = candidate_rules(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &BTreeMap::new(),
+            DiscoveryDecisionMode::Standard,
+        );
+
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate.feature == "score"
+                    && candidate.op == ComparisonOperator::Eq),
+            "singleton numeric exact-match candidates should be filtered by support floor"
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.feature == "score"
+                    && candidate.op == ComparisonOperator::Lte),
+            "threshold candidates should remain available"
         );
     }
 

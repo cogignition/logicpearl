@@ -14,3 +14,4 @@ All notable user-facing changes to this public repo should be added here.
 ### Changed
 - Public example plugins now prefer `payload.input` while still accepting the older stage-specific aliases.
 - Observer and trace-source flows now send the canonical payload shape in addition to compatibility aliases.
+- Discovery now suppresses numeric exact-match rules on high-cardinality numeric features and requires minimum support for remaining numeric exact matches, which reduces singleton overfitting in learned artifacts.
