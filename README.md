@@ -62,6 +62,29 @@ This repo is the public proof layer for that model:
 - reproducible public demos
 - parity/import examples for bounded logic slices
 
+## Which Surface To Use
+
+Use the surface that matches where the logic actually runs:
+
+- `logicpearl`
+  - for humans
+  - shell workflows
+  - build/inspect/run/diff from a terminal
+
+- `logicpearl-engine`
+  - for application backends and services
+  - when you want to load a pearl or pipeline once and execute it repeatedly in-process
+  - when your workflow uses plugins, files, or server-side adapters
+
+- `@logicpearl/browser`
+  - for browser-safe evaluation only
+  - best when the executed path is really a pearl or browser-safe bundle running client-side
+
+Practical rule:
+- if it needs plugins, Python, files, secrets, or server-only adapters, use `logicpearl-engine`
+- if it is truly browser-safe, use `@logicpearl/browser`
+- if a person is driving it from the terminal, use `logicpearl`
+
 ## Start Here
 
 If you only do one thing, run the public proof.

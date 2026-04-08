@@ -530,6 +530,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "logicpearl-engine"
+version = "0.1.1"
+dependencies = [
+ "logicpearl-core",
+ "logicpearl-ir",
+ "logicpearl-pipeline",
+ "logicpearl-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "logicpearl-ir"
 version = "0.1.1"
 dependencies = [

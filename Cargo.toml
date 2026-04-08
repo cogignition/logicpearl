@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/logicpearl",
+  "crates/logicpearl-engine",
   "crates/logicpearl-benchmark",
   "crates/logicpearl-core",
   "crates/logicpearl-ir",
@@ -50,6 +51,7 @@ logicpearl-benchmark = { version = "0.1.1", path = "crates/logicpearl-benchmark"
 logicpearl-conformance = { version = "0.1.1", path = "crates/logicpearl-conformance" }
 logicpearl-core = { version = "0.1.1", path = "crates/logicpearl-core" }
 logicpearl-discovery = { version = "0.1.1", path = "crates/logicpearl-discovery" }
+logicpearl-engine = { version = "0.1.1", path = "crates/logicpearl-engine" }
 logicpearl-ir = { version = "0.1.1", path = "crates/logicpearl-ir" }
 logicpearl-observer = { version = "0.1.1", path = "crates/logicpearl-observer" }
 logicpearl-observer-synthesis = { version = "0.1.1", path = "crates/logicpearl-observer-synthesis" }

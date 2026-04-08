@@ -13,6 +13,7 @@ All notable user-facing changes to this public repo should be added here.
 - Browser runtime tests in the public pre-commit hook alongside the Rust E2E checks.
 - `logicpearl run` and `logicpearl pipeline run` now accept `-` or omitted input paths to read JSON from stdin, which makes shell composition and adapter debugging easier without changing runtime semantics.
 - First-class `trace_source_plugin` stages in public pipelines, including explicit `payload` and `options` fields for non-object stage input and plugin configuration.
+- Public `logicpearl-engine` crate as the library-level execution facade for app backends and services.
 
 ### Changed
 - Public example plugins now prefer `payload.input` while still accepting the older stage-specific aliases.

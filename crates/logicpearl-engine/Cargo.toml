@@ -1,0 +1,19 @@
+[package]
+name = "logicpearl-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Library-level execution facade for LogicPearl artifacts and pipelines."
+
+[dependencies]
+logicpearl-core.workspace = true
+logicpearl-ir.workspace = true
+logicpearl-pipeline.workspace = true
+logicpearl-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
