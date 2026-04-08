@@ -76,12 +76,18 @@ Use the surface that matches where the logic actually runs:
   - when you want to load a pearl or pipeline once and execute it repeatedly in-process
   - when your workflow uses plugins, files, or server-side adapters
 
+- `logicpearl` Python package
+  - for Python code that needs the real Rust execution surface
+  - thin bindings over `logicpearl-engine`, not a CLI subprocess wrapper
+  - currently lives under [`reserved-python/logicpearl`](./reserved-python/logicpearl)
+
 - `@logicpearl/browser`
   - for browser-safe evaluation only
   - best when the executed path is really a pearl or browser-safe bundle running client-side
 
 Practical rule:
 - if it needs plugins, Python, files, secrets, or server-only adapters, use `logicpearl-engine`
+- if your app is in Python, use the `logicpearl` Python package as the bridge to `logicpearl-engine`
 - if it is truly browser-safe, use `@logicpearl/browser`
 - if a person is driving it from the terminal, use `logicpearl`
 

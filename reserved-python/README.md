@@ -1,13 +1,13 @@
-# Reserved Python Packages
+# Python Packages
 
-These packages are intentionally minimal placeholders for realistic future `logicpearl*` names we may want on PyPI.
+This directory holds Python-facing packages that are outside the Rust workspace.
 
 They are:
 - outside the Rust workspace
 - not part of the normal build or test flow
-- meant only for clean namespace reservation when we are ready to publish them
+- allowed to evolve independently when a real Python-facing surface makes sense
 
-Current reserved-name candidates:
+Current package:
 - `logicpearl`
 
 ## Why This Exists
@@ -16,35 +16,31 @@ PyPI package names are first-come, first-served.
 
 Publishing `logicpearl` on crates.io or npm does **not** protect the Python package name.
 
-If we believe a name is plausibly part of the long-term public product surface, the cleanest way to protect it is to publish a small honest placeholder package before someone else claims it.
+Now that `logicpearl-engine` exists, this directory can also hold real Python bridges to public Rust surfaces when that is cleaner than asking Python code to shell out to the CLI.
 
 ## Publish Intent
 
-These placeholders should stay:
-- small
+These packages should stay:
 - honest
 - clearly documented
-
-They should not pretend to be fully implemented libraries.
+- thin over the real Rust execution surface
 
 ## Suggested Publish Flow
 
-1. Check live availability.
-2. Build the source distribution and wheel.
-3. Upload with Twine.
+1. Build the wheel/source distribution.
+2. Smoke-test the resulting package.
+3. Upload with Twine or the chosen release path.
 
 Example:
 
 ```bash
-python3 -m build reserved-python/logicpearl
-python3 -m twine upload dist/logicpearl-*
+maturin build --manifest-path reserved-python/logicpearl/Cargo.toml
+python3 -m twine upload target/wheels/logicpearl-*
 ```
 
 ## Naming Rule
 
-Only add a placeholder here if the name is:
+Only add packages here if the name is:
 - realistic
 - product-aligned
-- likely to matter later
-
-Do not fill this directory with speculative package names.
+- clearly tied to a public Rust surface or a truly useful Python bridge

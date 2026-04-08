@@ -1,11 +1,14 @@
+"""Official Python bindings for ``logicpearl-engine``.
+
+This package gives Python code a direct bridge to the Rust execution facade for:
+
+- loading a pearl artifact bundle or `pearl.ir.json`
+- loading a `pipeline.json`
+- executing those artifacts on JSON-compatible Python input
+
+It is intentionally not a CLI subprocess wrapper.
 """
-Reserved package name for the LogicPearl project.
 
-The main public surfaces today are the Rust CLI and the npm browser runtime.
-This package exists so the `logicpearl` Python package name stays aligned with
-the public LogicPearl project.
-"""
+from ._logicpearl import LogicPearlEngine, __version__, load_engine
 
-__all__ = ["__version__"]
-
-__version__ = "0.0.1"
+__all__ = ["LogicPearlEngine", "load_engine", "__version__"]
