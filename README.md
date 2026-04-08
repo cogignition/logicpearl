@@ -457,6 +457,8 @@ That small output shows the core shape:
 
 Use the generic plugin surface first:
 
+If you are updating an older plugin, start with [docs/plugin-migration.md](./docs/plugin-migration.md).
+
 ```bash
 logicpearl plugin validate examples/plugins/python_observer/manifest.json
 logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
