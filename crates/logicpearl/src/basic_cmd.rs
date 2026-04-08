@@ -769,13 +769,7 @@ pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
-    let payload: Value = serde_json::from_str(
-        &fs::read_to_string(&args.input_json)
-            .into_diagnostic()
-            .wrap_err("failed to read input JSON")?,
-    )
-    .into_diagnostic()
-    .wrap_err("input JSON is not valid JSON")?;
+    let payload = read_json_input_argument(args.input_json.as_ref(), "input")?;
 
     let parsed = parse_input_payload(payload)
         .into_diagnostic()

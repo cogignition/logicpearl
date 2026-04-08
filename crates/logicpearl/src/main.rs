@@ -40,6 +40,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 mod artifact_cmd;
@@ -117,6 +118,7 @@ Examples:
   logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration,target_tool_use
   logicpearl inspect examples/getting_started/output
   logicpearl run examples/getting_started/output examples/getting_started/new_input.json
+  cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output -
   logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json
   logicpearl refresh benchmarks --resume
@@ -129,6 +131,7 @@ Examples:
   logicpearl pipeline validate examples/pipelines/authz/pipeline.json
   logicpearl pipeline inspect examples/pipelines/observer_membership_verify/pipeline.json
   logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
+  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json -
   logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json";
 
 const BENCHMARK_AFTER_HELP: &str = "\
@@ -194,6 +197,34 @@ Examples:
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
+}
+
+fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Result<Value> {
+    let raw = match input_json {
+        None => {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .into_diagnostic()
+                .wrap_err(format!("failed to read {context} JSON from stdin"))?;
+            buffer
+        }
+        Some(path) if path.as_os_str() == "-" => {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .into_diagnostic()
+                .wrap_err(format!("failed to read {context} JSON from stdin"))?;
+            buffer
+        }
+        Some(path) => fs::read_to_string(path)
+            .into_diagnostic()
+            .wrap_err(format!("failed to read {context} JSON"))?,
+    };
+
+    serde_json::from_str(&raw)
+        .into_diagnostic()
+        .wrap_err(format!("{context} JSON is not valid JSON"))
 }
 
 #[derive(Debug, Parser)]
@@ -1080,12 +1111,13 @@ struct BenchmarkEmitTracesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl run examples/getting_started/output examples/getting_started/new_input.json\n  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json"
+    after_help = "Examples:\n  logicpearl run examples/getting_started/output examples/getting_started/new_input.json\n  logicpearl run examples/getting_started/output -\n  cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output\n  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json"
 )]
 struct RunArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
     pearl_ir: PathBuf,
-    input_json: PathBuf,
+    /// Input JSON file, `-` for stdin, or omit to read stdin.
+    input_json: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -1200,11 +1232,12 @@ struct PipelineInspectArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json"
+    after_help = "Examples:\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json - --json\n  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json --json"
 )]
 struct PipelineRunArgs {
     pipeline_json: PathBuf,
-    input_json: PathBuf,
+    /// Input JSON file, `-` for stdin, or omit to read stdin.
+    input_json: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,

@@ -261,7 +261,10 @@ Run it on a new input:
 
 ```bash
 logicpearl run examples/getting_started/output examples/getting_started/new_input.json
+cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output -
 ```
+
+Both `logicpearl run` and `logicpearl pipeline run` also accept omitted input paths and will read JSON from stdin in that case.
 
 Compile it into a standalone native executable:
 
@@ -378,6 +381,7 @@ Validate the checked-in example:
 logicpearl pipeline validate examples/pipelines/authz/pipeline.json
 logicpearl pipeline inspect examples/pipelines/authz/pipeline.json
 logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
+cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json -
 logicpearl pipeline trace examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json
 ```
 

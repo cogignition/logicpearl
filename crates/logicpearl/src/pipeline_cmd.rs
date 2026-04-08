@@ -104,13 +104,7 @@ pub(crate) fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         .pipeline_json
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
-    let input: Value = serde_json::from_str(
-        &fs::read_to_string(&args.input_json)
-            .into_diagnostic()
-            .wrap_err("failed to read pipeline input JSON")?,
-    )
-    .into_diagnostic()
-    .wrap_err("pipeline input JSON is not valid JSON")?;
+    let input = read_json_input_argument(args.input_json.as_ref(), "pipeline input")?;
     let execution = pipeline
         .run(base_dir, &input)
         .into_diagnostic()
