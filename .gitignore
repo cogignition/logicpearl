@@ -4,6 +4,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+# Secrets / local env
+.env
+.env.*
+*.env
+*.env.*
+
 # Rust
 target/
 *.pearl

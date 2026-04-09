@@ -3,28 +3,58 @@ import sys
 
 
 def audit_payload(payload: dict) -> dict:
-    bitmask = int(payload.get("bitmask", 0))
+    canonical_input = payload.get("input", {})
+    bitmask = int(canonical_input.get("bitmask", payload.get("bitmask", 0)))
     injection_payload = int(
-        payload.get(
+        canonical_input.get(
             "injection_payload_bitmask",
-            payload.get("target_injection_payload_bitmask", 0),
+            payload.get(
+                "injection_payload_bitmask",
+                payload.get("target_injection_payload_bitmask", 0),
+            ),
         )
     )
     sensitive_surface = int(
-        payload.get(
+        canonical_input.get(
             "sensitive_surface_bitmask",
-            payload.get("target_sensitive_surface_bitmask", 0),
+            payload.get(
+                "sensitive_surface_bitmask",
+                payload.get("target_sensitive_surface_bitmask", 0),
+            ),
         )
     )
-    suspicious_request = int(payload.get("target_suspicious_request_bitmask", 0))
-    has_scanner_fingerprint = bool(payload.get("has_scanner_fingerprint", False))
-    has_malformed_encoding = bool(payload.get("has_malformed_encoding", False))
-    risk_score = float(payload.get("risk_score", 0.0))
-    likely_benign = bool(payload.get("likely_benign_request", False))
+    suspicious_request = int(
+        canonical_input.get(
+            "target_suspicious_request_bitmask",
+            payload.get("target_suspicious_request_bitmask", 0),
+        )
+    )
+    has_scanner_fingerprint = bool(
+        canonical_input.get(
+            "has_scanner_fingerprint", payload.get("has_scanner_fingerprint", False)
+        )
+    )
+    has_malformed_encoding = bool(
+        canonical_input.get(
+            "has_malformed_encoding", payload.get("has_malformed_encoding", False)
+        )
+    )
+    risk_score = float(canonical_input.get("risk_score", payload.get("risk_score", 0.0)))
+    likely_benign = bool(
+        canonical_input.get("likely_benign_request", payload.get("likely_benign_request", False))
+    )
     allow = bool(
-        payload.get(
+        canonical_input.get(
             "allow",
-            (bitmask == 0 and injection_payload == 0 and sensitive_surface == 0 and suspicious_request == 0),
+            payload.get(
+                "allow",
+                (
+                    bitmask == 0
+                    and injection_payload == 0
+                    and sensitive_surface == 0
+                    and suspicious_request == 0
+                ),
+            ),
         )
     )
 
