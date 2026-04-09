@@ -75,22 +75,13 @@
       "label": "Underage access is denied"
     },
     {
-      "id": "viewer_cannot_write",
+      "id": "viewer_denied",
       "deny_when": {
-        "all": [
-          {
-            "feature": "role",
-            "op": "==",
-            "value": "viewer"
-          },
-          {
-            "feature": "action",
-            "op": "==",
-            "value": "write"
-          }
-        ]
+        "feature": "role",
+        "op": "==",
+        "value": "viewer"
       },
-      "label": "Viewer write requests are denied"
+      "label": "Viewer access is denied"
     },
     {
       "id": "insufficient_clearance",
