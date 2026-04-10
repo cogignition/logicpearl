@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -52,7 +53,25 @@ def parse_args() -> tuple[Path, bool]:
 
 
 def run(cmd: list[str], cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+    completed = subprocess.run(cmd, cwd=cwd, check=False, capture_output=True, text=True)
+    if completed.returncode == 0:
+        return completed
+
+    def tail(text: str, limit: int = 12_000) -> str:
+        if len(text) <= limit:
+            return text
+        return f"<truncated {len(text) - limit} bytes>\n{text[-limit:]}"
+
+    details = [
+        f"command failed with exit code {completed.returncode}: {shlex.join(cmd)}"
+    ]
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    if stdout:
+        details.extend(["", "stdout:", tail(stdout)])
+    if stderr:
+        details.extend(["", "stderr:", tail(stderr)])
+    raise RuntimeError("\n".join(details))
 
 
 def run_json(cmd: list[str], cwd: Path = REPO_ROOT) -> Any:

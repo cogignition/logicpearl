@@ -28,6 +28,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Install Z3
+        run: sudo apt-get update && sudo apt-get install -y z3
+
       - name: Generate score JSON
         run: |
           python3 scripts/scoreboard/update_scores.py --output "$RUNNER_TEMP/SCORES.json"

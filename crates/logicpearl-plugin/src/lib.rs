@@ -11,6 +11,18 @@ const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_TIMEOUT_MS: u64 = 30_000;
 
+#[cfg(unix)]
+const SIGTERM: i32 = 15;
+#[cfg(unix)]
+const SIGKILL: i32 = 9;
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn getpgid(pid: i32) -> i32;
+    fn getpgrp() -> i32;
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginStage {
@@ -641,21 +653,41 @@ fn wait_for_plugin_exit(timeout_ms: Option<u64>, child: &mut Child) -> Result<(E
 
 #[cfg(unix)]
 fn terminate_plugin_process(child: &mut Child) {
-    let process_group = format!("-{}", child.id());
-    let _ = Command::new("kill")
-        .args(["-TERM", &process_group])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    thread::sleep(Duration::from_millis(50));
-    if child.try_wait().ok().flatten().is_none() {
-        let _ = Command::new("kill")
-            .args(["-KILL", &process_group])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+    let child_process_group = safe_child_process_group(child);
+    if let Some(process_group) = child_process_group {
+        signal_process_group(process_group, SIGTERM);
+    } else {
         let _ = child.kill();
     }
+    thread::sleep(Duration::from_millis(50));
+    if child.try_wait().ok().flatten().is_none() {
+        if let Some(process_group) = child_process_group {
+            signal_process_group(process_group, SIGKILL);
+        }
+        let _ = child.kill();
+    }
+}
+
+#[cfg(unix)]
+fn safe_child_process_group(child: &Child) -> Option<i32> {
+    let pid = i32::try_from(child.id()).ok()?;
+    // SAFETY: getpgid only reads kernel process metadata for the spawned child pid.
+    let process_group = unsafe { getpgid(pid) };
+    if process_group <= 0 {
+        return None;
+    }
+    // SAFETY: getpgrp has no arguments and returns the current process group id.
+    let parent_process_group = unsafe { getpgrp() };
+    if process_group == parent_process_group {
+        return None;
+    }
+    Some(process_group)
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_group: i32, signal: i32) {
+    // SAFETY: negative pid values are the POSIX API for signaling a process group.
+    let _ = unsafe { kill(-process_group, signal) };
 }
 
 #[cfg(not(unix))]
