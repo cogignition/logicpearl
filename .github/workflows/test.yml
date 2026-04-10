@@ -9,6 +9,8 @@ on:
 jobs:
   workspace:
     runs-on: ubuntu-latest
+    env:
+      CVC5_VERSION: 1.3.3
 
     steps:
       - name: Checkout
@@ -21,6 +23,12 @@ jobs:
 
       - name: Install Z3
         run: sudo apt-get update && sudo apt-get install -y z3
+
+      - name: Install cvc5
+        run: |
+          curl -fsSL -o /tmp/cvc5.zip "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
+          unzip -q /tmp/cvc5.zip -d /tmp
+          sudo install -m 0755 "/tmp/cvc5-Linux-x86_64-static/bin/cvc5" /usr/local/bin/cvc5
 
       - name: Run CI verification
         run: cargo xtask verify ci

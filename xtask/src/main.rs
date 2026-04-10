@@ -391,6 +391,7 @@ fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
         "python3",
         &["scripts/release/check_publish_ready.py"],
     )?;
+    run_solver_backend_parity(repo_root, false)?;
     Ok(())
 }
 
@@ -467,7 +468,10 @@ fn run_verify_ci(repo_root: &Path) -> Result<()> {
 
 fn run_verify_solver_backends(repo_root: &Path) -> Result<()> {
     println!("{}", "Running LogicPearl solver backend checks".bold());
+    run_solver_backend_parity(repo_root, true)
+}
 
+fn run_solver_backend_parity(repo_root: &Path, include_default_backend: bool) -> Result<()> {
     let solver_targets = [
         "test",
         "--manifest-path",
@@ -481,7 +485,10 @@ fn run_verify_solver_backends(repo_root: &Path) -> Result<()> {
         "-p",
         "logicpearl-observer-synthesis",
     ];
-    run_repo_command(repo_root, "cargo", &solver_targets)?;
+
+    if include_default_backend {
+        run_repo_command(repo_root, "cargo", &solver_targets)?;
+    }
 
     if !command_available("cvc5") {
         println!(
