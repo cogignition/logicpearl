@@ -598,6 +598,138 @@ impl ComparisonValue {
     }
 }
 
+pub fn canonicalize_expression(expression: &Expression) -> Expression {
+    match expression {
+        Expression::Comparison(comparison) => Expression::Comparison(ComparisonExpression {
+            feature: comparison.feature.clone(),
+            op: comparison.op.clone(),
+            value: canonicalize_comparison_value(&comparison.op, &comparison.value),
+        }),
+        Expression::All { all } => canonicalize_logical_expression(all, LogicalKind::All),
+        Expression::Any { any } => canonicalize_logical_expression(any, LogicalKind::Any),
+        Expression::Not { expr } => {
+            let normalized = canonicalize_expression(expr);
+            match normalized {
+                Expression::Not { expr } => *expr,
+                other => Expression::Not {
+                    expr: Box::new(other),
+                },
+            }
+        }
+    }
+}
+
+pub fn canonical_expression_key(expression: &Expression) -> String {
+    canonical_expression_key_inner(&canonicalize_expression(expression))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogicalKind {
+    All,
+    Any,
+}
+
+fn canonicalize_logical_expression(items: &[Expression], kind: LogicalKind) -> Expression {
+    let mut normalized = Vec::new();
+    for item in items {
+        match canonicalize_expression(item) {
+            Expression::All { all } if kind == LogicalKind::All => normalized.extend(all),
+            Expression::Any { any } if kind == LogicalKind::Any => normalized.extend(any),
+            other => normalized.push(other),
+        }
+    }
+
+    let mut keyed = normalized
+        .into_iter()
+        .map(|expr| (canonical_expression_key_inner(&expr), expr))
+        .collect::<Vec<_>>();
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    keyed.dedup_by(|left, right| left.0 == right.0);
+
+    let mut normalized = keyed.into_iter().map(|(_, expr)| expr).collect::<Vec<_>>();
+    match normalized.len() {
+        0 => match kind {
+            LogicalKind::All => Expression::All { all: Vec::new() },
+            LogicalKind::Any => Expression::Any { any: Vec::new() },
+        },
+        1 => normalized
+            .pop()
+            .expect("single normalized expression should exist"),
+        _ => match kind {
+            LogicalKind::All => Expression::All { all: normalized },
+            LogicalKind::Any => Expression::Any { any: normalized },
+        },
+    }
+}
+
+fn canonicalize_comparison_value(
+    op: &ComparisonOperator,
+    value: &ComparisonValue,
+) -> ComparisonValue {
+    match value {
+        ComparisonValue::FeatureRef { feature_ref } => ComparisonValue::FeatureRef {
+            feature_ref: feature_ref.clone(),
+        },
+        ComparisonValue::Literal(value) => {
+            ComparisonValue::Literal(canonicalize_literal_value(op, value))
+        }
+    }
+}
+
+fn canonicalize_literal_value(op: &ComparisonOperator, value: &Value) -> Value {
+    if matches!(op, ComparisonOperator::In | ComparisonOperator::NotIn) {
+        if let Some(items) = value.as_array() {
+            let mut keyed = items
+                .iter()
+                .map(|item| (canonical_json_value_key(item), item.clone()))
+                .collect::<Vec<_>>();
+            keyed.sort_by(|left, right| left.0.cmp(&right.0));
+            keyed.dedup_by(|left, right| left.0 == right.0);
+            return Value::Array(keyed.into_iter().map(|(_, item)| item).collect());
+        }
+    }
+    value.clone()
+}
+
+fn canonical_expression_key_inner(expression: &Expression) -> String {
+    match expression {
+        Expression::Comparison(comparison) => {
+            format!(
+                "cmp({}|{}|{})",
+                comparison.feature,
+                comparison.op.as_str(),
+                canonical_comparison_value_key(&comparison.op, &comparison.value)
+            )
+        }
+        Expression::All { all } => format!(
+            "all({})",
+            all.iter()
+                .map(canonical_expression_key_inner)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Expression::Any { any } => format!(
+            "any({})",
+            any.iter()
+                .map(canonical_expression_key_inner)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Expression::Not { expr } => format!("not({})", canonical_expression_key_inner(expr)),
+    }
+}
+
+fn canonical_comparison_value_key(op: &ComparisonOperator, value: &ComparisonValue) -> String {
+    match canonicalize_comparison_value(op, value) {
+        ComparisonValue::FeatureRef { feature_ref } => format!("@{feature_ref}"),
+        ComparisonValue::Literal(value) => canonical_json_value_key(&value),
+    }
+}
+
+fn canonical_json_value_key(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,5 +918,67 @@ mod tests {
         let decoded: RuleVerificationStatus =
             serde_json::from_str(&encoded).expect("verification status should deserialize");
         assert_eq!(decoded, RuleVerificationStatus::SolverVerified);
+    }
+
+    #[test]
+    fn canonicalize_expression_flattens_sorts_and_dedupes_boolean_groups() {
+        let normalized = canonicalize_expression(&Expression::All {
+            all: vec![
+                Expression::Comparison(ComparisonExpression {
+                    feature: "z".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(json!(1)),
+                }),
+                Expression::All {
+                    all: vec![
+                        Expression::Comparison(ComparisonExpression {
+                            feature: "a".to_string(),
+                            op: ComparisonOperator::Eq,
+                            value: ComparisonValue::Literal(json!(2)),
+                        }),
+                        Expression::Comparison(ComparisonExpression {
+                            feature: "z".to_string(),
+                            op: ComparisonOperator::Eq,
+                            value: ComparisonValue::Literal(json!(1)),
+                        }),
+                    ],
+                },
+            ],
+        });
+
+        let Expression::All { all } = normalized else {
+            panic!("expected normalized all expression");
+        };
+        assert_eq!(all.len(), 2);
+        let features = all
+            .iter()
+            .map(|expr| match expr {
+                Expression::Comparison(comparison) => comparison.feature.as_str(),
+                _ => panic!("expected comparisons after normalization"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(features, vec!["a", "z"]);
+    }
+
+    #[test]
+    fn canonicalize_expression_eliminates_double_negation_and_normalizes_membership_literals() {
+        let normalized = canonicalize_expression(&Expression::Not {
+            expr: Box::new(Expression::Not {
+                expr: Box::new(Expression::Comparison(ComparisonExpression {
+                    feature: "role".to_string(),
+                    op: ComparisonOperator::In,
+                    value: ComparisonValue::Literal(json!(["viewer", "admin", "viewer"])),
+                })),
+            }),
+        });
+
+        let Expression::Comparison(comparison) = normalized else {
+            panic!("expected double negation to collapse");
+        };
+        assert_eq!(comparison.feature, "role");
+        assert_eq!(
+            comparison.value,
+            ComparisonValue::Literal(json!(["admin", "viewer"]))
+        );
     }
 }

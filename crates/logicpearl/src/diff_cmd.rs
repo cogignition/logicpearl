@@ -1,7 +1,6 @@
 use super::*;
-use logicpearl_ir::{ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition};
+use logicpearl_ir::{canonical_expression_key, LogicPearlGateIr, RuleDefinition};
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Serialize)]
@@ -388,63 +387,18 @@ fn semantic_rule_signature(rule: &RuleDefinition) -> String {
     format!(
         "{}|{}",
         serde_json::to_string(&rule.kind).unwrap_or_default(),
-        canonical_expression(&rule.deny_when)
+        canonical_expression_key(&rule.deny_when)
     )
-}
-
-fn canonical_expression(expression: &Expression) -> String {
-    match expression {
-        Expression::Comparison(comparison) => {
-            format!(
-                "cmp({}|{}|{})",
-                comparison.feature,
-                comparison.op.as_str(),
-                canonical_comparison_value(comparison.op.as_str(), &comparison.value)
-            )
-        }
-        Expression::All { all } => {
-            let mut items = all.iter().map(canonical_expression).collect::<Vec<_>>();
-            items.sort();
-            format!("all({})", items.join(","))
-        }
-        Expression::Any { any } => {
-            let mut items = any.iter().map(canonical_expression).collect::<Vec<_>>();
-            items.sort();
-            format!("any({})", items.join(","))
-        }
-        Expression::Not { expr } => format!("not({})", canonical_expression(expr)),
-    }
-}
-
-fn canonical_comparison_value(op: &str, value: &ComparisonValue) -> String {
-    match value {
-        ComparisonValue::FeatureRef { feature_ref } => format!("@{feature_ref}"),
-        ComparisonValue::Literal(literal) => canonical_literal_value(op, literal),
-    }
-}
-
-fn canonical_literal_value(op: &str, value: &Value) -> String {
-    if matches!(op, "in" | "not_in") {
-        if let Some(items) = value.as_array() {
-            let mut normalized = items
-                .iter()
-                .map(|item| serde_json::to_string(item).unwrap_or_default())
-                .collect::<Vec<_>>();
-            normalized.sort();
-            return format!("[{}]", normalized.join(","));
-        }
-    }
-    serde_json::to_string(value).unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use logicpearl_ir::{
-        ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig,
+        ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
         FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, RuleKind,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::path::PathBuf;
 
     fn gate_with_rules(rules: Vec<RuleDefinition>) -> LogicPearlGateIr {
@@ -485,6 +439,20 @@ mod tests {
                 op,
                 value: ComparisonValue::Literal(value),
             }),
+            label: None,
+            message: None,
+            severity: None,
+            counterfactual_hint: None,
+            verification_status: None,
+        }
+    }
+
+    fn expression_rule(id: &str, bit: u32, deny_when: Expression) -> RuleDefinition {
+        RuleDefinition {
+            id: id.to_string(),
+            kind: RuleKind::Predicate,
+            bit,
+            deny_when,
             label: None,
             message: None,
             severity: None,
@@ -576,5 +544,46 @@ mod tests {
             .expect("diff should succeed");
         assert_eq!(report.summary.added_rules, 1);
         assert_eq!(report.summary.removed_rules, 1);
+    }
+
+    #[test]
+    fn diff_normalizes_semantically_equivalent_boolean_expressions() {
+        let old_gate = gate_with_rules(vec![expression_rule(
+            "age_guard",
+            0,
+            Expression::Not {
+                expr: Box::new(Expression::Not {
+                    expr: Box::new(Expression::Comparison(ComparisonExpression {
+                        feature: "age".to_string(),
+                        op: ComparisonOperator::In,
+                        value: ComparisonValue::Literal(json!([18, 21, 18])),
+                    })),
+                }),
+            },
+        )]);
+        let new_gate = gate_with_rules(vec![expression_rule(
+            "age_guard",
+            0,
+            Expression::Comparison(ComparisonExpression {
+                feature: "age".to_string(),
+                op: ComparisonOperator::In,
+                value: ComparisonValue::Literal(json!([21, 18])),
+            }),
+        )]);
+        let old_resolved = artifact_cmd::ResolvedArtifactInput {
+            artifact_dir: PathBuf::from("/tmp/old"),
+            pearl_ir: PathBuf::from("/tmp/old/pearl.ir.json"),
+        };
+        let new_resolved = artifact_cmd::ResolvedArtifactInput {
+            artifact_dir: PathBuf::from("/tmp/new"),
+            pearl_ir: PathBuf::from("/tmp/new/pearl.ir.json"),
+        };
+
+        let report = diff_gates(&old_gate, &new_gate, &old_resolved, &new_resolved)
+            .expect("diff should succeed");
+        assert_eq!(report.summary.changed_rules, 0);
+        assert_eq!(report.summary.reordered_rules, 0);
+        assert!(report.changed_rules.is_empty());
+        assert!(report.reordered_rules.is_empty());
     }
 }

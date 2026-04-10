@@ -2,8 +2,8 @@ use super::{
     verification_status, verification_status_rank, DecisionTraceRow, NumericBound, NumericInterval,
 };
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, RuleDefinition,
-    RuleVerificationStatus,
+    canonicalize_expression, ComparisonExpression, ComparisonOperator, ComparisonValue, Expression,
+    RuleDefinition, RuleVerificationStatus,
 };
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
@@ -44,7 +44,8 @@ pub(super) fn canonicalize_rules(rules: Vec<RuleDefinition>) -> Vec<RuleDefiniti
     let mut passthrough = Vec::new();
     let mut grouped: BTreeMap<String, Vec<RuleDefinition>> = BTreeMap::new();
 
-    for rule in rules {
+    for mut rule in rules {
+        rule.deny_when = canonicalize_expression(&rule.deny_when);
         if let Some(key) = rule_canonicalization_key(&rule) {
             grouped.entry(key).or_default().push(rule);
         } else {
@@ -136,7 +137,7 @@ fn canonicalize_numeric_rule_group(group: Vec<RuleDefinition>) -> Vec<RuleDefini
             let mut rule = prototype.clone();
             rule.bit = index as u32;
             rule.id = format!("rule_{index:03}");
-            rule.deny_when = interval_expression(prototype, interval);
+            rule.deny_when = canonicalize_expression(&interval_expression(prototype, interval));
             rule.verification_status = Some(strongest_status.clone());
             rule
         })
