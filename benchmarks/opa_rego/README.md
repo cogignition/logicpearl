@@ -47,7 +47,7 @@ Generated files are written under `benchmarks/opa_rego/output/`:
 - `sample_run.json`
 - `summary.json`
 
-`output/` is local generated material and is intentionally not checked into git.
+The script regenerates `output/` each run. The repository may also keep sample outputs checked in so readers can inspect the example without rerunning it first.
 
 ## What This Example Proves
 

@@ -3,13 +3,13 @@
 use clap::{Args, Parser, Subcommand};
 use logicpearl_benchmark::{
     adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
-    adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_pint_dataset,
-    adapt_safearena_dataset, adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset,
-    benchmark_adapter_registry, detect_benchmark_adapter_profile, emit_trace_tables,
-    load_benchmark_cases, load_synthesis_case_rows, load_synthesis_cases,
-    load_trace_projection_config, sanitize_identifier, write_benchmark_cases_jsonl,
-    BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase,
-    SaladSubsetKind, SynthesisCase, SynthesisCaseRow,
+    adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_safearena_dataset,
+    adapt_salad_dataset, adapt_squad_dataset, adapt_vigil_dataset, benchmark_adapter_registry,
+    detect_benchmark_adapter_profile, emit_trace_tables, load_benchmark_cases,
+    load_synthesis_case_rows, load_synthesis_cases, load_trace_projection_config,
+    sanitize_identifier, write_benchmark_cases_jsonl, BenchmarkAdaptDefaults,
+    BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase, SaladSubsetKind, SynthesisCase,
+    SynthesisCaseRow,
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
@@ -56,8 +56,7 @@ mod trace_cmd;
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
     load_artifact_bundle_descriptor, native_artifact_output_path, persist_build_report,
-    resolve_artifact_input, wasm_artifact_output_path, wasm_metadata_output_path,
-    write_named_artifact_manifest, WasmArtifactOutput,
+    resolve_artifact_input, wasm_artifact_output_path, write_named_artifact_manifest,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
@@ -90,6 +89,7 @@ Use this CLI to:
 - get a guided first run
 - build pearls from labeled traces
 - inspect and run pearls
+- compile optional native or Wasm deployables
 - compose and execute string-of-pearls pipelines
 - score benchmark datasets with explicit route outputs
 
@@ -100,6 +100,7 @@ Common commands:
 - inspect
 - diff
 - run
+- compile
 - pipeline
 - benchmark";
 
@@ -262,8 +263,7 @@ enum Commands {
     #[command(hide = true)]
     /// Create a starter pipeline from existing pearls.
     Compose(ComposeArgs),
-    #[command(hide = true)]
-    /// Compile a pearl into a standalone executable.
+    /// Compile a pearl into an optional native or Wasm deployable.
     Compile(CompileArgs),
     #[command(hide = true)]
     /// Validate artifact freshness and check runtime parity.
@@ -474,7 +474,6 @@ enum BenchmarkAdapterProfileArg {
     #[value(name = "noeti-toxicqa")]
     NoetiToxicQa,
     MtAgentrisk,
-    Pint,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -485,7 +484,7 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -533,9 +532,9 @@ struct BuildArgs {
     /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
     #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
     discovery_mode: DiscoveryDecisionModeArg,
-    /// Emit only the pearl artifact bundle and skip native and Wasm compilation.
+    /// Also compile native and Wasm deployables after writing the artifact bundle.
     #[arg(long, help_heading = "Advanced")]
-    bundle_only: bool,
+    compile: bool,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1359,7 +1358,6 @@ fn to_benchmark_adapter_profile(profile: BenchmarkAdapterProfileArg) -> Benchmar
         BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,
         BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,
         BenchmarkAdapterProfileArg::MtAgentrisk => BenchmarkAdapterProfile::MtAgentRisk,
-        BenchmarkAdapterProfileArg::Pint => BenchmarkAdapterProfile::Pint,
     }
 }
 

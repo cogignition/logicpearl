@@ -55,7 +55,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: logicpearl-${{ matrix.target }}
-          path: dist/logicpearl-${{ matrix.target }}.tar.gz
+          path: |
+            dist/logicpearl-${{ matrix.target }}.tar.gz
+            dist/logicpearl-${{ matrix.target }}.tar.gz.sha256
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -73,5 +75,7 @@ jobs:
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
           fail_on_unmatched_files: true

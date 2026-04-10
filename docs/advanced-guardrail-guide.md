@@ -3,13 +3,13 @@
 This guide documents the full LogicPearl guardrail workflow beyond the README quickstart.
 
 Use it when you want to:
-- prepare non-`PINT` guardrail corpora
+- prepare public guardrail corpora
 - adapt raw benchmark datasets into LogicPearl cases
 - run an observer over those cases
 - emit discovery traces
 - learn pearls from those traces
 - score held-out development slices
-- keep `PINT` untouched until the final proof run
+- keep post-freeze external checks separate from development
 
 ## The Core Split
 
@@ -19,16 +19,16 @@ There are two different phases:
 - use public corpora such as `Salad-Data`, `ALERT`, `Vigil`, `ChatGPT-Jailbreak-Prompts`, `NOETI ToxicQAFinal`, and `SQuAD 2.0`
 - learn and tune the system here
 
-2. `Proof`
-- use `PINT`
-- do not train or tune on it
+2. `Post-freeze external evaluation`
+- use open external checks such as `PromptShield`, `JailbreakBench`, or `rogue-security/prompt-injections-benchmark`
+- do not train or tune on them
 
 That distinction is the whole point.
 
 ## The Full Shape
 
 ```text
-raw dataset -> adapter -> benchmark cases -> observer -> normalized features -> discovery traces -> pearls -> dev scoring -> frozen proof run
+raw dataset -> adapter -> benchmark cases -> observer -> normalized features -> discovery traces -> pearls -> dev scoring -> frozen external checks
 ```
 
 ## Feature Contract
@@ -69,13 +69,15 @@ logicpearl observer synthesize \
 This path is intentionally seed-based:
 - the observer artifact or built-in profile defines the signal family
 - LogicPearl mines deterministic candidate phrases around that signal
-- Z3 chooses the smallest subset that keeps denied coverage and reduces benign hits
+- an exact selection backend chooses the smallest subset that keeps denied coverage and reduces benign hits
 - by default, LogicPearl holds out a deterministic development slice and chooses the smallest near-best candidate cap automatically
 - if you already have a held-out slice, pass `--dev-benchmark-cases` to use it instead of the automatic split
 
-That keeps the first pass solver-driven without pretending Z3 can invent a useful text ontology from arbitrary raw prompts.
+By default, observer synthesis uses the internal MIP selector for that subset-selection step. The SMT path remains available for internal parity checks.
 
-Repair one signal family with Z3 while preserving current denied-case coverage:
+That keeps the first pass selection-driven without pretending LogicPearl can invent a useful text ontology from arbitrary raw prompts.
+
+Repair one signal family while preserving current denied-case coverage:
 
 ```bash
 logicpearl observer repair \
@@ -86,9 +88,9 @@ logicpearl observer repair \
   --json
 ```
 
-## Phase 1: Adapt Non-PINT Data
+## Phase 1: Adapt Development Data
 
-The first public non-`PINT` adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.
+The first public development adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.
 
 For full local runs, stage public corpora under `$LOGICPEARL_DATASETS` outside the project tree.
 
@@ -292,7 +294,7 @@ Track:
 - `false_positive_rate`
 - `category_accuracy`
 
-## Phase 6: Freeze and Run PINT
+## Phase 6: Freeze and Run External Checks
 
 Only after the system is frozen:
 - observer version
@@ -301,15 +303,15 @@ Only after the system is frozen:
 - route mapping
 - adapter version
 
-then adapt and score `PINT`.
+then adapt and score an untouched external benchmark.
 
 Adapt:
 
 ```bash
 logicpearl benchmark adapt \
-  benchmarks/guardrails/proof/pint/example_pint.yaml \
-  --profile pint \
-  --output /tmp/pint_cases.jsonl
+  "$LOGICPEARL_DATASETS/promptshield/promptshield.json" \
+  --profile promptshield \
+  --output /tmp/promptshield_cases.jsonl
 ```
 
 Score:
@@ -317,7 +319,7 @@ Score:
 ```bash
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
-  /tmp/pint_cases.jsonl \
+  /tmp/promptshield_cases.jsonl \
   --collapse-routes \
   --json
 ```
@@ -331,7 +333,6 @@ That collapses rich internal routes into benchmark-facing:
 Public pieces already available:
 - `logicpearl benchmark adapt --profile salad-base-set`
 - `logicpearl benchmark merge-cases`
-- `logicpearl benchmark adapt --profile pint`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
 - `logicpearl build`
@@ -343,4 +344,3 @@ Public pieces already available:
 
 - [Guardrail benchmarks](../benchmarks/guardrails/README.md)
 - [Guardrail preparation](../benchmarks/guardrails/prep/README.md)
-- [PINT proof evaluation](../benchmarks/guardrails/proof/pint/README.md)

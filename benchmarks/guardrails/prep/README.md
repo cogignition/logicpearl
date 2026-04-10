@@ -1,6 +1,6 @@
 # Guardrail Preparation
 
-This is the non-`PINT` preparation path for LogicPearl guardrail work.
+This is the preparation path for LogicPearl guardrail work.
 
 Use public development corpora here:
 - `Salad-Data`
@@ -12,8 +12,6 @@ Use public development corpora here:
 - `ChatGPT-Jailbreak-Prompts`
 - `NOETI ToxicQAFinal`
 - `SQuAD 2.0`
-
-Do not use `PINT` here.
 
 Recommended staged dataset root:
 
@@ -71,7 +69,7 @@ $LOGICPEARL_DATASETS/safearena/
 
 Current access note:
 - `MT-AgentRisk` is still gated on Hugging Face
-- `SafeArena` is available locally and wired into the public non-`PINT` workflow
+- `SafeArena` is available locally and wired into the public development workflow
 
 ## Workflow
 
@@ -132,7 +130,6 @@ Today, the public pieces already in place are:
 - `logicpearl benchmark detect-profile`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
-- `logicpearl benchmark adapt --profile pint`
 - the public guardrail observer/pipeline examples
 
 Useful native observer commands:
@@ -141,12 +138,14 @@ Useful native observer commands:
 - `logicpearl observer synthesize`
 - `logicpearl observer repair`
 
-`observer synthesize` is seed-based and Z3-first:
+`observer synthesize` is seed-based and exact-selection-first:
 - start from a built-in or scaffolded signal family
 - mine deterministic candidates from matched denied cases
-- let Z3 select a compact subset
+- let LogicPearl choose a compact subset from those candidates
 - by default, hold out a deterministic development slice and let LogicPearl choose the smallest near-best candidate cap automatically
 - if you already have an explicit dev split, pass `--dev-benchmark-cases` and LogicPearl will use that instead of auto-splitting
+
+The current default subset-selection backend is the internal MIP path. The SMT path remains available for parity checks and backend bring-up.
 
 ## Current Public Adapter Path
 
@@ -349,7 +348,7 @@ logicpearl benchmark learn \
 
 Do not use the `training_parity` inside `benchmark learn` as the headline number.
 
-For a real non-`PINT` evaluation:
+For a real held-out development evaluation:
 
 1. split the merged benchmark cases into deterministic `train` and `dev`
 2. run `benchmark learn` only on `train`

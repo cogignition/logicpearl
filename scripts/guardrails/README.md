@@ -37,7 +37,7 @@ If the gated `MT-AgentRisk` dataset is staged at `$LOGICPEARL_DATASETS/mt_agentr
     - build and score manifests
 
 - `evaluate_guardrail_bundle.py`
-  - takes a frozen bundle plus a raw benchmark file such as `PINT`
+  - takes a frozen bundle plus a raw benchmark file such as `PromptShield`
   - adapts the raw benchmark cases
   - runs the frozen observer
   - evaluates the frozen combined pearl
@@ -112,17 +112,17 @@ Those subset limits are route-stratified, so the smaller bundle keeps a stable m
 
 Use `--resume` with the same output directory if the long synthesis step has already finished once.
 
-Evaluate untouched `PINT` against that bundle:
+Evaluate a raw external benchmark against that bundle:
 
 ```bash
 logicpearl benchmark adapt \
-  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output /tmp/pint_cases.jsonl
+  "$LOGICPEARL_DATASETS/promptshield/promptshield.json" \
+  --profile promptshield \
+  --output /tmp/promptshield_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
-  /tmp/pint_cases.jsonl \
+  /tmp/promptshield_cases.jsonl \
   --collapse-routes \
   --json
 ```

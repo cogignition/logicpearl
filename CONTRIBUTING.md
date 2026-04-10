@@ -1,6 +1,6 @@
 # Contributing
 
-LogicPearl is a small product repository with a visible scoreboard.
+LogicPearl is a small product repository.
 
 The goal is not just to land code. The goal is to make the public engine better:
 - easier to run
@@ -8,21 +8,16 @@ The goal is not just to land code. The goal is to make the public engine better:
 - more honest on parity and benchmarks
 - more generic, not more benchmark-shaped
 
-## The Scoreboard
+## Score Tracking
 
-Every commit that lands on `main` earns at least **1 shell**.
+The repository keeps a visible checked-in score file for the public example and benchmark suites.
 
-If that commit improves the measured public score suites, it also earns **pearls**.
+Every commit that lands on `main` contributes base participation credit in the score file. Commits that improve the measured public score suites also add improvement credit.
 
-- `shells`
-  - base participation credit
-  - you get these for shipping real work to `main`
-- `pearls`
-  - improvement credit
-  - you get these when the measured repo scores improve
-- `treasure`
-  - total score
-  - `shells + pearls`
+Score file fields:
+- `shells`: base participation credit for landed work
+- `pearls`: measured improvement credit
+- `treasure`: total score (`shells + pearls`)
 
 The scoreboard is generated from:
 - checked-in examples
@@ -34,7 +29,7 @@ Files:
 - [scripts/scoreboard/README.md](./scripts/scoreboard/README.md)
 - [scripts/scoreboard/score_model.json](./scripts/scoreboard/score_model.json)
 
-## How To Earn More Pearls
+## How To Improve The Score Suites
 
 High-value contribution patterns:
 - improve the generic engine so more datasets build cleanly without special handling
@@ -73,7 +68,7 @@ Please make sure:
 - benchmark framing matches what the code actually proves
 - score movement, if any, comes from a generic improvement
 
-If your change is score-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution. You still earn shells for landing it.
+If your change is score-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution.
 
 ## Local Development
 
@@ -126,12 +121,12 @@ Accepted backend values are `auto`, `z3`, `cvc5`, `prefer-z3`, and `prefer-cvc5`
 Observer phrase selection also has an internal backend toggle for subset-selection experiments:
 
 ```bash
-export LOGICPEARL_OBSERVER_SELECTION_BACKEND=smt
+export LOGICPEARL_OBSERVER_SELECTION_BACKEND=mip
 ```
 
 Accepted values are `smt` and `mip`.
 
-`smt` remains the default path. `mip` enables an internal mixed-integer subset-selection prototype built on `good_lp` with the pure-Rust `microlp` backend. It is intended for experimentation and parity comparison rather than as a public CLI knob.
+`mip` is now the default path for observer synthesis because it matched the SMT results on the checked-in observer comparison workloads while removing the external solver dependency from subset selection. `smt` remains available as an internal comparison path. Both backends are still internal toggles rather than public CLI knobs.
 
 Discovery exact rule selection also has an internal backend toggle for solver-selection experiments:
 

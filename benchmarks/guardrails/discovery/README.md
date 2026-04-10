@@ -14,7 +14,7 @@ The important separation is:
 3. Feature rows are written as decision traces
 4. `logicpearl build` discovers deterministic pearls from those traces
 5. Held-out `dev` checks false positives and route quality
-6. `PINT` stays untouched until final proof
+6. post-freeze external checks stay separate from development
 
 ## Recommended Pearl Split
 
@@ -41,4 +41,4 @@ logicpearl build \
   --output-dir /tmp/guardrail_instruction_boundary
 ```
 
-That same discovery loop scales up to Salad-Data, ALERT, SQuAD, and later PINT.
+That same discovery loop scales up to Salad-Data, ALERT, SQuAD, and larger staged guardrail corpora.

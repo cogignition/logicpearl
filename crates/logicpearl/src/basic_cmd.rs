@@ -498,25 +498,21 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
     let artifact_name = result.gate_id.clone();
-    if !args.bundle_only {
+    if args.compile {
         let native_binary_path = result
             .output_files
             .native_binary
             .clone()
             .map(PathBuf::from)
             .unwrap_or_else(|| native_artifact_output_path(&artifact_dir, &artifact_name, None));
-        let native_binary = if native_binary_path.exists() {
-            native_binary_path
-        } else {
-            compile_native_runner(
-                &pearl_ir_path,
-                &artifact_dir,
-                &result.gate_id,
-                Some(artifact_name.clone()),
-                None,
-                Some(native_binary_path),
-            )?
-        };
+        let native_binary = compile_native_runner(
+            &pearl_ir_path,
+            &artifact_dir,
+            &result.gate_id,
+            Some(artifact_name.clone()),
+            None,
+            Some(native_binary_path),
+        )?;
         result.output_files.native_binary = Some(native_binary.display().to_string());
 
         let wasm_output = if is_rust_target_installed("wasm32-unknown-unknown") {
@@ -526,26 +522,13 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
                 .clone()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| wasm_artifact_output_path(&artifact_dir, &artifact_name));
-            let wasm_metadata_path = result
-                .output_files
-                .wasm_metadata
-                .clone()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| wasm_metadata_output_path(&artifact_dir, &artifact_name));
-            Some(if wasm_output_path.exists() {
-                WasmArtifactOutput {
-                    module_path: wasm_output_path,
-                    metadata_path: wasm_metadata_path,
-                }
-            } else {
-                compile_wasm_module(
-                    &pearl_ir_path,
-                    &artifact_dir,
-                    &result.gate_id,
-                    Some(artifact_name.clone()),
-                    Some(wasm_output_path),
-                )?
-            })
+            Some(compile_wasm_module(
+                &pearl_ir_path,
+                &artifact_dir,
+                &result.gate_id,
+                Some(artifact_name.clone()),
+                Some(wasm_output_path),
+            )?)
         } else {
             None
         };
@@ -703,11 +686,18 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             if let Some(wasm_metadata) = &result.output_files.wasm_metadata {
                 println!("  {} {}", "Wasm metadata".bright_black(), wasm_metadata);
             }
-        } else {
+        } else if args.compile {
             println!(
                 "  {} {}",
                 "Wasm module".bright_black(),
                 "skipped (install wasm32-unknown-unknown to emit it)".bright_black()
+            );
+        } else {
+            println!(
+                "  {} {}",
+                "Deployables".bright_black(),
+                "not compiled by default; run `logicpearl compile <artifact>` when needed"
+                    .bright_black()
             );
         }
     }

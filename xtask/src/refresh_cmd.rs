@@ -1602,8 +1602,8 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     if args.resume {
         waf_build.push("--resume".to_string());
     }
-    if args.waf_skip_compile {
-        waf_build.push("--bundle-only".to_string());
+    if !args.waf_skip_compile {
+        waf_build.push("--compile".to_string());
     }
     if args.use_installed_cli {
         waf_build.push("--use-installed-cli".to_string());
@@ -3649,8 +3649,8 @@ fn build_waf_target_artifact_set(
             if refine {
                 command.push("--refine".to_string());
             }
-            if skip_compile {
-                command.push("--bundle-only".to_string());
+            if !skip_compile {
+                command.push("--compile".to_string());
             }
             ((*target).to_string(), command)
         })
@@ -3916,6 +3916,7 @@ fn measure_getting_started(repo_root: &Path, cli: &[String]) -> Result<(Value, V
                 &repo_root.join(GETTING_STARTED_CSV).display().to_string(),
                 "--output-dir",
                 &output_dir.display().to_string(),
+                "--compile",
                 "--json",
             ],
         ),

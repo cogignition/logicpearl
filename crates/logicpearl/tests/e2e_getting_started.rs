@@ -41,7 +41,7 @@ fn run_build_json_with_env(
 }
 
 #[test]
-fn sample_dataset_builds_artifact_bundle_and_runs_compiled_binary() {
+fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
     let repo_root = repo_root();
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
     let output_dir = tempdir().expect("temp output dir should be created");
@@ -86,18 +86,47 @@ fn sample_dataset_builds_artifact_bundle_and_runs_compiled_binary() {
     assert!(
         manifest["bundle"]["deployables"]
             .as_array()
-            .is_some_and(|deployables| !deployables.is_empty()),
-        "artifact manifest should describe deployable outputs"
+            .is_some_and(|deployables| deployables.is_empty()),
+        "default build should not describe deployable outputs"
+    );
+    assert!(
+        build_result.output_files.native_binary.is_none(),
+        "default build should not emit a native binary"
+    );
+    assert!(
+        build_result.output_files.wasm_module.is_none(),
+        "default build should not emit a Wasm module"
     );
 
-    let native_binary = build_result
-        .output_files
-        .native_binary
-        .as_ref()
-        .expect("build should emit a native binary");
-    assert!(Path::new(native_binary).exists());
+    let run_output = Command::new(cli_bin)
+        .arg("run")
+        .arg(&output_path)
+        .arg(&sample_input)
+        .output()
+        .expect("logicpearl run should run");
+    assert!(
+        run_output.status.success(),
+        "logicpearl run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run_output.stdout).trim(), "0");
 
-    let compiled_output = Command::new(native_binary)
+    let compile_output = Command::new(cli_bin)
+        .arg("compile")
+        .arg(&output_path)
+        .output()
+        .expect("logicpearl compile should run");
+    assert!(
+        compile_output.status.success(),
+        "logicpearl compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile_output.stdout),
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+    let native_binary = output_path.join("decision_traces.pearl");
+    assert!(native_binary.exists());
+
+    let compiled_output = Command::new(&native_binary)
         .arg(&sample_input)
         .output()
         .expect("compiled pearl binary should run");

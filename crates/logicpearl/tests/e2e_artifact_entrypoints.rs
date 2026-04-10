@@ -45,7 +45,6 @@ fn artifact_entrypoints_resolve_consistently_across_cli_commands() {
         &[
             "build".to_string(),
             sample_csv.display().to_string(),
-            "--bundle-only".to_string(),
             "--output-dir".to_string(),
             artifact_dir.display().to_string(),
             "--json".to_string(),

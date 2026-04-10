@@ -854,6 +854,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         "selected_max_candidates": report.selected_max_candidates,
         "selection_backend": report.selection_backend,
         "selection_status": report.selection_status,
+        "selection_duration_ms": report.selection_duration_ms,
         "phrases_before": report.phrases_before,
         "phrases_after": report.phrases_after,
         "output": args.output.display().to_string(),
@@ -940,6 +941,7 @@ fn carried_forward_synthesis_report(
         selected_max_candidates: None,
         selection_backend: None,
         selection_status: None,
+        selection_duration_ms: None,
         auto_selection: None,
     })
 }

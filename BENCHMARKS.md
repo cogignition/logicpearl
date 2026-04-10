@@ -19,24 +19,23 @@ That OPA example is useful as an additional parity walkthrough, but it is not th
 
 ## Guardrail Development Lane
 
-The current public guardrail development corpora are:
-- `Salad-Data`
-- `ALERT`
+The current public guardrail development lane is built from these public dataset sources and staged variants:
+- `Salad-Data` (`base_set`, `attack_enhanced_set`)
+- `ALERT` (`ALERT`, `ALERT_Adv`)
 - `ChatGPT-Jailbreak-Prompts`
-- `OpenAgentSafety`
+- `OpenAgentSafety S26`
 - `MCPMark`
-- `SafeArena`
+- `SafeArena` (`safe`, `harm`)
 - `Vigil`
 - `NOETI ToxicQAFinal`
 - `SQuAD 2.0`
 
 Two important boundary notes:
-- `PINT` is intentionally held back for final proof-only evaluation
-- `MT-AgentRisk` is staged locally but still excluded from the public lane because access is gated on Hugging Face
+- `MT-AgentRisk` is access-gated on Hugging Face and is not part of the default public lane
 
-## Held-Out Non-PINT Development Results
+## Held-Out Development Results
 
-The public non-`PINT` guardrail workflow was run on a merged corpus of `210,515` rows and evaluated on a deterministic held-out development split of `42,468` rows.
+The public guardrail workflow was run on a merged corpus of `210,515` rows and evaluated on a deterministic held-out development split of `42,468` rows.
 
 Split:
 - train: `168,047`
@@ -59,7 +58,7 @@ The learned rules are also compact and inspectable:
 
 ## Post-Freeze External Checks
 
-After freezing the pre-`PINT` bundle, the same compiled guardrail artifact was evaluated on three open external benchmarks that were not part of the training bundle:
+After freezing the development bundle, the same compiled guardrail artifact was evaluated on three open external benchmarks that were not part of the training bundle:
 - `JailbreakBench`
 - `PromptShield`
 - `rogue-security/prompt-injections-benchmark`
@@ -71,8 +70,8 @@ Results:
 
 How to read those checks:
 - `JailbreakBench` is not a clean apples-to-apples prompt-injection benchmark for the current guardrail bundle; many deny-labeled rows are broad harmful-task prompts rather than instruction-override or agent-boundary attacks
-- `PromptShield` and `rogue-security/prompt-injections-benchmark` are closer to the intended task and show the current frozen bundle is conservative: very low false positives, much weaker recall on broader prompt-injection variants than on the public pre-`PINT` development corpora
-- these are useful external stress tests, not headline replacement metrics for the current pre-`PINT` workflow
+- `PromptShield` and `rogue-security/prompt-injections-benchmark` are closer to the intended task and show the current frozen bundle is conservative: very low false positives, much weaker recall on broader prompt-injection variants than on the held-out development corpora
+- these are useful external stress tests, not headline replacement metrics for the current development workflow
 
 ## What These Numbers Mean
 
@@ -87,7 +86,7 @@ Important caveats:
 In practice:
 - `instruction_boundary` is the cleanest target because several public prompt-injection corpora align naturally with it
 - `exfiltration` and `tool_use` are still honest held-out results, but they depend more on the current observer contract and target projection config
-- that is exactly why `PINT` remains the untouched final proof benchmark instead of being mixed into development
+- that is exactly why the post-freeze external checks stay separate from the development lane instead of being mixed into training or tuning
 
 ## Reproduce
 
@@ -127,30 +126,14 @@ For the full frozen-bundle refresh flow, use:
 cargo xtask refresh-benchmarks
 ```
 
-For the proof-only `PINT` scoring path after the bundle is frozen:
-
-```bash
-logicpearl benchmark adapt \
-  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output /tmp/pint_cases.jsonl
-
-logicpearl benchmark run \
-  benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
-  /tmp/pint_cases.jsonl \
-  --collapse-routes \
-  --json
-```
-
 ## What This Proves
 
 These benchmark results show that the current public observer-plus-discovery path can:
 - learn compact deterministic guardrail artifacts from public corpora
-- preserve strong held-out performance on unseen non-`PINT` development traffic
+- preserve strong held-out performance on unseen development traffic
 - keep the learned rules inspectable instead of collapsing them into opaque classifiers
 
 They do not yet prove:
-- final proof-only benchmark performance
 - coverage across every agent-security scenario
 - performance on the access-gated `MT-AgentRisk` corpus
 - that every current target label is a native gold annotation from the source datasets themselves

@@ -26,6 +26,7 @@ demos/**/data/
 benchmarks/**/output/
 examples/getting_started/output/
 examples/getting_started/output-*/
+examples/pipelines/generated/*.pipeline.json
 
 # Local downloaded / processed corpora
 corpora/

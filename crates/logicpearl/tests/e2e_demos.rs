@@ -99,6 +99,7 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
             .arg(&traces_path)
             .arg("--output-dir")
             .arg(&output_path)
+            .arg("--compile")
             .arg("--json")
             .output()
             .expect("logicpearl build should run");

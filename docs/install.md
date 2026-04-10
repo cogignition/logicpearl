@@ -4,6 +4,7 @@ The easiest way to get started is the prebuilt installer. It installs:
 
 - `logicpearl`
 - a bundled `z3`
+- verifies the downloaded release archive against its published SHA-256 checksum
 
 That is the normal public CLI path. You do not need to install Z3 separately first.
 
@@ -30,6 +31,8 @@ The installer currently resolves these release bundles:
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 
+Prebuilt Windows and Linux arm64 bundles are not published yet. If your machine is outside the set above, use the source-install path below.
+
 ## Install A Specific Version
 
 ```bash
@@ -47,6 +50,8 @@ curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/instal
 ## Manual Bundle Install
 
 If you prefer not to pipe the installer into `sh`, download the release bundle directly from GitHub Releases and extract it yourself.
+
+Each release bundle also ships with a `.sha256` sidecar file. Verify the archive before extraction if you install it manually.
 
 Each bundle contains:
 

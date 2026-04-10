@@ -10,7 +10,6 @@ Current state:
 - `openagentsafety-s26.yaml` and `mcpmark.yaml` are built-in adapter profiles too
 - `safearena-safe.yaml` and `safearena-harm.yaml` are built-in adapter profiles too
 - `jailbreakbench.yaml`, `promptshield.yaml`, and `rogue-security-prompt-injections.yaml` are built-in adapter profiles too
-- `pint.yaml` is also loaded by the Rust benchmark crate
 - all current built-in benchmark adapters are now profile-backed
 
 Use YAML for profile authoring:
@@ -108,23 +107,23 @@ output:
     document_instructions_present: false
 ```
 
-Boolean-labeled YAML example:
+Boolean-labeled profile example:
 
 ```yaml
 version: "1"
-id: "pint"
-description: "Adapt PINT YAML rows into allow or deny benchmark cases for proof-only scoring."
-source_format: "PINT YAML list with text/category/label"
+id: "promptshield"
+description: "Adapt normalized PromptShield rows into allow or deny benchmark cases."
+source_format: "Normalized PromptShield JSON array with prompt/label rows"
 default_route: "mixed"
 
 source:
-  parser: "yaml-object-rows"
-  prompt_fields: ["text"]
-  category_fields: ["category"]
+  parser: "json-object-rows"
+  prompt_fields: ["prompt", "text"]
+  category_fields: ["category", "source"]
   label_fields: ["label"]
 
 output:
-  id_prefix: "pint"
+  id_prefix: "promptshield"
   boolean_label_routes:
     true_route: "deny"
     false_route: "allow"

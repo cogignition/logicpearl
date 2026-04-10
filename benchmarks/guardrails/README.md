@@ -13,15 +13,18 @@ Dataset source links, expected local staging paths, and the checked-in split/bui
 ## Dataset Roles
 
 Development corpora:
-- `Salad-Data`
+- `Salad-Data` (`base_set`, `attack_enhanced_set`)
+- `ALERT` (`ALERT`, `ALERT_Adv`)
 - `ChatGPT-Jailbreak-Prompts`
-- `Vigil: LLM Jailbreak embeddings`
-- `ALERT Adverserial`
+- `OpenAgentSafety S26`
+- `MCPMark`
+- `SafeArena` (`safe`, `harm`)
+- `Vigil`
 - `NOETI ToxicQAFinal`
 - `SQuAD 2.0`
 
-Proof-only corpus:
-- `PINT`
+Access-gated corpus outside the default public lane:
+- `MT-AgentRisk`
 
 ## Directory Shape
 
@@ -38,8 +41,6 @@ benchmarks/guardrails/
       prompt_injection/
       moderation/
       benign_negative/
-    proof/
-      pint/
   examples/
     agent_guardrail/
 ```
@@ -50,16 +51,14 @@ benchmarks/guardrails/
 - `moderation/`: harmful-content pressure that should still map to explicit route policy
 - `benign_negative/`: false-positive control traffic that should mostly pass
 
-## Why `PINT` Lives In `proof/`
+## Post-Freeze External Checks
 
-`PINT` is the final proof set, not a tuning set.
+After the guardrail bundle is frozen, run separate external checks instead of recycling those corpora back into development.
 
-Use the six public corpora above to build and calibrate the LogicPearl pipeline. Then run `PINT` once you want a defensible headline result.
-
-Proof design:
-- [proof/pint/README.md](./proof/pint/README.md)
-- [proof/pint/pint_case_schema.json](./proof/pint/pint_case_schema.json)
-- [proof/pint/pint_adapter_spec.json](./proof/pint/pint_adapter_spec.json)
+Recommended open external checks:
+- `JailbreakBench`
+- `PromptShield`
+- `rogue-security/prompt-injections-benchmark`
 
 Non-proof preparation:
 - [prep/README.md](./prep/README.md)

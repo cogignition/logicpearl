@@ -103,6 +103,8 @@ pub struct ExactSelectionReport {
     #[serde(default)]
     pub adopted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
 

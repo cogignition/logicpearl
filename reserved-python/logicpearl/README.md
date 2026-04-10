@@ -18,7 +18,7 @@ The intended split is still:
 ```python
 from logicpearl import LogicPearlEngine
 
-engine = LogicPearlEngine.from_path("examples/pipelines/observer_membership_verify/pipeline.json")
+engine = LogicPearlEngine.from_artifact_path("/path/to/logicpearl-bundle")
 result = engine.run({
     "age": 34,
     "member": True,
@@ -28,6 +28,9 @@ result = engine.run({
 print(result["mode"])
 print(result["kind"])
 ```
+
+For pipeline execution, use `LogicPearlEngine.from_pipeline_path("/path/to/pipeline.json")`.
+The installed Python package does not bundle the repository examples under `examples/`.
 
 ## Scope
 

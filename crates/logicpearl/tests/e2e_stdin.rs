@@ -42,7 +42,6 @@ fn run_accepts_stdin_and_dash_input() {
     let build_output = Command::new(cli_bin)
         .arg("build")
         .arg(&sample_csv)
-        .arg("--bundle-only")
         .arg("--output-dir")
         .arg(&artifact_dir)
         .output()

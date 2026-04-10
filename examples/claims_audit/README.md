@@ -11,11 +11,11 @@ Contents:
 What this example proves:
 - LogicPearl can be applied to a bounded claims-style decision surface
 - oracle behavior can be generated reproducibly from a local script
-- public example material can stay separate from private reconstruction workflows
+- the example stays small, synthetic, and reproducible
 
 What this example does not include:
-- the private reverse-engineering harness
-- private audit workflows
+- production claims integrations
+- customer data
 - customer or domain deployment logic
 
 If you want a public-first walkthrough, prefer the getting-started example and the small demo datasets under [examples/demos](../demos).

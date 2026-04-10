@@ -6,15 +6,13 @@
 
 **LogicPearl** turns hard software behavior into deterministic deployable artifacts called `pearls`.
 
-If your system makes consequential decisions about policy, eligibility, trust, compliance, claims, approvals, or risk, LogicPearl is a different execution model: messy input stays at the edge, observers normalize it, pearls run deterministic logic, and the result becomes something you can inspect, diff, validate, compile, and deploy.
+If your system makes consequential decisions about policy, eligibility, trust, compliance, claims, approvals, or risk, LogicPearl gives you a way to move that logic into a bounded artifact: messy input stays at the edge, observers normalize it, pearls run deterministic logic, and the result becomes something you can inspect, diff, validate, compile, and deploy.
 
-Imagine a giant codebase full of decision logic accumulated over ten years: thousands of conditionals, spread across handlers, services, scripts, and edge cases nobody wants to touch. The LogicPearl claim is that a bounded pearl can replace that logic slice with something smaller, faster, easier to understand, and parity-checkable against the old behavior. When that slice hits 100% measured parity on the real fixtures and decision surface you care about, it starts to feel like magic because it is effectively acting as a compact deterministic replacement for the old maze.
+Many systems accumulate decision logic across handlers, services, scripts, and one-off edge cases. LogicPearl is built to extract a slice of that behavior into something smaller, testable, easier to understand, and parity-checkable against the existing path.
 
-LogicPearl does not require AI. The artifact model stands on its own. But it becomes much more powerful with AI: AI can help extract messy inputs, build observers, synthesize artifacts, and call pearls as deterministic tools inside larger workflows.
+LogicPearl does not require AI. The artifact model stands on its own. AI can help extract messy inputs, build observers, synthesize artifacts, and call pearls inside larger workflows, but the runtime contract remains deterministic.
 
-And there is a practical reason this matters: if you are spending a fortune on tokens to repeatedly reconstruct the same logic, something has gone wrong. LogicPearl gives you another path. Use AI to find, learn, extract, or synthesize the behavior once, then distill that behavior into deterministic pearls you can run cheaply, validate exactly, and stop paying to rediscover on every call.
-
-Software should run as artifact, not fog.
+The goal is straightforward: learn or author an important behavior slice once, distill it into a pearl, then run and validate that artifact directly instead of rebuilding the same logic on every call.
 
 <p align="center">
   <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a.svg?style=flat-square"></a>
@@ -25,7 +23,7 @@ Software should run as artifact, not fog.
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
 Quick proof path with the checked-in example files:
 
@@ -161,14 +159,21 @@ logicpearl build examples/getting_started/decision_traces.csv --output-dir examp
 What you should see:
 - a named artifact directory at `examples/getting_started/output`
 - one artifact bundle you can treat as the entrypoint for CLI usage
-- `artifact.json`, `pearl.ir.json`, `build_report.json`, a host-native binary, a `.wasm` module, and a `.wasm.meta.json` metadata file inside it
+- `artifact.json`, `pearl.ir.json`, and `build_report.json`
 
 For end users, the important rule is:
 - the bundle directory or `artifact.json` is the logical artifact
-- the native binary and wasm module are deployable runtimes inside that bundle
-- the `.wasm.meta.json` file is companion metadata, not a second decision engine
+- native binaries and wasm modules are optional deployable derivatives
+- `logicpearl run` executes the artifact bundle directly
 
-The wasm artifact is intentionally split:
+If you want deployable binaries, compile them explicitly after the bundle exists:
+
+```bash
+logicpearl compile examples/getting_started/output
+logicpearl compile examples/getting_started/output --target wasm32-unknown-unknown
+```
+
+The wasm artifact is intentionally split when compiled:
 - `*.pearl.wasm` is a tiny compiled evaluator
 - `*.pearl.wasm.meta.json` is the wasm metadata file with bit-to-rule metadata, messages, and counterfactual hints
 
@@ -312,9 +317,10 @@ cat examples/getting_started/new_input.json | logicpearl run examples/getting_st
 
 Both `logicpearl run` and `logicpearl pipeline run` also accept omitted input paths and will read JSON from stdin in that case.
 
-Compile it into a standalone native executable:
+Compile it into a standalone native executable, then run the compiled binary:
 
 ```bash
+logicpearl compile examples/getting_started/output
 ./examples/getting_started/output/decision_traces.pearl examples/getting_started/new_input.json
 ```
 
@@ -542,7 +548,7 @@ Additional guides:
 - compile small pearls to WASM
 - reproduce the auth demo
 - run a smaller OPA / Rego parity example
-- structure guardrail benchmarks with clean `train / dev / proof` separation
+- structure guardrail benchmarks with clean `train / dev / post-freeze external evaluation` separation
 - see how observer specs and feature contracts connect raw inputs to pearls
 - inspect the generated artifact chain instead of treating the pearl as a black box
 
@@ -552,7 +558,7 @@ The benchmark summary lives in [BENCHMARKS.md](./BENCHMARKS.md).
 
 That file covers:
 - the current guardrail corpus story
-- held-out non-`PINT` results
+- held-out development results
 - what the current public benchmark numbers do and do not prove
 
 The separate OPA / Rego parity example lives in [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md).
@@ -620,8 +626,8 @@ The public demos write real artifacts you can inspect:
 - `artifact.json`
 - `pearl.ir.json`
 - `build_report.json`
-- compiled native binaries
-- compiled `.wasm` modules
+- optional compiled native binaries when you run `logicpearl compile`
+- optional compiled `.wasm` modules when you compile for `wasm32-unknown-unknown`
 
 The core promise is simple:
 - you should be able to build, run, inspect, and validate pearls yourself

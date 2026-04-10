@@ -185,7 +185,14 @@ def summarize_build(build: dict[str, Any]) -> dict[str, Any]:
 
 def build_case(csv_path: Path, output_dir: Path) -> dict[str, Any]:
     return run_json(
-        logicpearl_cmd("build", str(csv_path), "--output-dir", str(output_dir), "--json")
+        logicpearl_cmd(
+            "build",
+            str(csv_path),
+            "--output-dir",
+            str(output_dir),
+            "--compile",
+            "--json",
+        )
     )
 
 

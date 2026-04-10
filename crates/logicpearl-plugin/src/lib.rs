@@ -1,9 +1,14 @@
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -243,6 +248,11 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
             .collect();
         command.args(&args);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -258,13 +268,33 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
     stdin.write_all(b"\n")?;
     drop(child.stdin.take());
 
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout_handle = spawn_pipe_reader(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| LogicPearlError::message("failed to open plugin stdout"))?,
+        MAX_PLUGIN_STDOUT_BYTES,
+    );
+    let stderr_handle = spawn_pipe_reader(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| LogicPearlError::message("failed to open plugin stderr"))?,
+        MAX_PLUGIN_STDERR_BYTES,
+    );
+
+    let (status, timed_out) = wait_for_plugin_exit(manifest, &mut child)?;
+    let stdout = join_pipe_reader(manifest, "stdout", stdout_handle)?;
+    let stderr = String::from_utf8_lossy(&join_pipe_reader(manifest, "stderr", stderr_handle)?)
+        .trim()
+        .to_string();
+
+    if timed_out {
+        let timeout_ms = manifest.timeout_ms.unwrap_or_default();
         return Err(LogicPearlError::message(format!(
-            "plugin {} exited with status {}{}",
+            "plugin {} exceeded timeout_ms={} and was terminated{}",
             manifest.name,
-            output.status,
+            timeout_ms,
             if stderr.is_empty() {
                 String::new()
             } else {
@@ -273,12 +303,133 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
         )));
     }
 
-    String::from_utf8(output.stdout).map_err(|err| {
+    if !status.success() {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} exited with status {}{}",
+            manifest.name,
+            status,
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        )));
+    }
+
+    String::from_utf8(stdout).map_err(|err| {
         LogicPearlError::message(format!(
             "plugin {} returned invalid UTF-8: {}",
             manifest.name, err
         ))
     })
+}
+
+fn spawn_pipe_reader<R: Read + Send + 'static>(
+    reader: R,
+    max_bytes: usize,
+) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    spawn_limited_pipe_reader(reader, max_bytes)
+}
+
+fn spawn_limited_pipe_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    max_bytes: usize,
+) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    thread::spawn(move || read_limited(&mut reader, max_bytes))
+}
+
+fn read_limited(reader: &mut impl Read, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut exceeded_limit = false;
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            if exceeded_limit {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("plugin output exceeded {max_bytes} bytes"),
+                ));
+            }
+            return Ok(buffer);
+        }
+        if exceeded_limit {
+            continue;
+        }
+        let remaining = max_bytes.saturating_sub(buffer.len());
+        if read > remaining {
+            buffer.extend_from_slice(&chunk[..remaining]);
+            exceeded_limit = true;
+        } else {
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+    }
+}
+
+fn join_pipe_reader(
+    manifest: &PluginManifest,
+    stream: &str,
+    handle: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>> {
+    let result = handle.join().map_err(|_| {
+        LogicPearlError::message(format!(
+            "plugin {} {} reader thread panicked",
+            manifest.name, stream
+        ))
+    })?;
+    result.map_err(|err| {
+        LogicPearlError::message(format!(
+            "failed to read plugin {} {}: {}",
+            manifest.name, stream, err
+        ))
+    })
+}
+
+fn wait_for_plugin_exit(
+    manifest: &PluginManifest,
+    child: &mut Child,
+) -> Result<(ExitStatus, bool)> {
+    if let Some(timeout_ms) = manifest.timeout_ms {
+        let timeout = Duration::from_millis(timeout_ms);
+        let started_at = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok((status, false));
+            }
+            if started_at.elapsed() >= timeout {
+                terminate_plugin_process(child);
+                let status = child.wait()?;
+                return Ok((status, true));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    Ok((child.wait()?, false))
+}
+
+#[cfg(unix)]
+fn terminate_plugin_process(child: &mut Child) {
+    let process_group = format!("-{}", child.id());
+    let _ = Command::new("kill")
+        .args(["-TERM", &process_group])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    thread::sleep(Duration::from_millis(50));
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = Command::new("kill")
+            .args(["-KILL", &process_group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_plugin_process(child: &mut Child) {
+    let _ = child.kill();
 }
 
 fn parse_plugin_response(manifest: &PluginManifest, stdout: &str) -> Result<PluginResponse> {
@@ -638,8 +789,9 @@ fn resolve_entrypoint_segment(
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginManifest, PluginStage};
+    use super::{run_plugin, PluginManifest, PluginRequest, PluginStage};
     use serde_json::json;
+    use tempfile::tempdir;
 
     #[test]
     fn validates_basic_manifest() {
@@ -740,5 +892,118 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         assert!(super::validate_ok_plugin_response(&manifest, &bad_response).is_err());
+    }
+
+    #[cfg(unix)]
+    fn write_plugin_script(script_body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("plugin.sh");
+        std::fs::write(&path, script_body).expect("write script");
+        let mut permissions = std::fs::metadata(&path).expect("stat script").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).expect("chmod script");
+        (dir, path)
+    }
+
+    #[cfg(unix)]
+    fn test_request() -> PluginRequest {
+        PluginRequest {
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            payload: super::build_canonical_payload(
+                &PluginStage::Observer,
+                json!({"value": 1}),
+                None,
+            ),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enforces_plugin_timeout_when_declared() {
+        let (dir, _script_path) =
+            write_plugin_script("#!/bin/sh\nsleep 1\nprintf '{\"ok\":true}\\n'\n");
+        let manifest = PluginManifest {
+            name: "slow".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: Some(50),
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let error = run_plugin(&manifest, &test_request()).expect_err("plugin should time out");
+        let message = error.to_string();
+        assert!(message.contains("exceeded timeout_ms=50"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_long_running_plugin_when_timeout_is_unset() {
+        let (dir, _script_path) = write_plugin_script(
+            "#!/bin/sh\nsleep 0.1\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "slow".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let response = run_plugin(&manifest, &test_request()).expect("plugin should succeed");
+        assert!(response.ok);
+        assert_eq!(response.extra.get("features"), Some(&json!({"value": 1})));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_terminates_descendants_that_keep_output_pipes_open() {
+        let (dir, _script_path) = write_plugin_script(
+            "#!/bin/sh\n(sh -c 'sleep 5') &\nsleep 5\nprintf '{\"ok\":true}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "tree".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: Some(50),
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let started_at = std::time::Instant::now();
+        let error = run_plugin(&manifest, &test_request()).expect_err("plugin should time out");
+        assert!(
+            started_at.elapsed() < std::time::Duration::from_secs(2),
+            "timeout should not wait for descendant sleep process"
+        );
+        let message = error.to_string();
+        assert!(message.contains("exceeded timeout_ms=50"), "{message}");
+    }
+
+    #[test]
+    fn limited_reader_rejects_outputs_above_cap() {
+        let mut reader = std::io::Cursor::new(vec![b'x'; 5]);
+        let error = super::read_limited(&mut reader, 4).expect_err("reader should reject overflow");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(reader.position(), 5, "reader should drain capped streams");
     }
 }

@@ -25,28 +25,54 @@
           "id": "prompt_injection",
           "datasets": [
             {
-              "name": "Salad-Data",
+              "name": "Salad-Data base_set",
               "type": "prompt_injection",
-              "prompts": 21318,
-              "role": "broad training corpus"
+              "role": "broad prompt-injection corpus"
+            },
+            {
+              "name": "Salad-Data attack_enhanced_set",
+              "type": "prompt_injection",
+              "role": "attack-enhanced prompt-injection corpus"
             },
             {
               "name": "ChatGPT-Jailbreak-Prompts",
               "type": "prompt_injection",
-              "prompts": 79,
               "role": "small jailbreak set"
             },
             {
-              "name": "Vigil: LLM Jailbreak embeddings",
+              "name": "OpenAgentSafety S26",
               "type": "prompt_injection",
-              "prompts": 104,
+              "role": "agent-safety prompt set"
+            },
+            {
+              "name": "MCPMark",
+              "type": "prompt_injection",
+              "role": "tool and agent-task pressure set"
+            },
+            {
+              "name": "SafeArena safe",
+              "type": "negative",
+              "role": "benign agent-task control set"
+            },
+            {
+              "name": "SafeArena harm",
+              "type": "prompt_injection",
+              "role": "harmful prompt pressure set"
+            },
+            {
+              "name": "Vigil",
+              "type": "prompt_injection",
               "role": "scanner-oriented jailbreak examples"
             },
             {
-              "name": "ALERT Adverserial",
+              "name": "ALERT",
               "type": "prompt_injection",
-              "prompts": 45731,
               "role": "large harmful-instruction pressure set"
+            },
+            {
+              "name": "ALERT_Adv",
+              "type": "prompt_injection",
+              "role": "adversarial alert variant"
             }
           ]
         },
@@ -56,7 +82,6 @@
             {
               "name": "NOETI ToxicQAFinal",
               "type": "content_moderation",
-              "prompts": 6866,
               "role": "harmful-content routing pressure"
             }
           ]
@@ -67,7 +92,6 @@
             {
               "name": "SQuAD 2.0",
               "type": "negative",
-              "prompts": 142192,
               "role": "false-positive control set"
             }
           ]
@@ -79,7 +103,7 @@
       "groups": [
         {
           "id": "prompt_injection",
-          "source": "held-out slices from the six public corpora plus internal synthetic hard negatives"
+          "source": "held-out slices from the public development corpora"
         },
         {
           "id": "moderation",
@@ -91,16 +115,26 @@
         }
       ]
     },
-    "proof": {
-      "purpose": "Final untouched proof set used only for external headline evaluation.",
+    "external_checks": {
+      "purpose": "Open post-freeze checks kept separate from development and tuning.",
       "groups": [
         {
-          "id": "pint",
+          "id": "open_external_benchmarks",
           "datasets": [
             {
-              "name": "PINT",
+              "name": "JailbreakBench",
               "type": "prompt_injection",
-              "role": "proof_only"
+              "role": "post_freeze_external_check"
+            },
+            {
+              "name": "PromptShield",
+              "type": "prompt_injection",
+              "role": "post_freeze_external_check"
+            },
+            {
+              "name": "rogue-security/prompt-injections-benchmark",
+              "type": "prompt_injection",
+              "role": "post_freeze_external_check"
             }
           ]
         }

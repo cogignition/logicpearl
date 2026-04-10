@@ -21,6 +21,7 @@ use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
+use std::time::Instant;
 
 use super::canonicalize::{
     canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules,
@@ -828,11 +829,13 @@ fn select_candidate_rules_exact(
     allowed_indices: &[usize],
     candidates: &[CandidateRule],
 ) -> Result<(Option<Vec<CandidateRule>>, ExactSelectionReport)> {
+    let started = Instant::now();
     let mut report = ExactSelectionReport {
         shortlisted_candidates: candidates.len(),
         ..Default::default()
     };
     if candidates.is_empty() {
+        report.duration_ms = Some(started.elapsed().as_millis() as u64);
         return Ok((Some(Vec::new()), report));
     }
     let denied_matches: Vec<Vec<usize>> = denied_indices
@@ -865,6 +868,7 @@ fn select_candidate_rules_exact(
             select_candidate_rules_bruteforce(candidates, &denied_matches, &allowed_matches);
         report.backend = Some(ExactSelectionBackend::BruteForce);
         report.selected_candidates = selected.len();
+        report.duration_ms = Some(started.elapsed().as_millis() as u64);
         return Ok((Some(selected), report));
     }
 
@@ -883,6 +887,7 @@ fn select_candidate_rules_exact(
                     report.detail = Some(format!(
                         "falling back to greedy after SMT exact selection failed: {err}"
                     ));
+                    report.duration_ms = Some(started.elapsed().as_millis() as u64);
                     return Ok((None, report));
                 }
             }
@@ -894,12 +899,14 @@ fn select_candidate_rules_exact(
                     report.detail = Some(format!(
                         "falling back to greedy after MIP exact selection failed: {err}"
                     ));
+                    report.duration_ms = Some(started.elapsed().as_millis() as u64);
                     return Ok((None, report));
                 }
             }
         }
     };
     report.selected_candidates = selected_indexes.len();
+    report.duration_ms = Some(started.elapsed().as_millis() as u64);
     Ok((
         Some(
             selected_indexes

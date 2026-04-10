@@ -26,8 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-benchmark", required=True, help="Raw benchmark input file.")
     parser.add_argument(
         "--profile",
-        default="pint",
-        help="Benchmark adapter profile for the raw benchmark input. Defaults to `pint`.",
+        default="auto",
+        help="Benchmark adapter profile for the raw benchmark input. Defaults to `auto`.",
     )
     parser.add_argument(
         "--input-format",

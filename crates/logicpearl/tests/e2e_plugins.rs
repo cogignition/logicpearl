@@ -139,7 +139,6 @@ fn build_report_records_plugin_provenance() {
         .arg(&enricher_manifest)
         .arg("--source-ref")
         .arg("document_id=decision_traces_sample")
-        .arg("--bundle-only")
         .arg("--output-dir")
         .arg(&artifact_dir)
         .arg("--json")

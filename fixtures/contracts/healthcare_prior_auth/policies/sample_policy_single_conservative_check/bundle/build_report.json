@@ -18,12 +18,12 @@
   "provenance": {
     "decision_trace_source": {
       "kind": "trace_plugin",
-      "value": "/Users/missingno/Documents/LogicPearl/healthcare_demo/plugins/healthcare_trace_source/manifest.json"
+      "value": "fixture-source:healthcare_trace_source/manifest.json"
     },
     "trace_plugin": {
       "name": "healthcare-bcbsma-trace-source",
       "stage": "trace_source",
-      "manifest_path": "/Users/missingno/Documents/LogicPearl/healthcare_demo/plugins/healthcare_trace_source/manifest.json",
+      "manifest_path": "fixture-source:healthcare_trace_source/manifest.json",
       "manifest_sha256": "df0d3948346c610e061969bae7a6bc29b2a9e6713fda0ab64e985c2877f8500a",
       "input": {
         "kind": "inline",
@@ -36,10 +36,10 @@
     "source_references": {}
   },
   "output_files": {
-    "artifact_dir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn",
-    "artifact_manifest": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn/artifact.json",
-    "pearl_ir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn/pearl.ir.json",
-    "build_report": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn/build_report.json",
+    "artifact_dir": "bundle",
+    "artifact_manifest": "bundle/artifact.json",
+    "pearl_ir": "bundle/pearl.ir.json",
+    "build_report": "bundle/build_report.json",
     "native_binary": null,
     "wasm_module": null,
     "wasm_metadata": null

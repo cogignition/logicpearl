@@ -34,7 +34,7 @@ The checked-in Python scripts remain as supplementary reference tooling, but the
 
 ## Development Corpora
 
-These are the public corpora used for development and frozen holdouts before any final proof-only run.
+These are the public corpora and staged variants used for development and frozen holdouts before any final proof-only run.
 
 | Dataset | Source | Expected local file |
 |---|---|---|
@@ -60,7 +60,6 @@ These are useful as external benchmark checks for the frozen guardrail bundle.
 | `JailbreakBench` | https://github.com/JailbreakBench/jailbreakbench | `$LOGICPEARL_DATASETS/jailbreakbench/jbb_behaviors.json` |
 | `PromptShield` | https://huggingface.co/datasets/hendzh/PromptShield | `$LOGICPEARL_DATASETS/promptshield/promptshield.json` |
 | `rogue-security/prompt-injections-benchmark` | https://huggingface.co/datasets/rogue-security/prompt-injections-benchmark | `$LOGICPEARL_DATASETS/rogue_security/prompt_injections_benchmark.json` |
-| `MT-AgentRisk` | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo` |
 
 ## Access-Gated Corpora
 
@@ -68,11 +67,9 @@ These are relevant to the same workflow but may require explicit access approval
 
 | Dataset | Source | Expected local file |
 |---|---|---|
-| `PINT` | https://github.com/lakeraai/pint-benchmark | `$LOGICPEARL_DATASETS/pint/PINT.yaml` |
 | `MT-AgentRisk` full repo | https://huggingface.co/datasets/CHATS-Lab/MT-AgentRisk | `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo` |
 
-`PINT` is not publicly downloadable in full from the benchmark repo. The public notebook says access must be requested from Lakera.
-`MT-AgentRisk` also requires Hugging Face access approval; the guardrail scripts auto-include it when the full repo is staged locally and skip it otherwise.
+`MT-AgentRisk` requires Hugging Face access approval. The guardrail scripts can include it when the full repo is staged locally, but it is not part of the default public benchmark lane described in [BENCHMARKS.md](./BENCHMARKS.md).
 
 ## Freeze `dev` And `final_holdout`
 
@@ -138,17 +135,17 @@ cargo xtask guardrails-eval \
   --output-dir /tmp/guardrails_bundle/open_benchmarks_sample200
 ```
 
-### Run a raw benchmark file such as `PINT`
+### Run a raw benchmark file with a public adapter such as `PromptShield`
 
 ```bash
 logicpearl benchmark adapt \
-  "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
-  --profile pint \
-  --output /tmp/pint_cases.jsonl
+  "$LOGICPEARL_DATASETS/promptshield/promptshield.json" \
+  --profile promptshield \
+  --output /tmp/promptshield_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
-  /tmp/pint_cases.jsonl \
+  /tmp/promptshield_cases.jsonl \
   --collapse-routes \
   --json
 ```

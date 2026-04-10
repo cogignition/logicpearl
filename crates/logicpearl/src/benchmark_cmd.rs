@@ -608,9 +608,6 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
         BenchmarkAdapterProfile::MtAgentRisk => {
             run_benchmark_adapt_mt_agentrisk(&args.raw_dataset, &args.output, &defaults, args.json)
         }
-        BenchmarkAdapterProfile::Pint => {
-            run_benchmark_adapt_pint(&args.raw_dataset, &args.output, &defaults, args.json)
-        }
     }
 }
 
@@ -905,45 +902,6 @@ pub(crate) fn run_benchmark_adapt_squad(
             "{} {}",
             "Adapted".bold().bright_green(),
             "SQuAD dataset".bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), output.display());
-    }
-    Ok(())
-}
-
-pub(crate) fn run_benchmark_adapt_pint(
-    raw_dataset: &Path,
-    output: &Path,
-    defaults: &BenchmarkAdaptDefaults,
-    json: bool,
-) -> Result<()> {
-    let raw_yaml = fs::read_to_string(raw_dataset)
-        .into_diagnostic()
-        .wrap_err("could not read raw PINT YAML")?;
-    let cases = adapt_pint_dataset(&raw_yaml, defaults)
-        .into_diagnostic()
-        .wrap_err("failed to adapt PINT benchmark dataset")?;
-    let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, output)
-        .into_diagnostic()
-        .wrap_err("failed to write adapted PINT JSONL")?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "source_benchmark": "pint",
-                "rows": rows,
-                "output": output.display().to_string()
-            }))
-            .into_diagnostic()?
-        );
-    } else {
-        println!(
-            "{} {}",
-            "Adapted".bold().bright_green(),
-            "PINT dataset".bold()
         );
         println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), output.display());

@@ -1,5 +1,5 @@
 {
-  "source_csv": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/clinical_denial/route.current.csv",
+  "source_csv": "fixture-source:revenue_demo/traces/clinical_denial/route.current.csv",
   "gate_id": "revenue_route_clinical_denial",
   "rows": 4,
   "label_column": "allowed",
@@ -20,15 +20,15 @@
   "provenance": {
     "decision_trace_source": {
       "kind": "decision_traces_path",
-      "value": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/clinical_denial/route.current.csv"
+      "value": "fixture-source:revenue_demo/traces/clinical_denial/route.current.csv"
     },
     "source_references": {}
   },
   "output_files": {
-    "artifact_dir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/clinical_denial/route",
-    "artifact_manifest": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/clinical_denial/route/artifact.json",
-    "pearl_ir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/clinical_denial/route/pearl.ir.json",
-    "build_report": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/clinical_denial/route/build_report.json",
+    "artifact_dir": "bundle",
+    "artifact_manifest": "bundle/artifact.json",
+    "pearl_ir": "bundle/pearl.ir.json",
+    "build_report": "bundle/build_report.json",
     "native_binary": null,
     "wasm_module": null,
     "wasm_metadata": null

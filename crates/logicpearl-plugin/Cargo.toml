@@ -11,3 +11,6 @@ description = "Plugin manifest and stage contracts for LogicPearl integrations."
 logicpearl-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
