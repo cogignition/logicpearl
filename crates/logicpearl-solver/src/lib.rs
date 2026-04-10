@@ -10,8 +10,8 @@ pub use parse::{parse_sat_status, parse_selected_bool_indexes, parse_value_bindi
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,15 +123,16 @@ fn run_solver_script(
     needs_model: bool,
 ) -> Result<RawSolverOutput> {
     let backend_used = backend::resolve_backend(settings)?;
-    let script_path = std::env::temp_dir().join(format!(
-        "logicpearl-solver-{}-{}.smt2",
-        std::process::id(),
-        unique_suffix()
-    ));
-    fs::write(&script_path, script)?;
+    let mut temp_script = NamedTempFile::with_suffix(".smt2").map_err(|err| {
+        LogicPearlError::message(format!("failed to create temp solver script: {err}"))
+    })?;
+    temp_script.write_all(script.as_bytes()).map_err(|err| {
+        LogicPearlError::message(format!("failed to write temp solver script: {err}"))
+    })?;
+    let script_path = temp_script.path();
 
     let output =
-        backend::command_for_backend(backend_used, &script_path, settings.timeout_ms, needs_model)
+        backend::command_for_backend(backend_used, script_path, settings.timeout_ms, needs_model)
             .output()
             .map_err(|err| {
                 LogicPearlError::message(format!(
@@ -139,7 +140,6 @@ fn run_solver_script(
                     backend_used.as_str()
                 ))
             })?;
-    let _ = fs::remove_file(&script_path);
 
     let stdout = String::from_utf8(output.stdout).map_err(|err| {
         LogicPearlError::message(format!("solver stdout was not valid UTF-8: {err}"))
@@ -169,13 +169,6 @@ fn stdout_tail(stdout: &str) -> Option<String> {
     let tail = stdout.lines().skip(1).collect::<Vec<_>>().join("\n");
     let trimmed = tail.trim().to_string();
     (!trimmed.is_empty()).then_some(trimmed)
-}
-
-fn unique_suffix() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

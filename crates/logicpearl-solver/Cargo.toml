@@ -10,6 +10,4 @@ description = "Internal solver backend abstraction for LogicPearl search and ver
 [dependencies]
 logicpearl-core.workspace = true
 serde.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
