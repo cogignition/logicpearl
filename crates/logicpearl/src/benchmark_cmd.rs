@@ -266,6 +266,7 @@ pub(crate) fn run_benchmark_learn(args: BenchmarkLearnArgs) -> Result<()> {
         args.observer_profile.clone(),
         args.observer_artifact.clone(),
         args.plugin_manifest.clone(),
+        plugin_execution_policy(&args.plugin_execution),
     )?;
     let observed_rows = observe_benchmark_cases(&args.dataset_jsonl, &observer, &observed_path)?;
     let trace_summary = emit_trace_tables(&observed_path, &args.config, &traces_dir)
@@ -365,6 +366,7 @@ pub(crate) fn run_benchmark_observe(args: BenchmarkObserveArgs) -> Result<()> {
         args.observer_profile.clone(),
         args.observer_artifact.clone(),
         args.plugin_manifest.clone(),
+        plugin_execution_policy(&args.plugin_execution),
     )?;
     let rows = observe_benchmark_cases(&args.dataset_jsonl, &observer, &args.output)?;
 
@@ -917,8 +919,9 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         .pipeline_json
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
+    let policy = plugin_execution_policy(&args.plugin_execution);
     let prepared_pipeline = pipeline
-        .prepare(base_dir)
+        .prepare_with_plugin_policy(base_dir, policy)
         .into_diagnostic()
         .wrap_err("failed to prepare pipeline artifact")?;
 

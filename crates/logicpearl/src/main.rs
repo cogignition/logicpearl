@@ -31,7 +31,8 @@ use logicpearl_observer_synthesis::{
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{
-    run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginResponse, PluginStage,
+    run_plugin_batch_with_policy, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest,
+    PluginRequest, PluginResponse, PluginStage,
 };
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
@@ -119,6 +120,10 @@ For command-specific help, run:
   logicpearl <command> --help";
 
 const PIPELINE_AFTER_HELP: &str = "\
+Plugin trust:
+  Plugin-backed pipelines execute local programs declared by plugin manifests.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
 Examples:
   logicpearl pipeline validate examples/pipelines/authz/pipeline.json
   logicpearl pipeline inspect examples/pipelines/observer_membership_verify/pipeline.json
@@ -127,6 +132,10 @@ Examples:
   logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json";
 
 const BENCHMARK_AFTER_HELP: &str = "\
+Plugin trust:
+  Benchmark runs over plugin-backed pipelines execute local programs declared by plugin manifests.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
 Examples:
   logicpearl benchmark list-profiles
   logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --json
@@ -139,6 +148,10 @@ Examples:
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
 
 const OBSERVER_AFTER_HELP: &str = "\
+Plugin trust:
+  --plugin-manifest executes a local program declared by that plugin manifest.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
 Examples:
   logicpearl observer list
   logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json
@@ -149,6 +162,10 @@ Examples:
   logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
 
 const PLUGIN_AFTER_HELP: &str = "\
+Plugin trust:
+  plugin run and plugin validate with a smoke input execute the manifest entrypoint as local code.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
 Examples:
   logicpearl plugin validate examples/plugins/python_observer/manifest.json
   logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
@@ -182,6 +199,26 @@ Examples:
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
+}
+
+fn plugin_execution_policy(args: &PluginExecutionArgs) -> PluginExecutionPolicy {
+    PluginExecutionPolicy::default()
+        .with_allow_no_timeout(args.allow_no_timeout)
+        .with_allow_absolute_entrypoint(args.allow_absolute_plugin_entrypoint)
+        .with_allow_path_lookup(args.allow_plugin_path_lookup)
+}
+
+#[derive(Debug, Clone, Default, Args)]
+struct PluginExecutionArgs {
+    /// Allow trusted plugin manifests to disable timeouts with timeout_ms=0.
+    #[arg(long, help_heading = "Plugin Execution")]
+    allow_no_timeout: bool,
+    /// Allow trusted plugin manifests to use absolute executable or script paths.
+    #[arg(long, help_heading = "Plugin Execution")]
+    allow_absolute_plugin_entrypoint: bool,
+    /// Allow trusted plugin manifests to resolve arbitrary entrypoint programs from PATH.
+    #[arg(long, help_heading = "Plugin Execution")]
+    allow_plugin_path_lookup: bool,
 }
 
 fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Result<Value> {
@@ -484,7 +521,7 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -535,6 +572,8 @@ struct BuildArgs {
     /// Also compile native and Wasm deployables after writing the artifact bundle.
     #[arg(long, help_heading = "Advanced")]
     compile: bool,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -658,7 +697,7 @@ struct ConformanceSpecVerifyArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
+    after_help = "Plugin trust:\n  Plugin-backed benchmark pipelines execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExample:\n  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
 )]
 struct BenchmarkRunArgs {
     /// Pipeline definition to run for each benchmark case.
@@ -673,6 +712,8 @@ struct BenchmarkRunArgs {
     /// Optional path to write the full benchmark result JSON.
     #[arg(long)]
     output: Option<PathBuf>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -755,6 +796,8 @@ struct BenchmarkLearnArgs {
     /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
     #[arg(long)]
     plugin_manifest: Option<PathBuf>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Projection config that maps observed rows into discovery-ready trace tables.
     #[arg(long)]
     config: PathBuf,
@@ -783,6 +826,8 @@ struct BenchmarkObserveArgs {
     /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
     #[arg(long)]
     plugin_manifest: Option<PathBuf>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Output JSONL path with benchmark metadata plus observer features.
     #[arg(long)]
     output: PathBuf,
@@ -901,7 +946,7 @@ struct DiffArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl verify examples/getting_started/output --plugin-manifest examples/plugins/python_verify/manifest.json --json\n  logicpearl verify examples/getting_started/output/pearl.ir.json --plugin-manifest examples/plugins/python_verify/manifest.json --json"
+    after_help = "Plugin trust:\n  verify executes the local program declared by --plugin-manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl verify examples/getting_started/output --plugin-manifest examples/plugins/python_verify/manifest.json --json\n  logicpearl verify examples/getting_started/output/pearl.ir.json --plugin-manifest examples/plugins/python_verify/manifest.json --json"
 )]
 struct VerifyArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
@@ -913,6 +958,8 @@ struct VerifyArgs {
     /// Optional fixtures or cases payload passed through to the verifier.
     #[arg(long)]
     fixtures: Option<PathBuf>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -959,7 +1006,7 @@ struct PipelineInspectArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json - --json\n  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json --json"
+    after_help = "Plugin trust:\n  Plugin-backed pipelines execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json - --json\n  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json --json"
 )]
 struct PipelineRunArgs {
     /// Pipeline definition to run.
@@ -968,6 +1015,8 @@ struct PipelineRunArgs {
     /// Input JSON file, `-` for stdin, or omit to read stdin.
     #[arg(value_name = "INPUT")]
     input_json: Option<PathBuf>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -975,7 +1024,7 @@ struct PipelineRunArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
+    after_help = "Plugin trust:\n  Plugin-backed pipelines execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExample:\n  logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
 )]
 struct PipelineTraceArgs {
     /// Pipeline definition to trace.
@@ -984,6 +1033,8 @@ struct PipelineTraceArgs {
     /// Input JSON file to run through the pipeline.
     #[arg(value_name = "INPUT")]
     input_json: PathBuf,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1019,7 +1070,7 @@ enum PluginCommand {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+    after_help = "Plugin trust:\n  plugin validate executes the manifest entrypoint when a smoke input is provided.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
 )]
 struct PluginValidateArgs {
     /// Plugin manifest to validate.
@@ -1037,6 +1088,8 @@ struct PluginValidateArgs {
     /// Repeated key=value options to include in the canonical payload.
     #[arg(long = "option")]
     options: Vec<String>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1044,7 +1097,7 @@ struct PluginValidateArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json"
+    after_help = "Plugin trust:\n  plugin run executes the manifest entrypoint as local code.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json"
 )]
 struct PluginRunArgs {
     /// Plugin manifest to execute.
@@ -1062,6 +1115,8 @@ struct PluginRunArgs {
     /// Repeated key=value options to include in the canonical payload.
     #[arg(long = "option")]
     options: Vec<String>,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -1086,7 +1141,7 @@ struct ObserverValidateArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl observer run --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+    after_help = "Plugin trust:\n  --plugin-manifest executes a local program declared by that manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl observer run --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
 )]
 struct ObserverRunArgs {
     /// Built-in observer profile to use. If omitted, LogicPearl auto-detects one from the raw input when possible.
@@ -1101,6 +1156,8 @@ struct ObserverRunArgs {
     /// Raw input JSON to normalize.
     #[arg(long)]
     input: PathBuf,
+    #[command(flatten)]
+    plugin_execution: PluginExecutionArgs,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,

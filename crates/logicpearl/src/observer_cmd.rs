@@ -22,7 +22,10 @@ pub(crate) enum ObserverResolution {
 pub(crate) enum ResolvedObserver {
     NativeProfile(NativeObserverProfile),
     NativeArtifact(NativeObserverArtifact),
-    Plugin(PluginManifest),
+    Plugin {
+        manifest: PluginManifest,
+        policy: PluginExecutionPolicy,
+    },
 }
 
 pub(crate) fn to_native_profile(profile: ObserverProfileArg) -> Result<NativeObserverProfile> {
@@ -55,7 +58,7 @@ pub(crate) fn observer_resolution(observer: &ResolvedObserver) -> ObserverResolu
         ResolvedObserver::NativeArtifact(artifact) => ObserverResolution::NativeArtifact {
             observer_id: artifact.observer_id.clone(),
         },
-        ResolvedObserver::Plugin(manifest) => ObserverResolution::Plugin {
+        ResolvedObserver::Plugin { manifest, .. } => ObserverResolution::Plugin {
             name: manifest.name.clone(),
         },
     }
@@ -80,6 +83,7 @@ pub(crate) fn resolve_observer_for_cases(
     observer_profile: Option<ObserverProfileArg>,
     observer_artifact: Option<PathBuf>,
     plugin_manifest: Option<PathBuf>,
+    plugin_policy: PluginExecutionPolicy,
 ) -> Result<ResolvedObserver> {
     let explicit_count = usize::from(observer_profile.is_some())
         + usize::from(observer_artifact.is_some())
@@ -104,7 +108,10 @@ pub(crate) fn resolve_observer_for_cases(
                 "Use an observer-stage manifest.",
             ));
         }
-        return Ok(ResolvedObserver::Plugin(manifest));
+        return Ok(ResolvedObserver::Plugin {
+            manifest,
+            policy: plugin_policy,
+        });
     }
 
     if let Some(path) = observer_artifact {
@@ -161,6 +168,7 @@ pub(crate) fn resolve_observer_from_input(
     observer_profile: Option<ObserverProfileArg>,
     observer_artifact: Option<PathBuf>,
     plugin_manifest: Option<PathBuf>,
+    plugin_policy: PluginExecutionPolicy,
 ) -> Result<ResolvedObserver> {
     let explicit_count = usize::from(observer_profile.is_some())
         + usize::from(observer_artifact.is_some())
@@ -185,7 +193,10 @@ pub(crate) fn resolve_observer_from_input(
                 "Use an observer-stage manifest.",
             ));
         }
-        return Ok(ResolvedObserver::Plugin(manifest));
+        return Ok(ResolvedObserver::Plugin {
+            manifest,
+            policy: plugin_policy,
+        });
     }
 
     if let Some(path) = observer_artifact {
@@ -261,7 +272,7 @@ pub(crate) fn observe_benchmark_cases(
         cases.push(case);
     }
 
-    if matches!(observer, ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests"))
+    if matches!(observer, ResolvedObserver::Plugin { manifest, .. } if manifest.supports_capability("batch_requests"))
     {
         let observed = observe_case_chunks_parallel(observer, &cases)?;
         rows = observed.len();
@@ -349,7 +360,9 @@ fn process_case_chunk(
     chunk: &[BenchmarkCase],
 ) -> Result<Vec<ObservedBenchmarkCase>> {
     match observer {
-        ResolvedObserver::Plugin(manifest) if manifest.supports_capability("batch_requests") => {
+        ResolvedObserver::Plugin { manifest, policy }
+            if manifest.supports_capability("batch_requests") =>
+        {
             let payloads = chunk
                 .iter()
                 .map(|case| {
@@ -360,9 +373,10 @@ fn process_case_chunk(
                     )
                 })
                 .collect::<Vec<_>>();
-            let responses = run_plugin_batch(manifest, PluginStage::Observer, &payloads)
-                .into_diagnostic()
-                .wrap_err("observer plugin batch execution failed")?;
+            let responses =
+                run_plugin_batch_with_policy(manifest, PluginStage::Observer, &payloads, policy)
+                    .into_diagnostic()
+                    .wrap_err("observer plugin batch execution failed")?;
             chunk
                 .iter()
                 .zip(responses)
@@ -442,7 +456,7 @@ pub(crate) fn observe_features(
         ResolvedObserver::NativeArtifact(artifact) => observe_with_artifact(artifact, raw_input)
             .into_diagnostic()
             .wrap_err("native observer artifact execution failed"),
-        ResolvedObserver::Plugin(manifest) => {
+        ResolvedObserver::Plugin { manifest, policy } => {
             let request = PluginRequest {
                 protocol_version: "1".to_string(),
                 stage: PluginStage::Observer,
@@ -452,7 +466,7 @@ pub(crate) fn observe_features(
                     None,
                 ),
             };
-            let response = run_plugin(manifest, &request)
+            let response = run_plugin_with_policy(manifest, &request, policy)
                 .into_diagnostic()
                 .wrap_err("observer plugin execution failed")?;
             response
@@ -620,6 +634,7 @@ pub(crate) fn run_observer_run(args: ObserverRunArgs) -> Result<()> {
         args.observer_profile.clone(),
         args.observer_artifact.clone(),
         args.plugin_manifest.clone(),
+        plugin_execution_policy(&args.plugin_execution),
     )?;
     let features = observe_features(&observer, &raw_input)?;
     let response = serde_json::json!({

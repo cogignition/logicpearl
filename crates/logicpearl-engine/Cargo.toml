@@ -11,6 +11,7 @@ description = "Library-level execution facade for LogicPearl artifacts and pipel
 logicpearl-core.workspace = true
 logicpearl-ir.workspace = true
 logicpearl-pipeline.workspace = true
+logicpearl-plugin.workspace = true
 logicpearl-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true

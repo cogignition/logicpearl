@@ -1,6 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
+use logicpearl_plugin::PluginExecutionPolicy;
 use logicpearl_runtime::{evaluate_gate, parse_input_payload};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,6 +123,54 @@ impl LogicPearlEngine {
     }
 
     pub fn from_pipeline_path(path: impl AsRef<Path>) -> Result<Self> {
+        Self::from_pipeline_path_with_plugin_policy(path, PluginExecutionPolicy::default())
+    }
+
+    pub fn from_path_with_plugin_policy(
+        path: impl AsRef<Path>,
+        plugin_policy: PluginExecutionPolicy,
+    ) -> Result<Self> {
+        let path = path.as_ref();
+        if looks_like_pipeline_path(path) {
+            return Self::from_pipeline_path_with_plugin_policy(path, plugin_policy);
+        }
+        if looks_like_artifact_path(path) {
+            return Self::from_artifact_path(path);
+        }
+
+        if path.is_file() {
+            let content = fs::read_to_string(path)?;
+            let value: Value = serde_json::from_str(&content)?;
+            if value.get("pipeline_version").is_some() {
+                return Self::from_pipeline_path_with_plugin_policy(path, plugin_policy);
+            }
+            if value.get("ir_version").is_some() || value.get("files").is_some() {
+                return Self::from_artifact_path(path);
+            }
+        }
+
+        if path.is_dir() {
+            if path.join("pipeline.json").exists() {
+                return Self::from_pipeline_path_with_plugin_policy(
+                    path.join("pipeline.json"),
+                    plugin_policy,
+                );
+            }
+            if path.join("artifact.json").exists() || path.join("pearl.ir.json").exists() {
+                return Self::from_artifact_path(path);
+            }
+        }
+
+        Err(LogicPearlError::message(format!(
+            "could not determine whether {} is a LogicPearl artifact or pipeline",
+            path.display()
+        )))
+    }
+
+    pub fn from_pipeline_path_with_plugin_policy(
+        path: impl AsRef<Path>,
+        plugin_policy: PluginExecutionPolicy,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let resolved_path = if path.is_dir() {
             path.join("pipeline.json")
@@ -130,7 +179,7 @@ impl LogicPearlEngine {
         };
         let pipeline = PipelineDefinition::from_path(&resolved_path)?;
         let base_dir = resolved_path.parent().unwrap_or_else(|| Path::new("."));
-        let prepared = pipeline.prepare(base_dir)?;
+        let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
         Ok(Self {
             kind: EngineKind::Pipeline,
             source_path: resolved_path,

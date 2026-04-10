@@ -14,7 +14,8 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
     )?;
 
     let smoke = if let Some(request) = &request {
-        let response = run_plugin(&manifest, request)
+        let policy = plugin_execution_policy(&args.plugin_execution);
+        let response = run_plugin_with_policy(&manifest, request, &policy)
             .into_diagnostic()
             .wrap_err("plugin smoke execution failed")?;
         Some(build_plugin_smoke_report(&manifest, request, &response)?)
@@ -82,7 +83,8 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
         args.raw_payload.as_ref(),
         &args.options,
     )?;
-    let response = run_plugin(&manifest, &request)
+    let policy = plugin_execution_policy(&args.plugin_execution);
+    let response = run_plugin_with_policy(&manifest, &request, &policy)
         .into_diagnostic()
         .wrap_err("plugin execution failed")?;
     let report = build_plugin_smoke_report(&manifest, &request, &response)?;

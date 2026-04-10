@@ -1,7 +1,8 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
-    run_plugin, run_plugin_batch, PluginManifest, PluginRequest, PluginResponse, PluginStage,
+    run_plugin_batch_with_policy, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest,
+    PluginRequest, PluginResponse, PluginStage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
@@ -96,6 +97,7 @@ pub struct ComposePlan {
 pub struct PreparedPipeline {
     definition: PipelineDefinition,
     stages: Vec<PreparedStage>,
+    plugin_policy: PluginExecutionPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +208,17 @@ impl PipelineDefinition {
     }
 
     pub fn run(&self, base_dir: impl AsRef<Path>, root_input: &Value) -> Result<PipelineExecution> {
-        self.prepare(base_dir)?.run(root_input)
+        self.run_with_plugin_policy(base_dir, root_input, PluginExecutionPolicy::default())
+    }
+
+    pub fn run_with_plugin_policy(
+        &self,
+        base_dir: impl AsRef<Path>,
+        root_input: &Value,
+        plugin_policy: PluginExecutionPolicy,
+    ) -> Result<PipelineExecution> {
+        self.prepare_with_plugin_policy(base_dir, plugin_policy)?
+            .run(root_input)
     }
 
     pub fn write_pretty(&self, path: impl AsRef<Path>) -> Result<()> {
@@ -215,6 +227,14 @@ impl PipelineDefinition {
     }
 
     pub fn prepare(&self, base_dir: impl AsRef<Path>) -> Result<PreparedPipeline> {
+        self.prepare_with_plugin_policy(base_dir, PluginExecutionPolicy::default())
+    }
+
+    pub fn prepare_with_plugin_policy(
+        &self,
+        base_dir: impl AsRef<Path>,
+        plugin_policy: PluginExecutionPolicy,
+    ) -> Result<PreparedPipeline> {
         self.validate(&base_dir)?;
         let base_dir = base_dir.as_ref();
         let mut prepared_stages = Vec::with_capacity(self.stages.len());
@@ -259,6 +279,7 @@ impl PipelineDefinition {
         Ok(PreparedPipeline {
             definition: self.clone(),
             stages: prepared_stages,
+            plugin_policy,
         })
     }
 }
@@ -292,7 +313,12 @@ impl PreparedPipeline {
                 continue;
             }
 
-            let raw_result = run_prepared_stage(prepared_stage, root_input, &stage_exports)?;
+            let raw_result = run_prepared_stage(
+                prepared_stage,
+                root_input,
+                &stage_exports,
+                &self.plugin_policy,
+            )?;
 
             let exports = build_stage_exports(&stage.export, &raw_result)?;
             stage_exports.insert(stage.id.clone(), exports.clone());
@@ -355,6 +381,7 @@ impl PreparedPipeline {
                 root_inputs,
                 &stage_exports,
                 &runnable_indexes,
+                &self.plugin_policy,
             )?;
             let mut raw_iter = raw_results.into_iter();
 
@@ -636,6 +663,7 @@ fn run_prepared_stage(
     prepared_stage: &PreparedStage,
     root_input: &Value,
     stage_exports: &HashMap<String, HashMap<String, Value>>,
+    plugin_policy: &PluginExecutionPolicy,
 ) -> Result<Value> {
     let stage = &prepared_stage.stage;
     match &prepared_stage.executable {
@@ -657,13 +685,14 @@ fn run_prepared_stage(
                 build_stage_payload_value(stage, root_input, stage_exports)?,
                 build_stage_options_value(stage, root_input, stage_exports)?,
             );
-            let response = run_plugin(
+            let response = run_plugin_with_policy(
                 manifest,
                 &PluginRequest {
                     protocol_version: "1".to_string(),
                     stage: plugin_stage.clone(),
                     payload,
                 },
+                plugin_policy,
             )?;
             plugin_response_to_value(response)
         }
@@ -675,6 +704,7 @@ fn run_prepared_stage_batch(
     root_inputs: &[Value],
     stage_exports: &[HashMap<String, HashMap<String, Value>>],
     runnable_indexes: &[usize],
+    plugin_policy: &PluginExecutionPolicy,
 ) -> Result<Vec<Value>> {
     let stage = &prepared_stage.stage;
     match &prepared_stage.executable {
@@ -713,7 +743,12 @@ fn run_prepared_stage_batch(
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let responses = run_plugin_batch(manifest, plugin_stage.clone(), &payloads)?;
+            let responses = run_plugin_batch_with_policy(
+                manifest,
+                plugin_stage.clone(),
+                &payloads,
+                plugin_policy,
+            )?;
             responses
                 .into_iter()
                 .map(plugin_response_to_value)

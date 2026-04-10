@@ -105,8 +105,9 @@ pub(crate) fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let input = read_json_input_argument(args.input_json.as_ref(), "pipeline input")?;
+    let policy = plugin_execution_policy(&args.plugin_execution);
     let execution = pipeline
-        .run(base_dir, &input)
+        .run_with_plugin_policy(base_dir, &input, policy)
         .into_diagnostic()
         .wrap_err("pipeline execution failed")?;
     if args.json {
@@ -143,8 +144,9 @@ pub(crate) fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
     )
     .into_diagnostic()
     .wrap_err("pipeline input JSON is not valid JSON")?;
+    let policy = plugin_execution_policy(&args.plugin_execution);
     let execution = pipeline
-        .run(base_dir, &input)
+        .run_with_plugin_policy(base_dir, &input, policy)
         .into_diagnostic()
         .wrap_err("pipeline trace execution failed")?;
     if args.json {

@@ -335,6 +335,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
             "Pass --trace-plugin-manifest before using --trace-plugin-input or --trace-plugin-option.",
         ));
     }
+    let plugin_policy = plugin_execution_policy(&args.plugin_execution);
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
@@ -381,7 +382,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
                     Some(serde_json::to_value(&trace_plugin_options).into_diagnostic()?),
                 ),
             };
-            let response = run_plugin(&manifest, &request)
+            let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
                 .into_diagnostic()
                 .wrap_err("trace plugin execution failed")?;
             let traces_value = response
@@ -461,7 +462,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
                 None,
             ),
         };
-        let response = run_plugin(&manifest, &request)
+        let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
             .into_diagnostic()
             .wrap_err("enricher plugin execution failed")?;
         let records_value = response.extra.get("records").cloned().ok_or_else(|| {
@@ -967,7 +968,8 @@ pub(crate) fn run_verify(args: VerifyArgs) -> Result<()> {
         stage: PluginStage::Verify,
         payload,
     };
-    let response = run_plugin(&manifest, &request)
+    let policy = plugin_execution_policy(&args.plugin_execution);
+    let response = run_plugin_with_policy(&manifest, &request, &policy)
         .into_diagnostic()
         .wrap_err("verify plugin execution failed")?;
     if args.json {

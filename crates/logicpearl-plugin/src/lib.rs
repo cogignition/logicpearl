@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +38,61 @@ pub struct PluginManifest {
     pub output_schema: Option<Value>,
     #[serde(skip)]
     pub manifest_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginExecutionPolicy {
+    pub default_timeout_ms: u64,
+    pub allow_no_timeout: bool,
+    pub allow_absolute_entrypoint: bool,
+    pub allow_path_lookup: bool,
+}
+
+impl Default for PluginExecutionPolicy {
+    fn default() -> Self {
+        Self {
+            default_timeout_ms: DEFAULT_PLUGIN_TIMEOUT_MS,
+            allow_no_timeout: false,
+            allow_absolute_entrypoint: false,
+            allow_path_lookup: false,
+        }
+    }
+}
+
+impl PluginExecutionPolicy {
+    #[must_use]
+    pub fn trusted_local() -> Self {
+        Self {
+            allow_no_timeout: true,
+            allow_absolute_entrypoint: true,
+            allow_path_lookup: true,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_default_timeout_ms(mut self, timeout_ms: u64) -> Self {
+        self.default_timeout_ms = timeout_ms;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allow_no_timeout(mut self, allow: bool) -> Self {
+        self.allow_no_timeout = allow;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allow_absolute_entrypoint(mut self, allow: bool) -> Self {
+        self.allow_absolute_entrypoint = allow;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allow_path_lookup(mut self, allow: bool) -> Self {
+        self.allow_path_lookup = allow;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +196,14 @@ impl PluginManifest {
 }
 
 pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<PluginResponse> {
+    run_plugin_with_policy(manifest, request, &PluginExecutionPolicy::default())
+}
+
+pub fn run_plugin_with_policy(
+    manifest: &PluginManifest,
+    request: &PluginRequest,
+    policy: &PluginExecutionPolicy,
+) -> Result<PluginResponse> {
     if manifest.stage != request.stage {
         return Err(LogicPearlError::message(format!(
             "plugin stage mismatch: manifest is {:?}, request is {:?}",
@@ -148,7 +212,7 @@ pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<
     }
     validate_plugin_request_contract(manifest, request)?;
 
-    let stdout = run_plugin_raw(manifest, request)?;
+    let stdout = run_plugin_raw(manifest, request, policy)?;
     parse_plugin_response(manifest, &stdout)
 }
 
@@ -156,6 +220,15 @@ pub fn run_plugin_batch(
     manifest: &PluginManifest,
     stage: PluginStage,
     payloads: &[Value],
+) -> Result<Vec<PluginResponse>> {
+    run_plugin_batch_with_policy(manifest, stage, payloads, &PluginExecutionPolicy::default())
+}
+
+pub fn run_plugin_batch_with_policy(
+    manifest: &PluginManifest,
+    stage: PluginStage,
+    payloads: &[Value],
+    policy: &PluginExecutionPolicy,
 ) -> Result<Vec<PluginResponse>> {
     if manifest.stage != stage {
         return Err(LogicPearlError::message(format!(
@@ -171,13 +244,14 @@ pub fn run_plugin_batch(
             .iter()
             .map(|payload| {
                 validate_plugin_payload_contract(manifest, &stage, payload)?;
-                run_plugin(
+                run_plugin_with_policy(
                     manifest,
                     &PluginRequest {
                         protocol_version: "1".to_string(),
                         stage: stage.clone(),
                         payload: payload.clone(),
                     },
+                    policy,
                 )
             })
             .collect();
@@ -193,6 +267,7 @@ pub fn run_plugin_batch(
             stage: stage.clone(),
             payloads: payloads.to_vec(),
         },
+        policy,
     )?;
     let batch: PluginBatchResponse = serde_json::from_str(&stdout).map_err(|err| {
         LogicPearlError::message(format!(
@@ -226,28 +301,14 @@ pub fn run_plugin_batch(
     Ok(batch.responses)
 }
 
-pub fn manifest_contract_summary(manifest: &PluginManifest) -> Value {
-    serde_json::json!({
-        "input_schema": manifest.input_schema,
-        "options_schema": manifest.options_schema,
-        "output_schema": manifest.output_schema,
-    })
-}
-
-fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Result<String> {
-    let program = manifest
-        .entrypoint
-        .first()
-        .ok_or_else(|| LogicPearlError::message("plugin entrypoint is empty"))?;
-    let resolved_program = resolve_entrypoint_segment(manifest, program, true);
-    let mut command = Command::new(&resolved_program);
-    if manifest.entrypoint.len() > 1 {
-        let args: Vec<String> = manifest.entrypoint[1..]
-            .iter()
-            .map(|segment| resolve_entrypoint_segment(manifest, segment, false))
-            .collect();
-        command.args(&args);
-    }
+fn run_plugin_raw<T: Serialize>(
+    manifest: &PluginManifest,
+    request: &T,
+    policy: &PluginExecutionPolicy,
+) -> Result<String> {
+    let entrypoint = resolve_entrypoint(manifest, policy)?;
+    let mut command = Command::new(&entrypoint.program);
+    command.args(&entrypoint.args);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -258,6 +319,7 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    let timeout_ms = effective_timeout_ms(manifest, policy)?;
     let mut child = command.spawn()?;
     let stdin = child
         .stdin
@@ -283,18 +345,18 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
         MAX_PLUGIN_STDERR_BYTES,
     );
 
-    let (status, timed_out) = wait_for_plugin_exit(manifest, &mut child)?;
+    let (status, timed_out) = wait_for_plugin_exit(timeout_ms, &mut child)?;
     let stdout = join_pipe_reader(manifest, "stdout", stdout_handle)?;
     let stderr = String::from_utf8_lossy(&join_pipe_reader(manifest, "stderr", stderr_handle)?)
         .trim()
         .to_string();
 
     if timed_out {
-        let timeout_ms = manifest.timeout_ms.unwrap_or_default();
+        let timeout_display = timeout_ms.unwrap_or_default();
         return Err(LogicPearlError::message(format!(
             "plugin {} exceeded timeout_ms={} and was terminated{}",
             manifest.name,
-            timeout_ms,
+            timeout_display,
             if stderr.is_empty() {
                 String::new()
             } else {
@@ -322,6 +384,178 @@ fn run_plugin_raw<T: Serialize>(manifest: &PluginManifest, request: &T) -> Resul
             manifest.name, err
         ))
     })
+}
+
+pub fn manifest_contract_summary(manifest: &PluginManifest) -> Value {
+    serde_json::json!({
+        "input_schema": manifest.input_schema,
+        "options_schema": manifest.options_schema,
+        "output_schema": manifest.output_schema,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedPluginEntrypoint {
+    program: String,
+    args: Vec<String>,
+}
+
+fn resolve_entrypoint(
+    manifest: &PluginManifest,
+    policy: &PluginExecutionPolicy,
+) -> Result<ResolvedPluginEntrypoint> {
+    let program = manifest
+        .entrypoint
+        .first()
+        .ok_or_else(|| LogicPearlError::message("plugin entrypoint is empty"))?;
+    if program.trim().is_empty() {
+        return Err(LogicPearlError::message(
+            "plugin entrypoint program must be non-empty",
+        ));
+    }
+
+    let resolved_program = resolve_entrypoint_program(manifest, policy, program)?;
+    let args = manifest
+        .entrypoint
+        .iter()
+        .skip(1)
+        .map(|segment| resolve_entrypoint_arg(manifest, policy, segment))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(ResolvedPluginEntrypoint {
+        program: resolved_program,
+        args,
+    })
+}
+
+fn resolve_entrypoint_program(
+    manifest: &PluginManifest,
+    policy: &PluginExecutionPolicy,
+    program: &str,
+) -> Result<String> {
+    let program_path = Path::new(program);
+    if program_path.is_absolute() {
+        if !policy.allow_absolute_entrypoint {
+            return Err(LogicPearlError::message(format!(
+                "plugin {} entrypoint uses absolute program path {}; rerun with an execution policy that allows absolute entrypoints only for trusted manifests",
+                manifest.name, program
+            )));
+        }
+        return Ok(program.to_string());
+    }
+
+    if let Some(manifest_relative) = manifest_relative_existing_path(manifest, program) {
+        return Ok(manifest_relative);
+    }
+
+    if has_path_separator(program) {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} entrypoint path was not found relative to the manifest: {}",
+            manifest.name, program
+        )));
+    }
+
+    if policy.allow_path_lookup {
+        return Ok(program.to_string());
+    }
+
+    if is_allowed_manifest_script_interpreter(program) && has_manifest_local_script_arg(manifest) {
+        return Ok(program.to_string());
+    }
+
+    Err(LogicPearlError::message(format!(
+        "plugin {} entrypoint program {program:?} is not manifest-relative and PATH lookup is disabled; use a manifest-relative script path or enable PATH lookup only for trusted manifests",
+        manifest.name
+    )))
+}
+
+fn resolve_entrypoint_arg(
+    manifest: &PluginManifest,
+    policy: &PluginExecutionPolicy,
+    segment: &str,
+) -> Result<String> {
+    if segment.trim().is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} entrypoint arguments must be non-empty",
+            manifest.name
+        )));
+    }
+
+    let path = Path::new(segment);
+    if path.is_absolute() && !policy.allow_absolute_entrypoint {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} entrypoint argument uses absolute path {}; enable absolute entrypoints only for trusted manifests",
+            manifest.name, segment
+        )));
+    }
+    if path.is_absolute() {
+        return Ok(segment.to_string());
+    }
+
+    if let Some(manifest_relative) = manifest_relative_existing_path(manifest, segment) {
+        return Ok(manifest_relative);
+    }
+
+    if has_path_separator(segment) {
+        return Err(LogicPearlError::message(format!(
+            "plugin {} entrypoint argument path was not found relative to the manifest: {}",
+            manifest.name, segment
+        )));
+    }
+
+    Ok(segment.to_string())
+}
+
+fn manifest_relative_existing_path(manifest: &PluginManifest, segment: &str) -> Option<String> {
+    manifest.manifest_dir.as_ref().and_then(|dir| {
+        let candidate = dir.join(segment);
+        candidate.exists().then(|| candidate.display().to_string())
+    })
+}
+
+fn has_path_separator(segment: &str) -> bool {
+    segment.contains('/') || segment.contains('\\')
+}
+
+fn has_manifest_local_script_arg(manifest: &PluginManifest) -> bool {
+    manifest
+        .entrypoint
+        .iter()
+        .skip(1)
+        .any(|segment| manifest_relative_existing_path(manifest, segment).is_some())
+}
+
+fn is_allowed_manifest_script_interpreter(program: &str) -> bool {
+    let normalized = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
+        .trim_end_matches(".exe")
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "bash" | "bun" | "deno" | "node" | "perl" | "php" | "python" | "python3" | "ruby" | "sh"
+    )
+}
+
+fn effective_timeout_ms(
+    manifest: &PluginManifest,
+    policy: &PluginExecutionPolicy,
+) -> Result<Option<u64>> {
+    match manifest.timeout_ms {
+        Some(0) if policy.allow_no_timeout => Ok(None),
+        Some(0) => Err(LogicPearlError::message(format!(
+            "plugin {} declares timeout_ms=0, which disables the plugin timeout; enable no-timeout execution only for trusted manifests",
+            manifest.name
+        ))),
+        Some(timeout_ms) => Ok(Some(timeout_ms)),
+        None if policy.default_timeout_ms == 0 && policy.allow_no_timeout => Ok(None),
+        None if policy.default_timeout_ms == 0 => Err(LogicPearlError::message(format!(
+            "plugin {} has no timeout and the execution policy default is disabled; enable no-timeout execution only for trusted manifests",
+            manifest.name
+        ))),
+        None => Ok(Some(policy.default_timeout_ms)),
+    }
 }
 
 fn spawn_pipe_reader<R: Read + Send + 'static>(
@@ -385,11 +619,8 @@ fn join_pipe_reader(
     })
 }
 
-fn wait_for_plugin_exit(
-    manifest: &PluginManifest,
-    child: &mut Child,
-) -> Result<(ExitStatus, bool)> {
-    if let Some(timeout_ms) = manifest.timeout_ms {
+fn wait_for_plugin_exit(timeout_ms: Option<u64>, child: &mut Child) -> Result<(ExitStatus, bool)> {
+    if let Some(timeout_ms) = timeout_ms {
         let timeout = Duration::from_millis(timeout_ms);
         let started_at = Instant::now();
         loop {
@@ -770,26 +1001,12 @@ fn describe_json_type(value: &Value) -> &'static str {
     }
 }
 
-fn resolve_entrypoint_segment(
-    manifest: &PluginManifest,
-    segment: &str,
-    executable: bool,
-) -> String {
-    if let Some(dir) = &manifest.manifest_dir {
-        let candidate = dir.join(segment);
-        if candidate.exists() {
-            return candidate.display().to_string();
-        }
-        if executable && !segment.contains(std::path::MAIN_SEPARATOR) {
-            return segment.to_string();
-        }
-    }
-    segment.to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{run_plugin, PluginManifest, PluginRequest, PluginStage};
+    use super::{
+        run_plugin, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest, PluginRequest,
+        PluginStage,
+    };
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -946,12 +1163,11 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn allows_long_running_plugin_when_timeout_is_unset() {
-        let (dir, _script_path) = write_plugin_script(
-            "#!/bin/sh\nsleep 0.1\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
-        );
+    fn applies_policy_default_timeout_when_manifest_timeout_is_unset() {
+        let (dir, _script_path) =
+            write_plugin_script("#!/bin/sh\nsleep 1\nprintf '{\"ok\":true}\\n'\n");
         let manifest = PluginManifest {
-            name: "slow".to_string(),
+            name: "slow-default".to_string(),
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -964,9 +1180,162 @@ mod tests {
             manifest_dir: Some(dir.path().to_path_buf()),
         };
 
-        let response = run_plugin(&manifest, &test_request()).expect("plugin should succeed");
+        let policy = PluginExecutionPolicy::default().with_default_timeout_ms(50);
+        let error = run_plugin_with_policy(&manifest, &test_request(), &policy)
+            .expect_err("policy default timeout should apply");
+        let message = error.to_string();
+        assert!(message.contains("exceeded timeout_ms=50"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_no_timeout_manifest_without_policy_opt_in() {
+        let (dir, _script_path) = write_plugin_script("#!/bin/sh\nprintf '{\"ok\":true}\\n'\n");
+        let manifest = PluginManifest {
+            name: "no-timeout".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: Some(0),
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let error = run_plugin(&manifest, &test_request()).expect_err("no timeout should reject");
+        let message = error.to_string();
+        assert!(message.contains("timeout_ms=0"), "{message}");
+        assert!(message.contains("disables the plugin timeout"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_no_timeout_when_policy_opts_in() {
+        let (dir, _script_path) = write_plugin_script(
+            "#!/bin/sh\nsleep 0.1\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "trusted-no-timeout".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: Some(0),
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let policy = PluginExecutionPolicy::default().with_allow_no_timeout(true);
+        let response = run_plugin_with_policy(&manifest, &test_request(), &policy)
+            .expect("trusted no-timeout plugin should succeed");
         assert!(response.ok);
         assert_eq!(response.extra.get("features"), Some(&json!({"value": 1})));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_known_interpreter_for_manifest_local_script() {
+        let (dir, _script_path) = write_plugin_script(
+            "#!/bin/sh\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "shell-wrapper".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["sh".to_string(), "plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let response = run_plugin(&manifest, &test_request())
+            .expect("known interpreter with manifest-local script should succeed");
+        assert!(response.ok);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_bare_path_lookup_by_default() {
+        let dir = tempdir().expect("tempdir");
+        let manifest = PluginManifest {
+            name: "path-command".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["logicpearl-plugin-not-in-manifest".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let error = run_plugin(&manifest, &test_request()).expect_err("PATH lookup should reject");
+        let message = error.to_string();
+        assert!(message.contains("PATH lookup is disabled"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_absolute_entrypoint_by_default() {
+        let (dir, script_path) = write_plugin_script(
+            "#!/bin/sh\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "absolute".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec![script_path.display().to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let error =
+            run_plugin(&manifest, &test_request()).expect_err("absolute entrypoint should reject");
+        let message = error.to_string();
+        assert!(message.contains("absolute program path"), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_absolute_entrypoint_when_policy_opts_in() {
+        let (dir, script_path) = write_plugin_script(
+            "#!/bin/sh\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "absolute".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec![script_path.display().to_string()],
+            language: Some("shell".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let policy = PluginExecutionPolicy::default().with_allow_absolute_entrypoint(true);
+        let response = run_plugin_with_policy(&manifest, &test_request(), &policy)
+            .expect("absolute entrypoint should run only under explicit policy");
+        assert!(response.ok);
     }
 
     #[cfg(unix)]
