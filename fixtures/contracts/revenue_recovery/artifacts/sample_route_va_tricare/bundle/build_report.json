@@ -1,0 +1,36 @@
+{
+  "source_csv": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/va_tricare/route.current.csv",
+  "gate_id": "revenue_route_va_tricare",
+  "rows": 4,
+  "label_column": "allowed",
+  "rules_discovered": 2,
+  "residual_rules_discovered": 0,
+  "refined_rules_applied": 0,
+  "pinned_rules_applied": 0,
+  "selected_features": [
+    "document__eligibility_note__present",
+    "lane__va_tricare__candidate"
+  ],
+  "training_parity": 1.0,
+  "residual_recovery": {
+    "state": "no_missed_slices",
+    "backend_used": "z3"
+  },
+  "cache_hit": false,
+  "provenance": {
+    "decision_trace_source": {
+      "kind": "decision_traces_path",
+      "value": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/va_tricare/route.current.csv"
+    },
+    "source_references": {}
+  },
+  "output_files": {
+    "artifact_dir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/va_tricare/route",
+    "artifact_manifest": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/va_tricare/route/artifact.json",
+    "pearl_ir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/va_tricare/route/pearl.ir.json",
+    "build_report": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/va_tricare/route/build_report.json",
+    "native_binary": null,
+    "wasm_module": null,
+    "wasm_metadata": null
+  }
+}

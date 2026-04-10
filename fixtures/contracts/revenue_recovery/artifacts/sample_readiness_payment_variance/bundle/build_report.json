@@ -1,0 +1,37 @@
+{
+  "source_csv": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/payment_variance/readiness.current.csv",
+  "gate_id": "revenue_ready_payment_variance",
+  "rows": 8,
+  "label_column": "allowed",
+  "rules_discovered": 3,
+  "residual_rules_discovered": 0,
+  "refined_rules_applied": 0,
+  "pinned_rules_applied": 0,
+  "selected_features": [
+    "evidence__payment_variance__contract_excerpt_supported",
+    "evidence__payment_variance__remittance_supported",
+    "evidence__payment_variance__variance_worksheet_supported"
+  ],
+  "training_parity": 1.0,
+  "residual_recovery": {
+    "state": "no_missed_slices",
+    "backend_used": "z3"
+  },
+  "cache_hit": false,
+  "provenance": {
+    "decision_trace_source": {
+      "kind": "decision_traces_path",
+      "value": "/Users/missingno/Documents/LogicPearl/healthcare_demo/generated/revenue_demo/traces/payment_variance/readiness.current.csv"
+    },
+    "source_references": {}
+  },
+  "output_files": {
+    "artifact_dir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/payment_variance/readiness",
+    "artifact_manifest": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/payment_variance/readiness/artifact.json",
+    "pearl_ir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/payment_variance/readiness/pearl.ir.json",
+    "build_report": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/revenue_logicpearl/payment_variance/readiness/build_report.json",
+    "native_binary": null,
+    "wasm_module": null,
+    "wasm_metadata": null
+  }
+}

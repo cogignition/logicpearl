@@ -1,0 +1,76 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "revenue_route_va_tricare",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "document__eligibility_note__present",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      },
+      {
+        "id": "lane__va_tricare__candidate",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_000",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "document__eligibility_note__present",
+        "op": "<",
+        "value": 1.0
+      },
+      "label": "Document Eligibility Note Present below 1.0",
+      "message": "Document Eligibility Note Present below 1.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Document Eligibility Note Present at or above 1.0",
+      "verification_status": "pipeline_unverified"
+    },
+    {
+      "id": "rule_001",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "lane__va_tricare__candidate",
+        "op": "<=",
+        "value": 0.0
+      },
+      "label": "Lane Va Tricare Candidate at or below 0.0",
+      "message": "Lane Va Tricare Candidate at or below 0.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Lane Va Tricare Candidate above 0.0",
+      "verification_status": "pipeline_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "training parity against 4 decision traces",
+    "verification_summary": {
+      "pipeline_unverified": 2
+    }
+  },
+  "provenance": {
+    "generator": "logicpearl.build",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}

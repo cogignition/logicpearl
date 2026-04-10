@@ -1,0 +1,255 @@
+{
+  "contract_name": "revenue_recovery",
+  "description": "Frozen representative revenue recovery artifact contracts derived from healthcare_demo account-packet feature maps and expected rule outputs.",
+  "artifacts": [
+    {
+      "artifact_id": "sample_route_clinical_denial",
+      "title": "Sample route artifact: clinical denial",
+      "bundle_dir": "artifacts/sample_route_clinical_denial/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_route_clinical_denial",
+        "rules": 2,
+        "features": 2,
+        "rule_ids_in_order": ["rule_000", "rule_001"],
+        "feature_ids_in_order": ["document__denial_letter__present", "lane__clinical_denial__candidate"]
+      },
+      "scenarios": [
+        {
+          "name": "qualifies",
+          "feature_map": {
+            "document__denial_letter__present": 1.0,
+            "lane__clinical_denial__candidate": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "wrong_lane",
+          "feature_map": {
+            "document__denial_letter__present": 1.0,
+            "lane__clinical_denial__candidate": 0.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": ["rule_001"]
+        }
+      ]
+    },
+    {
+      "artifact_id": "sample_readiness_clinical_denial",
+      "title": "Sample readiness artifact: clinical denial",
+      "bundle_dir": "artifacts/sample_readiness_clinical_denial/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_ready_clinical_denial",
+        "rules": 3,
+        "features": 3,
+        "rule_ids_in_order": ["rule_000", "rule_001", "rule_002"],
+        "feature_ids_in_order": [
+          "evidence__clinical_denial__denial_letter_supported",
+          "evidence__clinical_denial__medical_record_supported",
+          "evidence__clinical_denial__payer_policy_supported"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "evidence__clinical_denial__denial_letter_supported": 1.0,
+            "evidence__clinical_denial__medical_record_supported": 1.0,
+            "evidence__clinical_denial__payer_policy_supported": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_medical_record",
+          "feature_map": {
+            "evidence__clinical_denial__denial_letter_supported": 1.0,
+            "evidence__clinical_denial__medical_record_supported": 0.0,
+            "evidence__clinical_denial__payer_policy_supported": 1.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": ["rule_001"]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "artifacts/sample_readiness_clinical_denial/diff/earlier.pearl.ir.json",
+        "current_ir": "artifacts/sample_readiness_clinical_denial/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 1,
+          "reordered_rules": 0,
+          "added_rules": 1,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": ["rule_001"],
+        "added_rule_ids": ["rule_002"],
+        "removed_rule_ids": []
+      }
+    },
+    {
+      "artifact_id": "sample_route_payment_variance",
+      "title": "Sample route artifact: payment variance",
+      "bundle_dir": "artifacts/sample_route_payment_variance/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_route_payment_variance",
+        "rules": 2,
+        "features": 2,
+        "rule_ids_in_order": ["rule_000", "rule_001"],
+        "feature_ids_in_order": ["document__remittance__present", "lane__payment_variance__candidate"]
+      },
+      "scenarios": [
+        {
+          "name": "qualifies",
+          "feature_map": {
+            "document__remittance__present": 1.0,
+            "lane__payment_variance__candidate": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "wrong_lane",
+          "feature_map": {
+            "document__remittance__present": 1.0,
+            "lane__payment_variance__candidate": 0.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": ["rule_001"]
+        }
+      ]
+    },
+    {
+      "artifact_id": "sample_readiness_payment_variance",
+      "title": "Sample readiness artifact: payment variance",
+      "bundle_dir": "artifacts/sample_readiness_payment_variance/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_ready_payment_variance",
+        "rules": 3,
+        "features": 3,
+        "rule_ids_in_order": ["rule_000", "rule_001", "rule_002"],
+        "feature_ids_in_order": [
+          "evidence__payment_variance__contract_excerpt_supported",
+          "evidence__payment_variance__remittance_supported",
+          "evidence__payment_variance__variance_worksheet_supported"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "evidence__payment_variance__contract_excerpt_supported": 1.0,
+            "evidence__payment_variance__remittance_supported": 1.0,
+            "evidence__payment_variance__variance_worksheet_supported": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_contract_excerpt",
+          "feature_map": {
+            "evidence__payment_variance__contract_excerpt_supported": 0.0,
+            "evidence__payment_variance__remittance_supported": 1.0,
+            "evidence__payment_variance__variance_worksheet_supported": 1.0
+          },
+          "expected_bitmask": 1,
+          "expected_missing_rule_ids": ["rule_000"]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "artifacts/sample_readiness_payment_variance/diff/earlier.pearl.ir.json",
+        "current_ir": "artifacts/sample_readiness_payment_variance/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 2,
+          "reordered_rules": 0,
+          "added_rules": 1,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": ["rule_000", "rule_001"],
+        "added_rule_ids": ["rule_002"],
+        "removed_rule_ids": []
+      }
+    },
+    {
+      "artifact_id": "sample_route_va_tricare",
+      "title": "Sample route artifact: VA / TRICARE",
+      "bundle_dir": "artifacts/sample_route_va_tricare/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_route_va_tricare",
+        "rules": 2,
+        "features": 2,
+        "rule_ids_in_order": ["rule_000", "rule_001"],
+        "feature_ids_in_order": ["document__eligibility_note__present", "lane__va_tricare__candidate"]
+      },
+      "scenarios": [
+        {
+          "name": "qualifies",
+          "feature_map": {
+            "document__eligibility_note__present": 1.0,
+            "lane__va_tricare__candidate": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "wrong_lane",
+          "feature_map": {
+            "document__eligibility_note__present": 1.0,
+            "lane__va_tricare__candidate": 0.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": ["rule_001"]
+        }
+      ]
+    },
+    {
+      "artifact_id": "sample_readiness_va_tricare",
+      "title": "Sample readiness artifact: VA / TRICARE",
+      "bundle_dir": "artifacts/sample_readiness_va_tricare/bundle",
+      "inspect_expectation": {
+        "gate_id": "revenue_ready_va_tricare",
+        "rules": 3,
+        "features": 3,
+        "rule_ids_in_order": ["rule_000", "rule_001", "rule_002"],
+        "feature_ids_in_order": [
+          "evidence__va_tricare__eligibility_note_supported",
+          "evidence__va_tricare__medical_record_supported",
+          "evidence__va_tricare__notification_log_supported"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "evidence__va_tricare__eligibility_note_supported": 1.0,
+            "evidence__va_tricare__medical_record_supported": 1.0,
+            "evidence__va_tricare__notification_log_supported": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_notification_log",
+          "feature_map": {
+            "evidence__va_tricare__eligibility_note_supported": 1.0,
+            "evidence__va_tricare__medical_record_supported": 1.0,
+            "evidence__va_tricare__notification_log_supported": 0.0
+          },
+          "expected_bitmask": 4,
+          "expected_missing_rule_ids": ["rule_002"]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "artifacts/sample_readiness_va_tricare/diff/earlier.pearl.ir.json",
+        "current_ir": "artifacts/sample_readiness_va_tricare/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 1,
+          "reordered_rules": 0,
+          "added_rules": 1,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": ["rule_001"],
+        "added_rule_ids": ["rule_002"],
+        "removed_rule_ids": []
+      }
+    }
+  ]
+}

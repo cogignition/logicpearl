@@ -1,0 +1,76 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "revenue_ready_clinical_denial_earlier",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "evidence__clinical_denial__denial_letter_supported",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      },
+      {
+        "id": "evidence__clinical_denial__payer_policy_supported",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_000",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "evidence__clinical_denial__denial_letter_supported",
+        "op": "<",
+        "value": 1.0
+      },
+      "label": "Evidence Clinical Denial Denial Letter Supported below 1.0",
+      "message": "Evidence Clinical Denial Denial Letter Supported below 1.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Evidence Clinical Denial Denial Letter Supported at or above 1.0",
+      "verification_status": "pipeline_unverified"
+    },
+    {
+      "id": "rule_001",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "evidence__clinical_denial__payer_policy_supported",
+        "op": "<=",
+        "value": 0.0
+      },
+      "label": "Evidence Clinical Denial Payer Policy Supported at or below 0.0",
+      "message": "Evidence Clinical Denial Payer Policy Supported at or below 0.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Evidence Clinical Denial Payer Policy Supported above 0.0",
+      "verification_status": "pipeline_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "training parity against 4 decision traces",
+    "verification_summary": {
+      "pipeline_unverified": 2
+    }
+  },
+  "provenance": {
+    "generator": "logicpearl.build",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}
