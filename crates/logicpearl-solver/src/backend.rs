@@ -389,7 +389,12 @@ mod tests {
             Some(2_500),
             false,
         );
-        assert_eq!(command.get_program().to_string_lossy(), "z3");
+        assert_eq!(
+            Path::new(command.get_program())
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("z3")
+        );
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
@@ -405,7 +410,12 @@ mod tests {
             Some(2_500),
             true,
         );
-        assert_eq!(command.get_program().to_string_lossy(), "cvc5");
+        assert_eq!(
+            Path::new(command.get_program())
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("cvc5")
+        );
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())

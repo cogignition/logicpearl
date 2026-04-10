@@ -6,7 +6,9 @@ use logicpearl_ir::{
     VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
-use logicpearl_solver::{resolve_backend, solve_keep_bools, SatStatus, SolverSettings};
+use logicpearl_solver::{
+    resolve_backend, solve_keep_bools_lexicographic, LexObjective, SatStatus, SolverSettings,
+};
 use logicpearl_verify::{
     synthesize_boolean_conjunctions, BooleanConjunctionCandidate, BooleanConjunctionSearchOptions,
     BooleanSearchExample,
@@ -34,6 +36,7 @@ const NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE: usize = 3;
 const NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS: usize = 10; // 0.1%
 const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
 const EXACT_SELECTION_COMPOUND_FRONTIER_LIMIT: usize = 24;
+const EXACT_SELECTION_BRUTE_FORCE_LIMIT: usize = 16;
 const CONJUNCTION_ATOM_FRONTIER_LIMIT: usize = 128;
 const RARE_RULE_RECOVERY_FRONTIER_LIMIT: usize = 24;
 const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
@@ -804,8 +807,17 @@ fn select_candidate_rules_exact(
         })
         .collect();
 
-    let smt = build_exact_selection_smt(candidates, &denied_matches, &allowed_matches);
-    let selected_indexes = solve_selected_rule_indexes(candidates.len(), &smt).ok()?;
+    if candidates.len() <= EXACT_SELECTION_BRUTE_FORCE_LIMIT {
+        return Some(select_candidate_rules_bruteforce(
+            candidates,
+            &denied_matches,
+            &allowed_matches,
+        ));
+    }
+
+    let (smt, objectives) =
+        build_exact_selection_problem(candidates, &denied_matches, &allowed_matches);
+    let selected_indexes = solve_selected_rule_indexes(candidates.len(), &smt, &objectives).ok()?;
     Some(
         selected_indexes
             .into_iter()
@@ -814,12 +826,12 @@ fn select_candidate_rules_exact(
     )
 }
 
-fn build_exact_selection_smt(
+fn build_exact_selection_problem(
     candidates: &[CandidateRule],
     denied_matches: &[Vec<usize>],
     allowed_matches: &[Vec<usize>],
-) -> String {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
+) -> (String, Vec<LexObjective>) {
+    let mut smt = String::new();
     for index in 0..candidates.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
@@ -839,19 +851,122 @@ fn build_exact_selection_smt(
         ));
     }
 
-    smt.push_str(&format!(
-        "(minimize (+ {} {}))\n",
-        hit_sum("deny_hit", denied_matches.len(), false),
-        hit_sum("allow_hit", allowed_matches.len(), true)
-    ));
-    smt.push_str(&format!(
-        "(minimize {})\n",
-        hit_sum("allow_hit", allowed_matches.len(), true)
-    ));
-    smt.push_str(&format!("(minimize {})\n", keep_sum(candidates.len())));
-    smt.push_str(&format!("(minimize {})\n", weighted_keep_sum(candidates)));
-    smt.push_str("(check-sat)\n(get-model)\n");
-    smt
+    let objectives = vec![
+        LexObjective::minimize(format!(
+            "(+ {} {})",
+            hit_sum("deny_hit", denied_matches.len(), false),
+            hit_sum("allow_hit", allowed_matches.len(), true)
+        )),
+        LexObjective::minimize(hit_sum("allow_hit", allowed_matches.len(), true)),
+        LexObjective::minimize(keep_sum(candidates.len())),
+        LexObjective::minimize(weighted_keep_sum(candidates)),
+        LexObjective::minimize(keep_index_sum(candidates.len())),
+    ];
+    (smt, objectives)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ExactSelectionScore {
+    total_errors: usize,
+    allowed_hits: usize,
+    rule_count: usize,
+    complexity_weight: usize,
+    index_weight: usize,
+}
+
+struct CandidateMatchMasks {
+    denied: Vec<usize>,
+    allowed: Vec<usize>,
+}
+
+fn select_candidate_rules_bruteforce(
+    candidates: &[CandidateRule],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> Vec<CandidateRule> {
+    let match_masks = candidate_match_masks(candidates.len(), denied_matches, allowed_matches);
+    let upper_bound = 1usize << candidates.len();
+    let mut best_mask = 0usize;
+    let mut best_score = exact_selection_score(0, candidates, &match_masks);
+
+    for mask in 1..upper_bound {
+        let score = exact_selection_score(mask, candidates, &match_masks);
+        if score < best_score {
+            best_score = score;
+            best_mask = mask;
+        }
+    }
+
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            ((best_mask & (1usize << index)) != 0).then_some(candidate.clone())
+        })
+        .collect()
+}
+
+fn candidate_match_masks(
+    candidate_count: usize,
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> CandidateMatchMasks {
+    let to_mask = |matches: &[usize]| {
+        matches.iter().fold(0usize, |mask, index| {
+            debug_assert!(*index < candidate_count);
+            mask | (1usize << index)
+        })
+    };
+
+    CandidateMatchMasks {
+        denied: denied_matches
+            .iter()
+            .map(|matches| to_mask(matches))
+            .collect(),
+        allowed: allowed_matches
+            .iter()
+            .map(|matches| to_mask(matches))
+            .collect(),
+    }
+}
+
+fn exact_selection_score(
+    mask: usize,
+    candidates: &[CandidateRule],
+    match_masks: &CandidateMatchMasks,
+) -> ExactSelectionScore {
+    let denied_misses = match_masks
+        .denied
+        .iter()
+        .filter(|row_mask| (**row_mask & mask) == 0)
+        .count();
+    let allowed_hits = match_masks
+        .allowed
+        .iter()
+        .filter(|row_mask| (**row_mask & mask) != 0)
+        .count();
+    let (rule_count, complexity_weight, index_weight) = candidates
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| (mask & (1usize << index)) != 0)
+        .fold(
+            (0usize, 0usize, 0usize),
+            |(count, complexity, index_sum), (index, candidate)| {
+                (
+                    count + 1,
+                    complexity + candidate_total_penalty(candidate),
+                    index_sum + index + 1,
+                )
+            },
+        );
+
+    ExactSelectionScore {
+        total_errors: denied_misses + allowed_hits,
+        allowed_hits,
+        rule_count,
+        complexity_weight,
+        index_weight,
+    }
 }
 
 fn match_expression_for(matches: &[usize]) -> String {
@@ -872,11 +987,7 @@ fn match_expression_for(matches: &[usize]) -> String {
 }
 
 fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
-    if count == 0 {
-        return "0".to_string();
-    }
-    format!(
-        "(+ {})",
+    solver_sum(
         (0..count)
             .map(|index| {
                 if when_true {
@@ -885,30 +996,28 @@ fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
                     format!("(ite {prefix}_{index} 0 1)")
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect(),
     )
 }
 
 fn keep_sum(count: usize) -> String {
-    if count == 0 {
-        return "0".to_string();
-    }
-    format!(
-        "(+ {})",
+    solver_sum(
         (0..count)
             .map(|index| format!("(ite keep_{index} 1 0)"))
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect(),
+    )
+}
+
+fn keep_index_sum(count: usize) -> String {
+    solver_sum(
+        (0..count)
+            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
+            .collect(),
     )
 }
 
 fn weighted_keep_sum(candidates: &[CandidateRule]) -> String {
-    if candidates.is_empty() {
-        return "0".to_string();
-    }
-    format!(
-        "(+ {})",
+    solver_sum(
         candidates
             .iter()
             .enumerate()
@@ -918,17 +1027,34 @@ fn weighted_keep_sum(candidates: &[CandidateRule]) -> String {
                     candidate_total_penalty(candidate)
                 )
             })
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect(),
     )
 }
 
-fn solve_selected_rule_indexes(candidate_count: usize, smt: &str) -> Result<Vec<usize>> {
+fn solver_sum(terms: Vec<String>) -> String {
+    match terms.len() {
+        0 => "0".to_string(),
+        1 => terms.into_iter().next().expect("single term should exist"),
+        _ => format!("(+ {})", terms.join(" ")),
+    }
+}
+
+fn solve_selected_rule_indexes(
+    candidate_count: usize,
+    preamble: &str,
+    objectives: &[LexObjective],
+) -> Result<Vec<usize>> {
     let solver_settings = SolverSettings::from_env()?;
-    let result =
-        solve_keep_bools(smt, "keep", candidate_count, &solver_settings).map_err(|err| {
-            LogicPearlError::message(format!("exact rule selection solver failed: {err}"))
-        })?;
+    let result = solve_keep_bools_lexicographic(
+        preamble,
+        objectives,
+        "keep",
+        candidate_count,
+        &solver_settings,
+    )
+    .map_err(|err| {
+        LogicPearlError::message(format!("exact rule selection solver failed: {err}"))
+    })?;
     match result.status {
         SatStatus::Sat => Ok(result.selected),
         SatStatus::Unsat => Ok(Vec::new()),

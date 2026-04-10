@@ -4,7 +4,8 @@ use logicpearl_ir::{
     DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
 };
 use logicpearl_solver::{
-    check_sat, check_sat_with_values, solve_keep_bools, SatStatus, SolverBackend, SolverSettings,
+    check_sat, check_sat_with_values, solve_keep_bools_lexicographic, LexObjective, SatStatus,
+    SolverBackend, SolverSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -648,7 +649,7 @@ fn solve_best_conjunction(
     uncovered_positive_indexes: &[usize],
     options: &BooleanConjunctionSearchOptions,
 ) -> Result<Option<BooleanConjunctionCandidate>> {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
+    let mut smt = String::new();
     for index in 0..feature_names.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
@@ -688,18 +689,14 @@ fn solve_best_conjunction(
         hit_sum("pos", uncovered_positive_indexes.len(), true),
         options.min_positive_support
     ));
-    smt.push_str(&format!(
-        "(maximize {})\n",
-        hit_sum("pos", uncovered_positive_indexes.len(), true)
-    ));
-    smt.push_str(&format!(
-        "(minimize {})\n",
-        hit_sum("neg", negatives.len(), true)
-    ));
-    smt.push_str(&format!("(minimize {})\n", keep_sum(feature_names.len())));
-    smt.push_str("(check-sat)\n(get-model)\n");
+    let objectives = vec![
+        LexObjective::maximize(hit_sum("pos", uncovered_positive_indexes.len(), true)),
+        LexObjective::minimize(hit_sum("neg", negatives.len(), true)),
+        LexObjective::minimize(keep_sum(feature_names.len())),
+        LexObjective::minimize(keep_index_sum(feature_names.len())),
+    ];
 
-    let selected_indexes = solve_selected_feature_indexes(feature_names.len(), smt)?;
+    let selected_indexes = solve_selected_feature_indexes(feature_names.len(), &smt, &objectives)?;
     if selected_indexes.is_empty() {
         return Ok(None);
     }
@@ -746,11 +743,7 @@ fn example_match_expression(features: &BTreeMap<String, bool>, feature_names: &[
 }
 
 fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
-    if count == 0 {
-        return "0".to_string();
-    }
-    format!(
-        "(+ {})",
+    solver_sum(
         (0..count)
             .map(|index| {
                 if when_true {
@@ -759,22 +752,32 @@ fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
                     format!("(ite {prefix}_{index} 0 1)")
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect(),
     )
 }
 
 fn keep_sum(count: usize) -> String {
-    if count == 0 {
-        return "0".to_string();
-    }
-    format!(
-        "(+ {})",
+    solver_sum(
         (0..count)
             .map(|index| format!("(ite keep_{index} 1 0)"))
-            .collect::<Vec<_>>()
-            .join(" ")
+            .collect(),
     )
+}
+
+fn keep_index_sum(count: usize) -> String {
+    solver_sum(
+        (0..count)
+            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
+            .collect(),
+    )
+}
+
+fn solver_sum(terms: Vec<String>) -> String {
+    match terms.len() {
+        0 => "0".to_string(),
+        1 => terms.into_iter().next().expect("single term should exist"),
+        _ => format!("(+ {})", terms.join(" ")),
+    }
 }
 
 fn conjunction_matches(
@@ -786,14 +789,24 @@ fn conjunction_matches(
         .all(|feature| features.get(feature).copied().unwrap_or(false))
 }
 
-fn solve_selected_feature_indexes(feature_count: usize, smt: String) -> Result<Vec<usize>> {
+fn solve_selected_feature_indexes(
+    feature_count: usize,
+    preamble: &str,
+    objectives: &[LexObjective],
+) -> Result<Vec<usize>> {
     let solver_settings = SolverSettings::from_env()?;
-    let result =
-        solve_keep_bools(&smt, "keep", feature_count, &solver_settings).map_err(|err| {
-            LogicPearlError::message(format!(
-                "boolean conjunction synthesis solver failed: {err}"
-            ))
-        })?;
+    let result = solve_keep_bools_lexicographic(
+        preamble,
+        objectives,
+        "keep",
+        feature_count,
+        &solver_settings,
+    )
+    .map_err(|err| {
+        LogicPearlError::message(format!(
+            "boolean conjunction synthesis solver failed: {err}"
+        ))
+    })?;
     match result.status {
         SatStatus::Sat => Ok(result.selected),
         SatStatus::Unsat => Ok(Vec::new()),
@@ -890,8 +903,8 @@ mod tests {
         assert!(report.fully_verified);
         assert_eq!(
             report.solver_backend,
-            resolve_backend(&SolverSettings::default())
-                .expect("a default solver backend should resolve")
+            resolve_backend(&SolverSettings::from_env().expect("solver settings should parse"))
+                .expect("an active solver backend should resolve")
                 .as_str()
         );
     }

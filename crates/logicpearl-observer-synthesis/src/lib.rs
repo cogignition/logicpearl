@@ -6,7 +6,9 @@ use logicpearl_observer::{
     prompt_matches_phrase, set_guardrails_signal_phrases, CompiledPhraseMatchText,
     GuardrailsSignal, NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
 };
-use logicpearl_solver::{solve_keep_bools, SatStatus, SolverBackend, SolverSettings};
+use logicpearl_solver::{
+    solve_keep_bools_lexicographic, LexObjective, SatStatus, SolverBackend, SolverSettings,
+};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -896,7 +898,7 @@ fn solve_phrase_subset_soft(
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
 ) -> Result<PhraseSelectionOutcome> {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
+    let mut smt = String::new();
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
@@ -917,47 +919,43 @@ fn solve_phrase_subset_soft(
     let missed_terms = if positive_constraints.is_empty() {
         "0".to_string()
     } else {
-        format!(
-            "(+ {})",
+        solver_sum(
             positive_constraints
                 .iter()
                 .enumerate()
                 .map(|(index, _)| format!("(ite pos_{index} 0 1)"))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect(),
         )
     };
     let negative_terms = if negative_constraints.is_empty() {
         "0".to_string()
     } else {
-        format!(
-            "(+ {})",
+        solver_sum(
             negative_constraints
                 .iter()
                 .enumerate()
                 .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect(),
         )
     };
     let keep_terms = if phrases.is_empty() {
         "0".to_string()
     } else {
-        format!(
-            "(+ {})",
+        solver_sum(
             phrases
                 .iter()
                 .enumerate()
                 .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect(),
         )
     };
-    smt.push_str(&format!("(minimize {missed_terms})\n"));
-    smt.push_str(&format!("(minimize {negative_terms})\n"));
-    smt.push_str(&format!("(minimize {keep_terms})\n"));
-    smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes(phrases.len(), smt)
+    let objectives = vec![
+        LexObjective::minimize(missed_terms),
+        LexObjective::minimize(negative_terms),
+        LexObjective::minimize(keep_terms),
+        LexObjective::minimize(keep_index_sum(phrases.len())),
+    ];
+    solve_selected_phrase_indexes(phrases.len(), &smt, &objectives)
 }
 
 fn solve_phrase_subset(
@@ -965,7 +963,7 @@ fn solve_phrase_subset(
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
 ) -> Result<PhraseSelectionOutcome> {
-    let mut smt = String::from("(set-option :opt.priority lex)\n");
+    let mut smt = String::new();
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
@@ -982,33 +980,31 @@ fn solve_phrase_subset(
     let negative_terms = if negative_constraints.is_empty() {
         "0".to_string()
     } else {
-        format!(
-            "(+ {})",
+        solver_sum(
             negative_constraints
                 .iter()
                 .enumerate()
                 .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect(),
         )
     };
     let keep_terms = if phrases.is_empty() {
         "0".to_string()
     } else {
-        format!(
-            "(+ {})",
+        solver_sum(
             phrases
                 .iter()
                 .enumerate()
                 .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
-                .collect::<Vec<_>>()
-                .join(" ")
+                .collect(),
         )
     };
-    smt.push_str(&format!("(minimize {negative_terms})\n"));
-    smt.push_str(&format!("(minimize {keep_terms})\n"));
-    smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes(phrases.len(), smt)
+    let objectives = vec![
+        LexObjective::minimize(negative_terms),
+        LexObjective::minimize(keep_terms),
+        LexObjective::minimize(keep_index_sum(phrases.len())),
+    ];
+    solve_selected_phrase_indexes(phrases.len(), &smt, &objectives)
 }
 
 pub fn synthesize_guardrails_artifact(
@@ -1865,10 +1861,18 @@ fn benign_question_tokens() -> [&'static str; 9] {
 
 fn solve_selected_phrase_indexes(
     phrase_count: usize,
-    smt: String,
+    preamble: &str,
+    objectives: &[LexObjective],
 ) -> Result<PhraseSelectionOutcome> {
     let solver_settings = SolverSettings::from_env()?;
-    let result = solve_keep_bools(&smt, "keep", phrase_count, &solver_settings).map_err(|err| {
+    let result = solve_keep_bools_lexicographic(
+        preamble,
+        objectives,
+        "keep",
+        phrase_count,
+        &solver_settings,
+    )
+    .map_err(|err| {
         LogicPearlError::message(format!("observer phrase subset solver failed: {err}"))
     })?;
     Ok(PhraseSelectionOutcome {
@@ -1900,6 +1904,22 @@ fn sat_status_label(status: SatStatus) -> &'static str {
         SatStatus::Sat => "sat",
         SatStatus::Unsat => "unsat",
         SatStatus::Unknown => "unknown",
+    }
+}
+
+fn keep_index_sum(count: usize) -> String {
+    solver_sum(
+        (0..count)
+            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
+            .collect(),
+    )
+}
+
+fn solver_sum(terms: Vec<String>) -> String {
+    match terms.len() {
+        0 => "0".to_string(),
+        1 => terms.into_iter().next().expect("single term should exist"),
+        _ => format!("(+ {})", terms.join(" ")),
     }
 }
 
@@ -2096,8 +2116,8 @@ mod tests {
         assert_eq!(selection.status, SatStatus::Sat);
         assert_eq!(
             selection.backend_used.as_str(),
-            resolve_backend(&SolverSettings::default())
-                .expect("a default solver backend should resolve")
+            resolve_backend(&SolverSettings::from_env().expect("solver settings should parse"))
+                .expect("an active solver backend should resolve")
                 .as_str()
         );
         assert_eq!(selection.selected, vec![0]);
