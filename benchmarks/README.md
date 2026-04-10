@@ -18,6 +18,6 @@ Rules:
 - track both attack catch rate and false-positive rate
 
 Recommended public benchmark families:
-- `opa_rego/`
+- `opa_rego/` for a small bounded parity example against a fixed Rego policy
 - `guardrails/`
 - `waf/`

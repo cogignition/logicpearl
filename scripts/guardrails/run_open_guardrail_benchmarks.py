@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         "--input-split",
         choices=("dev", "final_holdout", "raw"),
         default="dev",
-        help="Which frozen external split to evaluate. Defaults to the dev split; use raw only for legacy full-dataset runs.",
+        help="Which frozen external split to evaluate. Defaults to the dev split; use raw only to evaluate the unsplit source dataset directly.",
     )
     parser.add_argument(
         "--sample-size",

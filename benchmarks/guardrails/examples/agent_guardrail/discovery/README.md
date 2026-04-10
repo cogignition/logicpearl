@@ -20,7 +20,7 @@ logicpearl build benchmarks/guardrails/examples/agent_guardrail/discovery/data_e
 logicpearl build benchmarks/guardrails/examples/agent_guardrail/discovery/route_status_traces.csv --output-dir /tmp/route_status
 ```
 
-For the generalized multi-target path:
+For the advanced generalized multi-target path:
 
 ```bash
 logicpearl discover \

@@ -1,7 +1,5 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{
-    ComparisonOperator, ComparisonValue, FeatureGovernance, RuleDefinition, RuleVerificationStatus,
-};
+use logicpearl_ir::{Expression, FeatureGovernance, RuleDefinition, RuleVerificationStatus};
 use logicpearl_runtime::evaluate_gate;
 use serde::Serialize;
 use serde_json::Value;
@@ -73,10 +71,33 @@ pub struct BuildResult {
     pub selected_features: Vec<String>,
     pub training_parity: f64,
     #[serde(default)]
+    pub residual_recovery: ResidualRecoveryReport,
+    #[serde(default)]
     pub cache_hit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<BuildProvenance>,
     pub output_files: OutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidualRecoveryState {
+    #[default]
+    Disabled,
+    Applied,
+    NoMissedSlices,
+    SolverUnavailable,
+    SolverError,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+pub struct ResidualRecoveryReport {
+    #[serde(default)]
+    pub state: ResidualRecoveryState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_used: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
@@ -203,23 +224,14 @@ pub struct PinnedRuleSet {
 
 #[derive(Debug, Clone)]
 struct CandidateRule {
-    feature: String,
-    op: ComparisonOperator,
-    value: ComparisonValue,
+    expression: Expression,
     denied_coverage: usize,
     false_positives: usize,
 }
 
 impl CandidateRule {
     fn signature(&self) -> String {
-        match &self.value {
-            ComparisonValue::Literal(value) => {
-                format!("{}{}{}", self.feature, self.op.as_str(), value)
-            }
-            ComparisonValue::FeatureRef { feature_ref } => {
-                format!("{}{}@{}", self.feature, self.op.as_str(), feature_ref)
-            }
-        }
+        serde_json::to_string(&self.expression).expect("candidate rule signature serialization")
     }
 }
 
@@ -261,7 +273,7 @@ const DEFAULT_RESIDUAL_PASS_OPTIONS: ResidualPassOptions = ResidualPassOptions {
     max_conditions: 3,
     min_positive_support: 2,
     max_negative_hits: 0,
-    max_rules: 4,
+    max_rules: 8,
 };
 
 const DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS: UniqueCoverageRefinementOptions =
@@ -356,7 +368,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "1".to_string(),
+        cache_version: "2".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -729,18 +741,23 @@ pub fn build_pearl_from_rows(
         .as_ref()
         .map(|path| load_pinned_rule_set(path))
         .transpose()?;
-    let (gate, residual_rules_discovered, refined_rules_applied, pinned_rules_applied) =
-        build_gate(
-            &augmented_rows,
-            rows,
-            &derived_features,
-            &feature_governance.features,
-            &options.gate_id,
-            options.decision_mode,
-            residual_options.as_ref(),
-            refinement_options.as_ref(),
-            pinned_rules.as_ref(),
-        )?;
+    let (
+        gate,
+        residual_rules_discovered,
+        residual_recovery,
+        refined_rules_applied,
+        pinned_rules_applied,
+    ) = build_gate(
+        &augmented_rows,
+        rows,
+        &derived_features,
+        &feature_governance.features,
+        &options.gate_id,
+        options.decision_mode,
+        residual_options.as_ref(),
+        refinement_options.as_ref(),
+        pinned_rules.as_ref(),
+    )?;
     gate.write_pretty(&pearl_ir_path)?;
 
     let mut correct = 0;
@@ -769,6 +786,7 @@ pub fn build_pearl_from_rows(
             .map(|feature| feature.id.clone())
             .collect(),
         training_parity,
+        residual_recovery,
         cache_hit: false,
         provenance: None,
         output_files: OutputFiles {
@@ -803,7 +821,7 @@ fn verification_status(rule: &RuleDefinition) -> RuleVerificationStatus {
 
 fn verification_status_rank(status: &RuleVerificationStatus) -> i32 {
     match status {
-        RuleVerificationStatus::Z3Verified => 4,
+        RuleVerificationStatus::SolverVerified => 4,
         RuleVerificationStatus::RefinedUnverified => 3,
         RuleVerificationStatus::PipelineUnverified => 2,
         RuleVerificationStatus::HeuristicUnverified => 1,
@@ -827,16 +845,21 @@ mod tests {
         build_pearl_from_csv, build_pearl_from_rows, canonicalize_rules, dedupe_rules_by_signature,
         discover_from_csv, discover_residual_rules, gate_from_rules, load_decision_traces,
         load_decision_traces_auto, merge_discovered_and_pinned_rules, prune_redundant_rules,
-        rule_from_candidate, BuildOptions, CandidateRule, ComparisonOperator, DecisionTraceRow,
-        DiscoverOptions, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
+        rule_from_candidate, BuildOptions, CandidateRule, DecisionTraceRow, DiscoverOptions,
+        DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions, ResidualRecoveryState,
     };
     use logicpearl_ir::{
-        ComparisonExpression, ComparisonValue, Expression, LogicPearlGateIr, RuleDefinition,
-        RuleKind, RuleVerificationStatus,
+        ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
+        RuleDefinition, RuleKind, RuleVerificationStatus,
     };
+    use logicpearl_solver::{check_sat, SolverSettings};
     use serde_json::{Number, Value};
     use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
+
+    fn solver_available() -> bool {
+        check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
+    }
 
     #[test]
     fn load_decision_traces_parses_allowed_column() {
@@ -1022,6 +1045,10 @@ mod tests {
         assert_eq!(result.rows, 8);
         assert_eq!(result.rules_discovered, 1);
         assert_eq!(result.training_parity, 1.0);
+        assert_eq!(
+            result.residual_recovery.state,
+            ResidualRecoveryState::Disabled
+        );
         assert!(output_dir.join("pearl.ir.json").exists());
         assert!(output_dir.join("build_report.json").exists());
     }
@@ -1219,11 +1246,7 @@ mod tests {
 
     #[test]
     fn build_residual_pass_recovers_missed_boolean_slice() {
-        if std::process::Command::new("z3")
-            .arg("-version")
-            .output()
-            .is_err()
-        {
+        if !solver_available() {
             return;
         }
 
@@ -1244,9 +1267,11 @@ mod tests {
             vec![rule_from_candidate(
                 0,
                 &CandidateRule {
-                    feature: "seed".to_string(),
-                    op: ComparisonOperator::Gt,
-                    value: ComparisonValue::Literal(Value::Number(Number::from(0))),
+                    expression: Expression::Comparison(ComparisonExpression {
+                        feature: "seed".to_string(),
+                        op: ComparisonOperator::Gt,
+                        value: ComparisonValue::Literal(Value::Number(Number::from(0))),
+                    }),
                     denied_coverage: 1,
                     false_positives: 0,
                 },
@@ -1314,6 +1339,299 @@ mod tests {
         assert!(gate_json.contains("\"all\""));
         assert!(gate_json.contains("\"feature\": \"signal\""));
         assert!(gate_json.contains("\"feature\": \"guard\""));
+    }
+
+    #[test]
+    fn build_residual_pass_recovers_policy_style_conjunction_rules() {
+        if !solver_available() {
+            return;
+        }
+
+        let rows = vec![
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(1)),
+                    ("action_read", Value::from(0)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(1)),
+                    ("action_read", Value::from(0)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(1)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(1)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(0)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(1)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(0)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(1)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(0)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(0)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(0)),
+                    ("sensitivity", Value::from(2)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(0)),
+                    ("sensitivity", Value::from(1)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                false,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(1)),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(1)),
+                    ("action_delete", Value::from(1)),
+                    ("action_read", Value::from(0)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(1)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(1)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(1)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(0)),
+                    ("is_public", Value::from(1)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                true,
+            ),
+            row_values(
+                &[
+                    ("is_admin", Value::from(0)),
+                    ("action_delete", Value::from(0)),
+                    ("action_read", Value::from(1)),
+                    ("archived", Value::from(0)),
+                    ("is_authenticated", Value::from(0)),
+                    ("sensitivity", Value::from(0)),
+                    ("team_match", Value::from(1)),
+                    ("is_public", Value::from(0)),
+                    ("is_contractor", Value::from(0)),
+                ],
+                true,
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let coarse_output = dir.path().join("coarse");
+        let recovered_output = dir.path().join("recovered");
+
+        let coarse = build_pearl_from_rows(
+            &rows,
+            "policy_style".to_string(),
+            &BuildOptions {
+                output_dir: coarse_output.clone(),
+                gate_id: "policy_style".to_string(),
+                label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: false,
+                refine: false,
+                pinned_rules: None,
+                feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
+            },
+        )
+        .unwrap();
+        assert!(coarse.training_parity < 1.0);
+        assert_eq!(
+            coarse.residual_recovery.state,
+            ResidualRecoveryState::Disabled
+        );
+
+        let recovered = build_pearl_from_rows(
+            &rows,
+            "policy_style".to_string(),
+            &BuildOptions {
+                output_dir: recovered_output.clone(),
+                gate_id: "policy_style".to_string(),
+                label_column: "allowed".to_string(),
+                positive_label: None,
+                negative_label: None,
+                residual_pass: true,
+                refine: false,
+                pinned_rules: None,
+                feature_governance: None,
+                decision_mode: DiscoveryDecisionMode::Standard,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(recovered.training_parity, 1.0);
+        assert_eq!(
+            recovered.residual_recovery.state,
+            ResidualRecoveryState::Applied
+        );
+        let gate = LogicPearlGateIr::from_path(recovered_output.join("pearl.ir.json")).unwrap();
+        let rendered = serde_json::to_string(&gate.rules).unwrap();
+        assert!(rendered.contains("\"all\""));
+        assert!(rendered.contains("\"feature\":\"action_read\""));
+        assert!(rendered.contains("\"feature\":\"is_admin\""));
+        assert!(rendered.contains("\"feature\":\"archived\""));
+        assert!(rendered.contains("\"feature\":\"team_match\""));
+        assert!(rendered.contains("\"feature\":\"sensitivity\""));
     }
 
     #[test]
@@ -1504,9 +1822,11 @@ mod tests {
             rule_from_candidate(
                 0,
                 &CandidateRule {
-                    feature: "annual_income".to_string(),
-                    op: ComparisonOperator::Eq,
-                    value: ComparisonValue::Literal(Value::Number(Number::from(85000))),
+                    expression: Expression::Comparison(ComparisonExpression {
+                        feature: "annual_income".to_string(),
+                        op: ComparisonOperator::Eq,
+                        value: ComparisonValue::Literal(Value::Number(Number::from(85000))),
+                    }),
                     denied_coverage: 1,
                     false_positives: 0,
                 },
@@ -1514,9 +1834,11 @@ mod tests {
             rule_from_candidate(
                 1,
                 &CandidateRule {
-                    feature: "credit_score".to_string(),
-                    op: ComparisonOperator::Eq,
-                    value: ComparisonValue::Literal(Value::Number(Number::from(680))),
+                    expression: Expression::Comparison(ComparisonExpression {
+                        feature: "credit_score".to_string(),
+                        op: ComparisonOperator::Eq,
+                        value: ComparisonValue::Literal(Value::Number(Number::from(680))),
+                    }),
                     denied_coverage: 2,
                     false_positives: 0,
                 },
@@ -1524,9 +1846,13 @@ mod tests {
             rule_from_candidate(
                 2,
                 &CandidateRule {
-                    feature: "debt_ratio".to_string(),
-                    op: ComparisonOperator::Gte,
-                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(0.55).unwrap())),
+                    expression: Expression::Comparison(ComparisonExpression {
+                        feature: "debt_ratio".to_string(),
+                        op: ComparisonOperator::Gte,
+                        value: ComparisonValue::Literal(Value::Number(
+                            Number::from_f64(0.55).unwrap(),
+                        )),
+                    }),
                     denied_coverage: 3,
                     false_positives: 0,
                 },

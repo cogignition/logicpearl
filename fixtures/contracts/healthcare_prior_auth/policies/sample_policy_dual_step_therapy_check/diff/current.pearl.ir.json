@@ -1,0 +1,76 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      },
+      {
+        "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+        "op": "<",
+        "value": 1.0
+      },
+      "label": "Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001 Satisfied below 1.0",
+      "message": "Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001 Satisfied below 1.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001 Satisfied at or above 1.0",
+      "verification_status": "pipeline_unverified"
+    },
+    {
+      "id": "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied",
+        "op": "<=",
+        "value": 0.0
+      },
+      "label": "Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003 Satisfied at or below 0.0",
+      "message": "Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003 Satisfied at or below 0.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Requirement Req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003 Satisfied above 0.0",
+      "verification_status": "pipeline_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "training parity against 4 decision traces",
+    "verification_summary": {
+      "pipeline_unverified": 2
+    }
+  },
+  "provenance": {
+    "generator": "logicpearl.build",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}

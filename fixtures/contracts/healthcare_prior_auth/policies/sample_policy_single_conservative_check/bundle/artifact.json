@@ -1,0 +1,18 @@
+{
+  "artifact_version": "1.0",
+  "artifact_name": "bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn",
+  "gate_id": "bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn",
+  "files": {
+    "pearl_ir": "pearl.ir.json",
+    "build_report": "build_report.json",
+    "native_binary": null,
+    "wasm_module": null,
+    "wasm_metadata": null
+  },
+  "bundle": {
+    "bundle_kind": "direct_pearl_bundle",
+    "cli_entrypoint": "artifact.json",
+    "deployables": [],
+    "metadata_files": []
+  }
+}

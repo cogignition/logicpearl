@@ -1,4 +1,4 @@
-name: Scores
+name: Publish Scoreboard
 
 on:
   push:

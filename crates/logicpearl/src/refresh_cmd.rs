@@ -276,7 +276,7 @@ pub(crate) fn run_refresh_benchmarks(args: RefreshBenchmarksArgs) -> Result<()> 
         find_repo_root(&std::env::current_dir().into_diagnostic()?).ok_or_else(|| {
             guidance(
                 "could not find the LogicPearl repo root from the current directory",
-                "Run `logicpearl refresh benchmarks` from inside the checked-out LogicPearl repo.",
+                "Run `cargo xtask refresh-benchmarks` from inside the checked-out LogicPearl repo.",
             )
         })?;
     let logs_dir = args
@@ -1089,7 +1089,6 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
         &cli,
         &train_dir.join("traces"),
         &discovered_dir,
-        args.residual_pass,
         args.refine,
         args.skip_compile,
         &feature_governance,
@@ -1240,7 +1239,7 @@ pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -
 
     let payload = json!({
         "schema_version": "1.0",
-        "generated_by": "logicpearl refresh scoreboard-update",
+        "generated_by": "cargo xtask scoreboard-update",
         "generated_at": unix_timestamp(),
         "author": author_identity(&repo_root)?,
         "revision": revision_summary(&repo_root)?,
@@ -1417,7 +1416,7 @@ pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs)
 
     let payload = json!({
         "schema_version": "1.0",
-        "generated_by": "logicpearl refresh contributor-points",
+        "generated_by": "cargo xtask contributor-points",
         "participation_points_per_commit": PARTICIPATION_POINTS_PER_COMMIT,
         "scoring_terms": scoring_terms_json(),
         "score_model": score_model,
@@ -1472,7 +1471,7 @@ pub(crate) fn run_refresh_contributor_summary(args: RefreshContributorSummaryArg
 
     let payload = json!({
         "schema_version": "1.0",
-        "generated_by": "logicpearl refresh contributor-summary",
+        "generated_by": "cargo xtask contributor-summary",
         "scoring_terms": contributor_points["scoring_terms"].clone(),
         "contributors": summary_rows,
     });
@@ -1485,7 +1484,7 @@ pub(crate) fn run_refresh_contributor_summary(args: RefreshContributorSummaryArg
 }
 
 fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result<Vec<RefreshStep>> {
-    let refresh_cli = refresh_front_door(args.use_installed_cli)?;
+    let refresh_cli = refresh_front_door()?;
     let mut steps = Vec::new();
 
     if !args.skip_validate {
@@ -1516,7 +1515,7 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     }
 
     let mut guardrails_freeze = refresh_cli.clone();
-    guardrails_freeze.extend(["refresh".to_string(), "guardrails-freeze".to_string()]);
+    guardrails_freeze.push("guardrails-freeze".to_string());
     if args.use_installed_cli {
         guardrails_freeze.push("--use-installed-cli".to_string());
     }
@@ -1529,7 +1528,6 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
 
     let mut guardrails_build = refresh_cli.clone();
     guardrails_build.extend([
-        "refresh".to_string(),
         "guardrails-build".to_string(),
         "--output-dir".to_string(),
         args.guardrail_bundle_dir.display().to_string(),
@@ -1551,7 +1549,6 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
 
     let mut guardrails_eval = refresh_cli.clone();
     guardrails_eval.extend([
-        "refresh".to_string(),
         "guardrails-eval".to_string(),
         "--bundle-dir".to_string(),
         args.guardrail_bundle_dir.display().to_string(),
@@ -1579,7 +1576,6 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
 
     let mut waf_cases = refresh_cli.clone();
     waf_cases.extend([
-        "refresh".to_string(),
         "waf-cases".to_string(),
         "--output-dir".to_string(),
         args.waf_benchmark_dir.display().to_string(),
@@ -1596,20 +1592,18 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
 
     let mut waf_build = refresh_cli.clone();
     waf_build.extend([
-        "refresh".to_string(),
         "waf-build".to_string(),
         "--output-dir".to_string(),
         args.waf_bundle_dir.display().to_string(),
         "--benchmark-dir".to_string(),
         args.waf_benchmark_dir.display().to_string(),
-        "--residual-pass".to_string(),
         "--refine".to_string(),
     ]);
     if args.resume {
         waf_build.push("--resume".to_string());
     }
     if args.waf_skip_compile {
-        waf_build.push("--skip-compile".to_string());
+        waf_build.push("--bundle-only".to_string());
     }
     if args.use_installed_cli {
         waf_build.push("--use-installed-cli".to_string());
@@ -1623,7 +1617,6 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
 
     let mut scoreboard = refresh_cli.clone();
     scoreboard.extend([
-        "refresh".to_string(),
         "scoreboard-update".to_string(),
         "--guardrail-bundle-dir".to_string(),
         args.guardrail_bundle_dir.display().to_string(),
@@ -1639,7 +1632,7 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     });
 
     let mut contributor_points = refresh_cli.clone();
-    contributor_points.extend(["refresh".to_string(), "contributor-points".to_string()]);
+    contributor_points.push("contributor-points".to_string());
     steps.push(RefreshStep {
         id: "09_contributor_points",
         title: "Rebuild contributor points",
@@ -1648,7 +1641,7 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
     });
 
     let mut contributor_summary = refresh_cli;
-    contributor_summary.extend(["refresh".to_string(), "contributor-summary".to_string()]);
+    contributor_summary.push("contributor-summary".to_string());
     steps.push(RefreshStep {
         id: "10_contributor_summary",
         title: "Rebuild contributor summary",
@@ -1834,8 +1827,8 @@ fn guardrails_build_progress(lines: &[String], elapsed: Duration) -> Option<Refr
                 selected_signals.insert(signal.to_string());
             }
         }
-        if line.contains(" benchmark prepare ") {
-            last_phase = Some("prepare");
+        if line.contains(" benchmark learn ") {
+            last_phase = Some("learn");
         } else if line.contains(" benchmark observe ") {
             last_phase = Some("observe");
         } else if line.contains(" benchmark emit-traces ") {
@@ -2026,19 +2019,28 @@ fn simple_timestamp() -> String {
     unix_timestamp()
 }
 
-fn refresh_front_door(use_installed_cli: bool) -> Result<Vec<String>> {
-    if use_installed_cli {
-        Ok(vec!["logicpearl".to_string()])
-    } else {
-        Ok(vec![std::env::current_exe()
-            .into_diagnostic()?
-            .display()
-            .to_string()])
-    }
+fn refresh_front_door() -> Result<Vec<String>> {
+    Ok(vec![std::env::current_exe()
+        .into_diagnostic()?
+        .display()
+        .to_string()])
 }
 
 fn nested_logicpearl_base_command(use_installed_cli: bool) -> Result<Vec<String>> {
-    refresh_front_door(use_installed_cli)
+    if use_installed_cli {
+        Ok(vec!["logicpearl".to_string()])
+    } else {
+        let repo_root = require_repo_root()?;
+        Ok(vec![
+            "cargo".to_string(),
+            "run".to_string(),
+            "--manifest-path".to_string(),
+            repo_root.join("Cargo.toml").display().to_string(),
+            "-p".to_string(),
+            "logicpearl".to_string(),
+            "--".to_string(),
+        ])
+    }
 }
 
 fn build_nested_command(base: &[String], args: &[&str]) -> Vec<String> {
@@ -3184,7 +3186,7 @@ fn build_guardrails_combined_pearl(
             )])),
         }),
         provenance: Some(Provenance {
-            generator: Some("logicpearl refresh guardrails-build".to_string()),
+            generator: Some("cargo xtask guardrails-build".to_string()),
             generator_version: Some("0.1.0".to_string()),
             source_commit: Some(source_commit.to_string()),
             created_at: None,
@@ -3612,7 +3614,6 @@ fn build_waf_target_artifact_set(
     cli: &[String],
     train_traces_dir: &Path,
     discovered_dir: &Path,
-    residual_pass: bool,
     refine: bool,
     skip_compile: bool,
     feature_governance: &Path,
@@ -3640,19 +3641,16 @@ fn build_waf_target_artifact_set(
                     &target_output_dir.display().to_string(),
                     "--feature-governance",
                     &feature_governance.display().to_string(),
-                    "--decision-mode",
+                    "--discovery-mode",
                     decision_mode,
                     "--json",
                 ],
             );
-            if residual_pass {
-                command.push("--residual-pass".to_string());
-            }
             if refine {
                 command.push("--refine".to_string());
             }
             if skip_compile {
-                command.push("--skip-compile".to_string());
+                command.push("--bundle-only".to_string());
             }
             ((*target).to_string(), command)
         })
@@ -4024,7 +4022,6 @@ fn measure_guardrails(
         &build_nested_command(
             cli,
             &[
-                "refresh",
                 "guardrails-eval",
                 "--bundle-dir",
                 &bundle_dir.display().to_string(),

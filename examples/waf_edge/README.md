@@ -12,7 +12,7 @@ The boundary is intentional:
 - generic predicate/runtime behavior stays in the LogicPearl engine
 - WAF semantics live in custom plugins under [`plugins/`](./plugins)
 
-That makes this a good public proof of:
+This example demonstrates:
 
 - deterministic edge policy
 - versioned artifact bundles
@@ -130,16 +130,16 @@ This checked-in slice is for clarity. To scale it with public corpora, use:
    - old, but still useful for balanced reproducible WAF benchmarking
    - overview PDF mirror: <https://petescully.co.uk/wp-content/uploads/2018/04/http_dataset_csic_2010.pdf>
 
-The clean public path is:
+The intended scaling path is:
 
 - use adapters or parsers to normalize those corpora into benchmark cases
 - keep WAF meaning in plugins
 - keep the grouped pearl and route logic inspectable
 
-Build the larger public benchmark cases with:
+Build the larger benchmark cases with:
 
 ```bash
-logicpearl refresh waf-cases \
+cargo xtask waf-cases \
   --output-dir /tmp/waf_benchmark
 ```
 
@@ -154,7 +154,7 @@ That second command is still an example-maintenance helper. The public product s
 
 ## Open The Walkthrough Page
 
-From the repo root:
+From the project root:
 
 ```bash
 python3 -m http.server 8000

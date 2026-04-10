@@ -10,7 +10,7 @@ It answers four things:
 
 ## Local Staging Root
 
-The public refresh flow resolves staged datasets from:
+The benchmark refresh flow resolves staged datasets from:
 
 ```text
 $LOGICPEARL_DATASETS
@@ -22,15 +22,15 @@ Recommended:
 export LOGICPEARL_DATASETS="$HOME/logicpearl-datasets/public"
 ```
 
-If `LOGICPEARL_DATASETS` is unset, the scripts fall back to `../datasets/public` relative to the cloned `logicpearl/` repo directory.
+If `LOGICPEARL_DATASETS` is unset, the automation scripts fall back to `../datasets/public` relative to the project root.
 
 That is the root used by:
-- `logicpearl refresh benchmarks`
-- `logicpearl refresh guardrails-freeze`
-- `logicpearl refresh guardrails-build`
-- `logicpearl refresh guardrails-eval`
+- `cargo xtask refresh-benchmarks`
+- `cargo xtask guardrails-freeze`
+- `cargo xtask guardrails-build`
+- `cargo xtask guardrails-eval`
 
-The checked-in Python scripts still exist as compatibility/reference tooling, but the public product surface is now Rust-first.
+The checked-in Python scripts remain as supplementary reference tooling, but the primary interfaces are the Rust CLI and `xtask`.
 
 ## Development Corpora
 
@@ -79,7 +79,7 @@ These are relevant to the same workflow but may require explicit access approval
 Once the raw datasets are staged under the expected local paths, freeze deterministic per-dataset splits with:
 
 ```bash
-logicpearl refresh guardrails-freeze
+cargo xtask guardrails-freeze
 ```
 
 That writes:
@@ -101,7 +101,7 @@ This is the cleanest public protocol:
 After the per-dataset splits exist:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
@@ -122,7 +122,7 @@ That script:
 ### Run the open external evaluation corpora
 
 ```bash
-logicpearl refresh guardrails-eval \
+cargo xtask guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
@@ -131,7 +131,7 @@ logicpearl refresh guardrails-eval \
 For a faster sampled regression check:
 
 ```bash
-logicpearl refresh guardrails-eval \
+cargo xtask guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \
@@ -141,14 +141,15 @@ logicpearl refresh guardrails-eval \
 ### Run a raw benchmark file such as `PINT`
 
 ```bash
-logicpearl benchmark adapt-pint \
+logicpearl benchmark adapt \
   "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 
@@ -160,7 +161,7 @@ That:
 
 ## Public Contract
 
-The public repo does not vendor these external datasets into git.
+External datasets are not vendored into git.
 
 Instead it provides:
 - adapter profiles

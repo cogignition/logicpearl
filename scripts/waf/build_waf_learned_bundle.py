@@ -45,7 +45,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark-dir", type=Path, default=None)
     parser.add_argument("--use-installed-cli", action="store_true")
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--residual-pass", action="store_true", default=True)
     parser.add_argument("--refine", action="store_true", default=True)
     return parser.parse_args()
 
@@ -297,7 +296,6 @@ def build_target_artifact_set(
     cli: list[str],
     train_traces_dir: Path,
     discovered_dir: Path,
-    residual_pass: bool,
     refine: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     artifacts_dir = discovered_dir / "artifacts"
@@ -320,8 +318,6 @@ def build_target_artifact_set(
             str(target_output_dir),
             "--json",
         ]
-        if residual_pass:
-            build_cmd.append("--residual-pass")
         if refine:
             build_cmd.append("--refine")
         build_report = run_json(build_cmd)
@@ -426,7 +422,6 @@ def main() -> int:
         cli,
         train_dir / "traces",
         discovered_dir,
-        args.residual_pass,
         args.refine,
     )
     artifact_set_path = discovered_dir / "artifact_set.json"
@@ -510,7 +505,7 @@ def main() -> int:
             "run",
             str(learned_pipeline_path),
             str(final_holdout_cases),
-            "--collapse-non-allow-to-deny",
+            "--collapse-routes",
             "--output",
             str(holdout_dir / "collapsed_allow_deny.json"),
             "--json",

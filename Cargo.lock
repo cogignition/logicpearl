@@ -523,6 +523,7 @@ dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
  "logicpearl-runtime",
+ "logicpearl-solver",
  "logicpearl-verify",
  "serde",
  "serde_json",
@@ -567,6 +568,7 @@ dependencies = [
  "logicpearl-benchmark",
  "logicpearl-core",
  "logicpearl-observer",
+ "logicpearl-solver",
  "serde",
  "serde_json",
  "tempfile",
@@ -611,11 +613,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "logicpearl-solver"
+version = "0.1.2"
+dependencies = [
+ "logicpearl-core",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "logicpearl-verify"
 version = "0.1.2"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
+ "logicpearl-solver",
  "serde",
  "serde_json",
 ]
@@ -1211,6 +1223,23 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.2"
+dependencies = [
+ "clap",
+ "logicpearl-benchmark",
+ "logicpearl-core",
+ "logicpearl-discovery",
+ "logicpearl-ir",
+ "logicpearl-runtime",
+ "miette",
+ "owo-colors",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

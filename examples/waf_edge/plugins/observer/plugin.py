@@ -228,12 +228,12 @@ def main() -> int:
     if "payloads" in request:
         responses = []
         for payload in request.get("payloads", []):
-            responses.append(observe_raw_input(payload.get("raw_input", {})))
+            responses.append(observe_raw_input(payload.get("input", {})))
         json.dump({"ok": True, "responses": responses, "warnings": []}, sys.stdout)
         sys.stdout.write("\n")
         return 0
 
-    raw = request.get("payload", {}).get("raw_input", {})
+    raw = request.get("payload", {}).get("input", {})
     response = observe_raw_input(raw)
 
     json.dump(response, sys.stdout)

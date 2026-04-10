@@ -8,7 +8,7 @@ def _contains_any(text: str, phrases: list[str]) -> bool:
 
 def main() -> int:
     request = json.load(sys.stdin)
-    raw = request.get("payload", {}).get("raw_input", {})
+    raw = request.get("payload", {}).get("input", {})
 
     prompt = str(raw.get("prompt", "")).lower()
     requested_action = str(raw.get("requested_action", "")).lower()

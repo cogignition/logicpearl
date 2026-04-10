@@ -6,11 +6,10 @@ use logicpearl_observer::{
     prompt_matches_phrase, set_guardrails_signal_phrases, CompiledPhraseMatchText,
     GuardrailsSignal, NativeObserverArtifact, ObserverProfile as NativeObserverProfile,
 };
+use logicpearl_solver::{solve_keep_bools, SatStatus, SolverBackend, SolverSettings};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs;
-use std::process::Command;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +51,10 @@ pub struct ObserverSynthesisReport {
     pub matched_negatives_after: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_max_candidates: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_selection: Option<ObserverAutoSelectionReport>,
 }
@@ -115,6 +118,12 @@ struct CandidatePool {
     candidates: Vec<String>,
     positive_constraints: Vec<Vec<usize>>,
     negative_constraints: Vec<Vec<usize>>,
+}
+
+struct PhraseSelectionOutcome {
+    selected: Vec<usize>,
+    backend_used: SolverBackend,
+    status: SatStatus,
 }
 
 const GAP_TOKEN: &str = "__gap__";
@@ -825,15 +834,16 @@ fn synthesize_from_candidate_pool(
     let candidates = &pool.candidates[..candidate_count];
     let positive_constraints = truncate_constraints(&pool.positive_constraints, candidate_count);
     let negative_constraints = truncate_constraints(&pool.negative_constraints, candidate_count);
-    let selected =
-        solve_phrase_subset_with_z3_soft(candidates, &positive_constraints, &negative_constraints)?;
-    if selected.is_empty() {
+    let selection =
+        solve_phrase_subset_soft(candidates, &positive_constraints, &negative_constraints)?;
+    if selection.status != SatStatus::Sat || selection.selected.is_empty() {
         return Err(LogicPearlError::message(
-            "z3 could not synthesize a useful phrase subset",
+            "solver could not synthesize a useful phrase subset",
         ));
     }
 
-    let phrases_after: Vec<String> = selected
+    let phrases_after: Vec<String> = selection
+        .selected
         .iter()
         .map(|index| candidates[*index].clone())
         .collect();
@@ -853,10 +863,18 @@ fn synthesize_from_candidate_pool(
             negative_case_count: negative_prompts.len(),
             candidate_count,
             phrases_before,
-            matched_positives_after: count_selected_hits(&selected, &positive_constraints),
-            matched_negatives_after: count_selected_hits(&selected, &negative_constraints),
+            matched_positives_after: count_selected_hits(
+                &selection.selected,
+                &positive_constraints,
+            ),
+            matched_negatives_after: count_selected_hits(
+                &selection.selected,
+                &negative_constraints,
+            ),
             phrases_after,
             selected_max_candidates: Some(candidate_cap),
+            selection_backend: Some(selection.backend_used.as_str().to_string()),
+            selection_status: Some(sat_status_label(selection.status).to_string()),
             auto_selection: None,
         },
     ))
@@ -873,22 +891,28 @@ pub fn count_selected_hits(selected: &[usize], constraints: &[Vec<usize>]) -> us
         .count()
 }
 
-pub fn solve_phrase_subset_with_z3_soft(
+fn solve_phrase_subset_soft(
     phrases: &[String],
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
-) -> Result<Vec<usize>> {
+) -> Result<PhraseSelectionOutcome> {
     let mut smt = String::from("(set-option :opt.priority lex)\n");
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
     for (index, matches) in positive_constraints.iter().enumerate() {
         smt.push_str(&format!("(declare-fun pos_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= pos_{index} {}))\n", z3_or(matches)));
+        smt.push_str(&format!(
+            "(assert (= pos_{index} {}))\n",
+            solver_or(matches)
+        ));
     }
     for (index, matches) in negative_constraints.iter().enumerate() {
         smt.push_str(&format!("(declare-fun neg_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= neg_{index} {}))\n", z3_or(matches)));
+        smt.push_str(&format!(
+            "(assert (= neg_{index} {}))\n",
+            solver_or(matches)
+        ));
     }
     let missed_terms = if positive_constraints.is_empty() {
         "0".to_string()
@@ -933,24 +957,27 @@ pub fn solve_phrase_subset_with_z3_soft(
     smt.push_str(&format!("(minimize {negative_terms})\n"));
     smt.push_str(&format!("(minimize {keep_terms})\n"));
     smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes_with_z3(phrases, smt)
+    solve_selected_phrase_indexes(phrases.len(), smt)
 }
 
-pub fn solve_phrase_subset_with_z3(
+fn solve_phrase_subset(
     phrases: &[String],
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
-) -> Result<Vec<usize>> {
+) -> Result<PhraseSelectionOutcome> {
     let mut smt = String::from("(set-option :opt.priority lex)\n");
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
     for matches in positive_constraints {
-        smt.push_str(&format!("(assert {})\n", z3_or(matches)));
+        smt.push_str(&format!("(assert {})\n", solver_or(matches)));
     }
     for (index, matches) in negative_constraints.iter().enumerate() {
         smt.push_str(&format!("(declare-fun neg_{index} () Bool)\n"));
-        smt.push_str(&format!("(assert (= neg_{index} {}))\n", z3_or(matches)));
+        smt.push_str(&format!(
+            "(assert (= neg_{index} {}))\n",
+            solver_or(matches)
+        ));
     }
     let negative_terms = if negative_constraints.is_empty() {
         "0".to_string()
@@ -981,7 +1008,7 @@ pub fn solve_phrase_subset_with_z3(
     smt.push_str(&format!("(minimize {negative_terms})\n"));
     smt.push_str(&format!("(minimize {keep_terms})\n"));
     smt.push_str("(check-sat)\n(get-model)\n");
-    solve_selected_phrase_indexes_with_z3(phrases, smt)
+    solve_selected_phrase_indexes(phrases.len(), smt)
 }
 
 pub fn synthesize_guardrails_artifact(
@@ -1336,24 +1363,30 @@ pub fn repair_guardrails_artifact(
         )));
     }
 
-    let selected = solve_phrase_subset_with_z3(
+    let selection = solve_phrase_subset(
         &phrases_before,
         &positive_constraints,
         &negative_constraints,
     )?;
-    let phrases_after: Vec<String> = selected
+    if selection.status != SatStatus::Sat {
+        return Err(LogicPearlError::message(
+            "solver could not find a satisfying phrase subset",
+        ));
+    }
+    let phrases_after: Vec<String> = selection
+        .selected
         .iter()
         .map(|index| phrases_before[*index].clone())
         .collect();
     if phrases_after.is_empty() {
         return Err(LogicPearlError::message(
-            "z3 removed every phrase for the selected signal",
+            "solver removed every phrase for the selected signal",
         ));
     }
     let removed_phrases: Vec<String> = phrases_before
         .iter()
         .enumerate()
-        .filter(|(index, _)| !selected.contains(index))
+        .filter(|(index, _)| !selection.selected.contains(index))
         .map(|(_, phrase)| phrase.clone())
         .collect();
 
@@ -1369,9 +1402,9 @@ pub fn repair_guardrails_artifact(
             signal: guardrails_signal_label(signal).to_string(),
             bootstrap_mode,
             before_positive_hits: count_phrase_hits(&positive_constraints),
-            after_positive_hits: count_selected_hits(&selected, &positive_constraints),
+            after_positive_hits: count_selected_hits(&selection.selected, &positive_constraints),
             before_negative_hits: count_phrase_hits(&negative_constraints),
-            after_negative_hits: count_selected_hits(&selected, &negative_constraints),
+            after_negative_hits: count_selected_hits(&selection.selected, &negative_constraints),
             matched_positive_cases: positive_prompts.len(),
             matched_negative_cases: negative_prompts.len(),
             removed_phrases,
@@ -1830,52 +1863,22 @@ fn benign_question_tokens() -> [&'static str; 9] {
     ]
 }
 
-fn solve_selected_phrase_indexes_with_z3(phrases: &[String], smt: String) -> Result<Vec<usize>> {
-    let smt_path = std::env::temp_dir().join(format!(
-        "logicpearl-observer-z3-{}.smt2",
-        std::process::id()
-    ));
-    fs::write(&smt_path, smt)?;
-
-    let output = Command::new("z3")
-        .arg("-smt2")
-        .arg(&smt_path)
-        .output()
-        .map_err(|err| {
-            LogicPearlError::message(format!(
-                "failed to launch z3; make sure Z3 is installed and on PATH ({err})"
-            ))
-        })?;
-    let _ = fs::remove_file(&smt_path);
-    if !output.status.success() {
-        return Err(LogicPearlError::message(format!(
-            "z3 failed while solving the observer phrase subset: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    let stdout = String::from_utf8(output.stdout).map_err(|err| {
-        LogicPearlError::message(format!("z3 output was not valid UTF-8 ({err})"))
+fn solve_selected_phrase_indexes(
+    phrase_count: usize,
+    smt: String,
+) -> Result<PhraseSelectionOutcome> {
+    let solver_settings = SolverSettings::from_env()?;
+    let result = solve_keep_bools(&smt, "keep", phrase_count, &solver_settings).map_err(|err| {
+        LogicPearlError::message(format!("observer phrase subset solver failed: {err}"))
     })?;
-    if !stdout.lines().next().unwrap_or_default().contains("sat") {
-        return Err(LogicPearlError::message(
-            "z3 could not find a satisfying phrase subset",
-        ));
-    }
-    let mut selected = Vec::new();
-    for index in 0..phrases.len() {
-        let needle = format!("(define-fun keep_{index} () Bool");
-        if let Some(position) = stdout.find(&needle) {
-            let remainder = &stdout[position + needle.len()..];
-            let value = remainder.trim_start();
-            if value.starts_with("true") {
-                selected.push(index);
-            }
-        }
-    }
-    Ok(selected)
+    Ok(PhraseSelectionOutcome {
+        selected: result.selected,
+        backend_used: result.report.backend_used,
+        status: result.status,
+    })
 }
 
-fn z3_or(indices: &[usize]) -> String {
+fn solver_or(indices: &[usize]) -> String {
     if indices.is_empty() {
         "false".to_string()
     } else if indices.len() == 1 {
@@ -1892,14 +1895,23 @@ fn z3_or(indices: &[usize]) -> String {
     }
 }
 
+fn sat_status_label(status: SatStatus) -> &'static str {
+    match status {
+        SatStatus::Sat => "sat",
+        SatStatus::Unsat => "unsat",
+        SatStatus::Unknown => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_ngrams, infer_bootstrap_examples, ObserverBootstrapMode,
-        ObserverBootstrapStrategy,
+        candidate_ngrams, infer_bootstrap_examples, solve_phrase_subset_soft,
+        ObserverBootstrapMode, ObserverBootstrapStrategy,
     };
     use logicpearl_benchmark::SynthesisCase;
     use logicpearl_observer::GuardrailsSignal;
+    use logicpearl_solver::{check_sat, resolve_backend, SatStatus, SolverSettings};
     use serde_json::{Map, Value};
 
     #[test]
@@ -2065,5 +2077,33 @@ mod tests {
         assert_eq!(mode, ObserverBootstrapMode::Route);
         assert_eq!(positives.len(), 1);
         assert_eq!(negatives.len(), 1);
+    }
+
+    #[test]
+    fn phrase_subset_selection_reports_backend_and_optimal_choice() {
+        if !solver_available() {
+            return;
+        }
+
+        let phrases = vec![
+            "ignore".to_string(),
+            "system".to_string(),
+            "benign".to_string(),
+        ];
+        let selection = solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
+            .expect("solver should find a compact phrase subset");
+
+        assert_eq!(selection.status, SatStatus::Sat);
+        assert_eq!(
+            selection.backend_used.as_str(),
+            resolve_backend(&SolverSettings::default())
+                .expect("a default solver backend should resolve")
+                .as_str()
+        );
+        assert_eq!(selection.selected, vec![0]);
+    }
+
+    fn solver_available() -> bool {
+        check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
     }
 }

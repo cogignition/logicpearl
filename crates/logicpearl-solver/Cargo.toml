@@ -1,0 +1,15 @@
+[package]
+name = "logicpearl-solver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Internal solver backend abstraction for LogicPearl search and verification."
+
+[dependencies]
+logicpearl-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

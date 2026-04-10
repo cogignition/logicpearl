@@ -1,6 +1,6 @@
 # Contributing
 
-LogicPearl is a small public product repo with a visible scoreboard.
+LogicPearl is a small product repository with a visible scoreboard.
 
 The goal is not just to land code. The goal is to make the public engine better:
 - easier to run
@@ -47,7 +47,7 @@ Low-value or rejected patterns:
 - benchmark-specific hacks disguised as generic features
 - demo-only shortcuts in shared engine code
 - claims in docs that overstate what a benchmark proves
-- changes that make the public repo feel magical only because hidden assumptions were baked in
+- changes that feel magical only because hidden assumptions were baked in
 
 The fastest way to lose the plot here is optimizing for score movement while making the engine less honest.
 
@@ -77,23 +77,73 @@ If your change is score-neutral but makes the repo cleaner, easier to use, or mo
 
 ## Local Development
 
-Run the full public test suite:
+Enable the repository hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Run the same shared verification suites manually:
+
+```bash
+cargo xtask verify pre-commit
+```
+
+```bash
+cargo xtask verify pre-push
+```
+
+```bash
+cargo xtask verify ci
+```
+
+Run the targeted solver parity suite when you are touching solver-backed discovery, verification, or observer selection code:
+
+```bash
+cargo xtask verify solver-backends
+```
+
+Run the full public test suite directly when you want the raw command:
 
 ```bash
 cargo test --workspace
 ```
 
-Refresh the public score ledger:
+Internal solver bring-up is configurable through environment variables:
 
 ```bash
-logicpearl refresh scoreboard-update
+export LOGICPEARL_SOLVER_BACKEND=auto
+export LOGICPEARL_SOLVER_TIMEOUT_MS=5000
+export LOGICPEARL_SOLVER_DIR="$HOME/.logicpearl/current/bin"
+```
+
+Accepted backend values are `auto`, `z3`, `cvc5`, `prefer-z3`, and `prefer-cvc5`.
+
+`auto` prefers `z3` first and falls back to `cvc5` when `z3` is not available. `prefer-cvc5` flips that order. `z3` remains the default path, and `cvc5` is still an internal backend for bring-up and parity testing rather than a public CLI knob.
+
+`LOGICPEARL_SOLVER_DIR` is optional. Use it when you want LogicPearl to prefer a bundled solver directory over whatever happens to be on the global `PATH`.
+
+Maintainers can package a distributable CLI bundle with a bundled solver by running:
+
+```bash
+cargo xtask package-release-bundle \
+  --logicpearl-binary target/release/logicpearl \
+  --z3-binary "$(command -v z3)" \
+  --target-triple x86_64-unknown-linux-gnu \
+  --output-dir dist
+```
+
+Scoreboard maintenance is explicit and stays out of the git hooks. Refresh the score ledger when you actually intend to update it:
+
+```bash
+cargo xtask scoreboard-update
 ```
 
 Rebuild contributor totals:
 
 ```bash
-logicpearl refresh contributor-points
-logicpearl refresh contributor-summary
+cargo xtask contributor-points
+cargo xtask contributor-summary
 ```
 
 ## Attribution
@@ -105,4 +155,4 @@ For the cleanest attribution on `main`:
 - prefer merge strategies that keep contributor identity intact
 - if you use GitHub no-reply emails, the scoreboard will infer the GitHub login when possible
 
-If a maintainer rewrites authorship during squash merge, the scoreboard will attribute the shells and pearls to the squash author.
+If a squash merge rewrites authorship, the scoreboard will attribute the shells and pearls to the squash author.

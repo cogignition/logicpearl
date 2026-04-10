@@ -5,7 +5,7 @@ import sys
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
-    pearl_ir = payload.get("input", payload.get("pearl_ir", {}))
+    pearl_ir = payload.get("input", {})
     rules = pearl_ir.get("rules", [])
 
     statuses = []

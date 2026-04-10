@@ -1,11 +1,11 @@
 # Reserved Crates
 
-These crates are intentionally minimal placeholders for realistic future `logicpearl-*` package names we may want on crates.io.
+These crates are intentionally minimal placeholders for realistic `logicpearl-*` package names that may be published on crates.io later.
 
 They are:
 - outside the main Cargo workspace
 - not part of the normal build or test flow
-- meant only for clean namespace reservation when we are ready to publish them
+- meant only for clean namespace reservation before publication
 
 Current reserved-name candidates:
 - `logicpearl-explain`
@@ -22,7 +22,7 @@ Owning `logicpearl` does **not** automatically protect future names like:
 - `logicpearl-schema`
 - `logicpearl-policy`
 
-If we believe a name is plausibly part of the long-term public product surface, the cleanest way to protect it is to publish a minimal placeholder crate before someone else claims it.
+If a name is plausibly part of the long-term public product surface, the cleanest way to protect it is to publish a minimal placeholder crate before someone else claims it.
 
 ## Publish Intent
 

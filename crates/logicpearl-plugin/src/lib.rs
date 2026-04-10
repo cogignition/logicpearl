@@ -78,25 +78,13 @@ pub struct PluginBatchResponse {
     pub responses: Vec<PluginResponse>,
 }
 
-pub fn build_canonical_payload(stage: &PluginStage, input: Value, options: Option<Value>) -> Value {
+pub fn build_canonical_payload(
+    _stage: &PluginStage,
+    input: Value,
+    options: Option<Value>,
+) -> Value {
     let mut payload = Map::new();
-    payload.insert("input".to_string(), input.clone());
-
-    match stage {
-        PluginStage::Observer => {
-            payload.insert("raw_input".to_string(), input);
-        }
-        PluginStage::TraceSource => {
-            payload.insert("source".to_string(), input);
-        }
-        PluginStage::Enricher => {
-            payload.insert("records".to_string(), input);
-        }
-        PluginStage::Verify => {
-            payload.insert("pearl_ir".to_string(), input);
-        }
-        PluginStage::Render => {}
-    }
+    payload.insert("input".to_string(), input);
 
     if let Some(options) = options {
         payload.insert("options".to_string(), options);
@@ -363,25 +351,12 @@ fn validate_plugin_payload_contract(
     Ok(())
 }
 
-fn extract_payload_input<'a>(stage: &PluginStage, payload: &'a Value) -> Option<&'a Value> {
-    let object = payload.as_object()?;
-    object
-        .get("input")
-        .or_else(|| compatibility_alias(stage).and_then(|alias| object.get(alias)))
+fn extract_payload_input<'a>(_stage: &PluginStage, payload: &'a Value) -> Option<&'a Value> {
+    payload.as_object().and_then(|object| object.get("input"))
 }
 
 fn extract_payload_options(payload: &Value) -> Option<&Value> {
     payload.as_object().and_then(|object| object.get("options"))
-}
-
-fn compatibility_alias(stage: &PluginStage) -> Option<&'static str> {
-    match stage {
-        PluginStage::Observer => Some("raw_input"),
-        PluginStage::TraceSource => Some("source"),
-        PluginStage::Enricher => Some("records"),
-        PluginStage::Verify => Some("pearl_ir"),
-        PluginStage::Render => None,
-    }
 }
 
 fn validate_declared_schema(label: &str, schema: Option<&Value>) -> Result<()> {

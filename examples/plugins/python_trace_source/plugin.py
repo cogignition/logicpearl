@@ -31,7 +31,7 @@ def parse_scalar(raw: str):
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
-    source = payload.get("input", payload.get("source"))
+    source = payload.get("input")
     if source is None:
         raise KeyError("payload.input")
     options = payload.get("options", {})

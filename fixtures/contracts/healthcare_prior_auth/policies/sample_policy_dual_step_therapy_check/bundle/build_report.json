@@ -1,0 +1,48 @@
+{
+  "source_csv": "plugin:healthcare-bcbsma-trace-source",
+  "gate_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+  "rows": 4,
+  "label_column": "allowed",
+  "rules_discovered": 2,
+  "residual_rules_discovered": 0,
+  "refined_rules_applied": 0,
+  "pinned_rules_applied": 0,
+  "selected_features": [
+    "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+    "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied"
+  ],
+  "training_parity": 1.0,
+  "residual_recovery": {
+    "state": "no_missed_slices"
+  },
+  "cache_hit": false,
+  "provenance": {
+    "decision_trace_source": {
+      "kind": "trace_plugin",
+      "value": "/Users/missingno/Documents/LogicPearl/healthcare_demo/plugins/healthcare_trace_source/manifest.json"
+    },
+    "trace_plugin": {
+      "name": "healthcare-bcbsma-trace-source",
+      "stage": "trace_source",
+      "manifest_path": "/Users/missingno/Documents/LogicPearl/healthcare_demo/plugins/healthcare_trace_source/manifest.json",
+      "manifest_sha256": "df0d3948346c610e061969bae7a6bc29b2a9e6713fda0ab64e985c2877f8500a",
+      "input": {
+        "kind": "inline",
+        "value": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy"
+      },
+      "options": {
+        "label_column": "allowed"
+      }
+    },
+    "source_references": {}
+  },
+  "output_files": {
+    "artifact_dir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+    "artifact_manifest": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy/artifact.json",
+    "pearl_ir": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy/pearl.ir.json",
+    "build_report": "/Users/missingno/Documents/LogicPearl/healthcare_demo/artifacts/logicpearl_cli_corpus/bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy/build_report.json",
+    "native_binary": null,
+    "wasm_module": null,
+    "wasm_metadata": null
+  }
+}

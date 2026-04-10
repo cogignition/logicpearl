@@ -1,5 +1,6 @@
 use logicpearl_discovery::BuildResult;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::tempdir;
@@ -10,6 +11,13 @@ fn repo_root() -> PathBuf {
         .and_then(|path| path.parent())
         .expect("logicpearl crate should live under workspace/crates/logicpearl")
         .to_path_buf()
+}
+
+fn run_cli_output(cli_bin: &str, args: &[String]) -> std::process::Output {
+    Command::new(cli_bin)
+        .args(args)
+        .output()
+        .expect("logicpearl command should run")
 }
 
 #[test]
@@ -51,10 +59,6 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         Some("object")
     );
     assert_eq!(
-        validate_report["canonical_contract"]["compatibility_alias"].as_str(),
-        Some("payload.raw_input")
-    );
-    assert_eq!(
         validate_report["smoke"]["response"]["features"]["age"].as_i64(),
         Some(34)
     );
@@ -81,10 +85,6 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         Some(34)
     );
     assert_eq!(
-        observer_report["request"]["payload"]["raw_input"]["age"].as_i64(),
-        Some(34)
-    );
-    assert_eq!(
         observer_report["response"]["features"]["is_member"].as_i64(),
         Some(1)
     );
@@ -93,7 +93,7 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         .arg("plugin")
         .arg("run")
         .arg(&trace_manifest)
-        .arg("--input-literal")
+        .arg("--input-string")
         .arg(trace_source.display().to_string())
         .arg("--option")
         .arg("label_column=allowed")
@@ -110,10 +110,6 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         serde_json::from_slice(&run_trace.stdout).expect("trace plugin run output should be JSON");
     assert_eq!(
         trace_report["request"]["payload"]["input"].as_str(),
-        Some(trace_source.to_string_lossy().as_ref())
-    );
-    assert_eq!(
-        trace_report["request"]["payload"]["source"].as_str(),
         Some(trace_source.to_string_lossy().as_ref())
     );
     assert!(trace_report["response"]["decision_traces"]
@@ -143,7 +139,7 @@ fn build_report_records_plugin_provenance() {
         .arg(&enricher_manifest)
         .arg("--source-ref")
         .arg("document_id=decision_traces_sample")
-        .arg("--skip-compile")
+        .arg("--bundle-only")
         .arg("--output-dir")
         .arg(&artifact_dir)
         .arg("--json")
@@ -205,4 +201,98 @@ fn build_report_records_plugin_provenance() {
     )
     .expect("build report should be valid JSON");
     assert!(persisted.provenance.is_some());
+}
+
+#[test]
+fn plugin_raw_payload_supports_verify_stage_and_rejects_old_alias_shape() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let verify_manifest = repo_root.join("examples/plugins/python_verify/manifest.json");
+    let observer_manifest = repo_root.join("examples/plugins/python_observer/manifest.json");
+    let temp = tempdir().expect("temp directory should be created");
+    let raw_payload_path = temp.path().join("verify_payload.json");
+    let legacy_payload_path = temp.path().join("legacy_payload.json");
+    let pearl_ir: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root.join("fixtures/ir/valid/auth-demo-v1.json"))
+            .expect("fixture ir should be readable"),
+    )
+    .expect("fixture ir should parse");
+
+    fs::write(
+        &raw_payload_path,
+        serde_json::to_string_pretty(&json!({
+            "input": pearl_ir
+        }))
+        .expect("raw payload should encode"),
+    )
+    .expect("raw payload should write");
+
+    let run = run_cli_output(
+        cli_bin,
+        &[
+            "plugin".to_string(),
+            "run".to_string(),
+            verify_manifest.display().to_string(),
+            "--raw-payload".to_string(),
+            raw_payload_path.display().to_string(),
+            "--json".to_string(),
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "logicpearl plugin run with raw payload failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let report: Value =
+        serde_json::from_slice(&run.stdout).expect("plugin run output should be valid JSON");
+    assert_eq!(
+        report["request"]["payload"]["input"]["gate_id"].as_str(),
+        Some("auth_demo_v1")
+    );
+    assert_eq!(
+        report["response"]["summary"]["pipeline_unverified"].as_u64(),
+        Some(3)
+    );
+
+    fs::write(
+        &legacy_payload_path,
+        serde_json::to_string_pretty(&json!({
+            "raw_input": {
+                "age": 34,
+                "member": true,
+                "country": "US"
+            }
+        }))
+        .expect("legacy payload should encode"),
+    )
+    .expect("legacy payload should write");
+
+    let validate = run_cli_output(
+        cli_bin,
+        &[
+            "plugin".to_string(),
+            "validate".to_string(),
+            observer_manifest.display().to_string(),
+            "--raw-payload".to_string(),
+            legacy_payload_path.display().to_string(),
+            "--json".to_string(),
+        ],
+    );
+    assert!(
+        !validate.status.success(),
+        "logicpearl plugin validate unexpectedly accepted a legacy payload shape:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&validate.stdout),
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    assert!(
+        combined.contains("missing payload.input"),
+        "expected payload.input validation failure, got:\n{}",
+        combined
+    );
 }

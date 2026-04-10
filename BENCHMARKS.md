@@ -1,38 +1,25 @@
 # Benchmarks
 
-This file is the short benchmark summary for the public LogicPearl repo.
+This file is the short benchmark summary for LogicPearl.
 
-For the full workflow details, use:
+For workflow details, use:
 - [DATASETS.md](./DATASETS.md)
 - [benchmarks/guardrails/README.md](./benchmarks/guardrails/README.md)
 - [docs/advanced-guardrail-guide.md](./docs/advanced-guardrail-guide.md)
-- [scripts/guardrails/README.md](./scripts/guardrails/README.md)
 
-## Why This Matters
+## Current Public Story
 
-LogicPearl benchmark work is meant to show two things:
-- the public artifact model can recover clean deterministic rules from real corpora
-- the resulting artifacts still perform well on unseen data
+Current headline benchmark lane:
+- a guardrail development lane with held-out evaluation and post-freeze external stress tests
 
-The repo keeps that story honest:
-- `train` for discovery
-- `dev` for held-out evaluation
-- `proof` for untouched final benchmarks such as `PINT`
-
-`PINT` is intentionally held back for final proof-only evaluation.
-
-## Current Highlights
-
-### OPA parity demo
-
-The repo includes a public parity/import benchmark that starts from an existing Rego policy and emits LogicPearl artifacts:
+Separately, the repo also includes a small bounded OPA / Rego parity example:
 - [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md)
 
-This is the clearest example of LogicPearl replacing a bounded logic slice with a smaller deterministic artifact while preserving behavior.
+That OPA example is useful as an additional parity walkthrough, but it is not the flagship public proof path and should not be blurred together with the guardrail benchmark story.
 
-### Guardrail corpora
+## Guardrail Development Lane
 
-The current public guardrail development path uses:
+The current public guardrail development corpora are:
 - `Salad-Data`
 - `ALERT`
 - `ChatGPT-Jailbreak-Prompts`
@@ -43,92 +30,68 @@ The current public guardrail development path uses:
 - `NOETI ToxicQAFinal`
 - `SQuAD 2.0`
 
-These are used for development only. `PINT` stays untouched until final proof.
+Two important boundary notes:
+- `PINT` is intentionally held back for final proof-only evaluation
+- `MT-AgentRisk` is staged locally but still excluded from the public lane because access is gated on Hugging Face
 
-One additional agent-safety corpus is staged locally but not included yet because it is access-gated on Hugging Face:
-- `MT-AgentRisk`
+## Held-Out Non-PINT Development Results
 
-### Held-out non-PINT evaluation
+The public non-`PINT` guardrail workflow was run on a merged corpus of `210,515` rows and evaluated on a deterministic held-out development split of `42,468` rows.
 
-Using the public guardrail workflow, LogicPearl was run on a merged non-`PINT` corpus of `210,515` rows and then evaluated on a deterministic held-out dev split of `42,468` rows.
-
-Train/dev split:
+Split:
 - train: `168,047`
 - dev: `42,468`
 
-Held-out dev results for the learned artifacts:
+Held-out dev metrics for the learned artifact set:
 - macro exact match: `99.9937%`
 - macro positive recall: `100.0%`
 - macro negative pass rate: `99.9937%`
 
 Per target:
-- `target_instruction_boundary`
-  - exact match: `100.0%`
-  - positive recall: `100.0%`
-  - false positive rate: `0.0%`
-- `target_exfiltration`
-  - exact match: `99.9812%`
-  - positive recall: `100.0%`
-  - false positive rate: `0.0189%`
-- `target_tool_use`
-  - exact match: `100.0%`
-  - positive recall: `100.0%`
-  - false positive rate: `0.0%`
+- `target_instruction_boundary`: exact match `100.0%`, positive recall `100.0%`, false positive rate `0.0%`
+- `target_exfiltration`: exact match `99.9812%`, positive recall `100.0%`, false positive rate `0.0189%`
+- `target_tool_use`: exact match `100.0%`, positive recall `100.0%`, false positive rate `0.0%`
 
-The learned rules are also clean and inspectable:
+The learned rules are also compact and inspectable:
 - `target_instruction_boundary` -> `requests_instruction_override == 1`
 - `target_exfiltration` -> `requests_secret_exfiltration == 1`
 - `target_tool_use` -> `requests_tool_misuse == 1`
 
-### Post-freeze open benchmark checks
+## Post-Freeze External Checks
 
 After freezing the pre-`PINT` bundle, the same compiled guardrail artifact was evaluated on three open external benchmarks that were not part of the training bundle:
-
 - `JailbreakBench`
 - `PromptShield`
 - `rogue-security/prompt-injections-benchmark`
-
-These are stricter external checks than the held-out development split above, but they are not all testing exactly the same task.
 
 Results:
-- `JailbreakBench`
-  - exact match: `50.0%`
-  - attack catch rate: `2.0%`
-  - benign pass rate: `98.0%`
-- `PromptShield`
-  - exact match: `67.878%`
-  - attack catch rate: `15.528%`
-  - benign pass rate: `99.774%`
-- `rogue-security/prompt-injections-benchmark`
-  - exact match: `62.98%`
-  - attack catch rate: `8.138%`
-  - benign pass rate: `99.633%`
+- `JailbreakBench`: exact match `50.0%`, attack catch rate `2.0%`, benign pass rate `98.0%`
+- `PromptShield`: exact match `67.878%`, attack catch rate `15.528%`, benign pass rate `99.774%`
+- `rogue-security/prompt-injections-benchmark`: exact match `62.98%`, attack catch rate `8.138%`, benign pass rate `99.633%`
 
-Interpretation:
-- `JailbreakBench` is not a clean apples-to-apples prompt-injection benchmark for the current LogicPearl guardrail bundle. Many of its deny-labeled rows are broad harmful-task requests rather than instruction-override or agent-boundary attacks.
-- `PromptShield` and `rogue-security/prompt-injections-benchmark` are much closer to the intended task, and they show that the current frozen bundle is conservative: very low false positives, but much weaker recall on broader prompt-injection variants than on the public pre-`PINT` development corpora.
-- That makes them useful external stress tests, not headline replacement metrics for the current pre-`PINT` workflow.
+How to read those checks:
+- `JailbreakBench` is not a clean apples-to-apples prompt-injection benchmark for the current guardrail bundle; many deny-labeled rows are broad harmful-task prompts rather than instruction-override or agent-boundary attacks
+- `PromptShield` and `rogue-security/prompt-injections-benchmark` are closer to the intended task and show the current frozen bundle is conservative: very low false positives, much weaker recall on broader prompt-injection variants than on the public pre-`PINT` development corpora
+- these are useful external stress tests, not headline replacement metrics for the current pre-`PINT` workflow
 
-### Benchmark Boundaries
+## What These Numbers Mean
 
 These are honest development numbers, not final proof numbers.
 
-Important boundary notes:
-- `PINT` is still untouched and reserved for final proof-only evaluation.
-- `JailbreakBench`, `PromptShield`, and `rogue-security/prompt-injections-benchmark` were evaluated only after the pre-`PINT` bundle was frozen. They were not part of the training bundle reported above.
-- The development corpus is merged from public datasets with different native schemas and labels.
-- LogicPearl adapts those raw datasets into a common benchmark-case format, then projects observer features into the target labels used for discovery.
-- In other words, route-level supervision comes from the source datasets, while some target-level supervision is a LogicPearl projection over the normalized observer contract.
-- That means these results are a fair held-out evaluation of the current public LogicPearl workflow, but they are not the same thing as a single gold-standard benchmark with a native shared label ontology.
+Important caveats:
+- the development corpus is merged from public datasets with different native schemas and label semantics
+- LogicPearl first adapts those raw datasets into a common benchmark-case format
+- LogicPearl then projects normalized observer features into the target labels used for discovery
+- some route-level supervision comes directly from the source datasets, while some target-level supervision depends on the current observer contract and projection config
 
 In practice:
-- `instruction_boundary` is the cleanest target because several public prompt-injection corpora align naturally with it.
-- `exfiltration` and `tool_use` are still honest, but they depend more on the current observer contract and target projection config.
-- That is exactly why `PINT` remains the final untouched benchmark rather than being mixed into development.
+- `instruction_boundary` is the cleanest target because several public prompt-injection corpora align naturally with it
+- `exfiltration` and `tool_use` are still honest held-out results, but they depend more on the current observer contract and target projection config
+- that is exactly why `PINT` remains the untouched final proof benchmark instead of being mixed into development
 
-## How To Reproduce
+## Reproduce
 
-The lowest-level public benchmark commands are:
+For the low-level public held-out workflow:
 
 ```bash
 logicpearl benchmark split-cases \
@@ -137,7 +100,7 @@ logicpearl benchmark split-cases \
   --dev-output /tmp/guardrail_dev_holdout.jsonl \
   --train-fraction 0.8
 
-logicpearl benchmark prepare \
+logicpearl benchmark learn \
   /tmp/guardrail_train.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_train_prep \
@@ -158,39 +121,36 @@ logicpearl benchmark score-artifacts \
   --json
 ```
 
-For the full frozen guardrail bundle path, use the Rust public front door:
+For the full frozen-bundle refresh flow, use:
 
 ```bash
-logicpearl refresh guardrails-build \
-  --output-dir /tmp/guardrails_bundle
+cargo xtask refresh-benchmarks
+```
 
-logicpearl benchmark adapt-pint \
+For the proof-only `PINT` scoring path after the bundle is frozen:
+
+```bash
+logicpearl benchmark adapt \
   "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 
-That bundle path freezes:
-- the staged public development corpora used for training
-- the scaffolded observer artifact
-- the discovered artifact set
-- a derived combined pearl with route labels, messages, and counterfactual hints
-- the route policy used to collapse the specialized pearls into final `allow` / `deny`
-
 ## What This Proves
 
-These benchmark results show that the current public observer plus artifact-discovery path can:
+These benchmark results show that the current public observer-plus-discovery path can:
 - learn compact deterministic guardrail artifacts from public corpora
-- preserve strong held-out performance on unseen dev traffic
-- keep the learned rules inspectable instead of turning them into opaque classifiers
+- preserve strong held-out performance on unseen non-`PINT` development traffic
+- keep the learned rules inspectable instead of collapsing them into opaque classifiers
 
 They do not yet prove:
 - final proof-only benchmark performance
-- every possible agent-security scenario
+- coverage across every agent-security scenario
 - performance on the access-gated `MT-AgentRisk` corpus
 - that every current target label is a native gold annotation from the source datasets themselves

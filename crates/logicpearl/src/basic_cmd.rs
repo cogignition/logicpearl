@@ -105,15 +105,12 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
             println!("{}", "Quickstart: Benchmark".bold().bright_green());
             println!(
                 "  {}",
-                "Score the public guardrail benchmark slice:".bright_black()
+                "Run the checked-in guardrail benchmark slice:".bright_black()
             );
             println!(
                 "  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
             );
-            println!(
-                "  {}",
-                "Inspect the benchmark pipeline if you want the artifact view:".bright_black()
-            );
+            println!("  {}", "Inspect the benchmark pipeline:".bright_black());
             println!(
                 "  logicpearl pipeline inspect benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json"
             );
@@ -159,7 +156,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             refine: args.refine,
             pinned_rules: args.pinned_rules.clone(),
             feature_governance: args.feature_governance.clone(),
-            decision_mode: to_discovery_decision_mode(args.decision_mode),
+            decision_mode: to_discovery_decision_mode(args.discovery_mode),
         },
     )
     .into_diagnostic()
@@ -435,11 +432,11 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         label_column: resolved_label_column.clone(),
         positive_label: args.positive_label.clone(),
         negative_label: args.negative_label.clone(),
-        residual_pass: args.residual_pass,
+        residual_pass: true,
         refine: args.refine,
         pinned_rules: args.pinned_rules.clone(),
         feature_governance: args.feature_governance.clone(),
-        decision_mode: to_discovery_decision_mode(args.decision_mode),
+        decision_mode: to_discovery_decision_mode(args.discovery_mode),
     };
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
@@ -501,7 +498,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
     let artifact_name = result.gate_id.clone();
-    if !args.skip_compile {
+    if !args.bundle_only {
         let native_binary_path = result
             .output_files
             .native_binary
@@ -591,12 +588,47 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         }
         println!("  {} {}", "Rows".bright_black(), result.rows);
         println!("  {} {}", "Rules".bright_black(), result.rules_discovered);
-        if result.residual_rules_discovered > 0 {
-            println!(
-                "  {} {}",
-                "Residual rules".bright_black(),
-                result.residual_rules_discovered
-            );
+        match result.residual_recovery.state {
+            ResidualRecoveryState::Applied => {
+                println!(
+                    "  {} {}",
+                    "Solver recovery".bright_black(),
+                    result
+                        .residual_recovery
+                        .detail
+                        .clone()
+                        .unwrap_or_else(|| "applied".to_string())
+                );
+            }
+            ResidualRecoveryState::NoMissedSlices => {
+                println!(
+                    "  {} no missed deny slices found",
+                    "Solver recovery".bright_black(),
+                );
+            }
+            ResidualRecoveryState::SolverUnavailable => {
+                println!(
+                    "  {} {}",
+                    "Solver recovery".bright_black(),
+                    result
+                        .residual_recovery
+                        .detail
+                        .as_deref()
+                        .unwrap_or("unavailable")
+                );
+            }
+            ResidualRecoveryState::SolverError => {
+                println!(
+                    "  {} {}",
+                    "Solver recovery".bright_black(),
+                    result
+                        .residual_recovery
+                        .detail
+                        .as_deref()
+                        .unwrap_or("skipped after a solver error")
+                );
+            }
+            ResidualRecoveryState::Disabled => {}
         }
         if result.refined_rules_applied > 0 {
             println!(

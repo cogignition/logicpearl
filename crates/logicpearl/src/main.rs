@@ -15,7 +15,7 @@ use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildInputProvenance,
     BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    PluginBuildProvenance,
+    PluginBuildProvenance, ResidualRecoveryState,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -51,7 +51,6 @@ mod diff_cmd;
 mod observer_cmd;
 mod pipeline_cmd;
 mod plugin_cmd;
-mod refresh_cmd;
 mod trace_cmd;
 
 use artifact_cmd::{
@@ -65,11 +64,9 @@ use basic_cmd::{
     run_verify,
 };
 use benchmark_cmd::{
-    run_benchmark, run_benchmark_adapt, run_benchmark_adapt_alert, run_benchmark_adapt_pint,
-    run_benchmark_adapt_salad, run_benchmark_adapt_squad, run_benchmark_detect_profile,
-    run_benchmark_emit_traces, run_benchmark_list_profiles, run_benchmark_merge_cases,
-    run_benchmark_observe, run_benchmark_prepare, run_benchmark_score_artifacts,
-    run_benchmark_split_cases,
+    run_benchmark, run_benchmark_adapt, run_benchmark_detect_profile, run_benchmark_emit_traces,
+    run_benchmark_learn, run_benchmark_list_profiles, run_benchmark_merge_cases,
+    run_benchmark_observe, run_benchmark_score_artifacts, run_benchmark_split_cases,
 };
 use conformance_cmd::{
     run_conformance_runtime_parity, run_conformance_spec_verify,
@@ -84,11 +81,6 @@ use pipeline_cmd::{
     run_pipeline_inspect, run_pipeline_run, run_pipeline_trace, run_pipeline_validate,
 };
 use plugin_cmd::{run_plugin_run, run_plugin_validate};
-use refresh_cmd::{
-    run_refresh_benchmarks, run_refresh_contributor_points, run_refresh_contributor_summary,
-    run_refresh_guardrails_build, run_refresh_guardrails_eval, run_refresh_guardrails_freeze,
-    run_refresh_scoreboard_update, run_refresh_waf_benchmark_cases, run_refresh_waf_build,
-};
 use trace_cmd::{run_traces_audit, run_traces_generate};
 
 const CLI_LONG_ABOUT: &str = "\
@@ -101,29 +93,28 @@ Use this CLI to:
 - compose and execute string-of-pearls pipelines
 - score benchmark datasets with explicit route outputs
 
-The main public path is:
+Common commands:
 - quickstart
 - traces
 - build
 - inspect
+- diff
 - run
 - pipeline
-- benchmark
-- refresh";
+- benchmark";
 
 const CLI_AFTER_HELP: &str = "\
 Examples:
   logicpearl quickstart
   logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
-  logicpearl discover benchmarks/guardrails/examples/agent_guardrail/discovery/multi_target_demo.csv --targets target_instruction_boundary,target_exfiltration,target_tool_use
   logicpearl inspect examples/getting_started/output
+  logicpearl diff old_output new_output
   logicpearl run examples/getting_started/output examples/getting_started/new_input.json
   cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output -
   logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json
-  logicpearl refresh benchmarks --resume
 
-For more advanced surfaces, run:
+For command-specific help, run:
   logicpearl <command> --help";
 
 const PIPELINE_AFTER_HELP: &str = "\
@@ -142,7 +133,7 @@ Examples:
   logicpearl benchmark split-cases /tmp/guardrail_dev.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev_holdout.jsonl --train-fraction 0.8 --json
   logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl
   logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl
-  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
+  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
   logicpearl benchmark score-artifacts /tmp/guardrail_train_prep/discovered/artifact_set.json /tmp/guardrail_dev_holdout_traces/multi_target.csv --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
 
@@ -160,7 +151,7 @@ const PLUGIN_AFTER_HELP: &str = "\
 Examples:
   logicpearl plugin validate examples/plugins/python_observer/manifest.json
   logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
-  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-literal examples/getting_started/decision_traces.csv --option label_column=allowed --json";
+  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json";
 
 const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
@@ -181,13 +172,6 @@ Examples:
   logicpearl diff old_output new_output
   logicpearl diff old_output/artifact.json new_output/artifact.json --json
   logicpearl diff old_output/pearl.ir.json new_output/pearl.ir.json";
-
-const REFRESH_AFTER_HELP: &str = "\
-Examples:
-  logicpearl refresh benchmarks
-  logicpearl refresh benchmarks --resume
-  logicpearl refresh benchmarks --guardrail-sample-size 2000
-  logicpearl refresh benchmarks --skip-validate";
 
 const TRACES_AFTER_HELP: &str = "\
 Examples:
@@ -231,7 +215,7 @@ fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Resu
 #[command(
     name = "logicpearl",
     version,
-    about = "Build, inspect, discover, and benchmark deterministic LogicPearl artifacts.",
+    about = "Build, inspect, run, and benchmark deterministic LogicPearl artifacts.",
     long_about = CLI_LONG_ABOUT,
     after_help = CLI_AFTER_HELP
 )]
@@ -272,11 +256,7 @@ enum Commands {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
-    /// Refresh public benchmark bundles, evals, and score ledgers.
-    Refresh {
-        #[command(subcommand)]
-        command: RefreshCommand,
-    },
+    #[command(hide = true)]
     /// Learn multiple pearls from one dataset.
     Discover(DiscoverArgs),
     #[command(hide = true)]
@@ -326,17 +306,8 @@ enum BenchmarkCommand {
     Adapt(BenchmarkAdaptArgs),
     /// Deterministically split benchmark cases into train and dev sets.
     SplitCases(BenchmarkSplitCasesArgs),
-    #[command(hide = true)]
-    /// Convert a raw Salad-Data JSON file into LogicPearl benchmark-case JSONL.
-    AdaptSalad(BenchmarkAdaptSaladArgs),
-    #[command(hide = true)]
-    /// Convert a raw ALERT JSON file into LogicPearl benchmark-case JSONL.
-    AdaptAlert(BenchmarkAdaptAlertArgs),
-    #[command(hide = true)]
-    /// Convert a raw SQuAD-style JSON file into LogicPearl benchmark-case JSONL.
-    AdaptSquad(BenchmarkAdaptSquadArgs),
     /// Observe benchmark cases, emit traces, and discover artifacts in one run.
-    Prepare(BenchmarkPrepareArgs),
+    Learn(BenchmarkLearnArgs),
     /// Merge multiple benchmark-case JSONL files into one dataset.
     MergeCases(BenchmarkMergeCasesArgs),
     /// Run an observer over benchmark cases and emit observed feature rows.
@@ -345,34 +316,8 @@ enum BenchmarkCommand {
     EmitTraces(BenchmarkEmitTracesArgs),
     /// Score a discovered artifact set against a held-out multi-target trace CSV.
     ScoreArtifacts(BenchmarkScoreArtifactsArgs),
-    #[command(hide = true)]
-    /// Convert a raw PINT YAML dataset into LogicPearl benchmark-case JSONL.
-    AdaptPint(BenchmarkAdaptPintArgs),
     /// Run a benchmark dataset through a pipeline and compute metrics.
     Run(BenchmarkRunArgs),
-}
-
-#[derive(Debug, Subcommand)]
-#[command(after_help = REFRESH_AFTER_HELP)]
-enum RefreshCommand {
-    /// Run the full public benchmark refresh flow with cleaner progress output.
-    Benchmarks(RefreshBenchmarksArgs),
-    #[command(hide = true)]
-    GuardrailsFreeze(RefreshGuardrailsFreezeArgs),
-    #[command(hide = true)]
-    GuardrailsBuild(RefreshGuardrailsBuildArgs),
-    #[command(hide = true)]
-    GuardrailsEval(RefreshGuardrailsEvalArgs),
-    #[command(hide = true)]
-    WafCases(RefreshWafBenchmarkCasesArgs),
-    #[command(hide = true)]
-    WafBuild(RefreshWafBuildArgs),
-    #[command(hide = true)]
-    ScoreboardUpdate(RefreshScoreboardUpdateArgs),
-    #[command(hide = true)]
-    ContributorPoints(RefreshContributorPointsArgs),
-    #[command(hide = true)]
-    ContributorSummary(RefreshContributorSummaryArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -446,159 +391,6 @@ struct TraceAuditArgs {
 }
 
 #[derive(Debug, Args)]
-struct RefreshBenchmarksArgs {
-    /// Resume long-running bundle rebuilds where supported.
-    #[arg(long)]
-    resume: bool,
-    /// Skip cargo clippy and cargo test.
-    #[arg(long)]
-    skip_validate: bool,
-    /// Use `logicpearl` from PATH for nested refresh steps instead of the current binary.
-    #[arg(long)]
-    use_installed_cli: bool,
-    /// Guardrail target goal to use during frozen bundle synthesis.
-    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ProtectiveGate)]
-    target_goal: ObserverTargetGoalArg,
-    /// Directory for the frozen guardrail bundle.
-    #[arg(long, default_value = "/private/tmp/guardrails_bundle")]
-    guardrail_bundle_dir: PathBuf,
-    /// Directory for the adapted WAF benchmark corpus.
-    #[arg(long, default_value = "/private/tmp/waf_benchmark")]
-    waf_benchmark_dir: PathBuf,
-    /// Directory for the learned WAF bundle.
-    #[arg(long, default_value = "/private/tmp/waf_learned_bundle")]
-    waf_bundle_dir: PathBuf,
-    /// Skip native and Wasm compilation during the WAF learned bundle build.
-    #[arg(long)]
-    waf_skip_compile: bool,
-    /// Optional sampled guardrail eval size instead of the full final-holdout run.
-    #[arg(long)]
-    guardrail_sample_size: Option<usize>,
-    /// Directory to write per-step refresh logs into.
-    #[arg(long)]
-    logs_dir: Option<PathBuf>,
-    /// Stream full child command output instead of concise phase logging.
-    #[arg(long)]
-    verbose: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshGuardrailsFreezeArgs {
-    #[arg(long)]
-    datasets_root: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.9)]
-    dev_fraction: f64,
-    #[arg(long)]
-    use_installed_cli: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshGuardrailsBuildArgs {
-    #[arg(long)]
-    output_dir: PathBuf,
-    #[arg(long)]
-    datasets_root: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.9)]
-    dev_fraction: f64,
-    #[arg(long)]
-    use_installed_cli: bool,
-    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ParityFirst)]
-    target_goal: ObserverTargetGoalArg,
-    #[arg(long)]
-    resume: bool,
-    #[arg(long, default_value_t = 0)]
-    dev_case_limit: usize,
-    #[arg(long, default_value_t = 0)]
-    final_holdout_case_limit: usize,
-}
-
-#[derive(Debug, Args)]
-struct RefreshGuardrailsEvalArgs {
-    #[arg(long)]
-    bundle_dir: PathBuf,
-    #[arg(long)]
-    output_dir: PathBuf,
-    #[arg(long)]
-    datasets_root: Option<PathBuf>,
-    #[arg(long)]
-    use_installed_cli: bool,
-    #[arg(long, default_value = "final_holdout")]
-    input_split: String,
-    #[arg(long, default_value_t = 0)]
-    sample_size: usize,
-    #[arg(long, default_value = "")]
-    baseline: String,
-    #[arg(long, default_value_t = 0.0)]
-    tolerance: f64,
-    #[arg(long, default_value = "")]
-    target_goal: String,
-}
-
-#[derive(Debug, Args)]
-struct RefreshWafBenchmarkCasesArgs {
-    #[arg(long)]
-    output_dir: PathBuf,
-    #[arg(long)]
-    datasets_root: Option<PathBuf>,
-    #[arg(long)]
-    csic_root: Option<PathBuf>,
-    #[arg(long)]
-    modsecurity_root: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.8)]
-    dev_fraction: f64,
-    #[arg(long)]
-    use_installed_cli: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshWafBuildArgs {
-    #[arg(long)]
-    output_dir: PathBuf,
-    #[arg(long)]
-    benchmark_dir: PathBuf,
-    #[arg(long)]
-    datasets_root: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.8)]
-    dev_fraction: f64,
-    #[arg(long)]
-    use_installed_cli: bool,
-    #[arg(long)]
-    resume: bool,
-    #[arg(long, default_value_t = true)]
-    residual_pass: bool,
-    #[arg(long, default_value_t = true)]
-    refine: bool,
-    #[arg(long)]
-    skip_compile: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshScoreboardUpdateArgs {
-    #[arg(long)]
-    output: Option<PathBuf>,
-    #[arg(long)]
-    pretty: bool,
-    #[arg(long)]
-    guardrail_bundle_dir: Option<PathBuf>,
-    #[arg(long)]
-    use_installed_cli: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshContributorPointsArgs {
-    #[arg(long)]
-    output: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct RefreshContributorSummaryArgs {
-    #[arg(long)]
-    input: Option<PathBuf>,
-    #[arg(long)]
-    output: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
 struct BenchmarkListProfilesArgs {
     #[arg(long)]
     json: bool,
@@ -609,6 +401,8 @@ struct BenchmarkListProfilesArgs {
     after_help = "Example:\n  logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --json"
 )]
 struct BenchmarkDetectProfileArgs {
+    /// Raw benchmark dataset in its source format.
+    #[arg(value_name = "RAW_DATASET")]
     raw_dataset: PathBuf,
     #[arg(long)]
     json: bool,
@@ -677,7 +471,7 @@ enum BenchmarkAdapterProfileArg {
     Mcpmark,
     Squad,
     Vigil,
-    #[value(name = "noeti-toxicqa", alias = "noeti-toxic-qa")]
+    #[value(name = "noeti-toxicqa")]
     NoetiToxicQa,
     MtAgentrisk,
     Pint,
@@ -691,10 +485,11 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --residual-pass --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Examples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
-    /// Path to labeled decision traces in .csv, .jsonl/.ndjson, or .json form.
+    /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
+    #[arg(value_name = "TRACES")]
     decision_traces: Option<PathBuf>,
     /// Directory to write the named artifact bundle into.
     #[arg(long)]
@@ -726,9 +521,6 @@ struct BuildArgs {
     /// Repeated key=value source references to record in build_report.json, such as document_id=claim_1234.
     #[arg(long = "source-ref", help_heading = "Advanced")]
     source_references: Vec<String>,
-    /// Run a second solver-backed residual pass to recover missed deny slices from binary features.
-    #[arg(long, help_heading = "Advanced Discovery")]
-    residual_pass: bool,
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
     #[arg(long, help_heading = "Advanced Discovery")]
     refine: bool,
@@ -740,10 +532,10 @@ struct BuildArgs {
     feature_governance: Option<PathBuf>,
     /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
     #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
-    decision_mode: DiscoveryDecisionModeArg,
-    /// Skip native and Wasm compilation and emit only the pearl artifact bundle.
+    discovery_mode: DiscoveryDecisionModeArg,
+    /// Emit only the pearl artifact bundle and skip native and Wasm compilation.
     #[arg(long, help_heading = "Advanced")]
-    skip_compile: bool,
+    bundle_only: bool,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -761,6 +553,8 @@ struct QuickstartArgs {
     after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
 )]
 struct DiscoverArgs {
+    /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
+    #[arg(value_name = "DATASET")]
     dataset_csv: PathBuf,
     /// Single binary target column to learn.
     #[arg(long)]
@@ -774,7 +568,7 @@ struct DiscoverArgs {
     /// Stable artifact set identifier.
     #[arg(long, help_heading = "Advanced Discovery")]
     artifact_set_id: Option<String>,
-    /// Run a second solver-backed residual pass on each target after the first discovery pass.
+    /// Enable solver-backed conjunction recovery and a second residual pass on each target.
     #[arg(long, help_heading = "Advanced Discovery")]
     residual_pass: bool,
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
@@ -788,7 +582,7 @@ struct DiscoverArgs {
     feature_governance: Option<PathBuf>,
     /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
     #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
-    decision_mode: DiscoveryDecisionModeArg,
+    discovery_mode: DiscoveryDecisionModeArg,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,
@@ -833,7 +627,10 @@ struct ConformanceWriteManifestArgs {
 )]
 struct ConformanceRuntimeParityArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
+    /// Labeled decision traces to compare against runtime behavior.
+    #[arg(value_name = "TRACES")]
     decision_traces_csv: PathBuf,
     #[arg(long)]
     label_column: Option<String>,
@@ -851,8 +648,10 @@ struct ConformanceRuntimeParityArgs {
 )]
 struct ConformanceSpecVerifyArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
     /// Formal spec JSON using LogicPearl expressions under rules[].deny_when.
+    #[arg(value_name = "SPEC")]
     spec_json: PathBuf,
     #[arg(long)]
     json: bool,
@@ -863,11 +662,15 @@ struct ConformanceSpecVerifyArgs {
     after_help = "Example:\n  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
 )]
 struct BenchmarkRunArgs {
+    /// Pipeline definition to run for each benchmark case.
+    #[arg(value_name = "PIPELINE")]
     pipeline_json: PathBuf,
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
     /// Collapse all non-allow routes into `deny` before scoring.
     #[arg(long)]
-    collapse_non_allow_to_deny: bool,
+    collapse_routes: bool,
     /// Optional path to write the full benchmark result JSON.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -881,6 +684,8 @@ struct BenchmarkRunArgs {
     after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --profile squad --output /tmp/squad_benign.jsonl"
 )]
 struct BenchmarkAdaptArgs {
+    /// Raw benchmark dataset in its source format.
+    #[arg(value_name = "RAW_DATASET")]
     raw_dataset: PathBuf,
     /// Built-in adapter profile to use for this dataset.
     #[arg(long, value_enum)]
@@ -907,6 +712,8 @@ struct BenchmarkAdaptArgs {
     after_help = "Example:\n  logicpearl benchmark split-cases /tmp/guardrail_dev_full.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev.jsonl --train-fraction 0.8 --json"
 )]
 struct BenchmarkSplitCasesArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
     #[arg(long)]
     train_output: PathBuf,
@@ -914,107 +721,6 @@ struct BenchmarkSplitCasesArgs {
     dev_output: PathBuf,
     #[arg(long, default_value_t = 0.8)]
     train_fraction: f64,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-#[command(
-    after_help = "Example:\n  logicpearl benchmark adapt-pint raw_pint.yaml --output /tmp/pint_cases.jsonl"
-)]
-struct BenchmarkAdaptPintArgs {
-    raw_pint_yaml: PathBuf,
-    /// Output JSONL path in LogicPearl benchmark-case format.
-    #[arg(long)]
-    output: PathBuf,
-    /// Default requested tool when the source row does not provide one.
-    #[arg(long, default_value = "none")]
-    requested_tool: String,
-    /// Default requested action when the source row does not provide one.
-    #[arg(long, default_value = "chat_response")]
-    requested_action: String,
-    /// Default scope when the source row does not provide one.
-    #[arg(long, default_value = "allowed")]
-    scope: String,
-    /// Emit machine-readable JSON summary instead of styled terminal output.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-enum SaladSubset {
-    BaseSet,
-    AttackEnhancedSet,
-}
-
-#[derive(Debug, Args)]
-#[command(
-    after_help = "Examples:\n  logicpearl benchmark adapt-salad raw_base_set.json --subset base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt-salad raw_attack_enhanced_set.json --subset attack-enhanced-set --output /tmp/salad_attack.jsonl"
-)]
-struct BenchmarkAdaptSaladArgs {
-    raw_salad_json: PathBuf,
-    /// Which Salad-Data subset format this file uses.
-    #[arg(long, value_enum)]
-    subset: SaladSubset,
-    /// Output JSONL path in LogicPearl benchmark-case format.
-    #[arg(long)]
-    output: PathBuf,
-    /// Default requested tool when the source row does not provide one.
-    #[arg(long, default_value = "none")]
-    requested_tool: String,
-    /// Default requested action when the source row does not provide one.
-    #[arg(long, default_value = "chat_response")]
-    requested_action: String,
-    /// Default scope when the source row does not provide one.
-    #[arg(long, default_value = "allowed")]
-    scope: String,
-    /// Emit machine-readable JSON summary instead of styled terminal output.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-#[command(
-    after_help = "Example:\n  logicpearl benchmark adapt-alert raw_alert.json --output /tmp/alert_attack.jsonl"
-)]
-struct BenchmarkAdaptAlertArgs {
-    raw_alert_json: PathBuf,
-    /// Output JSONL path in LogicPearl benchmark-case format.
-    #[arg(long)]
-    output: PathBuf,
-    /// Default requested tool when the source row does not provide one.
-    #[arg(long, default_value = "none")]
-    requested_tool: String,
-    /// Default requested action when the source row does not provide one.
-    #[arg(long, default_value = "chat_response")]
-    requested_action: String,
-    /// Default scope when the source row does not provide one.
-    #[arg(long, default_value = "allowed")]
-    scope: String,
-    /// Emit machine-readable JSON summary instead of styled terminal output.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-#[command(
-    after_help = "Example:\n  logicpearl benchmark adapt-squad train-v2.0.json --output /tmp/squad_benign.jsonl"
-)]
-struct BenchmarkAdaptSquadArgs {
-    raw_squad_json: PathBuf,
-    /// Output JSONL path in LogicPearl benchmark-case format.
-    #[arg(long)]
-    output: PathBuf,
-    /// Default requested tool when the source row does not provide one.
-    #[arg(long, default_value = "none")]
-    requested_tool: String,
-    /// Default requested action when the source row does not provide one.
-    #[arg(long, default_value = "chat_response")]
-    requested_action: String,
-    /// Default scope when the source row does not provide one.
-    #[arg(long, default_value = "allowed")]
-    scope: String,
-    /// Emit machine-readable JSON summary instead of styled terminal output.
     #[arg(long)]
     json: bool,
 }
@@ -1035,9 +741,11 @@ struct BenchmarkMergeCasesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark prepare /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
+    after_help = "Examples:\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
 )]
-struct BenchmarkPrepareArgs {
+struct BenchmarkLearnArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
     /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
     #[arg(long, value_enum)]
@@ -1064,6 +772,8 @@ struct BenchmarkPrepareArgs {
     after_help = "Examples:\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/guardrail_dev_observed.jsonl"
 )]
 struct BenchmarkObserveArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
     /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
     #[arg(long, value_enum)]
@@ -1087,7 +797,11 @@ struct BenchmarkObserveArgs {
     after_help = "Example:\n  logicpearl benchmark score-artifacts /tmp/guardrail_train/discovered/artifact_set.json /tmp/guardrail_dev/traces/multi_target.csv --json"
 )]
 struct BenchmarkScoreArtifactsArgs {
+    /// Artifact set manifest emitted by benchmark learning.
+    #[arg(value_name = "ARTIFACT_SET")]
     artifact_set_json: PathBuf,
+    /// Held-out multi-target trace CSV to score against.
+    #[arg(value_name = "TRACES")]
     trace_csv: PathBuf,
     #[arg(long)]
     output: Option<PathBuf>,
@@ -1100,6 +814,8 @@ struct BenchmarkScoreArtifactsArgs {
     after_help = "Example:\n  logicpearl benchmark emit-traces /tmp/salad_attack_observed.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/trace_exports"
 )]
 struct BenchmarkEmitTracesArgs {
+    /// Observed benchmark rows in LogicPearl JSONL format.
+    #[arg(value_name = "OBSERVED_DATASET")]
     observed_jsonl: PathBuf,
     /// Projection config that maps observed rows into discovery-ready trace tables.
     #[arg(long)]
@@ -1118,8 +834,10 @@ struct BenchmarkEmitTracesArgs {
 )]
 struct RunArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
     /// Input JSON file, `-` for stdin, or omit to read stdin.
+    #[arg(value_name = "INPUT")]
     input_json: Option<PathBuf>,
 }
 
@@ -1144,6 +862,7 @@ struct ComposeArgs {
 )]
 struct CompileArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
     /// Rust target triple, for example x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, or wasm32-unknown-unknown.
     #[arg(long)]
@@ -1162,6 +881,7 @@ struct CompileArgs {
 )]
 struct InspectArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -1186,6 +906,7 @@ struct DiffArgs {
 )]
 struct VerifyArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
     pearl_ir: PathBuf,
     /// Plugin manifest for the verifier backend.
     #[arg(long)]
@@ -1216,6 +937,8 @@ enum PipelineCommand {
     after_help = "Example:\n  logicpearl pipeline validate examples/pipelines/authz/pipeline.json --json"
 )]
 struct PipelineValidateArgs {
+    /// Pipeline definition to validate.
+    #[arg(value_name = "PIPELINE")]
     pipeline_json: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -1227,6 +950,8 @@ struct PipelineValidateArgs {
     after_help = "Example:\n  logicpearl pipeline inspect examples/pipelines/observer_membership_verify/pipeline.json --json"
 )]
 struct PipelineInspectArgs {
+    /// Pipeline definition to inspect.
+    #[arg(value_name = "PIPELINE")]
     pipeline_json: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -1238,8 +963,11 @@ struct PipelineInspectArgs {
     after_help = "Examples:\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json --json\n  logicpearl pipeline run examples/pipelines/authz/pipeline.json - --json\n  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json --json"
 )]
 struct PipelineRunArgs {
+    /// Pipeline definition to run.
+    #[arg(value_name = "PIPELINE")]
     pipeline_json: PathBuf,
     /// Input JSON file, `-` for stdin, or omit to read stdin.
+    #[arg(value_name = "INPUT")]
     input_json: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -1251,7 +979,11 @@ struct PipelineRunArgs {
     after_help = "Example:\n  logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
 )]
 struct PipelineTraceArgs {
+    /// Pipeline definition to trace.
+    #[arg(value_name = "PIPELINE")]
     pipeline_json: PathBuf,
+    /// Input JSON file to run through the pipeline.
+    #[arg(value_name = "INPUT")]
     input_json: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
@@ -1291,16 +1023,18 @@ enum PluginCommand {
     after_help = "Examples:\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
 )]
 struct PluginValidateArgs {
+    /// Plugin manifest to validate.
+    #[arg(value_name = "MANIFEST")]
     manifest: PathBuf,
     /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
-    #[arg(long, conflicts_with_all = ["input_literal", "payload"])]
+    #[arg(long, conflicts_with_all = ["input_string", "raw_payload"])]
     input: Option<PathBuf>,
-    /// Literal input string for stages like trace_source.
-    #[arg(long, conflicts_with_all = ["input", "payload"])]
-    input_literal: Option<String>,
-    /// Exact JSON payload to send without canonical wrapping.
-    #[arg(long, conflicts_with_all = ["input", "input_literal"])]
-    payload: Option<PathBuf>,
+    /// Input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "raw_payload"])]
+    input_string: Option<String>,
+    /// Exact stage payload JSON to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_string"])]
+    raw_payload: Option<PathBuf>,
     /// Repeated key=value options to include in the canonical payload.
     #[arg(long = "option")]
     options: Vec<String>,
@@ -1311,19 +1045,21 @@ struct PluginValidateArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-literal examples/getting_started/decision_traces.csv --option label_column=allowed --json"
+    after_help = "Examples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json"
 )]
 struct PluginRunArgs {
+    /// Plugin manifest to execute.
+    #[arg(value_name = "MANIFEST")]
     manifest: PathBuf,
     /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
-    #[arg(long, conflicts_with_all = ["input_literal", "payload"])]
+    #[arg(long, conflicts_with_all = ["input_string", "raw_payload"])]
     input: Option<PathBuf>,
-    /// Literal input string for stages like trace_source.
-    #[arg(long, conflicts_with_all = ["input", "payload"])]
-    input_literal: Option<String>,
-    /// Exact JSON payload to send without canonical wrapping.
-    #[arg(long, conflicts_with_all = ["input", "input_literal"])]
-    payload: Option<PathBuf>,
+    /// Input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "raw_payload"])]
+    input_string: Option<String>,
+    /// Exact stage payload JSON to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_string"])]
+    raw_payload: Option<PathBuf>,
     /// Repeated key=value options to include in the canonical payload.
     #[arg(long = "option")]
     options: Vec<String>,
@@ -1507,17 +1243,8 @@ fn main() -> Result<()> {
             command: BenchmarkCommand::SplitCases(args),
         } => run_benchmark_split_cases(args),
         Commands::Benchmark {
-            command: BenchmarkCommand::AdaptSalad(args),
-        } => run_benchmark_adapt_salad(args),
-        Commands::Benchmark {
-            command: BenchmarkCommand::AdaptAlert(args),
-        } => run_benchmark_adapt_alert(args),
-        Commands::Benchmark {
-            command: BenchmarkCommand::AdaptSquad(args),
-        } => run_benchmark_adapt_squad(args),
-        Commands::Benchmark {
-            command: BenchmarkCommand::Prepare(args),
-        } => run_benchmark_prepare(args),
+            command: BenchmarkCommand::Learn(args),
+        } => run_benchmark_learn(args),
         Commands::Benchmark {
             command: BenchmarkCommand::MergeCases(args),
         } => run_benchmark_merge_cases(args),
@@ -1531,38 +1258,8 @@ fn main() -> Result<()> {
             command: BenchmarkCommand::ScoreArtifacts(args),
         } => run_benchmark_score_artifacts(args),
         Commands::Benchmark {
-            command: BenchmarkCommand::AdaptPint(args),
-        } => run_benchmark_adapt_pint(args),
-        Commands::Benchmark {
             command: BenchmarkCommand::Run(args),
         } => run_benchmark(args),
-        Commands::Refresh {
-            command: RefreshCommand::Benchmarks(args),
-        } => run_refresh_benchmarks(args),
-        Commands::Refresh {
-            command: RefreshCommand::GuardrailsFreeze(args),
-        } => run_refresh_guardrails_freeze(args),
-        Commands::Refresh {
-            command: RefreshCommand::GuardrailsBuild(args),
-        } => run_refresh_guardrails_build(args),
-        Commands::Refresh {
-            command: RefreshCommand::GuardrailsEval(args),
-        } => run_refresh_guardrails_eval(args),
-        Commands::Refresh {
-            command: RefreshCommand::WafCases(args),
-        } => run_refresh_waf_benchmark_cases(args),
-        Commands::Refresh {
-            command: RefreshCommand::WafBuild(args),
-        } => run_refresh_waf_build(args),
-        Commands::Refresh {
-            command: RefreshCommand::ScoreboardUpdate(args),
-        } => run_refresh_scoreboard_update(args),
-        Commands::Refresh {
-            command: RefreshCommand::ContributorPoints(args),
-        } => run_refresh_contributor_points(args),
-        Commands::Refresh {
-            command: RefreshCommand::ContributorSummary(args),
-        } => run_refresh_contributor_summary(args),
         Commands::Traces {
             command: TraceCommand::Generate(args),
         } => run_traces_generate(args),

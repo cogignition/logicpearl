@@ -2,20 +2,22 @@
 
 These scripts make the public guardrail workflow reproducible.
 
-The preferred public entrypoint is now the Rust CLI:
-- `logicpearl refresh benchmarks`
-- `logicpearl refresh guardrails-freeze`
-- `logicpearl refresh guardrails-build`
-- `logicpearl refresh guardrails-eval`
+Fast path:
+- `cargo xtask refresh-benchmarks`
 
-The Python files in this folder remain as compatibility/reference tooling.
+Additional `xtask` commands:
+- `cargo xtask guardrails-freeze`
+- `cargo xtask guardrails-build`
+- `cargo xtask guardrails-eval`
+
+The Python files in this folder remain as supplementary reference tooling.
 
 Dataset sources, expected local staging paths, and the full split/build/eval flow are documented in:
 - [DATASETS.md](../../DATASETS.md)
 
-These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is unset, they fall back to `../datasets/public` relative to the cloned `logicpearl/` repo.
+These scripts honor `LOGICPEARL_DATASETS` as the staged dataset root. If it is unset, they fall back to `../datasets/public` relative to the project root.
 
-If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo`, the freeze/build flow includes it automatically in the grouped guardrail bundle. If it is absent, the public scripts skip it and keep the rest of the workflow working.
+If the gated `MT-AgentRisk` dataset is staged at `$LOGICPEARL_DATASETS/mt_agentrisk/full_repo`, the freeze/build flow includes it automatically in the grouped guardrail bundle. If it is absent, the remaining workflow still runs.
 
 ## Scripts
 
@@ -43,7 +45,7 @@ If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agen
 
 - `run_open_guardrail_benchmarks.py`
   - runs the frozen bundle against staged open benchmarks
-  - currently supports:
+  - supports:
     - `JailbreakBench`
     - `PromptShield`
     - `rogue-security/prompt-injections-benchmark`
@@ -66,28 +68,28 @@ If the gated `MT-AgentRisk` full repo is staged at `$LOGICPEARL_DATASETS/mt_agen
 For the full public refresh path, including guardrails, WAF, and scoreboard updates:
 
 ```bash
-logicpearl refresh benchmarks
+cargo xtask refresh-benchmarks
 ```
 
-or from the repo checkout:
+or from the project root:
 
 ```bash
 scripts/refresh_all_benchmarks.sh
 ```
 
-If you only want the guardrail lane, use the commands below.
+For guardrail-only maintenance flows, use these commands:
 
 Build the frozen guardrail bundle:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
 Build the same bundle with a guardrail-specific synthesis goal:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle \
   --target-goal protective-gate
 ```
@@ -95,7 +97,7 @@ logicpearl refresh guardrails-build \
 Build a faster deterministic subset bundle for quick iteration:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle_sample \
   --target-goal protective-gate \
   --dev-case-limit 20000 \
@@ -113,21 +115,22 @@ Use `--resume` with the same output directory if the long synthesis step has alr
 Evaluate untouched `PINT` against that bundle:
 
 ```bash
-logicpearl benchmark adapt-pint \
+logicpearl benchmark adapt \
   "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 
 Run the same frozen bundle against the staged open post-freeze benchmarks:
 
 ```bash
-logicpearl refresh guardrails-eval \
+cargo xtask guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --output-dir /tmp/guardrails_bundle/open_benchmarks
 ```
@@ -135,13 +138,13 @@ logicpearl refresh guardrails-eval \
 Freeze development and final-holdout splits for all staged guardrail datasets:
 
 ```bash
-logicpearl refresh guardrails-freeze
+cargo xtask guardrails-freeze
 ```
 
 Later, when you are ready for a final untouched external check, run the frozen holdout split explicitly:
 
 ```bash
-logicpearl refresh guardrails-eval \
+cargo xtask guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --output-dir /tmp/guardrails_bundle/open_benchmarks_final_holdout
@@ -150,7 +153,7 @@ logicpearl refresh guardrails-eval \
 For a faster regression check that avoids a full rebuild and avoids scoring every case on large benchmarks:
 
 ```bash
-logicpearl refresh guardrails-eval \
+cargo xtask guardrails-eval \
   --bundle-dir /tmp/guardrails_bundle \
   --input-split final_holdout \
   --sample-size 200 \

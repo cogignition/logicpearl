@@ -1,0 +1,50 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "bcbsma_documentation_requirement_004_immune_modulating_drugs_prn",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requirement__req-004-immune-modulating-drugs-prn-p6-010__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "missing_req-004-immune-modulating-drugs-prn-p6-010",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requirement__req-004-immune-modulating-drugs-prn-p6-010__satisfied",
+        "op": "<=",
+        "value": 0.5
+      },
+      "label": null,
+      "message": null,
+      "severity": null,
+      "counterfactual_hint": null,
+      "verification_status": "heuristic_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "draft healthcare policy requirement gate",
+    "verification_summary": null
+  },
+  "provenance": {
+    "generator": "logicpearl.healthcare_policy_compiler",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}

@@ -5,7 +5,7 @@ import sys
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
-    raw = payload.get("input", payload.get("raw_input", {}))
+    raw = payload.get("input", {})
 
     response = {
         "ok": True,

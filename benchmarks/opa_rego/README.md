@@ -1,40 +1,63 @@
-# OPA / Rego Benchmark
+# OPA / Rego Parity Example
 
-This benchmark keeps OPA-specific parsing and evaluation behind a LogicPearl domain adapter while the shared engine stays generic.
+This is a small bounded parity example, not the flagship proof path for the repository.
 
-The demo uses a compact RBAC policy in Rego and compares:
-- OPA's `allow` decision
-- an equivalent LogicPearl pearl built from imported bounded policy behavior
-- the emitted `pearl.ir.json` evaluated through `pearl-runtime`
+The current goal is narrower than "general Rego import":
+- start from a compact Rego policy
+- evaluate that policy with the real `opa` CLI on generated requests
+- observe those requests into a fixed LogicPearl feature contract
+- build a pearl from the resulting labeled decision traces
+- verify runtime parity on that generated slice with the current `logicpearl` CLI
 
-Important benchmark framing:
-- This is a parity/import benchmark, not an automatic discovery demo.
-- The interesting part is the artifact chain: start from an existing policy, import the bounded behavior through a domain adapter, emit a pearl, and run it through the shared runtime.
-- The latency comparison is policy-core-to-policy-core. OPA evaluates raw requests directly, while the LogicPearl timing uses precomputed feature payloads and does not include observation/adaptation cost.
-- The stronger claim here is parity plus artifact/runtime portability: same policy behavior, emitted as `pearl.ir.json`, validated through `pearl-runtime`, and compiled to WASM.
+If you want the main first-run path, start with [`examples/getting_started`](../../examples/getting_started).
+If you want the main public benchmark story, start with [`BENCHMARKS.md`](../../BENCHMARKS.md).
 
-Run from the repo root:
+## Prerequisites
+
+- Rust
+- Python 3
+- `opa` on `PATH`
+
+## Run
+
+From the project root:
 
 ```bash
-cd discovery
-uv run python ../benchmarks/opa_rego/run_benchmark.py
+python3 benchmarks/opa_rego/run_benchmark.py
 ```
 
-Outputs are written under:
-- `benchmarks/opa_rego/output/pearl.json`
-- `benchmarks/opa_rego/output/pearl.ir.json`
-- `benchmarks/opa_rego/output/pearl_audit.json`
+That script:
+- generates deterministic authz-style raw requests
+- labels them with `opa eval` against [`policy.rego`](./policy.rego)
+- writes observed decision traces to `benchmarks/opa_rego/output/decision_traces.csv`
+- builds a real LogicPearl artifact bundle with `logicpearl build`
+- runs `logicpearl inspect`
+- runs `logicpearl conformance runtime-parity`
+- runs one sample payload through `logicpearl run`
 
-The benchmark is intentionally demo-sized. The reusable pieces live in:
-- `logicpearl.domains.opa` for Rego parsing/eval wrappers
-- `logicpearl.engine` for gate compilation, IR emission, and WASM generation
+## Outputs
 
-What this benchmark is good for:
-- showing that existing policy behavior can be imported into a compact deterministic pearl
-- demonstrating runtime parity between OPA, Python evaluation, `pearl-runtime`, and emitted IR/WASM artifacts
-- proving the OPA adapter can stay outside the generic engine
+Generated files are written under `benchmarks/opa_rego/output/`:
+- `decision_traces.csv`
+- `sample_raw_input.json`
+- `sample_feature_input.json`
+- `artifact_bundle/`
+- `inspect.json`
+- `runtime_parity.json`
+- `sample_run.json`
+- `summary.json`
 
-What this benchmark does not prove by itself:
-- automatic policy discovery from OPA traces
-- full end-to-end request-path latency parity
-- general Rego transpilation coverage beyond the demonstrated parity path
+`output/` is local generated material and is intentionally not checked into git.
+
+## What This Example Proves
+
+- a bounded Rego policy can act as a labeling oracle for a deterministic LogicPearl build
+- the current public CLI can build, inspect, and validate the resulting artifact bundle end to end
+- the artifact/runtime path is inspectable rather than hidden behind a custom importer
+
+## What It Does Not Prove
+
+- general Rego transpilation or import coverage
+- parity on arbitrary policies beyond this compact example
+- end-to-end request-path latency parity
+- that raw requests can skip the observer boundary

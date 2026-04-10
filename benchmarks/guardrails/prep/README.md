@@ -27,7 +27,7 @@ Recommended:
 export LOGICPEARL_DATASETS="$HOME/logicpearl-datasets/public"
 ```
 
-If unset, the checked-in guardrail scripts fall back to `../datasets/public` relative to the cloned `logicpearl/` repo.
+If unset, the automation scripts fall back to `../datasets/public` relative to the project root.
 
 Recommended local staging path for full ALERT runs:
 
@@ -105,34 +105,34 @@ logicpearl prepare guardrails \
   --output-dir /tmp/logicpearl-guardrails
 ```
 
-The public Rust front door today is:
+Fast path:
 
 ```bash
-logicpearl refresh benchmarks
+cargo xtask refresh-benchmarks
 ```
 
-or, for the guardrail lane only:
+Additional project automation commands:
 
 ```bash
-logicpearl refresh guardrails-freeze
-logicpearl refresh guardrails-build --output-dir /tmp/guardrails_bundle
-logicpearl refresh guardrails-eval --bundle-dir /tmp/guardrails_bundle --input-split final_holdout
+cargo xtask guardrails-freeze
+cargo xtask guardrails-build --output-dir /tmp/guardrails_bundle
+cargo xtask guardrails-eval --bundle-dir /tmp/guardrails_bundle --input-split final_holdout
 ```
 
 That full `prepare guardrails` command is not implemented yet.
 
 Today, the public pieces already in place are:
-- `logicpearl discover`
+- `logicpearl discover` for the advanced multi-target artifact-set path
 - `logicpearl benchmark run`
 - `logicpearl benchmark adapt`
-- `logicpearl benchmark adapt-salad`
-- `logicpearl benchmark adapt-alert`
-- `logicpearl benchmark adapt-squad`
+- `logicpearl benchmark adapt --profile salad-base-set`
+- `logicpearl benchmark adapt --profile alert`
+- `logicpearl benchmark adapt --profile squad`
 - `logicpearl benchmark list-profiles`
 - `logicpearl benchmark detect-profile`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
-- `logicpearl benchmark adapt-pint`
+- `logicpearl benchmark adapt --profile pint`
 - the public guardrail observer/pipeline examples
 
 Useful native observer commands:
@@ -338,7 +338,7 @@ logicpearl benchmark emit-traces \
 Or run the generic middle stage in one shot:
 
 ```bash
-logicpearl benchmark prepare \
+logicpearl benchmark learn \
   /tmp/guardrail_dev.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
@@ -347,12 +347,12 @@ logicpearl benchmark prepare \
 
 ## Honest Held-Out Evaluation
 
-Do not use the `training_parity` inside `benchmark prepare` as the headline number.
+Do not use the `training_parity` inside `benchmark learn` as the headline number.
 
 For a real non-`PINT` evaluation:
 
 1. split the merged benchmark cases into deterministic `train` and `dev`
-2. run `benchmark prepare` only on `train`
+2. run `benchmark learn` only on `train`
 3. observe and emit traces for untouched `dev`
 4. score the discovered artifact set against the held-out `dev` traces
 
@@ -365,7 +365,7 @@ logicpearl benchmark split-cases \
   --dev-output /tmp/guardrail_dev_holdout.jsonl \
   --train-fraction 0.8
 
-logicpearl benchmark prepare \
+logicpearl benchmark learn \
   /tmp/guardrail_train.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_train_prep \
@@ -388,15 +388,15 @@ logicpearl benchmark score-artifacts \
 
 ## Frozen Guardrail Bundle
 
-For the public proof flow, the preferred source-of-truth is still a string of pearls:
+For bundle-based workflows, the preferred source of truth is still a string of pearls:
 - one frozen observer artifact
 - one frozen discovered artifact set
 - an explicit route policy over the specialized target pearls
 
-To make that easy to rerun and audit, the repo also ships a higher-level builder:
+To rerun that flow in one command, use:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 

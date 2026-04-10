@@ -8,8 +8,8 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
     let request = optional_plugin_request(
         &manifest,
         args.input.as_ref(),
-        args.input_literal.as_ref(),
-        args.payload.as_ref(),
+        args.input_string.as_ref(),
+        args.raw_payload.as_ref(),
         &args.options,
     )?;
 
@@ -57,11 +57,6 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
             "Canonical input".bright_black(),
             canonical_input_name(&manifest.stage)
         );
-        println!(
-            "  {} {}",
-            "Compatibility alias".bright_black(),
-            compatibility_alias_name(&manifest.stage)
-        );
         if smoke.is_some() {
             println!("  {} {}", "Smoke run".bright_black(), "passed".bold());
         }
@@ -83,8 +78,8 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
     let request = required_plugin_request(
         &manifest,
         args.input.as_ref(),
-        args.input_literal.as_ref(),
-        args.payload.as_ref(),
+        args.input_string.as_ref(),
+        args.raw_payload.as_ref(),
         &args.options,
     )?;
     let response = run_plugin(&manifest, &request)
@@ -144,15 +139,15 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
 fn required_plugin_request(
     manifest: &PluginManifest,
     input_path: Option<&PathBuf>,
-    input_literal: Option<&String>,
+    input_string: Option<&String>,
     payload_path: Option<&PathBuf>,
     options: &[String],
 ) -> Result<PluginRequest> {
-    optional_plugin_request(manifest, input_path, input_literal, payload_path, options)?.ok_or_else(
+    optional_plugin_request(manifest, input_path, input_string, payload_path, options)?.ok_or_else(
         || {
             guidance(
                 "plugin run is missing an input source",
-                "Use --input input.json, --input-literal STRING, or --payload payload.json.",
+                "Use --input input.json, --input-string STRING, or --raw-payload payload.json.",
             )
         },
     )
@@ -161,12 +156,12 @@ fn required_plugin_request(
 fn optional_plugin_request(
     manifest: &PluginManifest,
     input_path: Option<&PathBuf>,
-    input_literal: Option<&String>,
+    input_string: Option<&String>,
     payload_path: Option<&PathBuf>,
     options: &[String],
 ) -> Result<Option<PluginRequest>> {
     let provided = usize::from(input_path.is_some())
-        + usize::from(input_literal.is_some())
+        + usize::from(input_string.is_some())
         + usize::from(payload_path.is_some());
     if provided == 0 {
         return Ok(None);
@@ -174,7 +169,7 @@ fn optional_plugin_request(
     if provided > 1 {
         return Err(guidance(
             "choose only one plugin input source",
-            "Use one of --input, --input-literal, or --payload.",
+            "Use one of --input, --input-string, or --raw-payload.",
         ));
     }
 
@@ -184,7 +179,7 @@ fn optional_plugin_request(
         let input = if let Some(input_path) = input_path {
             read_json_value(input_path)?
         } else {
-            Value::String(input_literal.cloned().unwrap_or_default())
+            Value::String(input_string.cloned().unwrap_or_default())
         };
         let options = parse_key_value_entries(options, "option")?;
         let options_value = if options.is_empty() {
@@ -268,16 +263,6 @@ fn canonical_input_name(stage: &PluginStage) -> &'static str {
     }
 }
 
-fn compatibility_alias_name(stage: &PluginStage) -> &'static str {
-    match stage {
-        PluginStage::Observer => "payload.raw_input",
-        PluginStage::TraceSource => "payload.source",
-        PluginStage::Enricher => "payload.records",
-        PluginStage::Verify => "payload.pearl_ir",
-        PluginStage::Render => "none",
-    }
-}
-
 fn expected_output_key(stage: &PluginStage) -> Option<&'static str> {
     match stage {
         PluginStage::Observer => Some("features"),
@@ -291,7 +276,6 @@ fn expected_output_key(stage: &PluginStage) -> Option<&'static str> {
 fn canonical_contract_for_stage(stage: &PluginStage) -> Value {
     serde_json::json!({
         "canonical_input": canonical_input_name(stage),
-        "compatibility_alias": compatibility_alias_name(stage),
         "expected_primary_output": expected_output_key(stage),
     })
 }

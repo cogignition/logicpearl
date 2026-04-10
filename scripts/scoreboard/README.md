@@ -2,18 +2,20 @@
 
 These scripts keep a small public score ledger for LogicPearl.
 
-The preferred public entrypoint is now the Rust CLI:
-- `logicpearl refresh benchmarks`
-- `logicpearl refresh scoreboard-update`
-- `logicpearl refresh contributor-points`
-- `logicpearl refresh contributor-summary`
+Fast path:
+- `cargo xtask refresh-benchmarks`
 
-The Python files in this folder remain as compatibility/reference tooling.
+Additional `xtask` commands:
+- `cargo xtask scoreboard-update`
+- `cargo xtask contributor-points`
+- `cargo xtask contributor-summary`
+
+The Python files in this folder remain as supplementary reference tooling.
 
 ## Files
 
 - `update_scores.py`
-  - measures the current public repo against checked-in examples and the fast guardrail regression sample
+  - measures checked-in examples and the fast guardrail regression sample
   - records guardrail scores under the active `target_goal` lane from the frozen bundle manifest
   - writes the root [`SCORES.json`](../../SCORES.json)
 
@@ -52,10 +54,10 @@ The Python files in this folder remain as compatibility/reference tooling.
 Run the full public refresh flow in one command:
 
 ```bash
-logicpearl refresh benchmarks
+cargo xtask refresh-benchmarks
 ```
 
-or from the repo checkout:
+or from the project root:
 
 ```bash
 scripts/refresh_all_benchmarks.sh
@@ -63,17 +65,17 @@ scripts/refresh_all_benchmarks.sh
 
 That wrapper runs workspace validation, guardrail rebuild/eval, WAF rebuild/eval, and the scoreboard refresh.
 
-Refresh the root score ledger:
+Refresh the root score ledger with:
 
 ```bash
-logicpearl refresh scoreboard-update
+cargo xtask scoreboard-update
 ```
 
-Rebuild contributor points from git history:
+Rebuild contributor points from git history with:
 
 ```bash
-logicpearl refresh contributor-points
-logicpearl refresh contributor-summary
+cargo xtask contributor-points
+cargo xtask contributor-summary
 ```
 
 ## Notes
@@ -100,14 +102,14 @@ logicpearl refresh contributor-summary
   - `latest/contributor_summary.json`
   - `latest/score_model.json`
   - plus per-commit snapshots under `history/<commit>/`
-  - to the repo's `gh-pages` branch, with prior history retained
+  - to the project `gh-pages` branch, with prior history retained
 
 ## Contributor Attribution
 
 For fair contributor tracking, prefer merge strategies that preserve author identity on `main`.
 
 Important caveat:
-- if a maintainer squash-merges a PR and rewrites the author identity, the score history will attribute that improvement to the squash commit author
+- if a squash merge rewrites the author identity, the score history will attribute that improvement to the squash commit author
 - if authors use GitHub no-reply emails, the history script will infer the GitHub login when possible
 
 The current model is best suited to:

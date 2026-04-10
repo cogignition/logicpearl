@@ -1,0 +1,52 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "missing_req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied",
+        "op": "<=",
+        "value": 0.0
+      },
+      "label": "Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied at or below 0.0",
+      "message": "Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied at or below 0.0.",
+      "severity": null,
+      "counterfactual_hint": "Keep Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied above 0.0",
+      "verification_status": "pipeline_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "training parity against 3 decision traces",
+    "verification_summary": {
+      "pipeline_unverified": 1
+    }
+  },
+  "provenance": {
+    "generator": "logicpearl.build",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}

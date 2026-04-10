@@ -20,18 +20,17 @@ Software should run as artifact, not fog.
   <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a.svg?style=flat-square"></a>
   <a href="./Cargo.toml"><img alt="Workspace" src="https://img.shields.io/badge/workspace-Rust-173053.svg?style=flat-square"></a>
   <a href="./crates/logicpearl/Cargo.toml"><img alt="CLI" src="https://img.shields.io/badge/cli-logicpearl-173053.svg?style=flat-square"></a>
-  <a href="./benchmarks/opa_rego/README.md"><img alt="Demo" src="https://img.shields.io/badge/demo-OPA%20parity-173053.svg?style=flat-square"></a>
   <a href="./schema"><img alt="Schema" src="https://img.shields.io/badge/artifact-Pearl%20IR-173053.svg?style=flat-square"></a>
 </p>
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Generate Your Own Pearl](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Agent Guide](./AGENTS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Scores](./SCORES.json) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
-Quick proof path from a local checkout:
+Quick proof path with the checked-in example files:
 
 ```bash
-cargo install --path crates/logicpearl
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
 ```
 
@@ -55,12 +54,12 @@ The execution shape is simple:
 3. a pearl executes deterministic logic
 4. the result can be inspected, validated, diffed, and deployed
 
-This repo is the public proof layer for that model:
+The repository includes:
 - Pearl IR and schemas
 - observer and feature-contract tooling
 - Rust runtime evaluation
 - reproducible public demos
-- parity/import examples for bounded logic slices
+- bounded parity examples for external policy slices
 
 ## Which Surface To Use
 
@@ -79,7 +78,7 @@ Use the surface that matches where the logic actually runs:
 - `logicpearl` Python package
   - for Python code that needs the real Rust execution surface
   - thin bindings over `logicpearl-engine`, not a CLI subprocess wrapper
-  - currently lives under [`reserved-python/logicpearl`](./reserved-python/logicpearl)
+  - lives under [`reserved-python/logicpearl`](./reserved-python/logicpearl)
 
 - `@logicpearl/browser`
   - for browser-safe evaluation only
@@ -93,38 +92,55 @@ Practical rule:
 
 ## Start Here
 
-If you only do one thing, run the public proof.
+If you are new, start with the public quickstart command.
 
 Prerequisites:
-- Rust
+- a supported macOS or Linux machine for the prebuilt installer
 - a willingness to treat logic as a build artifact instead of application glue
 
-Install the public CLI once:
+Install the public CLI and bundled Z3 once, then ask it for the shortest proof path:
 
 ```bash
-cargo install logicpearl
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
+logicpearl quickstart
+logicpearl quickstart build
 ```
 
-If you want to follow the example paths in this README exactly, run them from a local checkout of this repo. The files under `examples/`, `fixtures/`, and `benchmarks/` are not bundled into the crates.io install.
+The prebuilt installer:
+- installs a versioned LogicPearl bundle under `~/.logicpearl`
+- installs `logicpearl` and `z3` symlinks into `~/.local/bin`
+- keeps the default build path working without separate solver setup
 
-If you are developing from a local checkout instead of crates.io:
+Full install details and manual bundle instructions live in [docs/install.md](./docs/install.md).
+
+To run the checked-in getting-started example:
+
+```bash
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
+logicpearl inspect /tmp/logicpearl-output
+logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
+```
+
+The example paths in this README reference checked-in files under `examples/`, `fixtures/`, and `benchmarks/`. Those files are not bundled into the crates.io package.
+
+To install from source instead of using the prebuilt bundle:
 
 ```bash
 cargo install --path crates/logicpearl
 ```
 
-For local development inside the repo, the equivalent form is:
+For source builds, the equivalent form is:
 
 ```bash
 cargo run --manifest-path Cargo.toml -p logicpearl -- <command>
 ```
 
 Practical rule:
-- `cargo install logicpearl` gives you the CLI anywhere
-- this README's file paths are repo-relative unless stated otherwise
-- if you only installed from crates.io, point `logicpearl` at your own trace dataset or clone this repo for the checked-in examples
-
-The public repo also ships a local `pre-commit` hook under `.githooks/` that runs the getting-started end-to-end CLI test. In this checkout it is already enabled through the repo-local `core.hooksPath` setting.
+- the prebuilt installer is the easiest path for normal CLI usage
+- `cargo install logicpearl` is the source-build path
+- this README's file paths are repository-relative unless stated otherwise
+- if you only installed from crates.io, point `logicpearl` at your own trace dataset or clone the repository for the checked-in examples
+- `logicpearl quickstart` is the best first command when you are learning the surface
 
 ### Build a pearl from decision traces
 
@@ -156,10 +172,10 @@ The wasm artifact is intentionally split:
 - `*.pearl.wasm` is a tiny compiled evaluator
 - `*.pearl.wasm.meta.json` is the wasm metadata file with bit-to-rule metadata, messages, and counterfactual hints
 
-For JavaScript and browser integrations, the intended public surface is an official loader/runtime package.
+For JavaScript and browser integrations, the public surface is the official loader/runtime package.
 Frontend code should not call raw Wasm exports directly.
 
-The planned package surface is:
+The package surface is:
 
 ```js
 import { loadArtifact } from '@logicpearl/browser';
@@ -191,8 +207,9 @@ logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/loa
 logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/mod-nested
 ```
 
-You can also ask the public builder to do a second pass:
-- `--residual-pass` adds solver-backed recovery for missed denied slices
+The public builder already includes solver-backed conjunction recovery for multi-condition deny slices.
+
+Additional build controls:
 - `--refine` tightens uniquely over-broad rules
 - `--pinned-rules rules.json` merges a maintained rule layer after discovery
 - `--feature-governance governance.json` constrains how discovery may use specific features
@@ -200,7 +217,7 @@ You can also ask the public builder to do a second pass:
 Example:
 
 ```bash
-logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --residual-pass --refine
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --refine
 ```
 
 ### Constrain one-sided evidence with feature governance
@@ -333,70 +350,21 @@ The same stage model is available to plugins:
 ### Custom plugins and observer profiles
 
 The intended boundary is:
-- the generic core provides the predicate engine, discovery/runtime plumbing, artifact formats, validation, and compilation
-- plugins and observer profiles provide domain meaning
+- the generic core owns artifact formats, discovery/runtime plumbing, validation, and compilation
+- observer profiles and plugins own domain meaning
 
-That means LogicPearl should stay generic about things like:
-- boolean and numeric features
-- text predicates and normalization primitives
-- deterministic rule execution
-- parity and mismatch reporting
+If your domain has its own raw input shape, keep that meaning at the edge instead of forcing it into the shared core.
 
-And domain-shaped adapters should own things like:
-- what raw fields matter for a use case
-- how to normalize domain input into features
-- what a feature should be called in that domain
-- route labels and domain-specific explanation wording
+If you are building custom boundaries, the advanced surfaces live here:
+- `logicpearl plugin validate` / `logicpearl plugin run` for contract debugging
+- `logicpearl observer ...` for observer profiles and scaffolds
+- `logicpearl build ... --trace-plugin-manifest ...` for build-time trace plugins
+- `logicpearl pipeline ...` for plugin-backed stage execution
+- `logicpearl conformance ...` for manifests, runtime parity, and spec verification
 
-Guardrails are a good example:
-- the core can provide generic text matching primitives such as phrase, gap, proximity, and delimiter-aware predicates
-- a guardrail observer profile or plugin can decide that those primitives map to features like `requests_secret_exfiltration` or `targets_system_prompt`
-
-That keeps the public core honest and reusable:
-- generic predicate engine in core
-- domain semantics in plugins/profiles
-
-If you are building for a domain with its own raw input shape, that is a first-class LogicPearl use case. Prefer a custom observer plugin or profile over forcing that domain vocabulary into the generic core.
-
-You can also validate artifact freshness and runtime parity directly:
-
-```bash
-logicpearl conformance write-manifest \
-  --output /tmp/authz_manifest.json \
-  --artifact pearl=examples/getting_started/output/artifact.json \
-  --data traces=examples/getting_started/decision_traces.csv
-
-logicpearl conformance validate-artifacts /tmp/authz_manifest.json
-logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed
-logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json
-```
-
-That gives you:
-- a reproducible artifact manifest
-- a freshness check for saved outputs
-- a direct runtime-vs-traces parity report
-- a formal check that the pearl satisfies the deny rules you state explicitly
-
-The formal spec path is intentionally stronger than trace-only verification. You can provide explicit deny requirements such as:
-- `age < 18 -> deny`
-- `role == "viewer" AND action == "write" -> deny`
-- `clearance_level < resource_sensitivity -> deny`
-
-`logicpearl conformance spec-verify` then proves:
-- whether every spec rule is satisfied by the pearl
-- whether every pearl deny rule is implied by or at least consistent with the spec
-- witness assignments when there is a spec gap or a spurious pearl rule
-
-You can also scaffold a starter string-of-pearls artifact from existing pearls:
-
-```bash
-logicpearl compose \
-  --pipeline-id starter_authz \
-  --output examples/pipelines/generated/starter_authz.pipeline.json \
-  fixtures/ir/valid/auth-demo-v1.json
-```
-
-That emits a `pipeline.json` with explicit placeholder root mappings like `$.TODO_action` so the composition stays inspectable instead of hiding inference magic.
+Start with:
+- [Advanced guardrail guide](./docs/advanced-guardrail-guide.md)
+- [WAF edge demo](./examples/waf_edge/README.md)
 
 ### Validate and run a string-of-pearls pipeline artifact
 
@@ -482,136 +450,25 @@ That small output shows the core shape:
 - explicit reasons
 - behavior that does not disappear into service code
 
-### Validate and smoke-test a plugin
+### Advanced integrations
 
-Use the generic plugin surface first:
+Most new users can stop after `build`, `inspect`, `run`, and `pipeline`.
 
-If you are updating an older plugin, start with [docs/plugin-migration.md](./docs/plugin-migration.md).
+If you are building custom boundaries or proof workflows, start here:
+- [Advanced guardrail guide](./docs/advanced-guardrail-guide.md)
+- [WAF edge demo](./examples/waf_edge/README.md)
+- [OPA / Rego parity example](./benchmarks/opa_rego/README.md)
 
-```bash
-logicpearl plugin validate examples/plugins/python_observer/manifest.json
-logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
-```
-
-What you should see:
-- the plugin stage and canonical contract
-- any declared input/options/output schemas
-- the exact JSON request envelope LogicPearl sent
-- the exact JSON response the plugin returned
-
-This is the fastest way to develop adapters safely:
-- you can validate any plugin stage, not just observers
-- you do not need to guess the request shape
-- the process boundary stays explicit and inspectable
-
-The canonical rule is simple:
-- LogicPearl now treats `payload.input` as the generic input field
-- stage-specific aliases still exist for compatibility:
-  - observer: `payload.raw_input`
-  - trace_source: `payload.source`
-  - enricher: `payload.records`
-  - verify: `payload.pearl_ir`
-
-If you want a stricter contract than “arbitrary JSON,” declare schemas directly in the plugin manifest:
-
-```json
-{
-  "name": "python-trace-source-demo",
-  "protocol_version": "1",
-  "stage": "trace_source",
-  "entrypoint": ["python3", "plugin.py"],
-  "input_schema": { "type": "string" },
-  "options_schema": {
-    "type": "object",
-    "required": ["label_column"],
-    "properties": {
-      "label_column": { "type": "string" }
-    }
-  },
-  "output_schema": {
-    "type": "object",
-    "required": ["ok", "decision_traces"]
-  }
-}
-```
-
-LogicPearl validates those schemas in the generic plugin commands and also enforces them when the same plugin runs inside `build` or a pipeline.
-
-Today the supported JSON Schema subset is intentionally small and inspectable:
-- `type`
-- `properties`
-- `required`
-- `items`
-- `enum`
-- `const`
-- `additionalProperties`
-
-### Use a Python observer plugin at the edge
+Representative advanced commands:
 
 ```bash
 logicpearl plugin validate examples/plugins/python_observer/manifest.json
 logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json
+logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output
+logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed
 ```
 
-What you should see:
-- raw input mapped into normalized features
-- a clean process boundary for Python or any other language
-- a plugin contract that does not require embedding Python into the Rust core
-
-That is the other half of the model:
-- raw input comes in
-- the observer emits normalized features
-- the pearl consumes deterministic features
-
-In the full LogicPearl workflow, observers are an artifact boundary too:
-- models or adapters can live at the edge
-- the normalized contract stays explicit
-- the pearl stays deterministic in the middle
-
-### Build through Python plugin stages
-
-Use a Python trace-source plugin:
-
-```bash
-logicpearl build \
-  --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
-  --trace-plugin-input examples/getting_started/decision_traces.csv \
-  --trace-plugin-option label_column=allowed \
-  --source-ref dataset=decision_traces_sample \
-  --output-dir examples/getting_started/output-plugin
-```
-
-Add a Python enricher plugin in the same build:
-
-```bash
-logicpearl build \
-  --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json \
-  --trace-plugin-input examples/getting_started/decision_traces.csv \
-  --trace-plugin-option label_column=allowed \
-  --enricher-plugin-manifest examples/plugins/python_enricher/manifest.json \
-  --output-dir examples/getting_started/output-plugin-enriched
-```
-
-Verify an emitted pearl through a Python verify plugin:
-
-```bash
-logicpearl verify examples/getting_started/output \
-  --plugin-manifest examples/plugins/python_verify/manifest.json \
-  --json
-```
-
-That is the intended plugin shape:
-- Rust owns the core CLI and artifact model
-- Python can plug into explicit stages
-- the contracts stay JSON-based and inspectable
-
-The emitted `build_report.json` now records plugin provenance too:
-- which trace-source plugin ran
-- which enricher plugin ran
-- whether the trace-source input was a path or an inline value
-- any `--source-ref key=value` entries you want to preserve as source references
-
-### 5. See the bitmask visually
+### See the bitmask visually
 
 See example outputs:
 - [Auth Bitmask SVG](./docs/examples/auth-bitmask.svg)
@@ -668,93 +525,14 @@ And the full promise is broader than “write rules in JSON”:
 - keep the final pearl deterministic and portable
 - keep the observer boundary explicit instead of burying it in application code
 
-## Quick Start
+## More Guides
 
-### Run tests
+Additional guides:
 
-```bash
-cargo test --manifest-path Cargo.toml --workspace
-```
-
-### Run the OPA parity demo
-
-```bash
-cd discovery
-uv run logicpearl-opa-inspect ../benchmarks/opa_rego/policy.rego
-uv run python ../benchmarks/opa_rego/run_benchmark.py
-```
-
-### Run the Rust runtime directly
-
-Use the checked-in normalized feature input:
-
-```bash
-logicpearl run benchmarks/opa_rego/output/pearl.ir.json fixtures/eval/opa-rego-runtime-input.json
-```
-
-Expected OPA outputs:
-- `benchmarks/opa_rego/output/pearl.json`
-- `benchmarks/opa_rego/output/pearl.ir.json`
-- `benchmarks/opa_rego/output/pearl_audit.json`
-- `benchmarks/opa_rego/output/*.wasm`
-
-## Generate Your Own Pearl
-
-The intended workflow is:
-1. start from behavior, examples, or an existing policy/runtime
-2. generate a pearl artifact
-3. generate or validate the observer boundary
-4. inspect, diff, and run the emitted pearl
-
-### Fastest public path: start from an existing policy/runtime
-
-The best public example in this repo is the OPA parity/import demo:
-
-```bash
-cd discovery
-uv run python ../benchmarks/opa_rego/run_benchmark.py
-```
-
-That flow:
-- starts from an existing Rego policy
-- imports the bounded decision behavior through a domain adapter
-- emits `pearl.json`, `pearl.ir.json`, audit output, and WASM
-- lets you inspect and run the resulting pearl yourself
-
-This is the quickest way for a new person to see the full artifact loop without hand-editing the pearl itself.
-
-See:
-- [OPA / Rego Benchmark](./benchmarks/opa_rego/README.md)
-
-### Fastest public path for the observer boundary
-
-The observer fixtures are there to make the boundary inspectable and testable, not to suggest that production observers should be maintained by hand forever.
-
-Run:
-
-```bash
-logicpearl plugin validate examples/plugins/python_observer/manifest.json
-```
-
-That shows the intended observer loop:
-- raw-input fixtures go in
-- observer behavior is validated exactly
-- the emitted feature contract can be trusted by the pearl runtime
-
-### Common ways to create a pearl
-
-In practice, creating a new pearl usually means one of these:
-- importing an existing policy/runtime into a bounded LogicPearl artifact
-- learning a deterministic pearl from labeled examples or known behavior
-- generating an observer/adapter boundary for raw input, then validating it against fixtures
-
-The hand-authored auth fixture is still useful for learning the shape of the artifact, but it is not the main product promise.
-
-If you want to inspect the artifact shape directly, start here:
-- [auth-demo-v1.json](./fixtures/ir/valid/auth-demo-v1.json)
-- [auth-observer-v1.json](./fixtures/observer/valid/auth-observer-v1.json)
-
-The goal is to generate the deterministic middle artifact, then let you inspect and run the result.
+- [Advanced guardrail guide](./docs/advanced-guardrail-guide.md) for the full observer -> traces -> artifact-set workflow
+- [WAF edge demo](./examples/waf_edge/README.md) for raw-request plugins and route mapping
+- [OPA / Rego parity example](./benchmarks/opa_rego/README.md) for a smaller bounded policy-parity walkthrough
+- [BENCHMARKS.md](./BENCHMARKS.md) and [DATASETS.md](./DATASETS.md) for the public benchmark story and local staging expectations
 
 ## What You Can Do Here
 
@@ -763,7 +541,7 @@ The goal is to generate the deterministic middle artifact, then let you inspect 
 - run pearls through the Rust runtime
 - compile small pearls to WASM
 - reproduce the auth demo
-- reproduce the OPA / Rego parity demo
+- run a smaller OPA / Rego parity example
 - structure guardrail benchmarks with clean `train / dev / proof` separation
 - see how observer specs and feature contracts connect raw inputs to pearls
 - inspect the generated artifact chain instead of treating the pearl as a black box
@@ -773,10 +551,11 @@ The goal is to generate the deterministic middle artifact, then let you inspect 
 The benchmark summary lives in [BENCHMARKS.md](./BENCHMARKS.md).
 
 That file covers:
-- the public OPA parity demo
 - the current guardrail corpus story
 - held-out non-`PINT` results
 - what the current public benchmark numbers do and do not prove
+
+The separate OPA / Rego parity example lives in [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md).
 
 ## Next Demos
 
@@ -795,16 +574,16 @@ A full raw-request WAF demo showing:
 See:
 - [examples/waf_edge/README.md](./examples/waf_edge/README.md)
 
-### OPA / Rego Demo
+### OPA / Rego Example
 
-A parity/import demo that starts from an existing Rego policy and emits LogicPearl artifacts.
+A smaller bounded parity example that starts from a fixed Rego policy, generates labeled traces with `opa`, and builds a LogicPearl artifact bundle from that slice.
 
 See:
 - [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md)
 
 ## Repository Layout
 
-The current public repo is organized around one primary Rust-first surface:
+The repository is organized around one primary Rust-first surface:
 
 - `crates/logicpearl`
   The user-facing CLI published as `logicpearl`.
@@ -821,13 +600,13 @@ The current public repo is organized around one primary Rust-first surface:
 - `schema/`
   Published JSON schemas for public artifact formats.
 - `scripts/`
-  Supporting scripts and reference tooling. The public front door is still the Rust CLI.
+  Supporting scripts and reference tooling. The Rust CLI remains the primary interface.
 - `docs/`
   Longer-form public guides and background material.
 - `reserved-crates/`
-  Namespace placeholder crates reserved for future public modules. Most users can ignore this.
+  Namespace placeholder crates reserved for separately published modules. Ignore these unless you are working on package publishing.
 
-If you are new here, the important directories are:
+The main directories are:
 - `crates/logicpearl`
 - `packages/logicpearl-browser`
 - `examples/`

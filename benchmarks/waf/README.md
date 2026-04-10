@@ -2,7 +2,7 @@
 
 This folder defines the public LogicPearl benchmark shape for classic web-application-firewall work.
 
-The intended benchmark stack is:
+The benchmark stack is:
 
 1. **CSIC HTTP 2010**
    - balanced request-level corpus with benign and anomalous HTTP requests
@@ -41,8 +41,10 @@ $LOGICPEARL_DATASETS/
 
 ## Build Adapted Cases
 
+To rebuild the adapted benchmark cases, use:
+
 ```bash
-logicpearl refresh waf-cases \
+cargo xtask waf-cases \
   --output-dir /tmp/waf_benchmark
 ```
 
@@ -70,7 +72,7 @@ Collapsed allow-vs-deny evaluation:
 logicpearl benchmark run \
   examples/waf_edge/waf_edge.pipeline.json \
   /tmp/waf_benchmark/final_holdout.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 

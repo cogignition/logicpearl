@@ -907,7 +907,7 @@ fn is_empty_synthesis_error(error: &logicpearl_core::LogicPearlError) -> bool {
     let text = error.to_string();
     text.contains("could not synthesize any observer variants")
         || text.contains("could not generate candidate phrases")
-        || text.contains("z3 could not synthesize a useful phrase subset")
+        || text.contains("solver could not synthesize a useful phrase subset")
 }
 
 fn carried_forward_synthesis_report(
@@ -936,6 +936,8 @@ fn carried_forward_synthesis_report(
         matched_positives_after: score.true_positive_count,
         matched_negatives_after: score.false_positive_count,
         selected_max_candidates: None,
+        selection_backend: None,
+        selection_status: None,
         auto_selection: None,
     })
 }

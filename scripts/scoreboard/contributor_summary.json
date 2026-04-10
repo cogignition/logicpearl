@@ -25,7 +25,7 @@
       "treasure": 242.500000001
     }
   ],
-  "generated_by": "logicpearl refresh contributor-summary",
+  "generated_by": "cargo xtask contributor-summary",
   "schema_version": "1.0",
   "scoring_terms": {
     "improvement_points": {

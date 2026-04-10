@@ -197,11 +197,11 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
     assert_eq!(split["train_rows"].as_u64(), Some(8));
     assert_eq!(split["dev_rows"].as_u64(), Some(8));
 
-    let prepare = run_cli_json(
+    let learn = run_cli_json(
         cli_bin,
         &[
             "benchmark",
-            "prepare",
+            "learn",
             train_jsonl.to_str().unwrap(),
             "--config",
             trace_config.to_str().unwrap(),
@@ -210,16 +210,13 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
             "--json",
         ],
     );
-    assert_eq!(
-        prepare["observer"]["profile"].as_str(),
-        Some("guardrails_v1")
-    );
-    assert_eq!(prepare["observed_rows"].as_u64(), Some(8));
+    assert_eq!(learn["observer"]["profile"].as_str(), Some("guardrails_v1"));
+    assert_eq!(learn["observed_rows"].as_u64(), Some(8));
 
     let artifact_set = train_prep_dir.join("discovered/artifact_set.json");
     assert!(
         artifact_set.exists(),
-        "artifact set should exist after prepare"
+        "artifact set should exist after benchmark learn"
     );
 
     run_cli_json(

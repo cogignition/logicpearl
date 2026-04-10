@@ -90,7 +90,7 @@ logicpearl observer repair \
 
 The first public non-`PINT` adapters are `Salad-Data`, `ALERT`, and `SQuAD 2.0`.
 
-For full local runs, stage public corpora outside the public repo under `$LOGICPEARL_DATASETS`.
+For full local runs, stage public corpora under `$LOGICPEARL_DATASETS` outside the project tree.
 
 Recommended:
 
@@ -238,7 +238,7 @@ This command is generic on purpose:
 If you want the middle of the workflow as one command, use:
 
 ```bash
-logicpearl benchmark prepare \
+logicpearl benchmark learn \
   /tmp/salad_dev.jsonl \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
@@ -261,7 +261,7 @@ logicpearl build \
   --output-dir /tmp/instruction_boundary
 ```
 
-Multi-target example:
+Advanced multi-target example:
 
 ```bash
 logicpearl discover \
@@ -306,8 +306,9 @@ then adapt and score `PINT`.
 Adapt:
 
 ```bash
-logicpearl benchmark adapt-pint \
+logicpearl benchmark adapt \
   benchmarks/guardrails/proof/pint/example_pint.yaml \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 ```
 
@@ -317,7 +318,7 @@ Score:
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 
@@ -328,13 +329,13 @@ That collapses rich internal routes into benchmark-facing:
 ## What Exists Today
 
 Public pieces already available:
-- `logicpearl benchmark adapt-salad`
+- `logicpearl benchmark adapt --profile salad-base-set`
 - `logicpearl benchmark merge-cases`
-- `logicpearl benchmark adapt-pint`
+- `logicpearl benchmark adapt --profile pint`
 - `logicpearl benchmark observe`
 - `logicpearl benchmark emit-traces`
 - `logicpearl build`
-- `logicpearl discover`
+- `logicpearl discover` for the advanced multi-target artifact-set path
 - `logicpearl benchmark run`
 - public observer + pipeline examples
 

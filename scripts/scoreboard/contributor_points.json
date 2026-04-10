@@ -1430,7 +1430,7 @@
       "treasure": 242.50000000100002
     }
   ],
-  "generated_by": "logicpearl refresh contributor-points",
+  "generated_by": "cargo xtask contributor-points",
   "participation_points_per_commit": 1.0,
   "schema_version": "1.0",
   "score_model": {

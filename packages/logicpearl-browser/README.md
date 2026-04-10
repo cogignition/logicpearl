@@ -47,9 +47,9 @@ This v1 package supports:
 - Wasm evaluation
 - rule decoding from wasm metadata
 
-It does **not** yet support:
+It does **not** support:
 - full string-of-pearls pipeline orchestration
 - observer/plugin execution
 - automatic pipeline route evaluation
 
-Those should be added later on top of this single-artifact runtime, not instead of it.
+Keep those concerns above this single-artifact runtime instead of folding them into it.

@@ -252,10 +252,10 @@ fn disambiguate_case_id(
     unreachable!("duplicate id disambiguation should always find a suffix")
 }
 
-pub(crate) fn run_benchmark_prepare(args: BenchmarkPrepareArgs) -> Result<()> {
+pub(crate) fn run_benchmark_learn(args: BenchmarkLearnArgs) -> Result<()> {
     fs::create_dir_all(&args.output_dir)
         .into_diagnostic()
-        .wrap_err("failed to create benchmark prepare output directory")?;
+        .wrap_err("failed to create benchmark learn output directory")?;
 
     let observed_path = args.output_dir.join("observed.jsonl");
     let traces_dir = args.output_dir.join("traces");
@@ -480,6 +480,11 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             .wrap_err("failed to detect benchmark adapter profile")?,
         other => other,
     };
+    let defaults = BenchmarkAdaptDefaults {
+        requested_tool: args.requested_tool,
+        requested_action: args.requested_action,
+        scope: args.scope,
+    };
     match profile {
         BenchmarkAdapterProfile::Auto => {
             unreachable!("auto profile should be resolved before dispatch")
@@ -487,57 +492,37 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
         BenchmarkAdapterProfile::CsicHttp2010 => run_benchmark_adapt_csic_http_2010(
             &args.raw_dataset,
             &args.output,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::ModsecurityOwasp2025 => {
             run_benchmark_adapt_modsecurity_owasp_2025(
                 &args.raw_dataset,
                 &args.output,
-                &BenchmarkAdaptDefaults {
-                    requested_tool: args.requested_tool,
-                    requested_action: args.requested_action,
-                    scope: args.scope,
-                },
+                &defaults,
                 args.json,
             )
         }
-        BenchmarkAdapterProfile::SaladBaseSet => {
-            run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
-                raw_salad_json: args.raw_dataset,
-                subset: SaladSubset::BaseSet,
-                output: args.output,
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-                json: args.json,
-            })
-        }
-        BenchmarkAdapterProfile::SaladAttackEnhancedSet => {
-            run_benchmark_adapt_salad(BenchmarkAdaptSaladArgs {
-                raw_salad_json: args.raw_dataset,
-                subset: SaladSubset::AttackEnhancedSet,
-                output: args.output,
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-                json: args.json,
-            })
-        }
+        BenchmarkAdapterProfile::SaladBaseSet => run_benchmark_adapt_salad(
+            &args.raw_dataset,
+            SaladSubsetKind::BaseSet,
+            &args.output,
+            &defaults,
+            args.json,
+        ),
+        BenchmarkAdapterProfile::SaladAttackEnhancedSet => run_benchmark_adapt_salad(
+            &args.raw_dataset,
+            SaladSubsetKind::AttackEnhancedSet,
+            &args.output,
+            &defaults,
+            args.json,
+        ),
         BenchmarkAdapterProfile::SafearenaSafe => run_benchmark_adapt_prompt_json_rows(
             &args.raw_dataset,
             &args.output,
             "SafeArena safe",
             |raw, defaults| adapt_safearena_dataset(raw, true, defaults),
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::SafearenaHarm => run_benchmark_adapt_prompt_json_rows(
@@ -545,31 +530,18 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "SafeArena harm",
             |raw, defaults| adapt_safearena_dataset(raw, false, defaults),
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
-        BenchmarkAdapterProfile::Alert => run_benchmark_adapt_alert(BenchmarkAdaptAlertArgs {
-            raw_alert_json: args.raw_dataset,
-            output: args.output,
-            requested_tool: args.requested_tool,
-            requested_action: args.requested_action,
-            scope: args.scope,
-            json: args.json,
-        }),
+        BenchmarkAdapterProfile::Alert => {
+            run_benchmark_adapt_alert(&args.raw_dataset, &args.output, &defaults, args.json)
+        }
         BenchmarkAdapterProfile::JailbreakBench => run_benchmark_adapt_prompt_json_rows(
             &args.raw_dataset,
             &args.output,
             "JailbreakBench",
             adapt_jailbreakbench_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::PromptShield => run_benchmark_adapt_prompt_json_rows(
@@ -577,11 +549,7 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "PromptShield",
             adapt_promptshield_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::RogueSecurityPromptInjections => {
@@ -590,11 +558,7 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
                 &args.output,
                 "rogue-security/prompt-injections-benchmark",
                 adapt_rogue_security_prompt_injections_dataset,
-                &BenchmarkAdaptDefaults {
-                    requested_tool: args.requested_tool,
-                    requested_action: args.requested_action,
-                    scope: args.scope,
-                },
+                &defaults,
                 args.json,
             )
         }
@@ -603,11 +567,7 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "ChatGPT-Jailbreak-Prompts",
             adapt_chatgpt_jailbreak_prompts_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::OpenAgentSafetyS26 => run_benchmark_adapt_prompt_json_rows(
@@ -615,11 +575,7 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "OpenAgentSafety S26",
             adapt_openagentsafety_s26_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::McpMark => run_benchmark_adapt_prompt_json_rows(
@@ -627,31 +583,18 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "MCPMark",
             adapt_mcpmark_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
-        BenchmarkAdapterProfile::Squad => run_benchmark_adapt_squad(BenchmarkAdaptSquadArgs {
-            raw_squad_json: args.raw_dataset,
-            output: args.output,
-            requested_tool: args.requested_tool,
-            requested_action: args.requested_action,
-            scope: args.scope,
-            json: args.json,
-        }),
+        BenchmarkAdapterProfile::Squad => {
+            run_benchmark_adapt_squad(&args.raw_dataset, &args.output, &defaults, args.json)
+        }
         BenchmarkAdapterProfile::Vigil => run_benchmark_adapt_prompt_json_rows(
             &args.raw_dataset,
             &args.output,
             "Vigil",
             adapt_vigil_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
         BenchmarkAdapterProfile::NoetiToxicQa => run_benchmark_adapt_prompt_json_rows(
@@ -659,31 +602,15 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
             &args.output,
             "NOETI ToxicQAFinal",
             adapt_noeti_toxicqa_dataset,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
+            &defaults,
             args.json,
         ),
-        BenchmarkAdapterProfile::MtAgentRisk => run_benchmark_adapt_mt_agentrisk(
-            &args.raw_dataset,
-            &args.output,
-            &BenchmarkAdaptDefaults {
-                requested_tool: args.requested_tool,
-                requested_action: args.requested_action,
-                scope: args.scope,
-            },
-            args.json,
-        ),
-        BenchmarkAdapterProfile::Pint => run_benchmark_adapt_pint(BenchmarkAdaptPintArgs {
-            raw_pint_yaml: args.raw_dataset,
-            output: args.output,
-            requested_tool: args.requested_tool,
-            requested_action: args.requested_action,
-            scope: args.scope,
-            json: args.json,
-        }),
+        BenchmarkAdapterProfile::MtAgentRisk => {
+            run_benchmark_adapt_mt_agentrisk(&args.raw_dataset, &args.output, &defaults, args.json)
+        }
+        BenchmarkAdapterProfile::Pint => {
+            run_benchmark_adapt_pint(&args.raw_dataset, &args.output, &defaults, args.json)
+        }
     }
 }
 
@@ -854,40 +781,32 @@ fn run_benchmark_adapt_prompt_json_rows(
     Ok(())
 }
 
-pub(crate) fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result<()> {
-    let raw_json = fs::read_to_string(&args.raw_salad_json)
+pub(crate) fn run_benchmark_adapt_salad(
+    raw_dataset: &Path,
+    subset: SaladSubsetKind,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let raw_json = fs::read_to_string(raw_dataset)
         .into_diagnostic()
         .wrap_err("could not read raw Salad-Data JSON")?;
-    let cases = adapt_salad_dataset(
-        &raw_json,
-        match args.subset {
-            SaladSubset::BaseSet => SaladSubsetKind::BaseSet,
-            SaladSubset::AttackEnhancedSet => SaladSubsetKind::AttackEnhancedSet,
-        },
-        &BenchmarkAdaptDefaults {
-            requested_tool: args.requested_tool.clone(),
-            requested_action: args.requested_action.clone(),
-            scope: args.scope.clone(),
-        },
-    )
-    .into_diagnostic()
-    .wrap_err("failed to adapt Salad-Data benchmark dataset")?;
+    let cases = adapt_salad_dataset(&raw_json, subset, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt Salad-Data benchmark dataset")?;
     let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, &args.output)
+    write_benchmark_cases_jsonl(&cases, output)
         .into_diagnostic()
         .wrap_err("failed to write adapted Salad JSONL")?;
 
-    if args.json {
+    if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "salad-data",
-                "subset": match args.subset {
-                    SaladSubset::BaseSet => "base_set",
-                    SaladSubset::AttackEnhancedSet => "attack_enhanced_set",
-                },
+                "subset": salad_subset_name(subset),
                 "rows": rows,
-                "output": args.output.display().to_string()
+                "output": output.display().to_string()
             }))
             .into_diagnostic()?
         );
@@ -901,42 +820,44 @@ pub(crate) fn run_benchmark_adapt_salad(args: BenchmarkAdaptSaladArgs) -> Result
         println!(
             "  {} {}",
             "Subset".bright_black(),
-            match args.subset {
-                SaladSubset::BaseSet => "base_set",
-                SaladSubset::AttackEnhancedSet => "attack_enhanced_set",
-            }
+            salad_subset_name(subset)
         );
-        println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {}", "Output".bright_black(), output.display());
     }
     Ok(())
 }
 
-pub(crate) fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result<()> {
-    let raw_json = fs::read_to_string(&args.raw_alert_json)
+fn salad_subset_name(subset: SaladSubsetKind) -> &'static str {
+    match subset {
+        SaladSubsetKind::BaseSet => "base_set",
+        SaladSubsetKind::AttackEnhancedSet => "attack_enhanced_set",
+    }
+}
+
+pub(crate) fn run_benchmark_adapt_alert(
+    raw_dataset: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let raw_json = fs::read_to_string(raw_dataset)
         .into_diagnostic()
         .wrap_err("could not read raw ALERT JSON")?;
-    let cases = adapt_alert_dataset(
-        &raw_json,
-        &BenchmarkAdaptDefaults {
-            requested_tool: args.requested_tool.clone(),
-            requested_action: args.requested_action.clone(),
-            scope: args.scope.clone(),
-        },
-    )
-    .into_diagnostic()
-    .wrap_err("failed to adapt ALERT benchmark dataset")?;
+    let cases = adapt_alert_dataset(&raw_json, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt ALERT benchmark dataset")?;
     let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, &args.output)
+    write_benchmark_cases_jsonl(&cases, output)
         .into_diagnostic()
         .wrap_err("failed to write adapted ALERT JSONL")?;
 
-    if args.json {
+    if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "alert",
                 "rows": rows,
-                "output": args.output.display().to_string()
+                "output": output.display().to_string()
             }))
             .into_diagnostic()?
         );
@@ -947,37 +868,35 @@ pub(crate) fn run_benchmark_adapt_alert(args: BenchmarkAdaptAlertArgs) -> Result
             "ALERT dataset".bold()
         );
         println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {}", "Output".bright_black(), output.display());
     }
     Ok(())
 }
 
-pub(crate) fn run_benchmark_adapt_squad(args: BenchmarkAdaptSquadArgs) -> Result<()> {
-    let raw_json = fs::read_to_string(&args.raw_squad_json)
+pub(crate) fn run_benchmark_adapt_squad(
+    raw_dataset: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let raw_json = fs::read_to_string(raw_dataset)
         .into_diagnostic()
         .wrap_err("could not read raw SQuAD JSON")?;
-    let cases = adapt_squad_dataset(
-        &raw_json,
-        &BenchmarkAdaptDefaults {
-            requested_tool: args.requested_tool.clone(),
-            requested_action: args.requested_action.clone(),
-            scope: args.scope.clone(),
-        },
-    )
-    .into_diagnostic()
-    .wrap_err("failed to adapt SQuAD benchmark dataset")?;
+    let cases = adapt_squad_dataset(&raw_json, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt SQuAD benchmark dataset")?;
     let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, &args.output)
+    write_benchmark_cases_jsonl(&cases, output)
         .into_diagnostic()
         .wrap_err("failed to write adapted SQuAD JSONL")?;
 
-    if args.json {
+    if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "squad",
                 "rows": rows,
-                "output": args.output.display().to_string()
+                "output": output.display().to_string()
             }))
             .into_diagnostic()?
         );
@@ -988,37 +907,35 @@ pub(crate) fn run_benchmark_adapt_squad(args: BenchmarkAdaptSquadArgs) -> Result
             "SQuAD dataset".bold()
         );
         println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {}", "Output".bright_black(), output.display());
     }
     Ok(())
 }
 
-pub(crate) fn run_benchmark_adapt_pint(args: BenchmarkAdaptPintArgs) -> Result<()> {
-    let raw_yaml = fs::read_to_string(&args.raw_pint_yaml)
+pub(crate) fn run_benchmark_adapt_pint(
+    raw_dataset: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let raw_yaml = fs::read_to_string(raw_dataset)
         .into_diagnostic()
         .wrap_err("could not read raw PINT YAML")?;
-    let cases = adapt_pint_dataset(
-        &raw_yaml,
-        &BenchmarkAdaptDefaults {
-            requested_tool: args.requested_tool.clone(),
-            requested_action: args.requested_action.clone(),
-            scope: args.scope.clone(),
-        },
-    )
-    .into_diagnostic()
-    .wrap_err("failed to adapt PINT benchmark dataset")?;
+    let cases = adapt_pint_dataset(&raw_yaml, defaults)
+        .into_diagnostic()
+        .wrap_err("failed to adapt PINT benchmark dataset")?;
     let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, &args.output)
+    write_benchmark_cases_jsonl(&cases, output)
         .into_diagnostic()
         .wrap_err("failed to write adapted PINT JSONL")?;
 
-    if args.json {
+    if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "source_benchmark": "pint",
                 "rows": rows,
-                "output": args.output.display().to_string()
+                "output": output.display().to_string()
             }))
             .into_diagnostic()?
         );
@@ -1029,7 +946,7 @@ pub(crate) fn run_benchmark_adapt_pint(args: BenchmarkAdaptPintArgs) -> Result<(
             "PINT dataset".bold()
         );
         println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), args.output.display());
+        println!("  {} {}", "Output".bright_black(), output.display());
     }
     Ok(())
 }
@@ -1077,9 +994,8 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
         ));
     }
 
-    let collapse_non_allow_to_deny = args.collapse_non_allow_to_deny;
-    let results =
-        benchmark_case_results_parallel(&prepared_pipeline, &cases, collapse_non_allow_to_deny)?;
+    let collapse_routes = args.collapse_routes;
+    let results = benchmark_case_results_parallel(&prepared_pipeline, &cases, collapse_routes)?;
 
     let mut matched_cases = 0_usize;
     let mut attack_cases = 0_usize;
@@ -1199,7 +1115,7 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
 fn benchmark_case_results_parallel(
     prepared_pipeline: &logicpearl_pipeline::PreparedPipeline,
     cases: &[BenchmarkCase],
-    collapse_non_allow_to_deny: bool,
+    collapse_routes: bool,
 ) -> Result<Vec<BenchmarkCaseResult>> {
     let chunked = cases
         .chunks(BENCHMARK_BATCH_SIZE)
@@ -1219,7 +1135,7 @@ fn benchmark_case_results_parallel(
             results.extend(run_benchmark_chunk(
                 prepared_pipeline,
                 chunk,
-                collapse_non_allow_to_deny,
+                collapse_routes,
             )?);
         }
         return Ok(results);
@@ -1234,10 +1150,9 @@ fn benchmark_case_results_parallel(
         let chunked = chunked.clone();
         thread::spawn(move || {
             for index in (worker..chunked.len()).step_by(worker_count) {
-                let result =
-                    run_benchmark_chunk(&pipeline, &chunked[index], collapse_non_allow_to_deny)
-                        .map(|rows| (index, rows))
-                        .map_err(|err| err.to_string());
+                let result = run_benchmark_chunk(&pipeline, &chunked[index], collapse_routes)
+                    .map(|rows| (index, rows))
+                    .map_err(|err| err.to_string());
                 let _ = tx.send(result);
             }
         });
@@ -1257,7 +1172,7 @@ fn benchmark_case_results_parallel(
 fn run_benchmark_chunk(
     prepared_pipeline: &logicpearl_pipeline::PreparedPipeline,
     chunk: &[BenchmarkCase],
-    collapse_non_allow_to_deny: bool,
+    collapse_routes: bool,
 ) -> Result<Vec<BenchmarkCaseResult>> {
     let inputs = chunk
         .iter()
@@ -1281,8 +1196,8 @@ fn run_benchmark_chunk(
                         "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
                     )
                 })?;
-            let actual_route = collapse_route(actual_route_raw, collapse_non_allow_to_deny);
-            let expected_route = collapse_route(&case.expected_route, collapse_non_allow_to_deny);
+            let actual_route = collapse_route(actual_route_raw, collapse_routes);
+            let expected_route = collapse_route(&case.expected_route, collapse_routes);
             let matched = actual_route == expected_route;
             let attack_confidence = execution
                 .output
@@ -1585,8 +1500,8 @@ fn average(values: impl Iterator<Item = f64>) -> f64 {
     }
 }
 
-fn collapse_route(route: &str, collapse_non_allow_to_deny: bool) -> String {
-    if collapse_non_allow_to_deny {
+fn collapse_route(route: &str, collapse_routes: bool) -> String {
+    if collapse_routes {
         if route == "allow" {
             "allow".to_string()
         } else {

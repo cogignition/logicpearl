@@ -1,0 +1,269 @@
+{
+  "contract_name": "healthcare_prior_auth",
+  "description": "Frozen representative prior-auth artifact contracts derived from healthcare_demo feature maps and expected rule outputs.",
+  "policies": [
+    {
+      "policy_id": "sample_policy_single_conservative_check",
+      "title": "Sample policy: single conservative-therapy check",
+      "bundle_dir": "policies/sample_policy_single_conservative_check/bundle",
+      "inspect_expectation": {
+        "gate_id": "bcbsma_conservative_therapy_prereq_003_transcutaneous_electrical_nerve_stimulation_prn",
+        "rules": 1,
+        "features": 1,
+        "rule_ids_in_order": [
+          "missing_req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001"
+        ],
+        "feature_ids_in_order": [
+          "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "no_supporting_evidence",
+          "feature_map": {
+            "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied": 0.0
+          },
+          "expected_bitmask": 1,
+          "expected_missing_rule_ids": [
+            "missing_req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001"
+          ]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "policies/sample_policy_single_conservative_check/diff/earlier.pearl.ir.json",
+        "current_ir": "policies/sample_policy_single_conservative_check/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 1,
+          "reordered_rules": 0,
+          "added_rules": 0,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": [
+          "missing_req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001"
+        ],
+        "added_rule_ids": [],
+        "removed_rule_ids": []
+      }
+    },
+    {
+      "policy_id": "sample_policy_single_documentation_check",
+      "title": "Sample policy: single documentation check",
+      "bundle_dir": "policies/sample_policy_single_documentation_check/bundle",
+      "inspect_expectation": {
+        "gate_id": "bcbsma_documentation_requirement_004_immune_modulating_drugs_prn",
+        "rules": 1,
+        "features": 1,
+        "rule_ids_in_order": [
+          "missing_req-004-immune-modulating-drugs-prn-p6-010"
+        ],
+        "feature_ids_in_order": [
+          "requirement__req-004-immune-modulating-drugs-prn-p6-010__satisfied"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "requirement__req-004-immune-modulating-drugs-prn-p6-010__satisfied": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_clinical_documentation",
+          "feature_map": {
+            "requirement__req-004-immune-modulating-drugs-prn-p6-010__satisfied": 0.0
+          },
+          "expected_bitmask": 1,
+          "expected_missing_rule_ids": [
+            "missing_req-004-immune-modulating-drugs-prn-p6-010"
+          ]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "policies/sample_policy_single_documentation_check/diff/earlier.pearl.ir.json",
+        "current_ir": "policies/sample_policy_single_documentation_check/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 1,
+          "reordered_rules": 0,
+          "added_rules": 0,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": [
+          "missing_req-004-immune-modulating-drugs-prn-p6-010"
+        ],
+        "added_rule_ids": [],
+        "removed_rule_ids": []
+      }
+    },
+    {
+      "policy_id": "sample_policy_dual_documentation_check",
+      "title": "Sample policy: dual documentation check",
+      "bundle_dir": "policies/sample_policy_dual_documentation_check/bundle",
+      "inspect_expectation": {
+        "gate_id": "bcbsma_documentation_requirement_049_drug_management_retail_pharmacy_prior_authorization_policy",
+        "rules": 2,
+        "features": 2,
+        "rule_ids_in_order": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008",
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013"
+        ],
+        "feature_ids_in_order": [
+          "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied",
+          "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013__satisfied"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied": 1.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013__satisfied": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_genetic_test_support",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied": 0.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013__satisfied": 1.0
+          },
+          "expected_bitmask": 1,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008"
+          ]
+        },
+        {
+          "name": "missing_clinical_documentation",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied": 1.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013__satisfied": 0.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013"
+          ]
+        },
+        {
+          "name": "missing_both_requirements",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied": 0.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013__satisfied": 0.0
+          },
+          "expected_bitmask": 3,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008",
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013"
+          ]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "policies/sample_policy_dual_documentation_check/diff/earlier.pearl.ir.json",
+        "current_ir": "policies/sample_policy_dual_documentation_check/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 1,
+          "reordered_rules": 0,
+          "added_rules": 1,
+          "removed_rules": 1
+        },
+        "changed_rule_ids": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008"
+        ],
+        "added_rule_ids": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-013"
+        ],
+        "removed_rule_ids": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-002"
+        ]
+      }
+    },
+    {
+      "policy_id": "sample_policy_dual_step_therapy_check",
+      "title": "Sample policy: dual step-therapy check",
+      "bundle_dir": "policies/sample_policy_dual_step_therapy_check/bundle",
+      "inspect_expectation": {
+        "gate_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+        "rules": 2,
+        "features": 2,
+        "rule_ids_in_order": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003"
+        ],
+        "feature_ids_in_order": [
+          "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+          "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied"
+        ]
+      },
+      "scenarios": [
+        {
+          "name": "complete",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied": 1.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied": 1.0
+          },
+          "expected_bitmask": 0,
+          "expected_missing_rule_ids": []
+        },
+        {
+          "name": "missing_prior_trial",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied": 0.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied": 1.0
+          },
+          "expected_bitmask": 1,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001"
+          ]
+        },
+        {
+          "name": "missing_formulary_alternative_trial",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied": 1.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied": 0.0
+          },
+          "expected_bitmask": 2,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003"
+          ]
+        },
+        {
+          "name": "missing_both_step_requirements",
+          "feature_map": {
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied": 0.0,
+            "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied": 0.0
+          },
+          "expected_bitmask": 3,
+          "expected_missing_rule_ids": [
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+            "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003"
+          ]
+        }
+      ],
+      "diff_expectation": {
+        "earlier_ir": "policies/sample_policy_dual_step_therapy_check/diff/earlier.pearl.ir.json",
+        "current_ir": "policies/sample_policy_dual_step_therapy_check/diff/current.pearl.ir.json",
+        "summary": {
+          "changed_rules": 2,
+          "reordered_rules": 0,
+          "added_rules": 0,
+          "removed_rules": 0
+        },
+        "changed_rule_ids": [
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+          "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003"
+        ],
+        "added_rule_ids": [],
+        "removed_rule_ids": []
+      }
+    }
+  ]
+}

@@ -14,10 +14,10 @@ Use `PINT` once the observer, pearls, and route policy are frozen.
 ## Purpose
 
 The public claim is not:
-- "we tuned on PINT and got a good PINT score"
+- "the system was tuned on PINT and then produced a good PINT score"
 
 The public claim is:
-- "we built the system on separate corpora, then used PINT as the held-out final exam"
+- "the system was built on separate corpora, then PINT was used as the held-out final exam"
 
 ## Evaluation Path
 
@@ -61,21 +61,22 @@ Suggested rule:
 Build and commit the frozen guardrail bundle first:
 
 ```bash
-logicpearl refresh guardrails-build \
+cargo xtask guardrails-build \
   --output-dir /tmp/guardrails_bundle
 ```
 
 Then adapt raw `PINT` and run the frozen pipeline:
 
 ```bash
-logicpearl benchmark adapt-pint \
+logicpearl benchmark adapt \
   "$LOGICPEARL_DATASETS/pint/PINT.yaml" \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 
@@ -84,8 +85,9 @@ logicpearl benchmark run \
 If you want the lower-level public commands instead, start by adapting raw PINT YAML into LogicPearl benchmark-case JSONL:
 
 ```bash
-logicpearl benchmark adapt-pint \
+logicpearl benchmark adapt \
   benchmarks/guardrails/proof/pint/example_pint.yaml \
+  --profile pint \
   --output /tmp/pint_cases.jsonl
 ```
 
@@ -95,7 +97,7 @@ Then run the frozen guardrail pipeline with route collapse enabled:
 logicpearl benchmark run \
   benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json \
   /tmp/pint_cases.jsonl \
-  --collapse-non-allow-to-deny \
+  --collapse-routes \
   --json
 ```
 

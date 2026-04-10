@@ -101,7 +101,7 @@ pub enum RuleKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleVerificationStatus {
-    Z3Verified,
+    SolverVerified,
     PipelineUnverified,
     HeuristicUnverified,
     RefinedUnverified,
@@ -750,11 +750,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_legacy_literal_comparison_shape() {
+    fn parses_literal_comparison_shape() {
         let gate = LogicPearlGateIr::from_json_str(
             &json!({
                 "ir_version": "1.0",
-                "gate_id": "legacy",
+                "gate_id": "literal_value",
                 "gate_type": "bitmask_gate",
                 "input_schema": {
                     "features": [
@@ -770,10 +770,21 @@ mod tests {
             })
             .to_string(),
         )
-        .expect("legacy literal shape should still parse");
+        .expect("literal comparison shape should parse");
         let Expression::Comparison(comparison) = &gate.rules[0].deny_when else {
             panic!("expected comparison expression");
         };
         assert_eq!(comparison.value, ComparisonValue::Literal(json!(1)));
+    }
+
+    #[test]
+    fn serializes_solver_verified_status_with_backend_neutral_name() {
+        let encoded = serde_json::to_string(&RuleVerificationStatus::SolverVerified)
+            .expect("verification status should serialize");
+        assert_eq!(encoded, "\"solver_verified\"");
+
+        let decoded: RuleVerificationStatus =
+            serde_json::from_str(&encoded).expect("verification status should deserialize");
+        assert_eq!(decoded, RuleVerificationStatus::SolverVerified);
     }
 }

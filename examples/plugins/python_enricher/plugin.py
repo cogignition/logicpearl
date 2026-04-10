@@ -5,7 +5,7 @@ import sys
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
-    records = payload.get("input", payload.get("records", []))
+    records = payload.get("input", [])
 
     enriched = []
     for record in records:

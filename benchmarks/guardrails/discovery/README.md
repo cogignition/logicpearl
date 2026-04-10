@@ -41,4 +41,4 @@ logicpearl build \
   --output-dir /tmp/guardrail_instruction_boundary
 ```
 
-That is the public discovery loop we want to scale up onto Salad-Data, ALERT, SQuAD, and later PINT.
+That same discovery loop scales up to Salad-Data, ALERT, SQuAD, and later PINT.

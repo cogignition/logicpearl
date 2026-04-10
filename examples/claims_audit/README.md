@@ -1,6 +1,6 @@
 # Claims Audit Example
 
-This example keeps a small synthetic claims oracle in the public repo.
+This example includes a small synthetic claims oracle.
 
 Contents:
 - `oracle/generate_claims.py`

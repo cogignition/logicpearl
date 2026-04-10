@@ -6,8 +6,8 @@ def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
     canonical_input = payload.get("input", {})
-    bitmask = int(canonical_input.get("bitmask", payload.get("bitmask", 0)))
-    allow = bool(canonical_input.get("allow", payload.get("allow", False)))
+    bitmask = int(canonical_input.get("bitmask", 0))
+    allow = bool(canonical_input.get("allow", False))
 
     if allow and bitmask == 0:
         audit_status = "clean_pass"

@@ -1,0 +1,74 @@
+{
+  "ir_version": "1.0",
+  "gate_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+  "gate_type": "bitmask_gate",
+  "input_schema": {
+    "features": [
+      {
+        "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      },
+      {
+        "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+      "kind": "predicate",
+      "bit": 0,
+      "deny_when": {
+        "feature": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001__satisfied",
+        "op": "<=",
+        "value": 0.5
+      },
+      "label": null,
+      "message": null,
+      "severity": null,
+      "counterfactual_hint": null,
+      "verification_status": "heuristic_unverified"
+    },
+    {
+      "id": "missing_req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003",
+      "kind": "predicate",
+      "bit": 1,
+      "deny_when": {
+        "feature": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied",
+        "op": "<=",
+        "value": 0.5
+      },
+      "label": null,
+      "message": null,
+      "severity": null,
+      "counterfactual_hint": null,
+      "verification_status": "heuristic_unverified"
+    }
+  ],
+  "evaluation": {
+    "combine": "bitwise_or",
+    "allow_when_bitmask": 0
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "draft healthcare policy requirement gate",
+    "verification_summary": null
+  },
+  "provenance": {
+    "generator": "logicpearl.healthcare_policy_compiler",
+    "generator_version": "0.1.0",
+    "source_commit": null,
+    "created_at": null
+  }
+}

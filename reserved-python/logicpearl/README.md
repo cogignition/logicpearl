@@ -31,7 +31,7 @@ print(result["kind"])
 
 ## Scope
 
-This package currently exposes local execution through `logicpearl-engine`.
+This package exposes local execution through `logicpearl-engine`.
 
 It is:
 - not a service client yet

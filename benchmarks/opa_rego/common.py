@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import csv
 import random
 from pathlib import Path
-
-from logicpearl.engine import Condition, Rule, RuleSource, VerificationStatus
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BENCHMARK_DIR / "output"
 POLICY_PATH = BENCHMARK_DIR / "policy.rego"
+OPA_ALLOW_QUERY = "data.authz.allow"
+
+FEATURE_COLUMNS = [
+    "is_admin",
+    "is_contractor",
+    "team_match",
+    "is_public",
+    "archived",
+    "sensitivity",
+    "action_read",
+    "action_write",
+    "action_delete",
+    "is_authenticated",
+]
 
 ROLES = ["viewer", "editor", "admin", "contractor"]
 ROLE_LEVELS = {"viewer": 0, "editor": 1, "admin": 2, "contractor": 0}
@@ -48,11 +61,8 @@ def _generate_raw_request(rng: random.Random) -> dict:
 
 
 def observe_authz_request(raw_input: dict) -> dict[str, float]:
-    failed = float(raw_input["context"]["failed_attempts"])
-    concurrent = float(raw_input["context"]["concurrent_sessions"])
     role = raw_input["user"]["role"]
     return {
-        "role_level": float(ROLE_LEVELS[role]),
         "is_admin": float(role == "admin"),
         "is_contractor": float(role == "contractor"),
         "team_match": float(raw_input["user"]["team"] == raw_input["resource"]["owner_team"]),
@@ -62,86 +72,18 @@ def observe_authz_request(raw_input: dict) -> dict[str, float]:
         "action_read": float(raw_input["action"] == "read"),
         "action_write": float(raw_input["action"] == "write"),
         "action_delete": float(raw_input["action"] == "delete"),
-        "failed_attempts": failed,
-        "concurrent_sessions": concurrent,
-        "is_business_hours": float(raw_input["context"]["is_business_hours"]),
         "is_authenticated": float(raw_input["user"]["is_authenticated"]),
-        "risk_score": failed * 2 + concurrent * 3,
     }
 
 
-def build_demo_rules() -> list[Rule]:
-    return [
-        _demo_rule(
-            "archived_admin_requires_explicit_allow",
-            [("archived", ">", 0.5), ("is_admin", ">", 0.5)],
-        ),
-        _demo_rule(
-            "archived_read_only",
-            [("archived", ">", 0.5), ("action_read", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "contractor_read_only",
-            [("is_contractor", ">", 0.5), ("action_read", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "team_boundary_non_admin",
-            [("team_match", "<=", 0.5), ("is_public", "<=", 0.5), ("is_admin", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "team_boundary_archived_admin",
-            [("team_match", "<=", 0.5), ("is_public", "<=", 0.5), ("archived", ">", 0.5)],
-        ),
-        _demo_rule(
-            "minimum_role_write",
-            [("action_write", ">", 0.5), ("role_level", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "minimum_role_delete",
-            [("action_delete", ">", 0.5), ("role_level", "<=", 1.5)],
-        ),
-        _demo_rule(
-            "brute_force_non_admin",
-            [("failed_attempts", ">", 5.0), ("concurrent_sessions", ">", 3.0), ("is_admin", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "brute_force_archived_admin",
-            [("failed_attempts", ">", 5.0), ("concurrent_sessions", ">", 3.0), ("archived", ">", 0.5)],
-        ),
-        _demo_rule(
-            "risk_score_exceeded_non_admin",
-            [("risk_score", ">", 15.0), ("is_admin", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "risk_score_exceeded_archived_admin",
-            [("risk_score", ">", 15.0), ("archived", ">", 0.5)],
-        ),
-        _demo_rule(
-            "off_hours_sensitive",
-            [("is_business_hours", "<=", 0.5), ("sensitivity", ">", 1.0), ("is_admin", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "unauthenticated_sensitive_non_admin",
-            [("is_authenticated", "<=", 0.5), ("sensitivity", ">", 0.0), ("is_admin", "<=", 0.5)],
-        ),
-        _demo_rule(
-            "unauthenticated_sensitive_archived_admin",
-            [("is_authenticated", "<=", 0.5), ("sensitivity", ">", 0.0), ("archived", ">", 0.5)],
-        ),
-    ]
-
-
-def condition_count(rules: list[Rule]) -> int:
-    return sum(len(rule.conditions) for rule in rules)
-
-
-def _demo_rule(rule_id: str, condition_specs: list[tuple[str, str, float]]) -> Rule:
-    return Rule(
-        rule_id=rule_id,
-        source=RuleSource.PINNED,
-        verification_status=VerificationStatus.HEURISTIC_UNVERIFIED,
-        conditions=[
-            Condition(feature=feature, operator=operator, threshold=threshold)
-            for feature, operator, threshold in condition_specs
-        ],
-    )
+def write_decision_traces_csv(
+    observed_rows: list[dict[str, float]], allowed_rows: list[bool], output_path: Path
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=[*FEATURE_COLUMNS, "allowed"])
+        writer.writeheader()
+        for observed, allowed in zip(observed_rows, allowed_rows):
+            row = {column: observed[column] for column in FEATURE_COLUMNS}
+            row["allowed"] = "true" if allowed else "false"
+            writer.writerow(row)

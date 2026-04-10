@@ -5,14 +5,15 @@ import sys
 def main() -> int:
     request = json.load(sys.stdin)
     payload = request.get("payload", {})
+    canonical_input = payload.get("input", {})
 
-    allow = bool(payload.get("allow", False))
-    bitmask = int(payload.get("bitmask", 0))
-    tool = int(payload.get("tool_authorization_bitmask", 0))
-    boundary = int(payload.get("instruction_boundary_bitmask", 0))
-    exfil = int(payload.get("data_exfiltration_bitmask", 0))
-    attack_confidence = float(payload.get("attack_confidence", 0.0))
-    benign = bool(payload.get("is_likely_benign_question", False))
+    allow = bool(canonical_input.get("allow", False))
+    bitmask = int(canonical_input.get("bitmask", 0))
+    tool = int(canonical_input.get("tool_authorization_bitmask", 0))
+    boundary = int(canonical_input.get("instruction_boundary_bitmask", 0))
+    exfil = int(canonical_input.get("data_exfiltration_bitmask", 0))
+    attack_confidence = float(canonical_input.get("attack_confidence", 0.0))
+    benign = bool(canonical_input.get("is_likely_benign_question", False))
 
     if allow:
         route_status = "allow"

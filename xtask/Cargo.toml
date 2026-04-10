@@ -1,0 +1,26 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+description = "Maintainer automation for the LogicPearl repository."
+
+[dependencies]
+clap.workspace = true
+logicpearl-benchmark.workspace = true
+logicpearl-core.workspace = true
+logicpearl-discovery.workspace = true
+logicpearl-ir.workspace = true
+logicpearl-runtime.workspace = true
+miette.workspace = true
+owo-colors.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"

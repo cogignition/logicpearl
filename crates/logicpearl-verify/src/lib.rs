@@ -3,14 +3,17 @@ use logicpearl_ir::{
     validate_expression_against_schema, ComparisonOperator, ComparisonValue,
     DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
 };
+use logicpearl_solver::{
+    check_sat, check_sat_with_values, solve_keep_bools, SatStatus, SolverBackend, SolverSettings,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct BooleanConjunctionSearchOptions {
+    pub min_conditions: usize,
     pub max_conditions: usize,
     pub min_positive_support: usize,
     pub max_negative_hits: usize,
@@ -56,6 +59,7 @@ pub struct FormalSpecVerificationReport {
     pub complete: bool,
     pub no_spurious_rules: bool,
     pub fully_verified: bool,
+    pub solver_backend: String,
     pub spec_rule_checks: Vec<FormalSpecRuleCheck>,
     pub gate_rule_checks: Vec<GateRuleCheck>,
     pub overall_spec_gap_witness: Option<String>,
@@ -80,6 +84,7 @@ pub struct GateRuleCheck {
 struct SolverCheckResult {
     unsat: bool,
     witness: Option<String>,
+    backend_used: SolverBackend,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +195,7 @@ pub fn verify_gate_against_formal_spec(
         complete,
         no_spurious_rules,
         fully_verified: complete && no_spurious_rules,
+        solver_backend: overall_spec_gap_witness.backend_used.as_str().to_string(),
         spec_rule_checks,
         gate_rule_checks,
         overall_spec_gap_witness: overall_spec_gap_witness.witness,
@@ -211,6 +217,16 @@ pub fn synthesize_boolean_conjunctions(
     if options.max_conditions == 0 {
         return Err(LogicPearlError::message(
             "max_conditions must be at least 1 for boolean conjunction synthesis",
+        ));
+    }
+    if options.min_conditions == 0 {
+        return Err(LogicPearlError::message(
+            "min_conditions must be at least 1 for boolean conjunction synthesis",
+        ));
+    }
+    if options.min_conditions > options.max_conditions {
+        return Err(LogicPearlError::message(
+            "min_conditions cannot exceed max_conditions for boolean conjunction synthesis",
         ));
     }
     if options.max_rules == 0 {
@@ -335,40 +351,75 @@ fn check_formula_with_witness(
     context: &FormalSpecSmtContext,
     formula: &str,
 ) -> Result<SolverCheckResult> {
-    let status = run_z3_smt(
-        build_check_sat_script(context, formula, false),
-        "formal spec verification",
-    )?;
-    let status_line = status.lines().next().unwrap_or_default().trim().to_string();
-    match status_line.as_str() {
-        "unsat" => Ok(SolverCheckResult {
+    let solver_settings = SolverSettings::from_env()?;
+    let status = check_sat(
+        &build_check_sat_script(context, formula, false),
+        &solver_settings,
+    )
+    .map_err(|err| {
+        LogicPearlError::message(format!("formal spec verification solver failed: {err}"))
+    })?;
+    match status.status {
+        SatStatus::Unsat => Ok(SolverCheckResult {
             unsat: true,
             witness: None,
+            backend_used: status.report.backend_used,
         }),
-        "sat" => {
-            let witness_output = if context.value_symbols.is_empty() {
-                String::new()
-            } else {
-                run_z3_smt(
-                    build_check_sat_script(context, formula, true),
-                    "formal spec verification witness",
-                )?
-            };
-            let witness = witness_output
-                .lines()
-                .skip(1)
-                .collect::<Vec<_>>()
-                .join("\n")
-                .trim()
-                .to_string();
+        SatStatus::Sat => {
+            if context.value_symbols.is_empty() {
+                return Ok(SolverCheckResult {
+                    unsat: false,
+                    witness: None,
+                    backend_used: status.report.backend_used,
+                });
+            }
+
+            let witness_output = check_sat_with_values(
+                &build_check_sat_script(context, formula, true),
+                &solver_settings,
+            )
+            .map_err(|err| {
+                LogicPearlError::message(format!(
+                    "formal spec verification witness solver failed: {err}"
+                ))
+            })?;
+            if witness_output.status != SatStatus::Sat {
+                return Err(LogicPearlError::message(format!(
+                    "{} returned {:?} while producing a formal spec verification witness",
+                    witness_output.report.backend_used.as_str(),
+                    witness_output.status
+                )));
+            }
+
             Ok(SolverCheckResult {
                 unsat: false,
-                witness: (!witness.is_empty()).then_some(witness),
+                witness: render_value_witness(&context.value_symbols, &witness_output.values),
+                backend_used: witness_output.report.backend_used,
             })
         }
-        other => Err(LogicPearlError::message(format!(
-            "z3 returned unexpected status during formal spec verification: {other}"
+        SatStatus::Unknown => Err(LogicPearlError::message(format!(
+            "{} returned unknown during formal spec verification",
+            status.report.backend_used.as_str()
         ))),
+    }
+}
+
+fn render_value_witness(
+    value_symbols: &[String],
+    values: &BTreeMap<String, String>,
+) -> Option<String> {
+    let bindings = value_symbols
+        .iter()
+        .filter_map(|symbol| {
+            values
+                .get(symbol)
+                .map(|value| format!("({symbol} {value})"))
+        })
+        .collect::<Vec<_>>();
+    if bindings.is_empty() {
+        None
+    } else {
+        Some(format!("({})", bindings.join(" ")))
     }
 }
 
@@ -570,38 +621,6 @@ fn smt_string_literal(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\"\""))
 }
 
-fn run_z3_smt(smt: String, context: &str) -> Result<String> {
-    let smt_path = std::env::temp_dir().join(format!(
-        "logicpearl-verify-{}-{}.smt2",
-        std::process::id(),
-        unique_suffix()
-    ));
-    fs::write(&smt_path, &smt)?;
-
-    let output = Command::new("z3")
-        .arg("-smt2")
-        .arg(&smt_path)
-        .output()
-        .map_err(|err| {
-            LogicPearlError::message(format!(
-                "failed to launch z3; make sure Z3 is installed and on PATH: {err}"
-            ))
-        })?;
-    let _ = fs::remove_file(&smt_path);
-
-    if !output.status.success() {
-        return Err(LogicPearlError::message(format!(
-            "z3 failed during {context}: stderr=`{}` stdout=`{}` smt=`{}`",
-            String::from_utf8_lossy(&output.stderr).trim(),
-            String::from_utf8_lossy(&output.stdout).trim(),
-            smt.replace('\n', "\\n")
-        )));
-    }
-
-    String::from_utf8(output.stdout)
-        .map_err(|err| LogicPearlError::message(format!("z3 output was not valid UTF-8: {err}")))
-}
-
 fn candidate_feature_names(
     examples: &[BooleanSearchExample],
     min_positive_support: usize,
@@ -642,6 +661,11 @@ fn solve_best_conjunction(
         "(assert (>= {} 1))\n",
         keep_sum(feature_names.len())
     ));
+    smt.push_str(&format!(
+        "(assert (>= {} {}))\n",
+        keep_sum(feature_names.len()),
+        options.min_conditions
+    ));
 
     for (position, index) in uncovered_positive_indexes.iter().enumerate() {
         let expression = example_match_expression(&positives[*index].features, feature_names);
@@ -675,7 +699,7 @@ fn solve_best_conjunction(
     smt.push_str(&format!("(minimize {})\n", keep_sum(feature_names.len())));
     smt.push_str("(check-sat)\n(get-model)\n");
 
-    let selected_indexes = solve_selected_feature_indexes_with_z3(feature_names.len(), smt)?;
+    let selected_indexes = solve_selected_feature_indexes(feature_names.len(), smt)?;
     if selected_indexes.is_empty() {
         return Ok(None);
     }
@@ -762,57 +786,22 @@ fn conjunction_matches(
         .all(|feature| features.get(feature).copied().unwrap_or(false))
 }
 
-fn solve_selected_feature_indexes_with_z3(feature_count: usize, smt: String) -> Result<Vec<usize>> {
-    let smt_path = std::env::temp_dir().join(format!(
-        "logicpearl-verify-{}-{}.smt2",
-        std::process::id(),
-        unique_suffix()
-    ));
-    fs::write(&smt_path, smt)?;
-
-    let output = Command::new("z3")
-        .arg("-smt2")
-        .arg(&smt_path)
-        .output()
-        .map_err(|err| {
+fn solve_selected_feature_indexes(feature_count: usize, smt: String) -> Result<Vec<usize>> {
+    let solver_settings = SolverSettings::from_env()?;
+    let result =
+        solve_keep_bools(&smt, "keep", feature_count, &solver_settings).map_err(|err| {
             LogicPearlError::message(format!(
-                "failed to launch z3; make sure Z3 is installed and on PATH: {err}"
+                "boolean conjunction synthesis solver failed: {err}"
             ))
         })?;
-    let _ = fs::remove_file(&smt_path);
-
-    if !output.status.success() {
-        return Err(LogicPearlError::message(format!(
-            "z3 failed while solving boolean conjunction synthesis: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+    match result.status {
+        SatStatus::Sat => Ok(result.selected),
+        SatStatus::Unsat => Ok(Vec::new()),
+        SatStatus::Unknown => Err(LogicPearlError::message(format!(
+            "{} returned unknown while solving boolean conjunction synthesis",
+            result.report.backend_used.as_str()
+        ))),
     }
-
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|err| LogicPearlError::message(format!("z3 output was not valid UTF-8: {err}")))?;
-    if !stdout.lines().next().unwrap_or_default().contains("sat") {
-        return Ok(Vec::new());
-    }
-
-    let mut selected = Vec::new();
-    for index in 0..feature_count {
-        let needle = format!("(define-fun keep_{index} () Bool");
-        if let Some(position) = stdout.find(&needle) {
-            let remainder = &stdout[position + needle.len()..];
-            if remainder.trim_start().starts_with("true") {
-                selected.push(index);
-            }
-        }
-    }
-    Ok(selected)
-}
-
-fn unique_suffix() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos().to_string())
-        .unwrap_or_else(|_| "0".to_string())
 }
 
 #[cfg(test)]
@@ -822,16 +811,13 @@ mod tests {
         BooleanConjunctionSearchOptions, BooleanSearchExample, FormalSpec, FormalSpecRule,
     };
     use logicpearl_ir::LogicPearlGateIr;
+    use logicpearl_solver::{check_sat, resolve_backend, SolverSettings};
     use serde_json::json;
     use std::collections::BTreeMap;
 
     #[test]
     fn synthesizes_exact_two_feature_conjunction() {
-        if std::process::Command::new("z3")
-            .arg("-version")
-            .output()
-            .is_err()
-        {
+        if !solver_available() {
             return;
         }
 
@@ -844,6 +830,7 @@ mod tests {
         let candidates = synthesize_boolean_conjunctions(
             &examples,
             &BooleanConjunctionSearchOptions {
+                min_conditions: 1,
                 max_conditions: 2,
                 min_positive_support: 2,
                 max_negative_hits: 0,
@@ -863,11 +850,7 @@ mod tests {
 
     #[test]
     fn formal_spec_verification_reports_complete_and_non_spurious_gate() {
-        if std::process::Command::new("z3")
-            .arg("-version")
-            .output()
-            .is_err()
-        {
+        if !solver_available() {
             return;
         }
 
@@ -905,15 +888,17 @@ mod tests {
         assert!(report.complete);
         assert!(report.no_spurious_rules);
         assert!(report.fully_verified);
+        assert_eq!(
+            report.solver_backend,
+            resolve_backend(&SolverSettings::default())
+                .expect("a default solver backend should resolve")
+                .as_str()
+        );
     }
 
     #[test]
     fn formal_spec_verification_reports_missing_and_spurious_rules() {
-        if std::process::Command::new("z3")
-            .arg("-version")
-            .output()
-            .is_err()
-        {
+        if !solver_available() {
             return;
         }
 
@@ -941,6 +926,10 @@ mod tests {
             .iter()
             .any(|check| check.id == "viewer_write" && !check.implied_by_spec));
         assert!(report.overall_spurious_witness.is_some());
+    }
+
+    fn solver_available() -> bool {
+        check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
     }
 
     fn example(features: &[(&str, bool)], positive: bool) -> BooleanSearchExample {

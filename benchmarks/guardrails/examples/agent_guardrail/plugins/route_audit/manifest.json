@@ -7,6 +7,104 @@
     "python3",
     "plugin.py"
   ],
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "allow",
+      "bitmask"
+    ],
+    "properties": {
+      "allow": {
+        "type": "boolean"
+      },
+      "bitmask": {
+        "type": [
+          "integer",
+          "array"
+        ]
+      },
+      "tool_authorization_bitmask": {
+        "type": [
+          "integer",
+          "array"
+        ]
+      },
+      "instruction_boundary_bitmask": {
+        "type": [
+          "integer",
+          "array"
+        ]
+      },
+      "data_exfiltration_bitmask": {
+        "type": [
+          "integer",
+          "array"
+        ]
+      },
+      "attack_confidence": {
+        "type": "number"
+      },
+      "is_likely_benign_question": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "ok",
+      "route_status",
+      "decision_basis",
+      "summary"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "error": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "route_status": {
+        "type": "string"
+      },
+      "decision_basis": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "object",
+        "required": [
+          "allow",
+          "bitmask",
+          "consistent"
+        ],
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "bitmask": {
+            "type": [
+              "integer",
+              "array"
+            ]
+          },
+          "consistent": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "additionalProperties": false
+  },
   "capabilities": [
     "route_status_summary",
     "pipeline_audit_summary"
