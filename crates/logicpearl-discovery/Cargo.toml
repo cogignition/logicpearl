@@ -9,6 +9,7 @@ description = "Artifact discovery and rule recovery from labeled LogicPearl deci
 
 [dependencies]
 csv.workspace = true
+good_lp.workspace = true
 logicpearl-core.workspace = true
 logicpearl-ir.workspace = true
 logicpearl-runtime.workspace = true

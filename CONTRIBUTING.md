@@ -123,6 +123,28 @@ Accepted backend values are `auto`, `z3`, `cvc5`, `prefer-z3`, and `prefer-cvc5`
 
 `LOGICPEARL_SOLVER_DIR` is optional. Use it when you want LogicPearl to prefer a bundled solver directory over whatever happens to be on the global `PATH`.
 
+Observer phrase selection also has an internal backend toggle for subset-selection experiments:
+
+```bash
+export LOGICPEARL_OBSERVER_SELECTION_BACKEND=smt
+```
+
+Accepted values are `smt` and `mip`.
+
+`smt` remains the default path. `mip` enables an internal mixed-integer subset-selection prototype built on `good_lp` with the pure-Rust `microlp` backend. It is intended for experimentation and parity comparison rather than as a public CLI knob.
+
+Discovery exact rule selection also has an internal backend toggle for solver-selection experiments:
+
+```bash
+export LOGICPEARL_DISCOVERY_SELECTION_BACKEND=smt
+```
+
+Accepted values are `smt` and `mip`.
+
+`smt` remains the default path. `mip` enables an internal mixed-integer exact-selection prototype built on `good_lp` with the pure-Rust `microlp` backend. It is intended for parity comparison on larger candidate frontiers rather than as a public CLI knob.
+
+These internal backend overrides are included in build/discover cache fingerprints, and `build --json` now records the exact-selection backend and outcome in `exact_selection` so backend experiments do not silently reuse stale reports.
+
 Maintainers can package a distributable CLI bundle with a bundled solver by running:
 
 ```bash

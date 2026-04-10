@@ -1,3 +1,7 @@
+use good_lp::{
+    constraint, microlp, variable, variables, Expression, ResolutionError, Solution, SolverModel,
+    Variable,
+};
 use logicpearl_benchmark::SynthesisCase;
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_observer::{
@@ -12,6 +16,7 @@ use logicpearl_solver::{
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::env;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,10 +127,72 @@ struct CandidatePool {
     negative_constraints: Vec<Vec<usize>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObserverSelectionBackend {
+    Smt,
+    Mip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhraseSelectionBackend {
+    Solver(SolverBackend),
+    Mip,
+}
+
+impl PhraseSelectionBackend {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Solver(backend) => backend.as_str(),
+            Self::Mip => "mip",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhraseSelectionStatus {
+    Sat,
+    Unsat,
+    Unknown,
+    Optimal,
+    Infeasible,
+}
+
+impl PhraseSelectionStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Sat => "sat",
+            Self::Unsat => "unsat",
+            Self::Unknown => "unknown",
+            Self::Optimal => "optimal",
+            Self::Infeasible => "infeasible",
+        }
+    }
+
+    fn is_success(self) -> bool {
+        matches!(self, Self::Sat | Self::Optimal)
+    }
+}
+
+#[derive(Debug)]
 struct PhraseSelectionOutcome {
     selected: Vec<usize>,
-    backend_used: SolverBackend,
-    status: SatStatus,
+    backend_used: PhraseSelectionBackend,
+    status: PhraseSelectionStatus,
+}
+
+struct ObserverSelectionSettings {
+    backend: ObserverSelectionBackend,
+}
+
+impl ObserverSelectionSettings {
+    fn from_env() -> Result<Self> {
+        let backend = env::var(OBSERVER_SELECTION_BACKEND_ENV)
+            .ok()
+            .map(|raw| parse_observer_selection_backend(&raw))
+            .transpose()?
+            .unwrap_or(ObserverSelectionBackend::Smt);
+        Ok(Self { backend })
+    }
 }
 
 const GAP_TOKEN: &str = "__gap__";
@@ -137,6 +204,7 @@ const QUOTED_TOKEN: &str = "__quoted__";
 const MAX_SKIPGRAM_SPAN: usize = 6;
 const MAX_NEAR_PATTERN_SPAN: usize = 6;
 const MAX_CONJUNCTION_SPAN: usize = 12;
+const OBSERVER_SELECTION_BACKEND_ENV: &str = "LOGICPEARL_OBSERVER_SELECTION_BACKEND";
 
 const AUTO_BOOTSTRAP_STRATEGIES: [ObserverBootstrapStrategy; 3] = [
     ObserverBootstrapStrategy::ObservedFeature,
@@ -150,6 +218,16 @@ const SEED_BOOTSTRAP_STRATEGY: [ObserverBootstrapStrategy; 1] = [ObserverBootstr
 
 fn log_synthesis_progress(message: impl AsRef<str>) {
     eprintln!("[logicpearl observer synthesize] {}", message.as_ref());
+}
+
+fn parse_observer_selection_backend(raw: &str) -> Result<ObserverSelectionBackend> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "smt" => Ok(ObserverSelectionBackend::Smt),
+        "mip" => Ok(ObserverSelectionBackend::Mip),
+        other => Err(LogicPearlError::message(format!(
+            "unsupported observer selection backend `{other}` in {OBSERVER_SELECTION_BACKEND_ENV}; expected `smt` or `mip`"
+        ))),
+    }
 }
 
 fn auto_bootstrap_strategies(
@@ -838,7 +916,7 @@ fn synthesize_from_candidate_pool(
     let negative_constraints = truncate_constraints(&pool.negative_constraints, candidate_count);
     let selection =
         solve_phrase_subset_soft(candidates, &positive_constraints, &negative_constraints)?;
-    if selection.status != SatStatus::Sat || selection.selected.is_empty() {
+    if !selection.status.is_success() || selection.selected.is_empty() {
         return Err(LogicPearlError::message(
             "solver could not synthesize a useful phrase subset",
         ));
@@ -876,7 +954,7 @@ fn synthesize_from_candidate_pool(
             phrases_after,
             selected_max_candidates: Some(candidate_cap),
             selection_backend: Some(selection.backend_used.as_str().to_string()),
-            selection_status: Some(sat_status_label(selection.status).to_string()),
+            selection_status: Some(selection.status.as_str().to_string()),
             auto_selection: None,
         },
     ))
@@ -898,6 +976,14 @@ fn solve_phrase_subset_soft(
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
 ) -> Result<PhraseSelectionOutcome> {
+    let selection_settings = ObserverSelectionSettings::from_env()?;
+    if selection_settings.backend == ObserverSelectionBackend::Mip {
+        return solve_phrase_subset_soft_mip(
+            phrases.len(),
+            positive_constraints,
+            negative_constraints,
+        );
+    }
     let mut smt = String::new();
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
@@ -963,6 +1049,10 @@ fn solve_phrase_subset(
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
 ) -> Result<PhraseSelectionOutcome> {
+    let selection_settings = ObserverSelectionSettings::from_env()?;
+    if selection_settings.backend == ObserverSelectionBackend::Mip {
+        return solve_phrase_subset_mip(phrases.len(), positive_constraints, negative_constraints);
+    }
     let mut smt = String::new();
     for index in 0..phrases.len() {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
@@ -1364,7 +1454,7 @@ pub fn repair_guardrails_artifact(
         &positive_constraints,
         &negative_constraints,
     )?;
-    if selection.status != SatStatus::Sat {
+    if !selection.status.is_success() {
         return Err(LogicPearlError::message(
             "solver could not find a satisfying phrase subset",
         ));
@@ -1877,8 +1967,8 @@ fn solve_selected_phrase_indexes(
     })?;
     Ok(PhraseSelectionOutcome {
         selected: result.selected,
-        backend_used: result.report.backend_used,
-        status: result.status,
+        backend_used: PhraseSelectionBackend::Solver(result.report.backend_used),
+        status: phrase_selection_status_from_sat(result.status),
     })
 }
 
@@ -1899,11 +1989,11 @@ fn solver_or(indices: &[usize]) -> String {
     }
 }
 
-fn sat_status_label(status: SatStatus) -> &'static str {
+fn phrase_selection_status_from_sat(status: SatStatus) -> PhraseSelectionStatus {
     match status {
-        SatStatus::Sat => "sat",
-        SatStatus::Unsat => "unsat",
-        SatStatus::Unknown => "unknown",
+        SatStatus::Sat => PhraseSelectionStatus::Sat,
+        SatStatus::Unsat => PhraseSelectionStatus::Unsat,
+        SatStatus::Unknown => PhraseSelectionStatus::Unknown,
     }
 }
 
@@ -1923,16 +2013,299 @@ fn solver_sum(terms: Vec<String>) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhraseSelectionObjective {
+    MissedPositives,
+    NegativeMatches,
+    KeepCount,
+    KeepIndexSum,
+}
+
+fn solve_phrase_subset_soft_mip(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+) -> Result<PhraseSelectionOutcome> {
+    solve_phrase_subset_mip_internal(
+        phrase_count,
+        positive_constraints,
+        negative_constraints,
+        false,
+        &[
+            PhraseSelectionObjective::MissedPositives,
+            PhraseSelectionObjective::NegativeMatches,
+            PhraseSelectionObjective::KeepCount,
+            PhraseSelectionObjective::KeepIndexSum,
+        ],
+    )
+}
+
+fn solve_phrase_subset_mip(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+) -> Result<PhraseSelectionOutcome> {
+    solve_phrase_subset_mip_internal(
+        phrase_count,
+        positive_constraints,
+        negative_constraints,
+        true,
+        &[
+            PhraseSelectionObjective::NegativeMatches,
+            PhraseSelectionObjective::KeepCount,
+            PhraseSelectionObjective::KeepIndexSum,
+        ],
+    )
+}
+
+fn solve_phrase_subset_mip_internal(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+    require_positive_coverage: bool,
+    objectives: &[PhraseSelectionObjective],
+) -> Result<PhraseSelectionOutcome> {
+    if require_positive_coverage
+        && positive_constraints
+            .iter()
+            .any(|matched| matched.is_empty())
+    {
+        return Ok(PhraseSelectionOutcome {
+            selected: Vec::new(),
+            backend_used: PhraseSelectionBackend::Mip,
+            status: PhraseSelectionStatus::Infeasible,
+        });
+    }
+
+    let mut locked = Vec::new();
+    let mut selected = Vec::new();
+    for objective in objectives {
+        let stage = solve_phrase_subset_mip_stage(
+            phrase_count,
+            positive_constraints,
+            negative_constraints,
+            require_positive_coverage,
+            *objective,
+            &locked,
+        )?;
+        if stage.status != PhraseSelectionStatus::Optimal {
+            return Ok(stage);
+        }
+        let objective_value = objective_value(
+            *objective,
+            &stage.selected,
+            positive_constraints,
+            negative_constraints,
+        );
+        selected = stage.selected;
+        locked.push((*objective, objective_value));
+    }
+
+    Ok(PhraseSelectionOutcome {
+        selected,
+        backend_used: PhraseSelectionBackend::Mip,
+        status: PhraseSelectionStatus::Optimal,
+    })
+}
+
+fn solve_phrase_subset_mip_stage(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+    require_positive_coverage: bool,
+    objective: PhraseSelectionObjective,
+    locked: &[(PhraseSelectionObjective, usize)],
+) -> Result<PhraseSelectionOutcome> {
+    let mut vars = variables!();
+    let keep_vars: Vec<Variable> = (0..phrase_count)
+        .map(|_| vars.add(variable().binary()))
+        .collect();
+    let pos_vars: Vec<Variable> = if require_positive_coverage {
+        Vec::new()
+    } else {
+        positive_constraints
+            .iter()
+            .map(|_| vars.add(variable().binary()))
+            .collect()
+    };
+    let neg_vars: Vec<Variable> = negative_constraints
+        .iter()
+        .map(|_| vars.add(variable().binary()))
+        .collect();
+
+    let mut model = vars
+        .minimise(objective_expression(
+            objective,
+            &keep_vars,
+            &pos_vars,
+            &neg_vars,
+            positive_constraints.len(),
+        ))
+        .using(microlp);
+    model = add_base_phrase_selection_constraints(
+        model,
+        &keep_vars,
+        &pos_vars,
+        &neg_vars,
+        positive_constraints,
+        negative_constraints,
+        require_positive_coverage,
+    );
+
+    for (locked_objective, value) in locked {
+        model = model.with(constraint!(
+            objective_expression(
+                *locked_objective,
+                &keep_vars,
+                &pos_vars,
+                &neg_vars,
+                positive_constraints.len(),
+            ) == *value as f64
+        ));
+    }
+
+    let solution = match model.solve() {
+        Ok(solution) => solution,
+        Err(ResolutionError::Infeasible) => {
+            return Ok(PhraseSelectionOutcome {
+                selected: Vec::new(),
+                backend_used: PhraseSelectionBackend::Mip,
+                status: PhraseSelectionStatus::Infeasible,
+            });
+        }
+        Err(ResolutionError::Unbounded) => {
+            return Err(LogicPearlError::message(
+                "observer phrase subset MIP solve was unexpectedly unbounded",
+            ));
+        }
+        Err(err) => {
+            return Err(LogicPearlError::message(format!(
+                "observer phrase subset MIP solve failed: {err}"
+            )));
+        }
+    };
+
+    Ok(PhraseSelectionOutcome {
+        selected: selected_keep_indexes(&solution, &keep_vars),
+        backend_used: PhraseSelectionBackend::Mip,
+        status: PhraseSelectionStatus::Optimal,
+    })
+}
+
+fn add_base_phrase_selection_constraints<M: SolverModel>(
+    mut model: M,
+    keep_vars: &[Variable],
+    pos_vars: &[Variable],
+    neg_vars: &[Variable],
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+    require_positive_coverage: bool,
+) -> M {
+    for (index, matches) in positive_constraints.iter().enumerate() {
+        if require_positive_coverage {
+            model = model.with(constraint!(sum_keep_vars(keep_vars, matches) >= 1.0));
+        } else {
+            model = add_match_indicator_constraints(model, pos_vars[index], keep_vars, matches);
+        }
+    }
+    for (index, matches) in negative_constraints.iter().enumerate() {
+        model = add_match_indicator_constraints(model, neg_vars[index], keep_vars, matches);
+    }
+    model
+}
+
+fn add_match_indicator_constraints<M: SolverModel>(
+    mut model: M,
+    indicator: Variable,
+    keep_vars: &[Variable],
+    matches: &[usize],
+) -> M {
+    if matches.is_empty() {
+        return model.with(constraint!(indicator == 0.0));
+    }
+
+    model = model.with(constraint!(indicator <= sum_keep_vars(keep_vars, matches)));
+    for matched in matches {
+        model = model.with(constraint!(indicator >= keep_vars[*matched]));
+    }
+    model
+}
+
+fn objective_expression(
+    objective: PhraseSelectionObjective,
+    keep_vars: &[Variable],
+    pos_vars: &[Variable],
+    neg_vars: &[Variable],
+    positive_constraint_count: usize,
+) -> Expression {
+    match objective {
+        PhraseSelectionObjective::MissedPositives => {
+            (positive_constraint_count as f64) - sum_vars(pos_vars)
+        }
+        PhraseSelectionObjective::NegativeMatches => sum_vars(neg_vars),
+        PhraseSelectionObjective::KeepCount => sum_vars(keep_vars),
+        PhraseSelectionObjective::KeepIndexSum => keep_vars
+            .iter()
+            .enumerate()
+            .fold(Expression::from(0.0), |expression, (index, variable)| {
+                expression + ((index + 1) as f64) * *variable
+            }),
+    }
+}
+
+fn objective_value(
+    objective: PhraseSelectionObjective,
+    selected: &[usize],
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+) -> usize {
+    match objective {
+        PhraseSelectionObjective::MissedPositives => {
+            positive_constraints.len() - count_selected_hits(selected, positive_constraints)
+        }
+        PhraseSelectionObjective::NegativeMatches => {
+            count_selected_hits(selected, negative_constraints)
+        }
+        PhraseSelectionObjective::KeepCount => selected.len(),
+        PhraseSelectionObjective::KeepIndexSum => selected.iter().map(|index| index + 1).sum(),
+    }
+}
+
+fn sum_keep_vars(keep_vars: &[Variable], matches: &[usize]) -> Expression {
+    matches
+        .iter()
+        .fold(Expression::from(0.0), |expression, matched| {
+            expression + keep_vars[*matched]
+        })
+}
+
+fn sum_vars(vars: &[Variable]) -> Expression {
+    vars.iter()
+        .fold(Expression::from(0.0), |expression, variable| {
+            expression + *variable
+        })
+}
+
+fn selected_keep_indexes<S: Solution>(solution: &S, keep_vars: &[Variable]) -> Vec<usize> {
+    keep_vars
+        .iter()
+        .enumerate()
+        .filter_map(|(index, variable)| (solution.value(*variable) >= 0.5).then_some(index))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        candidate_ngrams, infer_bootstrap_examples, solve_phrase_subset_soft,
-        ObserverBootstrapMode, ObserverBootstrapStrategy,
+        candidate_ngrams, infer_bootstrap_examples, solve_phrase_subset, solve_phrase_subset_soft,
+        ObserverBootstrapMode, ObserverBootstrapStrategy, PhraseSelectionBackend,
+        PhraseSelectionStatus, OBSERVER_SELECTION_BACKEND_ENV,
     };
     use logicpearl_benchmark::SynthesisCase;
     use logicpearl_observer::GuardrailsSignal;
-    use logicpearl_solver::{check_sat, resolve_backend, SatStatus, SolverSettings};
+    use logicpearl_solver::{check_sat, resolve_backend, SolverSettings};
     use serde_json::{Map, Value};
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn instruction_override_candidates_require_action_and_target_tokens() {
@@ -2113,7 +2486,7 @@ mod tests {
         let selection = solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
             .expect("solver should find a compact phrase subset");
 
-        assert_eq!(selection.status, SatStatus::Sat);
+        assert_eq!(selection.status, PhraseSelectionStatus::Sat);
         assert_eq!(
             selection.backend_used.as_str(),
             resolve_backend(&SolverSettings::from_env().expect("solver settings should parse"))
@@ -2121,6 +2494,77 @@ mod tests {
                 .as_str()
         );
         assert_eq!(selection.selected, vec![0]);
+    }
+
+    #[test]
+    fn mip_phrase_subset_selection_matches_smt_choice_on_small_fixture() {
+        if !solver_available() {
+            return;
+        }
+
+        let phrases = vec![
+            "ignore".to_string(),
+            "system".to_string(),
+            "benign".to_string(),
+        ];
+        let smt_selection = with_observer_selection_backend("smt", || {
+            solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
+                .expect("smt solver should find a compact phrase subset")
+        });
+        let mip_selection = with_observer_selection_backend("mip", || {
+            solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
+                .expect("mip backend should find a compact phrase subset")
+        });
+
+        assert_eq!(smt_selection.selected, vec![0]);
+        assert_eq!(mip_selection.selected, smt_selection.selected);
+        assert_eq!(mip_selection.status, PhraseSelectionStatus::Optimal);
+        assert_eq!(mip_selection.backend_used, PhraseSelectionBackend::Mip);
+    }
+
+    #[test]
+    fn mip_hard_phrase_subset_selection_matches_smt_choice_on_small_fixture() {
+        if !solver_available() {
+            return;
+        }
+
+        let phrases = vec![
+            "ignore".to_string(),
+            "system".to_string(),
+            "benign".to_string(),
+        ];
+        let smt_selection = with_observer_selection_backend("smt", || {
+            solve_phrase_subset(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
+                .expect("smt solver should satisfy hard positive coverage")
+        });
+        let mip_selection = with_observer_selection_backend("mip", || {
+            solve_phrase_subset(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
+                .expect("mip backend should satisfy hard positive coverage")
+        });
+
+        assert_eq!(smt_selection.selected, vec![0]);
+        assert_eq!(mip_selection.selected, smt_selection.selected);
+        assert_eq!(mip_selection.status, PhraseSelectionStatus::Optimal);
+        assert_eq!(mip_selection.backend_used, PhraseSelectionBackend::Mip);
+    }
+
+    fn observer_selection_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_observer_selection_backend<T>(backend: &str, test: impl FnOnce() -> T) -> T {
+        let _guard = observer_selection_env_lock()
+            .lock()
+            .expect("env lock should be available");
+        let saved = std::env::var(OBSERVER_SELECTION_BACKEND_ENV).ok();
+        std::env::set_var(OBSERVER_SELECTION_BACKEND_ENV, backend);
+        let result = test();
+        match saved {
+            Some(value) => std::env::set_var(OBSERVER_SELECTION_BACKEND_ENV, value),
+            None => std::env::remove_var(OBSERVER_SELECTION_BACKEND_ENV),
+        }
+        result
     }
 
     fn solver_available() -> bool {

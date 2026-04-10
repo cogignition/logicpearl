@@ -15,7 +15,7 @@ use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildInputProvenance,
     BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    PluginBuildProvenance, ResidualRecoveryState,
+    ExactSelectionBackend, PluginBuildProvenance, ResidualRecoveryState,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -1003,9 +1003,9 @@ enum ObserverCommand {
     Detect(ObserverDetectArgs),
     /// Scaffold a native observer artifact from a built-in profile.
     Scaffold(ObserverScaffoldArgs),
-    /// Use the current signal family as seed positives, mine candidate phrases, and let Z3 choose a compact set.
+    /// Use the current signal family as seed positives, mine candidate phrases, and let LogicPearl choose a compact subset.
     Synthesize(ObserverSynthesizeArgs),
-    /// Use Z3 to prune ambiguous cue phrases while preserving current positive coverage.
+    /// Prune ambiguous cue phrases while preserving current positive coverage.
     Repair(ObserverRepairArgs),
 }
 
@@ -1136,7 +1136,7 @@ struct ObserverScaffoldArgs {
     after_help = "Example:\n  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json --json"
 )]
 struct ObserverSynthesizeArgs {
-    /// Existing native observer artifact to use as the semantic seed. Z3 then selects a compact phrase subset from candidates mined around that signal.
+    /// Existing native observer artifact to use as the semantic seed. LogicPearl then selects a compact phrase subset from candidates mined around that signal.
     #[arg(long, help_heading = "Advanced Observer Synthesis")]
     artifact: Option<PathBuf>,
     /// Built-in profile to use when no artifact is provided.
@@ -1148,7 +1148,7 @@ struct ObserverSynthesizeArgs {
     /// Which guardrail signal to synthesize.
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
-    /// How LogicPearl should choose positive examples before Z3 selects a compact phrase subset.
+    /// How LogicPearl should choose positive examples before it selects a compact phrase subset.
     #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
     bootstrap: ObserverBootstrapArg,
     /// What LogicPearl should optimize for when choosing the synthesized observer on held-out dev data.
@@ -1164,7 +1164,7 @@ struct ObserverSynthesizeArgs {
     /// Where to write the synthesized observer artifact.
     #[arg(long)]
     output: PathBuf,
-    /// Cap the number of candidate phrases sent to Z3 when LogicPearl falls back to single-pass synthesis on very small datasets.
+    /// Cap the number of candidate phrases sent to the subset selector when LogicPearl falls back to single-pass synthesis on very small datasets.
     #[arg(
         long,
         default_value_t = 64,
@@ -1210,7 +1210,7 @@ struct ObserverRepairArgs {
     /// Which guardrail signal to repair.
     #[arg(long, value_enum)]
     signal: ObserverSignalArg,
-    /// How LogicPearl should choose positive examples before Z3 repairs the phrase family.
+    /// How LogicPearl should choose positive examples before it repairs the phrase family.
     #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
     bootstrap: ObserverBootstrapArg,
     /// Optional route labels to treat as positive examples when using route-based bootstrapping.

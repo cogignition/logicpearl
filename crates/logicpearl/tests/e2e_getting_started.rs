@@ -1,5 +1,6 @@
-use logicpearl_discovery::BuildResult;
+use logicpearl_discovery::{BuildResult, ExactSelectionBackend};
 use serde_json::Value;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::tempdir;
@@ -10,6 +11,33 @@ fn repo_root() -> PathBuf {
         .and_then(|path| path.parent())
         .expect("logicpearl crate should live under workspace/crates/logicpearl")
         .to_path_buf()
+}
+
+fn run_build_json_with_env(
+    cli_bin: &str,
+    dataset: &Path,
+    output_dir: &Path,
+    envs: &[(&str, &str)],
+) -> BuildResult {
+    let mut command = Command::new(cli_bin);
+    command
+        .arg("build")
+        .arg(dataset)
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--json");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command.output().expect("logicpearl build should run");
+    assert!(
+        output.status.success(),
+        "logicpearl build failed:\nenvs: {:?}\nstdout:\n{}\nstderr:\n{}",
+        envs,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("build output should be valid JSON")
 }
 
 #[test]
@@ -130,4 +158,112 @@ fn sample_dataset_passes_formal_spec_verification() {
     assert!(report["complete"].as_bool().unwrap_or(false));
     assert!(report["no_spurious_rules"].as_bool().unwrap_or(false));
     assert!(report["fully_verified"].as_bool().unwrap_or(false));
+}
+
+#[test]
+fn build_mip_matches_smt_rule_artifact_on_large_exact_selection_fixture() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    let dataset = temp.path().join("large_exact_selection.csv");
+    let smt_output = temp.path().join("smt_bundle");
+    let mip_output = temp.path().join("mip_bundle");
+    let csv = (1..=18)
+        .map(|value| format!("{value},{}\n", if value == 18 { 1 } else { 0 }))
+        .collect::<String>();
+    fs::write(&dataset, format!("score,allowed\n{csv}"))
+        .expect("large exact-selection fixture should be written");
+
+    let smt_build = run_build_json_with_env(
+        cli_bin,
+        &dataset,
+        &smt_output,
+        &[("LOGICPEARL_DISCOVERY_SELECTION_BACKEND", "smt")],
+    );
+    let mip_build = run_build_json_with_env(
+        cli_bin,
+        &dataset,
+        &mip_output,
+        &[("LOGICPEARL_DISCOVERY_SELECTION_BACKEND", "mip")],
+    );
+
+    let smt_ir: Value = serde_json::from_str(
+        &fs::read_to_string(&smt_build.output_files.pearl_ir)
+            .expect("smt pearl ir should be readable"),
+    )
+    .expect("smt pearl ir should be valid JSON");
+    let mip_ir: Value = serde_json::from_str(
+        &fs::read_to_string(&mip_build.output_files.pearl_ir)
+            .expect("mip pearl ir should be readable"),
+    )
+    .expect("mip pearl ir should be valid JSON");
+
+    assert_eq!(
+        smt_build.exact_selection.backend,
+        Some(ExactSelectionBackend::Smt)
+    );
+    assert_eq!(
+        mip_build.exact_selection.backend,
+        Some(ExactSelectionBackend::Mip)
+    );
+    assert_eq!(smt_build.exact_selection.selected_candidates, 1);
+    assert_eq!(mip_build.exact_selection.selected_candidates, 1);
+    assert!(!smt_build.exact_selection.adopted);
+    assert!(!mip_build.exact_selection.adopted);
+    assert_eq!(
+        smt_build.exact_selection.detail.as_deref(),
+        Some("kept greedy plan because exact selection was not better")
+    );
+    assert_eq!(
+        mip_build.exact_selection.detail.as_deref(),
+        Some("kept greedy plan because exact selection was not better")
+    );
+    assert_eq!(mip_ir["rules"], smt_ir["rules"]);
+}
+
+#[test]
+fn build_cache_respects_internal_discovery_selection_backend() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    let dataset = temp.path().join("large_exact_selection.csv");
+    let output_dir = temp.path().join("shared_bundle");
+    let csv = (1..=18)
+        .map(|value| format!("{value},{}\n", if value == 18 { 1 } else { 0 }))
+        .collect::<String>();
+    fs::write(&dataset, format!("score,allowed\n{csv}"))
+        .expect("large exact-selection fixture should be written");
+
+    let smt_build = run_build_json_with_env(
+        cli_bin,
+        &dataset,
+        &output_dir,
+        &[("LOGICPEARL_DISCOVERY_SELECTION_BACKEND", "smt")],
+    );
+    let mip_build = run_build_json_with_env(
+        cli_bin,
+        &dataset,
+        &output_dir,
+        &[("LOGICPEARL_DISCOVERY_SELECTION_BACKEND", "mip")],
+    );
+    let mip_cached = run_build_json_with_env(
+        cli_bin,
+        &dataset,
+        &output_dir,
+        &[("LOGICPEARL_DISCOVERY_SELECTION_BACKEND", "mip")],
+    );
+
+    assert!(!smt_build.cache_hit);
+    assert!(!mip_build.cache_hit);
+    assert!(mip_cached.cache_hit);
+    assert_eq!(
+        smt_build.exact_selection.backend,
+        Some(ExactSelectionBackend::Smt)
+    );
+    assert_eq!(
+        mip_build.exact_selection.backend,
+        Some(ExactSelectionBackend::Mip)
+    );
+    assert_eq!(
+        mip_cached.exact_selection.backend,
+        Some(ExactSelectionBackend::Mip)
+    );
 }

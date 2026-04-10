@@ -1,6 +1,9 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{Expression, FeatureGovernance, RuleDefinition, RuleVerificationStatus};
 use logicpearl_runtime::evaluate_gate;
+use logicpearl_solver::{
+    resolve_backend, SolverSettings, SOLVER_BACKEND_ENV, SOLVER_DIR_ENV, SOLVER_TIMEOUT_MS_ENV,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -71,12 +74,36 @@ pub struct BuildResult {
     pub selected_features: Vec<String>,
     pub training_parity: f64,
     #[serde(default)]
+    pub exact_selection: ExactSelectionReport,
+    #[serde(default)]
     pub residual_recovery: ResidualRecoveryReport,
     #[serde(default)]
     pub cache_hit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<BuildProvenance>,
     pub output_files: OutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExactSelectionBackend {
+    BruteForce,
+    Smt,
+    Mip,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+pub struct ExactSelectionReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<ExactSelectionBackend>,
+    #[serde(default)]
+    pub shortlisted_candidates: usize,
+    #[serde(default)]
+    pub selected_candidates: usize,
+    #[serde(default)]
+    pub adopted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
@@ -318,6 +345,13 @@ fn write_cache_manifest(path: &Path, manifest: &CacheManifest) -> Result<()> {
     Ok(())
 }
 
+fn resolved_solver_backend_name() -> Option<String> {
+    let settings = SolverSettings::from_env().ok()?;
+    resolve_backend(&settings)
+        .ok()
+        .map(|backend| backend.as_str().to_string())
+}
+
 fn build_cache_manifest(
     rows: &[DecisionTraceRow],
     source_name: &str,
@@ -343,6 +377,11 @@ fn build_cache_manifest(
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        solver_backend_env: Option<String>,
+        resolved_solver_backend: Option<String>,
+        solver_timeout_ms_env: Option<String>,
+        solver_dir_env: Option<String>,
+        discovery_selection_backend_env: Option<String>,
     }
 
     let rows_fingerprint: Vec<BuildFingerprintRow<'_>> = rows
@@ -368,7 +407,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "2".to_string(),
+        cache_version: "3".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -390,6 +429,12 @@ fn build_cache_manifest(
                 .map(|path| path.display().to_string()),
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
+            resolved_solver_backend: resolved_solver_backend_name(),
+            solver_timeout_ms_env: std::env::var(SOLVER_TIMEOUT_MS_ENV).ok(),
+            solver_dir_env: std::env::var(SOLVER_DIR_ENV).ok(),
+            discovery_selection_backend_env: std::env::var(engine::DISCOVERY_SELECTION_BACKEND_ENV)
+                .ok(),
         })?,
     })
 }
@@ -406,6 +451,11 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        solver_backend_env: Option<String>,
+        resolved_solver_backend: Option<String>,
+        solver_timeout_ms_env: Option<String>,
+        solver_dir_env: Option<String>,
+        discovery_selection_backend_env: Option<String>,
     }
 
     let pinned_rules_fingerprint = options
@@ -420,7 +470,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "1".to_string(),
+        cache_version: "2".to_string(),
         operation: "discover".to_string(),
         input_fingerprint: fingerprint_file(csv_path)?,
         options_fingerprint: cache_fingerprint(&DiscoverFingerprintOptions {
@@ -439,6 +489,12 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
                 .map(|path| path.display().to_string()),
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
+            resolved_solver_backend: resolved_solver_backend_name(),
+            solver_timeout_ms_env: std::env::var(SOLVER_TIMEOUT_MS_ENV).ok(),
+            solver_dir_env: std::env::var(SOLVER_DIR_ENV).ok(),
+            discovery_selection_backend_env: std::env::var(engine::DISCOVERY_SELECTION_BACKEND_ENV)
+                .ok(),
         })?,
     })
 }
@@ -743,6 +799,7 @@ pub fn build_pearl_from_rows(
         .transpose()?;
     let (
         gate,
+        exact_selection,
         residual_rules_discovered,
         residual_recovery,
         refined_rules_applied,
@@ -786,6 +843,7 @@ pub fn build_pearl_from_rows(
             .map(|feature| feature.id.clone())
             .collect(),
         training_parity,
+        exact_selection,
         residual_recovery,
         cache_hit: false,
         provenance: None,

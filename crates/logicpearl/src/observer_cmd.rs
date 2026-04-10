@@ -852,6 +852,8 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         "negative_case_count": report.negative_case_count,
         "candidate_count": report.candidate_count,
         "selected_max_candidates": report.selected_max_candidates,
+        "selection_backend": report.selection_backend,
+        "selection_status": report.selection_status,
         "phrases_before": report.phrases_before,
         "phrases_after": report.phrases_after,
         "output": args.output.display().to_string(),

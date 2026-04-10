@@ -588,6 +588,32 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         }
         println!("  {} {}", "Rows".bright_black(), result.rows);
         println!("  {} {}", "Rules".bright_black(), result.rules_discovered);
+        if let Some(backend) = &result.exact_selection.backend {
+            let backend_label = match backend {
+                ExactSelectionBackend::BruteForce => "brute force",
+                ExactSelectionBackend::Smt => "smt",
+                ExactSelectionBackend::Mip => "mip",
+            };
+            let selection_summary = if result.exact_selection.adopted {
+                format!(
+                    "{backend_label} exact selection adopted on {} candidates",
+                    result.exact_selection.shortlisted_candidates
+                )
+            } else {
+                format!(
+                    "{backend_label} exact selection kept greedy plan on {} candidates",
+                    result.exact_selection.shortlisted_candidates
+                )
+            };
+            println!(
+                "  {} {}",
+                "Exact selection".bright_black(),
+                selection_summary
+            );
+            if let Some(detail) = &result.exact_selection.detail {
+                println!("  {} {}", "Selection detail".bright_black(), detail);
+            }
+        }
         match result.residual_recovery.state {
             ResidualRecoveryState::Applied => {
                 println!(

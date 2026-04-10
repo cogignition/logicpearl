@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Observer phrase mining and solver-backed signal synthesis for LogicPearl."
 
 [dependencies]
+good_lp.workspace = true
 logicpearl-benchmark.workspace = true
 logicpearl-core.workspace = true
 logicpearl-observer.workspace = true

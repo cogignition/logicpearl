@@ -1,3 +1,7 @@
+use good_lp::{
+    constraint, microlp, variable, variables, Expression as LpExpression, ResolutionError,
+    Solution, SolverModel, Variable,
+};
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     BooleanEvidencePolicy, ComparisonExpression, ComparisonOperator, ComparisonValue,
@@ -16,6 +20,7 @@ use logicpearl_verify::{
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::env;
 
 use super::canonicalize::{
     canonicalize_rules, comparison_matches, expression_matches, prune_redundant_rules,
@@ -26,8 +31,9 @@ use super::features::{
 };
 use super::rule_text::generate_rule_text;
 use super::{
-    CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
-    ResidualRecoveryReport, ResidualRecoveryState, UniqueCoverageRefinementOptions,
+    CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, ExactSelectionBackend,
+    ExactSelectionReport, PinnedRuleSet, ResidualPassOptions, ResidualRecoveryReport,
+    ResidualRecoveryState, UniqueCoverageRefinementOptions,
 };
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
@@ -43,6 +49,38 @@ const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
 const DISCOVERY_VALIDATION_MIN_CLASS_ROWS: usize = 20;
 const DISCOVERY_VALIDATION_FRACTION_NUMERATOR: usize = 1;
 const DISCOVERY_VALIDATION_FRACTION_DENOMINATOR: usize = 5;
+pub(crate) const DISCOVERY_SELECTION_BACKEND_ENV: &str = "LOGICPEARL_DISCOVERY_SELECTION_BACKEND";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscoverySelectionBackend {
+    Smt,
+    Mip,
+}
+
+struct DiscoverySelectionSettings {
+    backend: DiscoverySelectionBackend,
+}
+
+impl DiscoverySelectionSettings {
+    fn from_env() -> Result<Self> {
+        let backend = env::var(DISCOVERY_SELECTION_BACKEND_ENV)
+            .ok()
+            .map(|raw| parse_discovery_selection_backend(&raw))
+            .transpose()?
+            .unwrap_or(DiscoverySelectionBackend::Smt);
+        Ok(Self { backend })
+    }
+}
+
+fn parse_discovery_selection_backend(raw: &str) -> Result<DiscoverySelectionBackend> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "smt" => Ok(DiscoverySelectionBackend::Smt),
+        "mip" => Ok(DiscoverySelectionBackend::Mip),
+        other => Err(LogicPearlError::message(format!(
+            "unsupported discovery selection backend `{other}` in {DISCOVERY_SELECTION_BACKEND_ENV}; expected `smt` or `mip`"
+        ))),
+    }
+}
 
 fn current_solver_backend() -> Result<Option<String>> {
     let settings = SolverSettings::from_env()?;
@@ -90,12 +128,14 @@ pub(super) fn build_gate(
     pinned_rules: Option<&PinnedRuleSet>,
 ) -> Result<(
     LogicPearlGateIr,
+    ExactSelectionReport,
     usize,
     ResidualRecoveryReport,
     usize,
     usize,
 )> {
-    let mut rules = discover_rules(rows, feature_governance, decision_mode, residual_options)?;
+    let (mut rules, exact_selection) =
+        discover_rules(rows, feature_governance, decision_mode, residual_options)?;
     let mut residual_rules_discovered = 0usize;
     let primary_discovery_used_solver_recovery =
         residual_options.is_some() && rules.iter().any(rule_uses_compound_expression);
@@ -197,6 +237,7 @@ pub(super) fn build_gate(
             gate_id,
             rules,
         )?,
+        exact_selection,
         residual_rules_discovered,
         residual_recovery,
         refined_rules_applied,
@@ -362,7 +403,7 @@ pub(super) fn discover_rules(
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
-) -> Result<Vec<RuleDefinition>> {
+) -> Result<(Vec<RuleDefinition>, ExactSelectionReport)> {
     let denied_indices: Vec<usize> = rows
         .iter()
         .enumerate()
@@ -411,18 +452,22 @@ pub(super) fn discover_rules(
         &greedy_plan,
         EXACT_SELECTION_FRONTIER_LIMIT,
     );
-    let selected_candidates = match select_candidate_rules_exact(
+    let (exact_plan, mut exact_selection) = select_candidate_rules_exact(
         rows,
         &train_denied_indices,
         &train_allowed_indices,
         &shortlist,
-    ) {
+    )?;
+    let selected_candidates = match exact_plan {
         Some(exact_plan) if !exact_plan.is_empty() => {
             let greedy_score = score_candidate_set(rows, &greedy_plan, validation_indices);
             let exact_score = score_candidate_set(rows, &exact_plan, validation_indices);
             if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
+                exact_selection.adopted = true;
                 exact_plan
             } else {
+                exact_selection.detail =
+                    Some("kept greedy plan because exact selection was not better".to_string());
                 greedy_plan
             }
         }
@@ -437,13 +482,16 @@ pub(super) fn discover_rules(
         decision_mode,
         residual_options,
     };
-    let selected_candidates = recover_rare_rules(&selection_context, selected_candidates);
+    let selected_candidates = recover_rare_rules(&selection_context, selected_candidates)?;
 
-    Ok(selected_candidates
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| rule_from_candidate(index as u32, candidate))
-        .collect())
+    Ok((
+        selected_candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| rule_from_candidate(index as u32, candidate))
+            .collect(),
+        exact_selection,
+    ))
 }
 
 fn discovery_validation_split(
@@ -517,7 +565,7 @@ fn stable_row_bucket(row: &DecisionTraceRow) -> u64 {
 fn recover_rare_rules(
     selection_context: &CandidateSelectionContext<'_>,
     selected_candidates: Vec<CandidateRule>,
-) -> Vec<CandidateRule> {
+) -> Result<Vec<CandidateRule>> {
     let mut recovered = selected_candidates;
     for _ in 0..RARE_RULE_RECOVERY_MAX_PASSES {
         let uncovered_denied = selection_context
@@ -554,12 +602,13 @@ fn recover_rare_rules(
             break;
         }
 
-        let Some(rescue_plan) = select_candidate_rules_exact(
+        let (rescue_plan, _) = select_candidate_rules_exact(
             selection_context.rows,
             &uncovered_denied,
             selection_context.allowed_indices,
             &rescue_shortlist,
-        ) else {
+        )?;
+        let Some(rescue_plan) = rescue_plan else {
             break;
         };
         if rescue_plan.is_empty() {
@@ -590,7 +639,7 @@ fn recover_rare_rules(
 
         recovered = candidate_combined;
     }
-    recovered
+    Ok(recovered)
 }
 
 fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<CandidateRule> {
@@ -778,9 +827,13 @@ fn select_candidate_rules_exact(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     candidates: &[CandidateRule],
-) -> Option<Vec<CandidateRule>> {
+) -> Result<(Option<Vec<CandidateRule>>, ExactSelectionReport)> {
+    let mut report = ExactSelectionReport {
+        shortlisted_candidates: candidates.len(),
+        ..Default::default()
+    };
     if candidates.is_empty() {
-        return Some(Vec::new());
+        return Ok((Some(Vec::new()), report));
     }
     let denied_matches: Vec<Vec<usize>> = denied_indices
         .iter()
@@ -808,22 +861,54 @@ fn select_candidate_rules_exact(
         .collect();
 
     if candidates.len() <= EXACT_SELECTION_BRUTE_FORCE_LIMIT {
-        return Some(select_candidate_rules_bruteforce(
-            candidates,
-            &denied_matches,
-            &allowed_matches,
-        ));
+        let selected =
+            select_candidate_rules_bruteforce(candidates, &denied_matches, &allowed_matches);
+        report.backend = Some(ExactSelectionBackend::BruteForce);
+        report.selected_candidates = selected.len();
+        return Ok((Some(selected), report));
     }
 
-    let (smt, objectives) =
-        build_exact_selection_problem(candidates, &denied_matches, &allowed_matches);
-    let selected_indexes = solve_selected_rule_indexes(candidates.len(), &smt, &objectives).ok()?;
-    Some(
-        selected_indexes
-            .into_iter()
-            .map(|index| candidates[index].clone())
-            .collect(),
-    )
+    let selection_settings = DiscoverySelectionSettings::from_env()?;
+    report.backend = Some(match selection_settings.backend {
+        DiscoverySelectionBackend::Smt => ExactSelectionBackend::Smt,
+        DiscoverySelectionBackend::Mip => ExactSelectionBackend::Mip,
+    });
+    let selected_indexes = match selection_settings.backend {
+        DiscoverySelectionBackend::Smt => {
+            let (smt, objectives) =
+                build_exact_selection_problem(candidates, &denied_matches, &allowed_matches);
+            match solve_selected_rule_indexes(candidates.len(), &smt, &objectives) {
+                Ok(indexes) => indexes,
+                Err(err) => {
+                    report.detail = Some(format!(
+                        "falling back to greedy after SMT exact selection failed: {err}"
+                    ));
+                    return Ok((None, report));
+                }
+            }
+        }
+        DiscoverySelectionBackend::Mip => {
+            match solve_selected_rule_indexes_mip(candidates, &denied_matches, &allowed_matches) {
+                Ok(indexes) => indexes,
+                Err(err) => {
+                    report.detail = Some(format!(
+                        "falling back to greedy after MIP exact selection failed: {err}"
+                    ));
+                    return Ok((None, report));
+                }
+            }
+        }
+    };
+    report.selected_candidates = selected_indexes.len();
+    Ok((
+        Some(
+            selected_indexes
+                .into_iter()
+                .map(|index| candidates[index].clone())
+                .collect(),
+        ),
+        report,
+    ))
 }
 
 fn build_exact_selection_problem(
@@ -1063,6 +1148,237 @@ fn solve_selected_rule_indexes(
             result.report.backend_used.as_str()
         ))),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuleSelectionObjective {
+    TotalErrors,
+    AllowedHits,
+    KeepCount,
+    ComplexityWeight,
+    KeepIndexSum,
+}
+
+fn solve_selected_rule_indexes_mip(
+    candidates: &[CandidateRule],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> Result<Vec<usize>> {
+    let mut locked = Vec::new();
+    let mut selected = Vec::new();
+    for objective in [
+        RuleSelectionObjective::TotalErrors,
+        RuleSelectionObjective::AllowedHits,
+        RuleSelectionObjective::KeepCount,
+        RuleSelectionObjective::ComplexityWeight,
+        RuleSelectionObjective::KeepIndexSum,
+    ] {
+        let stage = solve_selected_rule_indexes_mip_stage(
+            candidates,
+            denied_matches,
+            allowed_matches,
+            objective,
+            &locked,
+        )?;
+        let objective_value = rule_selection_objective_value(
+            objective,
+            &stage,
+            candidates,
+            denied_matches,
+            allowed_matches,
+        );
+        selected = stage;
+        locked.push((objective, objective_value));
+    }
+    Ok(selected)
+}
+
+fn solve_selected_rule_indexes_mip_stage(
+    candidates: &[CandidateRule],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+    objective: RuleSelectionObjective,
+    locked: &[(RuleSelectionObjective, usize)],
+) -> Result<Vec<usize>> {
+    let mut vars = variables!();
+    let keep_vars: Vec<Variable> = (0..candidates.len())
+        .map(|_| vars.add(variable().binary()))
+        .collect();
+    let deny_hit_vars: Vec<Variable> = denied_matches
+        .iter()
+        .map(|_| vars.add(variable().binary()))
+        .collect();
+    let allow_hit_vars: Vec<Variable> = allowed_matches
+        .iter()
+        .map(|_| vars.add(variable().binary()))
+        .collect();
+
+    let mut model = vars
+        .minimise(rule_selection_objective_expression(
+            objective,
+            &keep_vars,
+            &deny_hit_vars,
+            &allow_hit_vars,
+            candidates,
+            denied_matches.len(),
+        ))
+        .using(microlp);
+    model = add_rule_selection_constraints(
+        model,
+        &keep_vars,
+        &deny_hit_vars,
+        &allow_hit_vars,
+        denied_matches,
+        allowed_matches,
+    );
+
+    for (locked_objective, value) in locked {
+        model = model.with(constraint!(
+            rule_selection_objective_expression(
+                *locked_objective,
+                &keep_vars,
+                &deny_hit_vars,
+                &allow_hit_vars,
+                candidates,
+                denied_matches.len(),
+            ) == *value as f64
+        ));
+    }
+
+    let solution = match model.solve() {
+        Ok(solution) => solution,
+        Err(ResolutionError::Infeasible) => return Ok(Vec::new()),
+        Err(ResolutionError::Unbounded) => {
+            return Err(LogicPearlError::message(
+                "discovery exact rule selection MIP solve was unexpectedly unbounded",
+            ));
+        }
+        Err(err) => {
+            return Err(LogicPearlError::message(format!(
+                "exact rule selection MIP solver failed: {err}"
+            )));
+        }
+    };
+
+    Ok(selected_keep_indexes(&solution, &keep_vars))
+}
+
+fn add_rule_selection_constraints<M: SolverModel>(
+    mut model: M,
+    keep_vars: &[Variable],
+    deny_hit_vars: &[Variable],
+    allow_hit_vars: &[Variable],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> M {
+    for (index, matches) in denied_matches.iter().enumerate() {
+        model = add_match_indicator_constraints(model, deny_hit_vars[index], keep_vars, matches);
+    }
+    for (index, matches) in allowed_matches.iter().enumerate() {
+        model = add_match_indicator_constraints(model, allow_hit_vars[index], keep_vars, matches);
+    }
+    model
+}
+
+fn add_match_indicator_constraints<M: SolverModel>(
+    mut model: M,
+    indicator: Variable,
+    keep_vars: &[Variable],
+    matches: &[usize],
+) -> M {
+    if matches.is_empty() {
+        return model.with(constraint!(indicator == 0.0));
+    }
+
+    model = model.with(constraint!(indicator <= sum_keep_vars(keep_vars, matches)));
+    for matched in matches {
+        model = model.with(constraint!(indicator >= keep_vars[*matched]));
+    }
+    model
+}
+
+fn rule_selection_objective_expression(
+    objective: RuleSelectionObjective,
+    keep_vars: &[Variable],
+    deny_hit_vars: &[Variable],
+    allow_hit_vars: &[Variable],
+    candidates: &[CandidateRule],
+    denied_count: usize,
+) -> LpExpression {
+    match objective {
+        RuleSelectionObjective::TotalErrors => {
+            (denied_count as f64) - sum_vars(deny_hit_vars) + sum_vars(allow_hit_vars)
+        }
+        RuleSelectionObjective::AllowedHits => sum_vars(allow_hit_vars),
+        RuleSelectionObjective::KeepCount => sum_vars(keep_vars),
+        RuleSelectionObjective::ComplexityWeight => keep_vars.iter().zip(candidates.iter()).fold(
+            LpExpression::from(0.0),
+            |expression, (variable, candidate)| {
+                expression + (candidate_total_penalty(candidate) as f64) * *variable
+            },
+        ),
+        RuleSelectionObjective::KeepIndexSum => keep_vars
+            .iter()
+            .enumerate()
+            .fold(LpExpression::from(0.0), |expression, (index, variable)| {
+                expression + ((index + 1) as f64) * *variable
+            }),
+    }
+}
+
+fn rule_selection_objective_value(
+    objective: RuleSelectionObjective,
+    selected: &[usize],
+    candidates: &[CandidateRule],
+    denied_matches: &[Vec<usize>],
+    allowed_matches: &[Vec<usize>],
+) -> usize {
+    match objective {
+        RuleSelectionObjective::TotalErrors => {
+            let denied_misses = denied_matches
+                .iter()
+                .filter(|matches| !matches.iter().any(|index| selected.contains(index)))
+                .count();
+            let allowed_hits = allowed_matches
+                .iter()
+                .filter(|matches| matches.iter().any(|index| selected.contains(index)))
+                .count();
+            denied_misses + allowed_hits
+        }
+        RuleSelectionObjective::AllowedHits => allowed_matches
+            .iter()
+            .filter(|matches| matches.iter().any(|index| selected.contains(index)))
+            .count(),
+        RuleSelectionObjective::KeepCount => selected.len(),
+        RuleSelectionObjective::ComplexityWeight => selected
+            .iter()
+            .map(|index| candidate_total_penalty(&candidates[*index]))
+            .sum(),
+        RuleSelectionObjective::KeepIndexSum => selected.iter().map(|index| index + 1).sum(),
+    }
+}
+
+fn sum_keep_vars(keep_vars: &[Variable], matches: &[usize]) -> LpExpression {
+    matches
+        .iter()
+        .fold(LpExpression::from(0.0), |expression, matched| {
+            expression + keep_vars[*matched]
+        })
+}
+
+fn sum_vars(vars: &[Variable]) -> LpExpression {
+    vars.iter()
+        .fold(LpExpression::from(0.0), |expression, variable| {
+            expression + *variable
+        })
+}
+
+fn selected_keep_indexes<S: Solution>(solution: &S, keep_vars: &[Variable]) -> Vec<usize> {
+    keep_vars
+        .iter()
+        .enumerate()
+        .filter_map(|(index, variable)| (solution.value(*variable) >= 0.5).then_some(index))
+        .collect()
 }
 
 fn select_candidate_rule(
@@ -1972,15 +2288,36 @@ mod tests {
         candidate_rules, compare_candidate_set_score, conjunction_candidate_rules,
         recover_rare_rules, rule_from_candidate, score_candidate_set, select_candidate_rules_exact,
         CandidateRule, CandidateSelectionContext, CandidateSetScore,
+        DISCOVERY_SELECTION_BACKEND_ENV,
     };
     use crate::{DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions};
     use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression};
     use logicpearl_solver::{check_sat, SolverSettings};
     use serde_json::{Number, Value};
     use std::collections::{BTreeMap, HashMap};
+    use std::sync::{Mutex, OnceLock};
 
     fn solver_available() -> bool {
         check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
+    }
+
+    fn discovery_selection_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_discovery_selection_backend<T>(backend: &str, test: impl FnOnce() -> T) -> T {
+        let _guard = discovery_selection_env_lock()
+            .lock()
+            .expect("env lock should be available");
+        let saved = std::env::var(DISCOVERY_SELECTION_BACKEND_ENV).ok();
+        std::env::set_var(DISCOVERY_SELECTION_BACKEND_ENV, backend);
+        let result = test();
+        match saved {
+            Some(value) => std::env::set_var(DISCOVERY_SELECTION_BACKEND_ENV, value),
+            None => std::env::remove_var(DISCOVERY_SELECTION_BACKEND_ENV),
+        }
+        result
     }
 
     #[test]
@@ -2005,6 +2342,8 @@ mod tests {
 
         let selected =
             select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+                .unwrap()
+                .0
                 .unwrap();
         assert_eq!(selected.len(), 1);
         let comparison = candidate_as_comparison(&selected[0]).unwrap();
@@ -2012,6 +2351,76 @@ mod tests {
         assert_eq!(
             comparison.value.literal().and_then(Value::as_f64),
             Some(2.0)
+        );
+    }
+
+    #[test]
+    fn mip_exact_selection_matches_smt_choice_beyond_bruteforce_limit() {
+        if !solver_available() {
+            return;
+        }
+
+        let rows = (1..=18)
+            .map(|value| row(value as f64, value == 18))
+            .collect::<Vec<_>>();
+        let denied_indices = (0..17).collect::<Vec<_>>();
+        let allowed_indices = vec![17usize];
+        let mut candidates = (1..=17)
+            .map(|value| numeric_candidate("score", ComparisonOperator::Eq, value as f64))
+            .collect::<Vec<_>>();
+        candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
+
+        let smt_selection = with_discovery_selection_backend("smt", || {
+            select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+                .expect("smt exact selection should find a solution")
+                .0
+                .expect("smt exact selection should return a rule set")
+        });
+        let mip_selection = with_discovery_selection_backend("mip", || {
+            select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+                .expect("mip exact selection should find a solution")
+                .0
+                .expect("mip exact selection should return a rule set")
+        });
+
+        assert_eq!(smt_selection.len(), 1);
+        let smt_comparison = candidate_as_comparison(&smt_selection[0]).unwrap();
+        assert_eq!(smt_comparison.op, ComparisonOperator::Lte);
+        assert_eq!(
+            smt_comparison.value.literal().and_then(Value::as_f64),
+            Some(17.0)
+        );
+
+        assert_eq!(mip_selection.len(), smt_selection.len());
+        let mip_comparison = candidate_as_comparison(&mip_selection[0]).unwrap();
+        assert_eq!(mip_comparison.op, smt_comparison.op);
+        assert_eq!(
+            mip_comparison.value.literal().and_then(Value::as_f64),
+            smt_comparison.value.literal().and_then(Value::as_f64)
+        );
+    }
+
+    #[test]
+    fn invalid_discovery_selection_backend_is_rejected() {
+        let rows = (1..=18)
+            .map(|value| row(value as f64, value == 18))
+            .collect::<Vec<_>>();
+        let denied_indices = (0..17).collect::<Vec<_>>();
+        let allowed_indices = vec![17usize];
+        let mut candidates = (1..=17)
+            .map(|value| numeric_candidate("score", ComparisonOperator::Eq, value as f64))
+            .collect::<Vec<_>>();
+        candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
+
+        let err = with_discovery_selection_backend("not-a-backend", || {
+            select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+                .expect_err("invalid discovery selection backend should fail loudly")
+        });
+
+        assert!(
+            err.to_string()
+                .contains("unsupported discovery selection backend"),
+            "unexpected error: {err}"
         );
     }
 
@@ -2258,7 +2667,7 @@ mod tests {
             decision_mode: DiscoveryDecisionMode::Standard,
             residual_options: None,
         };
-        let recovered = recover_rare_rules(&selection_context, selected);
+        let recovered = recover_rare_rules(&selection_context, selected).unwrap();
         assert_eq!(recovered.len(), 2);
         let score = score_candidate_set(&rows, &recovered, None);
         assert_eq!(score.false_negatives, 0);
@@ -2296,7 +2705,7 @@ mod tests {
             decision_mode: DiscoveryDecisionMode::Standard,
             residual_options: None,
         };
-        let recovered = recover_rare_rules(&selection_context, selected);
+        let recovered = recover_rare_rules(&selection_context, selected).unwrap();
         assert_eq!(recovered.len(), 1);
         assert_eq!(
             candidate_as_comparison(&recovered[0]).unwrap().feature,
