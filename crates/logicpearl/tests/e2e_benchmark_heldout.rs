@@ -36,6 +36,8 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
     let jailbreak_sample = root.join("sample_jailbreak.json");
     let trace_config =
         repo_root.join("benchmarks/guardrails/prep/trace_projection.guardrails_v1.json");
+    let observer_artifact =
+        repo_root.join("benchmarks/guardrails/observers/guardrails_v1.seed.json");
 
     std::fs::write(
         &squad_sample,
@@ -205,12 +207,17 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
             train_jsonl.to_str().unwrap(),
             "--config",
             trace_config.to_str().unwrap(),
+            "--observer-artifact",
+            observer_artifact.to_str().unwrap(),
             "--output-dir",
             train_prep_dir.to_str().unwrap(),
             "--json",
         ],
     );
-    assert_eq!(learn["observer"]["profile"].as_str(), Some("guardrails_v1"));
+    assert_eq!(
+        learn["observer"]["observer_id"].as_str(),
+        Some("guardrails_v1_seed")
+    );
     assert_eq!(learn["observed_rows"].as_u64(), Some(8));
 
     let artifact_set = train_prep_dir.join("discovered/artifact_set.json");
@@ -225,6 +232,8 @@ fn benchmark_flow_supports_held_out_artifact_scoring() {
             "benchmark",
             "observe",
             dev_jsonl.to_str().unwrap(),
+            "--observer-artifact",
+            observer_artifact.to_str().unwrap(),
             "--output",
             dev_observed_jsonl.to_str().unwrap(),
             "--json",

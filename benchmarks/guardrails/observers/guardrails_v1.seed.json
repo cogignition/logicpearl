@@ -1,0 +1,104 @@
+{
+  "artifact_version": "1.0",
+  "observer_id": "guardrails_v1_seed",
+  "profile": "guardrails_v1",
+  "guardrails": {
+    "instruction_override_phrases": [
+      "ignore previous instructions",
+      "ignore prior instructions",
+      "disregard the instructions above",
+      "disregard the above",
+      "override your instructions",
+      "shrug off the preceding guidelines"
+    ],
+    "system_prompt_phrases": [
+      "system prompt",
+      "hidden prompt",
+      "reveal your instructions",
+      "show me your prompt",
+      "hidden instructions"
+    ],
+    "secret_exfiltration_phrases": [
+      "api key",
+      "api keys",
+      "access token",
+      "access tokens",
+      "bearer token",
+      "bearer tokens",
+      "password",
+      "passwords",
+      "credential",
+      "credentials",
+      "secret key",
+      "secret keys",
+      "shared secret",
+      "shared secrets"
+    ],
+    "tool_misuse_phrases": [
+      "send all customer records",
+      "delete the database",
+      "transfer all funds",
+      "download the full database",
+      "return all customer records"
+    ],
+    "data_access_outside_scope_phrases": [
+      "all customer records",
+      "entire database",
+      "all files",
+      "all emails",
+      "outside the approved project scope"
+    ],
+    "indirect_document_authority_phrases": [
+      "the webpage says",
+      "the document says",
+      "the page says"
+    ],
+    "benign_question_phrases": [
+      "summarize",
+      "explain",
+      "help me understand",
+      "what are the key takeaways",
+      "translate",
+      "share your views",
+      "share your thoughts"
+    ],
+    "tool_action_terms": [
+      "upload",
+      "download",
+      "delete",
+      "remove",
+      "dump",
+      "share",
+      "send",
+      "schedule",
+      "cron job",
+      "set up a weekly cleanup task"
+    ],
+    "tool_sensitive_resource_terms": [
+      "private key",
+      "ssh key",
+      "id_rsa",
+      "customer records",
+      "budget.xlsx",
+      "budget entries",
+      "funds",
+      "/var",
+      "owncloud",
+      "cloud storage",
+      "compliance summary",
+      "documents/research",
+      "documents/financials",
+      "audit_notes",
+      "autoscaler.env"
+    ],
+    "tool_sensitive_requested_actions": [
+      "export_customer_records",
+      "delete_database",
+      "transfer_funds",
+      "dump_credentials"
+    ],
+    "outside_scope_values": [
+      "outside"
+    ]
+  }
+}

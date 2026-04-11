@@ -139,7 +139,7 @@ Useful native observer commands:
 - `logicpearl observer repair`
 
 `observer synthesize` is seed-based and exact-selection-first:
-- start from a built-in or scaffolded signal family
+- start from a scaffolded signal family or observer artifact
 - mine deterministic candidates from matched denied cases
 - let LogicPearl choose a compact subset from those candidates
 - by default, hold out a deterministic development slice and let LogicPearl choose the smallest near-best candidate cap automatically
@@ -320,10 +320,14 @@ Observe those adapted rows:
 ```bash
 logicpearl benchmark observe \
   /tmp/guardrail_dev.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --output /tmp/guardrail_dev_observed.jsonl
 ```
 
-If the input shape matches a built-in native observer profile, LogicPearl detects and uses it automatically. Use `--observer-artifact` to pin a scaffolded observer artifact, or `--plugin-manifest` only when you truly need an external observer.
+The public guardrail seed artifact is checked in at
+`benchmarks/guardrails/observers/guardrails_v1.seed.json`. Guardrail cue text is
+artifact data, not hidden observer-core behavior. Use `--plugin-manifest` only
+when you truly need an external observer.
 
 Then project them into discovery-ready traces:
 
@@ -339,6 +343,7 @@ Or run the generic middle stage in one shot:
 ```bash
 logicpearl benchmark learn \
   /tmp/guardrail_dev.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
   --json
@@ -366,12 +371,14 @@ logicpearl benchmark split-cases \
 
 logicpearl benchmark learn \
   /tmp/guardrail_train.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_train_prep \
   --json
 
 logicpearl benchmark observe \
   /tmp/guardrail_dev_holdout.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --output /tmp/guardrail_dev_holdout_observed.jsonl
 
 logicpearl benchmark emit-traces \

@@ -30,10 +30,11 @@ pub(crate) enum ResolvedObserver {
 
 pub(crate) fn to_native_profile(profile: ObserverProfileArg) -> Result<NativeObserverProfile> {
     match profile {
+        ObserverProfileArg::SignalFlagsV1 => Ok(NativeObserverProfile::SignalFlagsV1),
         ObserverProfileArg::GuardrailsV1 => Ok(NativeObserverProfile::GuardrailsV1),
         ObserverProfileArg::Auto => Err(guidance(
-            "`auto` is only valid when LogicPearl can inspect input examples",
-            "Use a concrete profile like --observer-profile guardrails-v1 or let benchmark observe/prepare auto-detect from dataset input.",
+            "`auto` is not available for configuration-backed observers",
+            "Use a concrete profile like --observer-profile signal-flags-v1, pass --observer-artifact, or use --plugin-manifest.",
         )),
     }
 }
@@ -124,43 +125,20 @@ pub(crate) fn resolve_observer_for_cases(
     if let Some(profile) = observer_profile {
         return match profile {
             ObserverProfileArg::Auto => {
-                let cases = load_benchmark_cases(dataset_jsonl)
-                    .into_diagnostic()
-                    .wrap_err("failed to load benchmark dataset for observer auto-detection")?;
-                let sample = cases.first().ok_or_else(|| {
-                    guidance(
-                        "benchmark dataset is empty",
-                        "Add at least one case before using --observer-profile auto.",
-                    )
-                })?;
-                let detected = detect_profile_from_input(&sample.input).ok_or_else(|| {
-                    guidance(
-                        "could not auto-detect a built-in observer profile",
-                        "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
-                    )
-                })?;
-                Ok(ResolvedObserver::NativeProfile(detected))
+                let _ = dataset_jsonl;
+                Err(guidance(
+                    "observer profile auto-detection is not available for configuration-backed observers",
+                    "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
+                ))
             }
             other => Ok(ResolvedObserver::NativeProfile(to_native_profile(other)?)),
         };
     }
 
-    let cases = load_benchmark_cases(dataset_jsonl)
-        .into_diagnostic()
-        .wrap_err("failed to load benchmark dataset for observer auto-detection")?;
-    let sample = cases.first().ok_or_else(|| {
-        guidance(
-            "benchmark dataset is empty",
-            "Add at least one case before running benchmark observe.",
-        )
-    })?;
-    let detected = detect_profile_from_input(&sample.input).ok_or_else(|| {
-        guidance(
-            "no observer source was provided and no built-in profile could be auto-detected",
-            "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
-        )
-    })?;
-    Ok(ResolvedObserver::NativeProfile(detected))
+    Err(guidance(
+        "no observer source was provided",
+        "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest. Guardrail examples use benchmarks/guardrails/observers/guardrails_v1.seed.json.",
+    ))
 }
 
 pub(crate) fn resolve_observer_from_input(
@@ -209,25 +187,20 @@ pub(crate) fn resolve_observer_from_input(
     if let Some(profile) = observer_profile {
         return match profile {
             ObserverProfileArg::Auto => {
-                let detected = detect_profile_from_input(raw_input).ok_or_else(|| {
-                    guidance(
-                        "could not auto-detect a built-in observer profile",
-                        "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
-                    )
-                })?;
-                Ok(ResolvedObserver::NativeProfile(detected))
+                let _ = raw_input;
+                Err(guidance(
+                    "observer profile auto-detection is not available for configuration-backed observers",
+                    "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
+                ))
             }
             other => Ok(ResolvedObserver::NativeProfile(to_native_profile(other)?)),
         };
     }
 
-    let detected = detect_profile_from_input(raw_input).ok_or_else(|| {
-        guidance(
-            "no observer source was provided and no built-in profile could be auto-detected",
-            "Use --observer-profile <profile>, --observer-artifact, or --plugin-manifest.",
-        )
-    })?;
-    Ok(ResolvedObserver::NativeProfile(detected))
+    Err(guidance(
+        "no observer source was provided",
+        "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
+    ))
 }
 
 pub(crate) fn observe_benchmark_cases(
@@ -1059,11 +1032,16 @@ pub(crate) fn resolve_synthesis_artifact(
         Some(ObserverProfileArg::Auto) => {
             return Err(guidance(
                 "`auto` is not valid for observer synthesize",
-                "Use a concrete profile like --profile guardrails-v1 or provide --artifact.",
+                "Pass --artifact or use a concrete profile like --profile guardrails-v1.",
             ))
         }
         Some(profile) => to_native_profile(profile)?,
-        None => NativeObserverProfile::GuardrailsV1,
+        None => {
+            return Err(guidance(
+                "observer synthesize needs an explicit observer seed",
+                "Pass --artifact for an existing observer artifact or --profile guardrails-v1 to scaffold an empty schema.",
+            ))
+        }
     };
     Ok(default_artifact_for_profile(profile))
 }
@@ -1111,5 +1089,11 @@ mod tests {
         let splits =
             choose_synthesis_train_and_dev(rows, None).expect("small datasets should not error");
         assert!(splits.is_none());
+    }
+
+    #[test]
+    fn synthesis_requires_explicit_observer_seed() {
+        let err = resolve_synthesis_artifact(None, None).expect_err("seed should be required");
+        assert!(format!("{err:?}").contains("observer synthesize needs an explicit observer seed"));
     }
 }

@@ -404,9 +404,9 @@ Process plugins are trusted local code. A plugin manifest declares a program to 
 
 The intended boundary is:
 - the generic core owns artifact formats, discovery/runtime plumbing, validation, and compilation
-- observer profiles and plugins own domain meaning
+- observer artifacts and plugins own domain meaning
 
-If your domain has its own raw input shape, keep that meaning at the edge instead of forcing it into the shared core.
+If your domain has its own raw input shape, keep that meaning at the edge instead of forcing it into the shared core. Native observer profiles define schemas and generic matching behavior; cue text such as guardrail phrase seeds lives in observer artifact data, for example [benchmarks/guardrails/observers/guardrails_v1.seed.json](./benchmarks/guardrails/observers/guardrails_v1.seed.json).
 
 If you are building custom boundaries, the advanced surfaces live here:
 - `logicpearl plugin validate` / `logicpearl plugin run` for contract debugging

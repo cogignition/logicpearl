@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Native observer profiles and feature extraction helpers for LogicPearl."
+description = "Configurable native observers and phrase matching helpers for LogicPearl."
 
 [dependencies]
 logicpearl-core.workspace = true

@@ -143,8 +143,8 @@ Examples:
   logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl
   logicpearl benchmark split-cases /tmp/guardrail_dev.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev_holdout.jsonl --train-fraction 0.8 --json
   logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl
-  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl
-  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
+  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --output /tmp/guardrail_dev_observed.jsonl
+  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
   logicpearl benchmark score-artifacts /tmp/guardrail_train_prep/discovered/artifact_set.json /tmp/guardrail_dev_holdout_traces/multi_target.csv --json
   logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
 
@@ -156,10 +156,10 @@ Plugin trust:
 Examples:
   logicpearl observer list
   logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json
-  logicpearl observer run --observer-profile guardrails-v1 --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl observer run --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --input examples/plugins/python_observer/raw_input.json --json
   logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json
-  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json
-  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_observed.jsonl --signal instruction-override --bootstrap observed-feature --output /tmp/guardrails_observer.synthesized.json
+  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json
+  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_observed.jsonl --signal instruction-override --bootstrap observed-feature --output /tmp/guardrails_observer.synthesized.json
   logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
 
 const PLUGIN_AFTER_HELP: &str = "\
@@ -456,6 +456,7 @@ enum QuickstartTopic {
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum ObserverProfileArg {
+    SignalFlagsV1,
     GuardrailsV1,
     Auto,
 }
@@ -788,13 +789,13 @@ struct BenchmarkMergeCasesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
+    after_help = "Examples:\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
 )]
 struct BenchmarkLearnArgs {
     /// Benchmark-case dataset in LogicPearl JSONL format.
     #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
-    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
+    /// Built-in observer profile to use. For domain cue sets, prefer --observer-artifact.
     #[arg(long, value_enum)]
     observer_profile: Option<ObserverProfileArg>,
     /// Observer artifact to run natively.
@@ -818,13 +819,13 @@ struct BenchmarkLearnArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --output /tmp/guardrail_dev_observed.jsonl\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/guardrail_dev_observed.jsonl"
+    after_help = "Examples:\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --output /tmp/guardrail_dev_observed.jsonl\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/guardrail_dev_observed.jsonl"
 )]
 struct BenchmarkObserveArgs {
     /// Benchmark-case dataset in LogicPearl JSONL format.
     #[arg(value_name = "DATASET")]
     dataset_jsonl: PathBuf,
-    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects a native profile from the input shape.
+    /// Built-in observer profile to use. For domain cue sets, prefer --observer-artifact.
     #[arg(long, value_enum)]
     observer_profile: Option<ObserverProfileArg>,
     /// Observer artifact to run natively.
@@ -1056,7 +1057,7 @@ enum ObserverCommand {
     Validate(ObserverValidateArgs),
     /// Run an observer on raw input and emit normalized features.
     Run(ObserverRunArgs),
-    /// Detect which built-in observer profile fits the input shape.
+    /// Check whether an input shape maps to a built-in observer profile.
     Detect(ObserverDetectArgs),
     /// Scaffold a native observer artifact from a built-in profile.
     Scaffold(ObserverScaffoldArgs),
@@ -1148,10 +1149,10 @@ struct ObserverValidateArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --plugin-manifest executes a local program declared by that manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl observer run --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+    after_help = "Plugin trust:\n  --plugin-manifest executes a local program declared by that manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl observer run --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
 )]
 struct ObserverRunArgs {
-    /// Built-in observer profile to use. If omitted, LogicPearl auto-detects one from the raw input when possible.
+    /// Built-in observer profile to use. Domain cue sets should be passed with --observer-artifact.
     #[arg(long)]
     observer_profile: Option<ObserverProfileArg>,
     /// Native observer artifact to execute.
@@ -1183,7 +1184,7 @@ struct ObserverDetectArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json"
+    after_help = "Examples:\n  logicpearl observer scaffold --profile signal-flags-v1 --output /tmp/signal_flags_observer.json\n  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json"
 )]
 struct ObserverScaffoldArgs {
     #[arg(long, value_enum)]
@@ -1196,7 +1197,7 @@ struct ObserverScaffoldArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl observer synthesize --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json --json"
+    after_help = "Example:\n  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json --json"
 )]
 struct ObserverSynthesizeArgs {
     /// Existing native observer artifact to use as the semantic seed. LogicPearl then selects a compact phrase subset from candidates mined around that signal.

@@ -101,12 +101,14 @@ logicpearl benchmark split-cases \
 
 logicpearl benchmark learn \
   /tmp/guardrail_train.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_train_prep \
   --json
 
 logicpearl benchmark observe \
   /tmp/guardrail_dev_holdout.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --output /tmp/guardrail_dev_holdout_observed.jsonl
 
 logicpearl benchmark emit-traces \

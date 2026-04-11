@@ -56,10 +56,16 @@ logicpearl observer scaffold \
   --output /tmp/guardrails_observer.json
 ```
 
+That scaffold contains the guardrail signal schema with empty cue lists. The
+checked-in public benchmark seed lives at:
+
+- [benchmarks/guardrails/observers/guardrails_v1.seed.json](../benchmarks/guardrails/observers/guardrails_v1.seed.json)
+
 Synthesize a compact cue set from benchmark data using the current signal family as the seed:
 
 ```bash
 logicpearl observer synthesize \
+  --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --benchmark-cases /tmp/squad_alert_full_dev.jsonl \
   --signal secret-exfiltration \
   --output /tmp/guardrails_observer.synthesized.json \
@@ -67,7 +73,7 @@ logicpearl observer synthesize \
 ```
 
 This path is intentionally seed-based:
-- the observer artifact or built-in profile defines the signal family
+- the observer artifact defines the signal family and cue text
 - LogicPearl mines deterministic candidate phrases around that signal
 - an exact selection backend chooses the smallest subset that keeps denied coverage and reduces benign hits
 - by default, LogicPearl holds out a deterministic development slice and chooses the smallest near-best candidate cap automatically
@@ -199,10 +205,14 @@ Run the guardrail observer over the adapted cases:
 ```bash
 logicpearl benchmark observe \
   /tmp/salad_dev.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --output /tmp/salad_dev_observed.jsonl
 ```
 
-For common prompt-shaped benchmark cases, LogicPearl will auto-detect the built-in native observer profile. If you need a frozen observer definition, scaffold one first and pass `--observer-artifact` instead.
+Guardrail cue text is supplied by an observer artifact. LogicPearl does not infer
+prompt-injection or security meaning from field names in the generic observer
+core; use `--observer-artifact` to select the benchmark seed, a synthesized
+artifact, or your own integration-owned observer.
 
 This emits rows that keep:
 - benchmark metadata
@@ -242,6 +252,7 @@ If you want the middle of the workflow as one command, use:
 ```bash
 logicpearl benchmark learn \
   /tmp/salad_dev.jsonl \
+  --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json \
   --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json \
   --output-dir /tmp/guardrail_prep \
   --json
