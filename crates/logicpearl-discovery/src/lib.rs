@@ -1,12 +1,14 @@
 use logicpearl_core::{LogicPearlError, Result};
-use logicpearl_ir::{Expression, FeatureGovernance, RuleDefinition, RuleVerificationStatus};
+use logicpearl_ir::{
+    Expression, FeatureGovernance, FeatureSemantics, RuleDefinition, RuleVerificationStatus,
+};
 use logicpearl_runtime::evaluate_gate;
 use logicpearl_solver::{
     resolve_backend, SolverSettings, SOLVER_BACKEND_ENV, SOLVER_DIR_ENV, SOLVER_TIMEOUT_MS_ENV,
 };
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
@@ -43,6 +45,7 @@ pub struct BuildOptions {
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
+    pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
 }
@@ -168,6 +171,7 @@ pub struct DiscoverOptions {
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
+    pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
 }
@@ -178,6 +182,14 @@ pub struct FeatureGovernanceConfig {
     pub feature_governance_version: String,
     #[serde(default)]
     pub features: BTreeMap<String, FeatureGovernance>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Default)]
+pub struct FeatureDictionaryConfig {
+    #[serde(default = "default_feature_dictionary_version")]
+    pub feature_dictionary_version: String,
+    #[serde(default)]
+    pub features: BTreeMap<String, FeatureSemantics>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -319,6 +331,10 @@ fn default_feature_governance_version() -> String {
     "1.0".to_string()
 }
 
+fn default_feature_dictionary_version() -> String {
+    "1.0".to_string()
+}
+
 fn default_rule_set_id() -> String {
     "pinned_rules".to_string()
 }
@@ -376,6 +392,8 @@ fn build_cache_manifest(
         refine: bool,
         pinned_rules_path: Option<String>,
         pinned_rules_fingerprint: Option<String>,
+        feature_dictionary_path: Option<String>,
+        feature_dictionary_fingerprint: Option<String>,
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
@@ -407,9 +425,14 @@ fn build_cache_manifest(
         .as_ref()
         .map(|path| fingerprint_file(path))
         .transpose()?;
+    let feature_dictionary_fingerprint = options
+        .feature_dictionary
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "3".to_string(),
+        cache_version: "4".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -425,6 +448,11 @@ fn build_cache_manifest(
                 .as_ref()
                 .map(|path| path.display().to_string()),
             pinned_rules_fingerprint,
+            feature_dictionary_path: options
+                .feature_dictionary
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            feature_dictionary_fingerprint,
             feature_governance_path: options
                 .feature_governance
                 .as_ref()
@@ -450,6 +478,8 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         refine: bool,
         pinned_rules_path: Option<String>,
         pinned_rules_fingerprint: Option<String>,
+        feature_dictionary_path: Option<String>,
+        feature_dictionary_fingerprint: Option<String>,
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
@@ -470,9 +500,14 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         .as_ref()
         .map(|path| fingerprint_file(path))
         .transpose()?;
+    let feature_dictionary_fingerprint = options
+        .feature_dictionary
+        .as_ref()
+        .map(|path| fingerprint_file(path))
+        .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "2".to_string(),
+        cache_version: "3".to_string(),
         operation: "discover".to_string(),
         input_fingerprint: fingerprint_file(csv_path)?,
         options_fingerprint: cache_fingerprint(&DiscoverFingerprintOptions {
@@ -485,6 +520,11 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
                 .as_ref()
                 .map(|path| path.display().to_string()),
             pinned_rules_fingerprint,
+            feature_dictionary_path: options
+                .feature_dictionary
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            feature_dictionary_fingerprint,
             feature_governance_path: options
                 .feature_governance
                 .as_ref()
@@ -513,6 +553,48 @@ pub fn load_feature_governance(path: &Path) -> Result<FeatureGovernanceConfig> {
     Ok(serde_json::from_str(&payload)?)
 }
 
+pub fn load_feature_dictionary(path: &Path) -> Result<FeatureDictionaryConfig> {
+    let payload = std::fs::read_to_string(path)?;
+    let config: FeatureDictionaryConfig = serde_json::from_str(&payload)?;
+    if config.feature_dictionary_version != "1.0" {
+        return Err(LogicPearlError::message(format!(
+            "unsupported feature_dictionary_version: {}",
+            config.feature_dictionary_version
+        )));
+    }
+    Ok(config)
+}
+
+fn validate_feature_dictionary(
+    dictionary: &FeatureDictionaryConfig,
+    rows: &[DecisionTraceRow],
+    derived_features: &[logicpearl_ir::FeatureDefinition],
+) -> Result<()> {
+    if dictionary.features.is_empty() {
+        return Ok(());
+    }
+    let mut known_features = rows
+        .first()
+        .map(|row| row.features.keys().cloned().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    for feature in derived_features {
+        known_features.insert(feature.id.clone());
+    }
+    let unknown = dictionary
+        .features
+        .keys()
+        .filter(|feature| !known_features.contains(*feature))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "feature dictionary references unknown feature(s): {}",
+            unknown.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
     let loaded = load_decision_traces_auto(
         csv_path,
@@ -529,6 +611,7 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         residual_pass: options.residual_pass,
         refine: options.refine,
         pinned_rules: options.pinned_rules.clone(),
+        feature_dictionary: options.feature_dictionary.clone(),
         feature_governance: options.feature_governance.clone(),
         decision_mode: options.decision_mode,
     };
@@ -691,6 +774,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 residual_pass: options.residual_pass,
                 refine: options.refine,
                 pinned_rules: options.pinned_rules.clone(),
+                feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
             },
@@ -788,6 +872,13 @@ pub fn build_pearl_from_rows(
         .map(load_feature_governance)
         .transpose()?
         .unwrap_or_default();
+    let feature_dictionary = options
+        .feature_dictionary
+        .as_deref()
+        .map(load_feature_dictionary)
+        .transpose()?
+        .unwrap_or_default();
+    validate_feature_dictionary(&feature_dictionary, rows, &derived_features)?;
     let residual_options = options
         .residual_pass
         .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
@@ -811,12 +902,14 @@ pub fn build_pearl_from_rows(
         rows,
         &derived_features,
         &feature_governance.features,
+        &feature_dictionary.features,
         &options.gate_id,
         options.decision_mode,
         residual_options.as_ref(),
         refinement_options.as_ref(),
         pinned_rules.as_ref(),
     )?;
+    gate.validate()?;
     gate.write_pretty(&pearl_ir_path)?;
 
     let mut correct = 0;
@@ -1096,6 +1189,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1135,6 +1229,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1256,6 +1351,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1293,6 +1389,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1323,6 +1420,7 @@ mod tests {
             &rows,
             &[],
             &BTreeMap::new(),
+            &BTreeMap::new(),
             "residual_gate",
             vec![rule_from_candidate(
                 0,
@@ -1342,6 +1440,7 @@ mod tests {
         let residual_rules = discover_residual_rules(
             &rows,
             &first_pass_gate,
+            &BTreeMap::new(),
             &ResidualPassOptions {
                 max_conditions: 2,
                 min_positive_support: 2,
@@ -1385,6 +1484,7 @@ mod tests {
                 residual_pass: false,
                 refine: true,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1650,6 +1750,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1673,6 +1774,7 @@ mod tests {
                 residual_pass: true,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1716,6 +1818,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1759,6 +1862,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1820,6 +1924,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },
@@ -1942,6 +2047,7 @@ mod tests {
             residual_pass: false,
             refine: false,
             pinned_rules: None,
+            feature_dictionary: None,
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
         };
@@ -2067,6 +2173,7 @@ mod tests {
             residual_pass: false,
             refine: false,
             pinned_rules: None,
+            feature_dictionary: None,
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
         };
@@ -2152,6 +2259,7 @@ mod tests {
                 residual_pass: false,
                 refine: false,
                 pinned_rules: None,
+                feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
             },

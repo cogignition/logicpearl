@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-use super::rule_text::generate_rule_text;
+use super::rule_text::{generate_rule_text, RuleTextContext};
 use super::DecisionTraceRow;
 
 const DERIVED_FEATURE_PREFIX: &str = "derived__";
@@ -129,6 +129,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
                         min: None,
                         max: None,
                         editable: Some(false),
+                        semantics: None,
                         governance: None,
                         derived: Some(DerivedFeatureDefinition {
                             op,
@@ -412,7 +413,7 @@ pub(super) fn rule_with_added_condition(
         _ => rule.deny_when.clone(),
     };
 
-    let generated = generate_rule_text(&deny_when);
+    let generated = generate_rule_text(&deny_when, &RuleTextContext::empty());
 
     RuleDefinition {
         id: rule.id.clone(),

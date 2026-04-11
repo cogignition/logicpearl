@@ -217,6 +217,7 @@ The public builder already includes solver-backed conjunction recovery for multi
 Additional build controls:
 - `--refine` tightens uniquely over-broad rules
 - `--pinned-rules rules.json` merges a maintained rule layer after discovery
+- `--feature-dictionary feature_dictionary.json` gives raw feature IDs readable labels, states, and source anchors
 - `--feature-governance governance.json` constrains how discovery may use specific features
 
 Example:
@@ -224,6 +225,35 @@ Example:
 ```bash
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --refine
 ```
+
+### Make learned rules readable with a feature dictionary
+
+LogicPearl learns deterministic rules from feature IDs. A feature dictionary tells LogicPearl what those features mean before discovery runs, so generated artifact text, `inspect`, and `diff` are readable without changing runtime behavior.
+
+Use it when feature IDs are stable machine names but the artifact should speak in domain language:
+
+```bash
+logicpearl build traces.csv \
+  --feature-dictionary feature_dictionary.json \
+  --output-dir /tmp/logicpearl-build
+```
+
+Dictionary entries are embedded into the emitted `pearl.ir.json` under `input_schema.features[].semantics`. The raw rule expression stays visible and remains the source of deterministic truth:
+
+```json
+{
+  "deny_when": {
+    "feature": "requirement__req-003__satisfied",
+    "op": "<=",
+    "value": 0.0
+  },
+  "label": "Failed conservative therapy is missing"
+}
+```
+
+The dictionary is generic. Do not encode healthcare, payer, or policy-specific parsing in the LogicPearl core. Domain adapters should generate the dictionary alongside traces and pass it to `build` or `discover`; CSV users can start with labels only and add state text when they want higher-quality diffs.
+
+See [Feature dictionaries](./docs/feature-dictionary.md) for the schema, examples, and guidance for integration authors.
 
 ### Constrain one-sided evidence with feature governance
 
@@ -300,6 +330,7 @@ The important boundary is:
 - policy fields can drive the generated label through declarative deny rules
 - nuisance fields are sampled independently and then audited for label skew
 - discovery still runs on the emitted traces, not on hidden handwritten runtime logic
+- optional feature dictionaries can make generated rule labels and diffs read like the source policy
 - optional feature governance can further constrain one-sided evidence if some generated features should only be usable in one direction
 
 Inspect the artifact:

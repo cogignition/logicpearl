@@ -1,5 +1,9 @@
-use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression};
+use logicpearl_ir::{
+    ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, FeatureSemantics,
+    FeatureStateSemantics,
+};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub(super) struct GeneratedRuleText {
@@ -8,10 +12,43 @@ pub(super) struct GeneratedRuleText {
     pub counterfactual_hint: Option<String>,
 }
 
-pub(super) fn generate_rule_text(expression: &Expression) -> GeneratedRuleText {
-    let label = Some(expression_label(expression));
-    let message = label.as_ref().map(|label| format!("{label}."));
-    let counterfactual_hint = Some(expression_counterfactual_hint(expression));
+pub(super) struct RuleTextContext<'a> {
+    feature_semantics: Option<&'a BTreeMap<String, FeatureSemantics>>,
+}
+
+impl<'a> RuleTextContext<'a> {
+    pub(super) fn empty() -> Self {
+        Self {
+            feature_semantics: None,
+        }
+    }
+
+    pub(super) fn with_feature_semantics(
+        feature_semantics: &'a BTreeMap<String, FeatureSemantics>,
+    ) -> Self {
+        Self {
+            feature_semantics: Some(feature_semantics),
+        }
+    }
+
+    fn feature_semantics(&self, feature: &str) -> Option<&'a FeatureSemantics> {
+        self.feature_semantics
+            .and_then(|semantics| semantics.get(feature))
+    }
+}
+
+pub(super) fn generate_rule_text(
+    expression: &Expression,
+    context: &RuleTextContext<'_>,
+) -> GeneratedRuleText {
+    let label = Some(expression_label(expression, context));
+    let message = match expression {
+        Expression::Comparison(comparison) => comparison_state_match(comparison, context)
+            .and_then(|(_, state)| state.message.clone())
+            .or_else(|| label.as_ref().map(|label| format!("{label}."))),
+        _ => label.as_ref().map(|label| format!("{label}.")),
+    };
+    let counterfactual_hint = Some(expression_counterfactual_hint(expression, context));
     GeneratedRuleText {
         label,
         message,
@@ -19,51 +56,73 @@ pub(super) fn generate_rule_text(expression: &Expression) -> GeneratedRuleText {
     }
 }
 
-fn expression_label(expression: &Expression) -> String {
+fn expression_label(expression: &Expression, context: &RuleTextContext<'_>) -> String {
     match expression {
-        Expression::Comparison(comparison) => comparison_label(comparison),
-        Expression::All { all } => join_child_labels(all, " and "),
-        Expression::Any { any } => join_child_labels(any, " or "),
-        Expression::Not { expr } => format!("Not ({})", expression_label(expr)),
+        Expression::Comparison(comparison) => comparison_label(comparison, context),
+        Expression::All { all } => join_child_labels(all, " and ", context),
+        Expression::Any { any } => join_child_labels(any, " or ", context),
+        Expression::Not { expr } => format!("Not ({})", expression_label(expr, context)),
     }
 }
 
-fn expression_counterfactual_hint(expression: &Expression) -> String {
+fn expression_counterfactual_hint(
+    expression: &Expression,
+    context: &RuleTextContext<'_>,
+) -> String {
     match expression {
-        Expression::Comparison(comparison) => comparison_counterfactual_hint(comparison),
+        Expression::Comparison(comparison) => comparison_counterfactual_hint(comparison, context),
         Expression::All { all } => format!(
             "Break at least one condition: {}",
             all.iter()
-                .map(expression_counterfactual_hint)
+                .map(|expression| expression_counterfactual_hint(expression, context))
                 .collect::<Vec<_>>()
                 .join("; ")
         ),
         Expression::Any { any } => format!(
             "Resolve all of: {}",
             any.iter()
-                .map(expression_counterfactual_hint)
+                .map(|expression| expression_counterfactual_hint(expression, context))
                 .collect::<Vec<_>>()
                 .join("; ")
         ),
         Expression::Not { expr } => {
-            format!("Reverse this negated condition: {}", expression_label(expr))
+            format!(
+                "Reverse this negated condition: {}",
+                expression_label(expr, context)
+            )
         }
     }
 }
 
-fn join_child_labels(children: &[Expression], joiner: &str) -> String {
+fn join_child_labels(
+    children: &[Expression],
+    joiner: &str,
+    context: &RuleTextContext<'_>,
+) -> String {
     children
         .iter()
-        .map(expression_label)
+        .map(|expression| expression_label(expression, context))
         .collect::<Vec<_>>()
         .join(joiner)
 }
 
-fn comparison_label(comparison: &ComparisonExpression) -> String {
-    let feature = humanize_feature_name(&comparison.feature);
+fn comparison_label(comparison: &ComparisonExpression, context: &RuleTextContext<'_>) -> String {
+    if let Some((semantics, state)) = comparison_state_match(comparison, context) {
+        if let Some(label) = state.label.as_ref() {
+            return label.clone();
+        }
+        if let Some(label) = semantics.label.as_ref() {
+            return comparison_label_with_feature(comparison, label);
+        }
+    }
+    let feature = feature_label(&comparison.feature, context);
+    comparison_label_with_feature(comparison, &feature)
+}
+
+fn comparison_label_with_feature(comparison: &ComparisonExpression, feature: &str) -> String {
     match (&comparison.op, &comparison.value) {
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(true))) => {
-            positive_boolean_label(&comparison.feature)
+            positive_boolean_label(&comparison.feature, feature)
         }
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(false))) => {
             format!("{feature} Is False")
@@ -72,7 +131,7 @@ fn comparison_label(comparison: &ComparisonExpression) -> String {
             format!("{feature} Is False")
         }
         (ComparisonOperator::Ne, ComparisonValue::Literal(Value::Bool(false))) => {
-            positive_boolean_label(&comparison.feature)
+            positive_boolean_label(&comparison.feature, feature)
         }
         (ComparisonOperator::Eq, ComparisonValue::FeatureRef { feature_ref }) => {
             format!("{feature} equals {}", humanize_feature_name(feature_ref))
@@ -137,11 +196,26 @@ fn comparison_label(comparison: &ComparisonExpression) -> String {
     }
 }
 
-fn comparison_counterfactual_hint(comparison: &ComparisonExpression) -> String {
-    let feature = humanize_feature_name(&comparison.feature);
+fn comparison_counterfactual_hint(
+    comparison: &ComparisonExpression,
+    context: &RuleTextContext<'_>,
+) -> String {
+    if let Some((_, state)) = comparison_state_match(comparison, context) {
+        if let Some(hint) = state.counterfactual_hint.as_ref() {
+            return hint.clone();
+        }
+    }
+    let feature = feature_label(&comparison.feature, context);
+    comparison_counterfactual_hint_with_feature(comparison, &feature)
+}
+
+fn comparison_counterfactual_hint_with_feature(
+    comparison: &ComparisonExpression,
+    feature: &str,
+) -> String {
     match (&comparison.op, &comparison.value) {
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(true))) => {
-            positive_boolean_counterfactual(&comparison.feature)
+            positive_boolean_counterfactual(&comparison.feature, feature)
         }
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(false))) => {
             format!("Keep {feature} true")
@@ -150,7 +224,7 @@ fn comparison_counterfactual_hint(comparison: &ComparisonExpression) -> String {
             format!("Keep {feature} false")
         }
         (ComparisonOperator::Ne, ComparisonValue::Literal(Value::Bool(false))) => {
-            positive_boolean_counterfactual(&comparison.feature)
+            positive_boolean_counterfactual(&comparison.feature, feature)
         }
         (ComparisonOperator::Lt, ComparisonValue::Literal(value)) => {
             format!("Keep {feature} at or above {}", render_value(value))
@@ -227,8 +301,49 @@ fn comparison_counterfactual_hint(comparison: &ComparisonExpression) -> String {
     }
 }
 
-fn positive_boolean_label(feature_id: &str) -> String {
-    let feature = humanize_feature_name(feature_id);
+fn feature_label(feature_id: &str, context: &RuleTextContext<'_>) -> String {
+    context
+        .feature_semantics(feature_id)
+        .and_then(|semantics| semantics.label.clone())
+        .unwrap_or_else(|| humanize_feature_name(feature_id))
+}
+
+fn comparison_state_match<'a>(
+    comparison: &ComparisonExpression,
+    context: &'a RuleTextContext<'a>,
+) -> Option<(&'a FeatureSemantics, &'a FeatureStateSemantics)> {
+    let semantics = context.feature_semantics(&comparison.feature)?;
+    semantics
+        .states
+        .values()
+        .find(|state| {
+            state.predicate.op == comparison.op
+                && comparison_values_match(&state.predicate.value, &comparison.value)
+        })
+        .map(|state| (semantics, state))
+}
+
+fn comparison_values_match(left: &ComparisonValue, right: &ComparisonValue) -> bool {
+    match (left, right) {
+        (
+            ComparisonValue::FeatureRef { feature_ref: left },
+            ComparisonValue::FeatureRef { feature_ref: right },
+        ) => left == right,
+        (ComparisonValue::Literal(left), ComparisonValue::Literal(right)) => {
+            literal_values_match(left, right)
+        }
+        _ => false,
+    }
+}
+
+fn literal_values_match(left: &Value, right: &Value) -> bool {
+    match (left.as_f64(), right.as_f64()) {
+        (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+        _ => left == right,
+    }
+}
+
+fn positive_boolean_label(feature_id: &str, feature: &str) -> String {
     if let Some(rest) = feature_id.strip_prefix("contains_") {
         format!("{} Detected", humanize_feature_name(rest))
     } else if let Some(rest) = feature_id.strip_prefix("has_") {
@@ -248,8 +363,7 @@ fn positive_boolean_label(feature_id: &str) -> String {
     }
 }
 
-fn positive_boolean_counterfactual(feature_id: &str) -> String {
-    let feature = humanize_feature_name(feature_id);
+fn positive_boolean_counterfactual(feature_id: &str, feature: &str) -> String {
     if let Some(rest) = feature_id.strip_prefix("contains_") {
         format!("Remove {}", humanize_feature_name(rest))
     } else if let Some(rest) = feature_id.strip_prefix("has_") {
@@ -342,9 +456,10 @@ fn render_value(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_rule_text;
-    use logicpearl_ir::Expression;
+    use super::{generate_rule_text, RuleTextContext};
+    use logicpearl_ir::{Expression, FeatureSemantics};
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn generates_boolean_detection_label_and_hint() {
@@ -355,7 +470,7 @@ mod tests {
         }))
         .unwrap();
 
-        let generated = generate_rule_text(&expression);
+        let generated = generate_rule_text(&expression, &RuleTextContext::empty());
         assert_eq!(generated.label.as_deref(), Some("XSS Signature Detected"));
         assert_eq!(
             generated.counterfactual_hint.as_deref(),
@@ -372,11 +487,53 @@ mod tests {
         }))
         .unwrap();
 
-        let generated = generate_rule_text(&expression);
+        let generated = generate_rule_text(&expression, &RuleTextContext::empty());
         assert_eq!(generated.label.as_deref(), Some("Clearance Level below 5"));
         assert_eq!(
             generated.counterfactual_hint.as_deref(),
             Some("Keep Clearance Level at or above 5")
+        );
+    }
+
+    #[test]
+    fn annotated_missing_requirement_generates_readable_rule_text() {
+        let expression: Expression = serde_json::from_value(json!({
+            "feature": "requirement__req-abc__satisfied",
+            "op": "<=",
+            "value": 0.0
+        }))
+        .unwrap();
+        let mut feature_semantics = BTreeMap::new();
+        feature_semantics.insert(
+            "requirement__req-abc__satisfied".to_string(),
+            serde_json::from_value::<FeatureSemantics>(json!({
+                "label": "Failed conservative therapy",
+                "states": {
+                    "missing": {
+                        "when": {"op": "<=", "value": 0.0},
+                        "label": "Failed conservative therapy is missing",
+                        "message": "This rule fires when the packet does not support failed conservative therapy.",
+                        "counterfactual_hint": "Add evidence showing failed conservative therapy."
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+        let context = RuleTextContext::with_feature_semantics(&feature_semantics);
+
+        let generated = generate_rule_text(&expression, &context);
+        assert_eq!(
+            generated.label.as_deref(),
+            Some("Failed conservative therapy is missing")
+        );
+        assert!(!generated.label.unwrap().contains("req-abc"));
+        assert_eq!(
+            generated.message.as_deref(),
+            Some("This rule fires when the packet does not support failed conservative therapy.")
+        );
+        assert_eq!(
+            generated.counterfactual_hint.as_deref(),
+            Some("Add evidence showing failed conservative therapy.")
         );
     }
 }

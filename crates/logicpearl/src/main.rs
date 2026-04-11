@@ -521,7 +521,7 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --output-dir /tmp/output\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -563,6 +563,9 @@ struct BuildArgs {
     /// JSON file of pinned rules to merge after discovery and refinement.
     #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
+    /// JSON feature dictionary that gives raw feature IDs readable labels, states, and provenance.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    feature_dictionary: Option<PathBuf>,
     /// JSON file declaring feature governance such as one-sided boolean evidence.
     #[arg(long, help_heading = "Advanced Discovery")]
     feature_governance: Option<PathBuf>,
@@ -588,7 +591,7 @@ struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
 )]
 struct DiscoverArgs {
     /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
@@ -615,6 +618,9 @@ struct DiscoverArgs {
     /// JSON file of pinned rules to merge after discovery and refinement.
     #[arg(long, help_heading = "Advanced Discovery")]
     pinned_rules: Option<PathBuf>,
+    /// JSON feature dictionary that gives raw feature IDs readable labels, states, and provenance.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    feature_dictionary: Option<PathBuf>,
     /// JSON file declaring feature governance such as one-sided boolean evidence.
     #[arg(long, help_heading = "Advanced Discovery")]
     feature_governance: Option<PathBuf>,

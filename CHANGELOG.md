@@ -4,6 +4,11 @@ All notable user-facing changes should be added here.
 
 ## Unreleased
 
+### Added
+- First-class feature dictionaries for `logicpearl build` and `logicpearl discover` via `--feature-dictionary`, embedding readable feature semantics into emitted artifacts without changing runtime evaluation.
+- Dictionary-aware rule text, inspect output, and artifact diffs, including separate diff flags for source/schema changes, learned rule changes, and explanation-only changes.
+- Feature dictionary documentation and repository guidance for LLM agents and integration authors.
+
 ## 0.1.2 - 2026-04-08
 
 ### Added

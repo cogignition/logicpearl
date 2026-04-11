@@ -191,6 +191,7 @@ mod tests {
                     min: None,
                     max: None,
                     editable: None,
+                    semantics: None,
                     governance: None,
                     derived: None,
                 }],
@@ -266,6 +267,32 @@ mod tests {
     }
 
     #[test]
+    fn feature_semantics_do_not_change_runtime_evaluation() {
+        let plain_gate = gate_for_eq_test(json!(1));
+        let mut annotated_gate = plain_gate.clone();
+        annotated_gate.input_schema.features[0].semantics = Some(
+            serde_json::from_value(json!({
+                "label": "Risk flag",
+                "states": {
+                    "present": {
+                        "when": {"op": "==", "value": 1},
+                        "label": "Risk flag is present",
+                        "message": "This rule fires when the risk flag is present.",
+                        "counterfactual_hint": "Remove the risk flag."
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+        let features = HashMap::from([("flag".to_string(), json!(1))]);
+
+        assert_eq!(
+            evaluate_gate(&plain_gate, &features).unwrap(),
+            evaluate_gate(&annotated_gate, &features).unwrap()
+        );
+    }
+
+    #[test]
     fn derived_ratio_feature_evaluates_from_raw_inputs() {
         let gate = LogicPearlGateIr {
             ir_version: "1.0".to_string(),
@@ -281,6 +308,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        semantics: None,
                         governance: None,
                         derived: None,
                     },
@@ -292,6 +320,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        semantics: None,
                         governance: None,
                         derived: None,
                     },
@@ -303,6 +332,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        semantics: None,
                         governance: None,
                         derived: Some(logicpearl_ir::DerivedFeatureDefinition {
                             op: logicpearl_ir::DerivedFeatureOperator::Ratio,

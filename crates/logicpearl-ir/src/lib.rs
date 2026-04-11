@@ -1,7 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -33,9 +33,47 @@ pub struct FeatureDefinition {
     pub max: Option<f64>,
     pub editable: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantics: Option<FeatureSemantics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub governance: Option<FeatureGovernance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub derived: Option<DerivedFeatureDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeatureSemantics {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub higher_is_better: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub states: BTreeMap<String, FeatureStateSemantics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeatureStateSemantics {
+    #[serde(rename = "when")]
+    pub predicate: FeatureStatePredicate,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, alias = "fix", skip_serializing_if = "Option::is_none")]
+    pub counterfactual_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeatureStatePredicate {
+    pub op: ComparisonOperator,
+    pub value: ComparisonValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -251,6 +289,11 @@ impl LogicPearlGateIr {
             }
             known_features.insert(feature.id.clone(), feature);
         }
+        for feature in &self.input_schema.features {
+            if let Some(semantics) = &feature.semantics {
+                validate_feature_semantics(feature, semantics, &known_features)?;
+            }
+        }
 
         let mut rule_ids = BTreeSet::new();
         let mut rule_bits = BTreeSet::new();
@@ -342,6 +385,47 @@ impl FeatureDefinition {
         }
         Ok(())
     }
+}
+
+fn validate_feature_semantics(
+    feature: &FeatureDefinition,
+    semantics: &FeatureSemantics,
+    known_features: &HashMap<String, &FeatureDefinition>,
+) -> Result<()> {
+    validate_optional_non_empty(&semantics.label, "feature semantics label")?;
+    validate_optional_non_empty(&semantics.kind, "feature semantics kind")?;
+    validate_optional_non_empty(&semantics.unit, "feature semantics unit")?;
+    validate_optional_non_empty(&semantics.source_id, "feature semantics source_id")?;
+    validate_optional_non_empty(&semantics.source_anchor, "feature semantics source_anchor")?;
+    for (state_id, state) in &semantics.states {
+        if state_id.trim().is_empty() {
+            return Err(LogicPearlError::message(
+                "feature semantics state ids must be non-empty",
+            ));
+        }
+        validate_optional_non_empty(&state.label, "feature semantics state label")?;
+        validate_optional_non_empty(&state.message, "feature semantics state message")?;
+        validate_optional_non_empty(
+            &state.counterfactual_hint,
+            "feature semantics state counterfactual_hint",
+        )?;
+        let comparison = ComparisonExpression {
+            feature: feature.id.clone(),
+            op: state.predicate.op.clone(),
+            value: state.predicate.value.clone(),
+        };
+        validate_comparison(&comparison, feature, known_features)?;
+    }
+    Ok(())
+}
+
+fn validate_optional_non_empty(value: &Option<String>, field: &str) -> Result<()> {
+    if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+        return Err(LogicPearlError::message(format!(
+            "{field} must be non-empty"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_derived_feature(
@@ -753,6 +837,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        semantics: None,
                         governance: None,
                         derived: None,
                     },
@@ -764,6 +849,7 @@ mod tests {
                         min: None,
                         max: None,
                         editable: None,
+                        semantics: None,
                         governance: None,
                         derived: None,
                     },
@@ -918,6 +1004,88 @@ mod tests {
         let decoded: RuleVerificationStatus =
             serde_json::from_str(&encoded).expect("verification status should deserialize");
         assert_eq!(decoded, RuleVerificationStatus::SolverVerified);
+    }
+
+    #[test]
+    fn feature_semantics_round_trips_and_validates() {
+        let mut gate = simple_gate(
+            ComparisonExpression {
+                feature: "left".to_string(),
+                op: ComparisonOperator::Lte,
+                value: ComparisonValue::Literal(json!(0.0)),
+            },
+            FeatureType::Int,
+        );
+        gate.input_schema.features[0].semantics = Some(
+            serde_json::from_value(json!({
+                "label": "Failed conservative therapy",
+                "kind": "evidence",
+                "source_id": "req-003",
+                "source_anchor": "page-1",
+                "states": {
+                    "missing": {
+                        "when": {"op": "<=", "value": 0.0},
+                        "label": "Failed conservative therapy is missing",
+                        "message": "This rule fires when the packet does not support failed conservative therapy.",
+                        "counterfactual_hint": "Add evidence showing failed conservative therapy."
+                    }
+                }
+            }))
+            .unwrap(),
+        );
+
+        gate.validate().expect("feature semantics should validate");
+        let serialized = serde_json::to_string(&gate).unwrap();
+        let parsed = LogicPearlGateIr::from_json_str(&serialized).unwrap();
+        let semantics = parsed.input_schema.features[0]
+            .semantics
+            .as_ref()
+            .expect("semantics should survive serialization");
+        assert_eq!(
+            semantics.label.as_deref(),
+            Some("Failed conservative therapy")
+        );
+        assert!(semantics.states.contains_key("missing"));
+    }
+
+    #[test]
+    fn old_artifact_without_feature_semantics_still_deserializes() {
+        let payload = json!({
+            "ir_version": "1.0",
+            "gate_id": "old_gate",
+            "gate_type": "bitmask_gate",
+            "input_schema": {
+                "features": [{
+                    "id": "age",
+                    "type": "int",
+                    "description": null,
+                    "values": null,
+                    "min": null,
+                    "max": null,
+                    "editable": null
+                }]
+            },
+            "rules": [{
+                "id": "rule_000",
+                "kind": "predicate",
+                "bit": 0,
+                "deny_when": {"feature": "age", "op": "<", "value": 18},
+                "label": null,
+                "message": null,
+                "severity": null,
+                "counterfactual_hint": null,
+                "verification_status": null
+            }],
+            "evaluation": {
+                "combine": "bitwise_or",
+                "allow_when_bitmask": 0
+            },
+            "verification": null,
+            "provenance": null
+        });
+
+        let parsed = LogicPearlGateIr::from_json_str(&payload.to_string()).unwrap();
+        assert!(parsed.input_schema.features[0].semantics.is_none());
     }
 
     #[test]

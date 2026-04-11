@@ -1,6 +1,6 @@
 use super::*;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -155,6 +155,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             residual_pass: args.residual_pass,
             refine: args.refine,
             pinned_rules: args.pinned_rules.clone(),
+            feature_dictionary: args.feature_dictionary.clone(),
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
         },
@@ -436,6 +437,7 @@ pub(crate) fn run_build(args: BuildArgs) -> Result<()> {
         residual_pass: true,
         refine: args.refine,
         pinned_rules: args.pinned_rules.clone(),
+        feature_dictionary: args.feature_dictionary.clone(),
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
     };
@@ -875,6 +877,8 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             "ir_version": gate.ir_version,
             "features": gate.input_schema.features.len(),
             "rules": gate.rules.len(),
+            "feature_dictionary": inspect_feature_dictionary(&gate),
+            "rule_details": inspect_rule_details(&gate),
             "correctness_scope": gate.verification.as_ref().and_then(|verification| verification.correctness_scope.clone()),
             "verification_summary": gate.verification.as_ref().and_then(|verification| verification.verification_summary.clone()),
             "bundle": bundle,
@@ -919,6 +923,100 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         println!("{}", inspector.render(&gate).into_diagnostic()?);
     }
     Ok(())
+}
+
+fn inspect_feature_dictionary(gate: &LogicPearlGateIr) -> Value {
+    let features = gate
+        .input_schema
+        .features
+        .iter()
+        .filter_map(|feature| {
+            let semantics = feature.semantics.as_ref()?;
+            Some(serde_json::json!({
+                "id": feature.id,
+                "label": semantics.label,
+                "kind": semantics.kind,
+                "unit": semantics.unit,
+                "higher_is_better": semantics.higher_is_better,
+                "source_id": semantics.source_id,
+                "source_anchor": semantics.source_anchor,
+                "states": semantics.states,
+            }))
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "features": features,
+        "feature_count": features.len(),
+    })
+}
+
+fn inspect_rule_details(gate: &LogicPearlGateIr) -> Vec<Value> {
+    gate.rules
+        .iter()
+        .map(|rule| {
+            let referenced_features = expression_feature_ids(&rule.deny_when)
+                .into_iter()
+                .filter_map(|feature_id| inspect_rule_feature(gate, &feature_id))
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "id": rule.id,
+                "bit": rule.bit,
+                "deny_when": rule.deny_when,
+                "label": rule.label,
+                "message": rule.message,
+                "severity": rule.severity,
+                "counterfactual_hint": rule.counterfactual_hint,
+                "verification_status": rule.verification_status,
+                "feature_dictionary": referenced_features,
+            })
+        })
+        .collect()
+}
+
+fn inspect_rule_feature(gate: &LogicPearlGateIr, feature_id: &str) -> Option<Value> {
+    let feature = gate
+        .input_schema
+        .features
+        .iter()
+        .find(|feature| feature.id == feature_id)?;
+    let semantics = feature.semantics.as_ref()?;
+    Some(serde_json::json!({
+        "id": feature.id,
+        "label": semantics.label,
+        "source_id": semantics.source_id,
+        "source_anchor": semantics.source_anchor,
+    }))
+}
+
+fn expression_feature_ids(expression: &logicpearl_ir::Expression) -> BTreeSet<String> {
+    let mut features = BTreeSet::new();
+    collect_expression_feature_ids(expression, &mut features);
+    features
+}
+
+fn collect_expression_feature_ids(
+    expression: &logicpearl_ir::Expression,
+    features: &mut BTreeSet<String>,
+) {
+    match expression {
+        logicpearl_ir::Expression::Comparison(comparison) => {
+            features.insert(comparison.feature.clone());
+            if let logicpearl_ir::ComparisonValue::FeatureRef { feature_ref } = &comparison.value {
+                features.insert(feature_ref.clone());
+            }
+        }
+        logicpearl_ir::Expression::All { all } => {
+            for child in all {
+                collect_expression_feature_ids(child, features);
+            }
+        }
+        logicpearl_ir::Expression::Any { any } => {
+            for child in any {
+                collect_expression_feature_ids(child, features);
+            }
+        }
+        logicpearl_ir::Expression::Not { expr } => collect_expression_feature_ids(expr, features),
+    }
 }
 
 pub(crate) fn run_verify(args: VerifyArgs) -> Result<()> {

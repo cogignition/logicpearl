@@ -521,6 +521,7 @@ fn spec_input_schema(spec: &TraceGenerationSpec) -> Result<InputSchema> {
                     min,
                     max,
                     editable: Some(true),
+                    semantics: None,
                     governance: None,
                     derived: None,
                 })

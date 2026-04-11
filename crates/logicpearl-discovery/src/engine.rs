@@ -30,7 +30,7 @@ use super::features::{
     boolean_feature_map, infer_binary_feature_names, infer_feature_type, is_derived_feature_name,
     numeric_feature_names, rule_contains_feature, rule_with_added_condition, sorted_feature_names,
 };
-use super::rule_text::generate_rule_text;
+use super::rule_text::{generate_rule_text, RuleTextContext};
 use super::{
     CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, ExactSelectionBackend,
     ExactSelectionReport, PinnedRuleSet, ResidualPassOptions, ResidualRecoveryReport,
@@ -122,6 +122,7 @@ pub(super) fn build_gate(
     source_rows: &[DecisionTraceRow],
     derived_features: &[FeatureDefinition],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     gate_id: &str,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
@@ -135,8 +136,13 @@ pub(super) fn build_gate(
     usize,
     usize,
 )> {
-    let (mut rules, exact_selection) =
-        discover_rules(rows, feature_governance, decision_mode, residual_options)?;
+    let (mut rules, exact_selection) = discover_rules(
+        rows,
+        feature_governance,
+        feature_semantics,
+        decision_mode,
+        residual_options,
+    )?;
     let mut residual_rules_discovered = 0usize;
     let primary_discovery_used_solver_recovery =
         residual_options.is_some() && rules.iter().any(rule_uses_compound_expression);
@@ -159,10 +165,11 @@ pub(super) fn build_gate(
             source_rows,
             derived_features,
             feature_governance,
+            feature_semantics,
             gate_id,
             rules.clone(),
         )?;
-        match discover_residual_rules(rows, &first_pass_gate, options) {
+        match discover_residual_rules(rows, &first_pass_gate, feature_semantics, options) {
             Ok(residual_rules) => {
                 residual_rules_discovered = residual_rules.len();
                 residual_recovery.state =
@@ -235,6 +242,7 @@ pub(super) fn build_gate(
             source_rows,
             derived_features,
             feature_governance,
+            feature_semantics,
             gate_id,
             rules,
         )?,
@@ -255,6 +263,7 @@ pub(super) fn gate_from_rules(
     source_rows: &[DecisionTraceRow],
     derived_features: &[FeatureDefinition],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     gate_id: &str,
     rules: Vec<RuleDefinition>,
 ) -> Result<LogicPearlGateIr> {
@@ -269,11 +278,17 @@ pub(super) fn gate_from_rules(
             min: None,
             max: None,
             editable: None,
+            semantics: feature_semantics.get(&feature).cloned(),
             governance: feature_governance.get(&feature).cloned(),
             derived: None,
         })
         .collect::<Vec<_>>();
-    features.extend(derived_features.iter().cloned());
+    features.extend(derived_features.iter().cloned().map(|mut feature| {
+        if feature.semantics.is_none() {
+            feature.semantics = feature_semantics.get(&feature.id).cloned();
+        }
+        feature
+    }));
     let verification_summary = rule_verification_summary(&rules);
     Ok(LogicPearlGateIr {
         ir_version: "1.0".to_string(),
@@ -402,6 +417,7 @@ fn rule_signature(rule: &RuleDefinition) -> String {
 pub(super) fn discover_rules(
     rows: &[DecisionTraceRow],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
+    feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
 ) -> Result<(Vec<RuleDefinition>, ExactSelectionReport)> {
@@ -489,7 +505,13 @@ pub(super) fn discover_rules(
         selected_candidates
             .iter()
             .enumerate()
-            .map(|(index, candidate)| rule_from_candidate(index as u32, candidate))
+            .map(|(index, candidate)| {
+                rule_from_candidate_with_context(
+                    index as u32,
+                    candidate,
+                    &RuleTextContext::with_feature_semantics(feature_semantics),
+                )
+            })
             .collect(),
         exact_selection,
     ))
@@ -1536,6 +1558,7 @@ fn compare_candidate_plan(
 pub(super) fn discover_residual_rules(
     rows: &[DecisionTraceRow],
     gate: &LogicPearlGateIr,
+    feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     options: &ResidualPassOptions,
 ) -> Result<Vec<RuleDefinition>> {
     let binary_features = infer_binary_feature_names(rows);
@@ -1578,7 +1601,11 @@ pub(super) fn discover_residual_rules(
         .into_iter()
         .enumerate()
         .map(|(index, candidate)| {
-            residual_rule_from_candidate(gate.rules.len() as u32 + index as u32, candidate)
+            residual_rule_from_candidate(
+                gate.rules.len() as u32 + index as u32,
+                candidate,
+                &RuleTextContext::with_feature_semantics(feature_semantics),
+            )
         })
         .collect())
 }
@@ -2228,9 +2255,18 @@ fn candidate_coverage(
         .count()
 }
 
+#[cfg(test)]
 pub(super) fn rule_from_candidate(bit: u32, candidate: &CandidateRule) -> RuleDefinition {
+    rule_from_candidate_with_context(bit, candidate, &RuleTextContext::empty())
+}
+
+fn rule_from_candidate_with_context(
+    bit: u32,
+    candidate: &CandidateRule,
+    context: &RuleTextContext<'_>,
+) -> RuleDefinition {
     let deny_when = candidate.expression.clone();
-    let generated = generate_rule_text(&deny_when);
+    let generated = generate_rule_text(&deny_when, context);
     RuleDefinition {
         id: format!("rule_{bit:03}"),
         kind: RuleKind::Predicate,
@@ -2247,6 +2283,7 @@ pub(super) fn rule_from_candidate(bit: u32, candidate: &CandidateRule) -> RuleDe
 fn residual_rule_from_candidate(
     bit: u32,
     candidate: BooleanConjunctionCandidate,
+    context: &RuleTextContext<'_>,
 ) -> RuleDefinition {
     let deny_when = if candidate.required_true_features.len() == 1 {
         Expression::Comparison(ComparisonExpression {
@@ -2270,7 +2307,7 @@ fn residual_rule_from_candidate(
         }
     };
 
-    let generated = generate_rule_text(&deny_when);
+    let generated = generate_rule_text(&deny_when, context);
     RuleDefinition {
         id: format!("rule_{bit:03}"),
         kind: RuleKind::Predicate,

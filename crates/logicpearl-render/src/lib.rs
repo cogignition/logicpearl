@@ -16,6 +16,15 @@ impl ArtifactRenderer<LogicPearlGateIr> for TextInspector {
                 lines.push(format!("Correctness scope: {scope}"));
             }
         }
+        let semantic_features = gate
+            .input_schema
+            .features
+            .iter()
+            .filter(|feature| feature.semantics.is_some())
+            .count();
+        if semantic_features > 0 {
+            lines.push(format!("Feature dictionary entries: {semantic_features}"));
+        }
         lines.push("Rule details:".to_string());
         for rule in &gate.rules {
             let status = match &rule.verification_status {
@@ -26,6 +35,15 @@ impl ArtifactRenderer<LogicPearlGateIr> for TextInspector {
                 None => "unknown",
             };
             lines.push(format!("  bit {}: {} [{}]", rule.bit, rule.id, status));
+            if let Some(label) = &rule.label {
+                lines.push(format!("    label: {label}"));
+            }
+            if let Some(message) = &rule.message {
+                lines.push(format!("    message: {message}"));
+            }
+            if let Some(hint) = &rule.counterfactual_hint {
+                lines.push(format!("    counterfactual: {hint}"));
+            }
         }
         Ok(lines.join("\n"))
     }
@@ -56,6 +74,7 @@ mod tests {
                     min: None,
                     max: None,
                     editable: None,
+                    semantics: None,
                     governance: None,
                     derived: None,
                 }],

@@ -298,6 +298,7 @@ pub(crate) fn run_benchmark_learn(args: BenchmarkLearnArgs) -> Result<()> {
                     residual_pass: false,
                     refine: false,
                     pinned_rules: None,
+                    feature_dictionary: None,
                     feature_governance: None,
                     decision_mode: logicpearl_discovery::DiscoveryDecisionMode::Standard,
                 },
