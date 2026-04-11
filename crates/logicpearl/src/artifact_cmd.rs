@@ -455,6 +455,7 @@ pub(crate) fn compile_native_runner(
             .wrap_err("failed to mark compiled pearl executable")?;
     }
 
+    cleanup_generated_build_dir(&build_dir);
     Ok(output_path)
 }
 
@@ -739,6 +740,7 @@ pub(crate) fn compile_wasm_module(
     fs::copy(&built_module, &output_path)
         .into_diagnostic()
         .wrap_err("failed to copy compiled pearl wasm module")?;
+    cleanup_generated_build_dir(&build_dir);
     Ok(WasmArtifactOutput {
         module_path: output_path,
         metadata_path,
@@ -1258,6 +1260,19 @@ fn generated_build_root(workspace_root: &Path) -> PathBuf {
             .join("logicpearl")
             .join("target")
             .join("generated")
+    }
+}
+
+fn cleanup_generated_build_dir(build_dir: &Path) {
+    if std::env::var_os("LOGICPEARL_KEEP_GENERATED_BUILDS").is_some() {
+        return;
+    }
+
+    if let Err(error) = fs::remove_dir_all(build_dir) {
+        eprintln!(
+            "warning: failed to clean generated compile directory {}: {error}",
+            build_dir.display()
+        );
     }
 }
 

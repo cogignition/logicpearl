@@ -84,6 +84,24 @@ cargo xtask verify pre-push
 cargo xtask verify ci
 ```
 
+Ignored local output can get large because compile, package, benchmark, and smoke-test flows create build products and JSON reports that are intentionally not tracked. Successful Cargo-backed compile runs clean up their transient generated crate by default; set `LOGICPEARL_KEEP_GENERATED_BUILDS=1` only when you need to debug the generated Rust project. Before sharing a worktree snapshot, inspect generated output with:
+
+```bash
+cargo xtask clean-generated
+```
+
+That command is a dry run. To remove those ignored generated paths:
+
+```bash
+cargo xtask clean-generated --apply
+```
+
+Use `cargo clean` or `cargo xtask clean-generated --include-cargo-target --apply` when you also want to remove the full root `target/` Cargo build cache. Public source archives should come from git, not a zipped local checkout:
+
+```bash
+git archive --format=zip --output logicpearl-source.zip HEAD
+```
+
 Run the targeted solver parity suite when you are touching solver-backed discovery, verification, or observer selection code:
 
 ```bash
