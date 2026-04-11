@@ -57,7 +57,8 @@ mod trace_cmd;
 use artifact_cmd::{
     compile_native_runner, compile_wasm_module, is_rust_target_installed,
     load_artifact_bundle_descriptor, native_artifact_output_path, persist_build_report,
-    resolve_artifact_input, wasm_artifact_output_path, write_named_artifact_manifest,
+    resolve_artifact_input, run_embedded_native_runner_if_present, wasm_artifact_output_path,
+    write_named_artifact_manifest,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
@@ -908,7 +909,7 @@ struct ComposeArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl compile examples/getting_started/output\n  logicpearl compile examples/getting_started/output --target wasm32-unknown-unknown\n  logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-unknown-linux-gnu"
+    after_help = "Requirements:\n  Same-host native compile is self-contained and copies the installed LogicPearl runner.\n  Wasm and non-host --target builds shell out to `cargo build --offline --release`.\n  Those Cargo-backed paths need Rust/Cargo, cached dependencies, and any requested\n  Rust target or linker/toolchain.\n\nExamples:\n  logicpearl compile examples/getting_started/output\n  logicpearl compile examples/getting_started/output --target wasm32-unknown-unknown\n  logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-unknown-linux-gnu"
 )]
 struct CompileArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
@@ -1290,6 +1291,10 @@ struct ObserverRepairArgs {
 }
 
 fn main() -> Result<()> {
+    if run_embedded_native_runner_if_present()? {
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Benchmark {

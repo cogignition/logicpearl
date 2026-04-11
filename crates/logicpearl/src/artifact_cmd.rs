@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const EMBEDDED_NATIVE_RUNNER_MAGIC: &[u8; 16] = b"LPEARL_RUNNER_V1";
+const EMBEDDED_NATIVE_RUNNER_TRAILER_LEN: u64 = 24;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactManifest {
@@ -362,6 +366,10 @@ pub(crate) fn compile_native_runner(
     let output_path = output.unwrap_or_else(|| {
         native_artifact_output_path(artifact_dir, &pearl_name, target_triple.as_deref())
     });
+    if should_use_embedded_native_runner(target_triple.as_deref()) {
+        return compile_embedded_native_runner(pearl_ir, &output_path);
+    }
+
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
     let crate_name = unique_generated_crate_name(&format!(
@@ -413,10 +421,12 @@ pub(crate) fn compile_native_runner(
     let status = command
         .status()
         .into_diagnostic()
-        .wrap_err("failed to invoke cargo for native pearl compilation")?;
+        .wrap_err(
+            "failed to invoke cargo for cross-target native pearl compilation; install Rust/Cargo and make sure `cargo` is on PATH",
+        )?;
     if !status.success() {
         return Err(miette::miette!(
-            "native pearl compilation failed with status {status}\n\nHint: If this is a cross-compile target, install the Rust target and any required linker/toolchain first."
+            "cross-target native pearl compilation failed with status {status}\n\nHint: same-host native compile is self-contained. Non-host `--target` builds run `cargo build --offline --release`; make sure Rust/Cargo is installed, required crates are present in Cargo's local cache, and the requested target plus linker/toolchain is installed."
         ));
     }
 
@@ -446,6 +456,210 @@ pub(crate) fn compile_native_runner(
     }
 
     Ok(output_path)
+}
+
+fn compile_embedded_native_runner(pearl_ir: &Path, output_path: &Path) -> Result<PathBuf> {
+    let current_exe = std::env::current_exe()
+        .into_diagnostic()
+        .wrap_err("failed to locate current LogicPearl executable for native compilation")?;
+    let pearl_payload = fs::read(pearl_ir)
+        .into_diagnostic()
+        .wrap_err("failed to read pearl IR for native runner payload")?;
+
+    fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new(".")))
+        .into_diagnostic()
+        .wrap_err("failed to create output directory")?;
+    fs::copy(&current_exe, output_path)
+        .into_diagnostic()
+        .wrap_err("failed to copy LogicPearl executable as native pearl runner")?;
+
+    let mut output = fs::OpenOptions::new()
+        .append(true)
+        .open(output_path)
+        .into_diagnostic()
+        .wrap_err("failed to open native pearl runner for payload embedding")?;
+    output
+        .write_all(&pearl_payload)
+        .into_diagnostic()
+        .wrap_err("failed to write native pearl runner payload")?;
+    output
+        .write_all(&(pearl_payload.len() as u64).to_le_bytes())
+        .into_diagnostic()
+        .wrap_err("failed to write native pearl runner payload length")?;
+    output
+        .write_all(EMBEDDED_NATIVE_RUNNER_MAGIC)
+        .into_diagnostic()
+        .wrap_err("failed to write native pearl runner payload marker")?;
+
+    mark_executable(output_path)?;
+    Ok(output_path.to_path_buf())
+}
+
+pub(crate) fn run_embedded_native_runner_if_present() -> Result<bool> {
+    let Some(payload) = read_embedded_native_runner_payload()? else {
+        return Ok(false);
+    };
+    let pearl_json = std::str::from_utf8(&payload)
+        .into_diagnostic()
+        .wrap_err("embedded pearl payload is not valid UTF-8")?;
+    let gate = LogicPearlGateIr::from_json_str(pearl_json)
+        .into_diagnostic()
+        .wrap_err("embedded pearl payload is not valid LogicPearl IR")?;
+    let args = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if args.len() != 1 {
+        return Err(miette::miette!("usage: compiled-pearl <input.json>"));
+    }
+    if args[0].as_os_str() == "--help" || args[0].as_os_str() == "-h" {
+        println!("usage: compiled-pearl <input.json>");
+        return Ok(true);
+    }
+
+    let input = if args[0].as_os_str() == "-" {
+        let mut buffer = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buffer)
+            .into_diagnostic()
+            .wrap_err("failed to read compiled pearl input JSON from stdin")?;
+        buffer
+    } else {
+        fs::read_to_string(&args[0])
+            .into_diagnostic()
+            .wrap_err("failed to read compiled pearl input JSON")?
+    };
+    let payload: Value = serde_json::from_str(&input)
+        .into_diagnostic()
+        .wrap_err("compiled pearl input is not valid JSON")?;
+    let parsed = logicpearl_runtime::parse_input_payload(payload)
+        .into_diagnostic()
+        .wrap_err("compiled pearl input does not match the expected payload shape")?;
+    let mut outputs = Vec::with_capacity(parsed.len());
+    for input in parsed {
+        outputs.push(
+            logicpearl_runtime::evaluate_gate(&gate, &input)
+                .into_diagnostic()
+                .wrap_err("failed to evaluate compiled pearl")?,
+        );
+    }
+    if outputs.len() == 1 {
+        println!("{}", outputs[0]);
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&outputs).into_diagnostic()?
+        );
+    }
+    Ok(true)
+}
+
+fn read_embedded_native_runner_payload() -> Result<Option<Vec<u8>>> {
+    let current_exe = std::env::current_exe()
+        .into_diagnostic()
+        .wrap_err("failed to locate current executable")?;
+    let mut file = fs::File::open(&current_exe)
+        .into_diagnostic()
+        .wrap_err("failed to open current executable")?;
+    let executable_len = file
+        .metadata()
+        .into_diagnostic()
+        .wrap_err("failed to read current executable metadata")?
+        .len();
+    if executable_len < EMBEDDED_NATIVE_RUNNER_TRAILER_LEN {
+        return Ok(None);
+    }
+
+    file.seek(SeekFrom::End(-(EMBEDDED_NATIVE_RUNNER_TRAILER_LEN as i64)))
+        .into_diagnostic()
+        .wrap_err("failed to seek current executable payload trailer")?;
+    let mut trailer = [0u8; EMBEDDED_NATIVE_RUNNER_TRAILER_LEN as usize];
+    file.read_exact(&mut trailer)
+        .into_diagnostic()
+        .wrap_err("failed to read current executable payload trailer")?;
+    if &trailer[8..] != EMBEDDED_NATIVE_RUNNER_MAGIC {
+        return Ok(None);
+    }
+
+    let payload_len = u64::from_le_bytes(
+        trailer[..8]
+            .try_into()
+            .expect("payload length trailer should be exactly 8 bytes"),
+    );
+    let max_payload_len = executable_len - EMBEDDED_NATIVE_RUNNER_TRAILER_LEN;
+    if payload_len > max_payload_len {
+        return Err(miette::miette!(
+            "embedded pearl payload length exceeds executable size"
+        ));
+    }
+    let payload_start = max_payload_len - payload_len;
+    file.seek(SeekFrom::Start(payload_start))
+        .into_diagnostic()
+        .wrap_err("failed to seek embedded pearl payload")?;
+    let mut payload = vec![0u8; payload_len as usize];
+    file.read_exact(&mut payload)
+        .into_diagnostic()
+        .wrap_err("failed to read embedded pearl payload")?;
+    Ok(Some(payload))
+}
+
+fn should_use_embedded_native_runner(target_triple: Option<&str>) -> bool {
+    match target_triple {
+        None => true,
+        Some(target) => current_host_target_triple()
+            .map(|host| host == target)
+            .unwrap_or(false),
+    }
+}
+
+fn current_host_target_triple() -> Option<&'static str> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+    {
+        return Some("x86_64-unknown-linux-gnu");
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))]
+    {
+        return Some("aarch64-unknown-linux-gnu");
+    }
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    {
+        return Some("x86_64-apple-darwin");
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+        return Some("aarch64-apple-darwin");
+    }
+    #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
+    {
+        return Some("x86_64-pc-windows-msvc");
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "windows", target_env = "msvc"))]
+    {
+        return Some("aarch64-pc-windows-msvc");
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+fn mark_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path)
+            .into_diagnostic()
+            .wrap_err("failed to read compiled pearl permissions")?
+            .permissions();
+        permissions.set_mode(permissions.mode() | 0o755);
+        fs::set_permissions(path, permissions)
+            .into_diagnostic()
+            .wrap_err("failed to mark compiled pearl executable")?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 pub(crate) fn compile_wasm_module(
@@ -505,10 +719,12 @@ pub(crate) fn compile_wasm_module(
         .arg(build_dir.join("Cargo.toml"))
         .status()
         .into_diagnostic()
-        .wrap_err("failed to invoke cargo for wasm pearl compilation")?;
+        .wrap_err(
+            "failed to invoke cargo for wasm pearl compilation; install Rust/Cargo and make sure `cargo` is on PATH",
+        )?;
     if !status.success() {
         return Err(miette::miette!(
-            "wasm pearl compilation failed with status {status}\n\nHint: Install the target with `rustup target add wasm32-unknown-unknown` and retry."
+            "wasm pearl compilation failed with status {status}\n\nHint: `logicpearl compile --target wasm32-unknown-unknown` runs `cargo build --offline --release --target wasm32-unknown-unknown`. Install Rust/Cargo, make sure required crates are present in Cargo's local cache, then install the target with `rustup target add wasm32-unknown-unknown`."
         ));
     }
 

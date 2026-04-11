@@ -115,6 +115,7 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
     let compile_output = Command::new(cli_bin)
         .arg("compile")
         .arg(&output_path)
+        .env("PATH", "")
         .output()
         .expect("logicpearl compile should run");
     assert!(

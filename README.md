@@ -168,6 +168,12 @@ For end users, the important rule is:
 
 If you want deployable binaries, compile them explicitly after the bundle exists:
 
+The default native compile path is same-host and self-contained: it copies the
+installed LogicPearl runner and embeds the pearl payload, so a prebuilt CLI
+install is enough. Wasm compile and non-host `--target` builds still shell out to
+`cargo build --offline --release`; those paths require Rust/Cargo, locally
+cached Cargo dependencies, and any requested Rust target or linker/toolchain.
+
 ```bash
 logicpearl compile examples/getting_started/output
 logicpearl compile examples/getting_started/output --target wasm32-unknown-unknown
@@ -348,7 +354,15 @@ cat examples/getting_started/new_input.json | logicpearl run examples/getting_st
 
 Both `logicpearl run` and `logicpearl pipeline run` also accept omitted input paths and will read JSON from stdin in that case.
 
-Compile it into a standalone native executable, then run the compiled binary:
+Optionally compile it into a standalone native executable, then run the compiled
+binary. This is not required for normal artifact evaluation; `logicpearl run`
+executes the artifact bundle directly.
+
+The default native compile path is same-host and self-contained: it copies the
+installed LogicPearl runner and embeds the pearl payload, so it does not require
+Rust/Cargo. Wasm compile and non-host `--target` builds still shell out to
+`cargo build --offline --release`; those paths require Rust/Cargo, locally
+cached Cargo dependencies, and any requested Rust target or linker/toolchain.
 
 ```bash
 logicpearl compile examples/getting_started/output
