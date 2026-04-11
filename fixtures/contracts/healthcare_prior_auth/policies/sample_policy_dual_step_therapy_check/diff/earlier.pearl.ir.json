@@ -11,7 +11,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Prior medication trial",
+          "source_id": "req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-001",
+          "source_anchor": "sample_policy_dual_step_therapy_check:p1-001",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Prior medication trial is missing",
+              "message": "This rule fires when the packet does not support prior medication trial.",
+              "counterfactual_hint": "Add evidence showing prior medication trial."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Prior medication trial is missing",
+              "message": "This rule fires when the packet does not support prior medication trial.",
+              "counterfactual_hint": "Add evidence showing prior medication trial."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Prior medication trial support is incomplete",
+              "message": "This rule fires when the packet only partially supports prior medication trial.",
+              "counterfactual_hint": "Add complete evidence showing prior medication trial."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Prior medication trial is missing",
+              "message": "This rule fires when the packet does not support prior medication trial.",
+              "counterfactual_hint": "Add evidence showing prior medication trial."
+            }
+          }
+        }
       },
       {
         "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003__satisfied",
@@ -20,7 +63,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Formulary alternative trial",
+          "source_id": "req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-003",
+          "source_anchor": "sample_policy_dual_step_therapy_check:p1-003",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Formulary alternative trial is missing",
+              "message": "This rule fires when the packet does not support formulary alternative trial.",
+              "counterfactual_hint": "Add evidence showing formulary alternative trial."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Formulary alternative trial is missing",
+              "message": "This rule fires when the packet does not support formulary alternative trial.",
+              "counterfactual_hint": "Add evidence showing formulary alternative trial."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Formulary alternative trial support is incomplete",
+              "message": "This rule fires when the packet only partially supports formulary alternative trial.",
+              "counterfactual_hint": "Add complete evidence showing formulary alternative trial."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Formulary alternative trial is missing",
+              "message": "This rule fires when the packet does not support formulary alternative trial.",
+              "counterfactual_hint": "Add evidence showing formulary alternative trial."
+            }
+          }
+        }
       }
     ]
   },
@@ -34,10 +120,10 @@
         "op": "<=",
         "value": 0.5
       },
-      "label": null,
-      "message": null,
+      "label": "Prior medication trial support is incomplete",
+      "message": "This rule fires when the packet only partially supports prior medication trial.",
       "severity": null,
-      "counterfactual_hint": null,
+      "counterfactual_hint": "Add complete evidence showing prior medication trial.",
       "verification_status": "heuristic_unverified"
     },
     {
@@ -49,10 +135,10 @@
         "op": "<=",
         "value": 0.5
       },
-      "label": null,
-      "message": null,
+      "label": "Formulary alternative trial support is incomplete",
+      "message": "This rule fires when the packet only partially supports formulary alternative trial.",
       "severity": null,
-      "counterfactual_hint": null,
+      "counterfactual_hint": "Add complete evidence showing formulary alternative trial.",
       "verification_status": "heuristic_unverified"
     }
   ],

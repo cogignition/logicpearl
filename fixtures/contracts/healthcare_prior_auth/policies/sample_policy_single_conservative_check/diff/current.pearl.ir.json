@@ -11,7 +11,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Failed conservative therapy",
+          "source_id": "req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001",
+          "source_anchor": "sample_policy_single_conservative_check:p1-001",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Failed conservative therapy is missing",
+              "message": "This rule fires when the packet does not support failed conservative therapy.",
+              "counterfactual_hint": "Add evidence showing failed conservative therapy."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Failed conservative therapy is missing",
+              "message": "This rule fires when the packet does not support failed conservative therapy.",
+              "counterfactual_hint": "Add evidence showing failed conservative therapy."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Failed conservative therapy support is incomplete",
+              "message": "This rule fires when the packet only partially supports failed conservative therapy.",
+              "counterfactual_hint": "Add complete evidence showing failed conservative therapy."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Failed conservative therapy is missing",
+              "message": "This rule fires when the packet does not support failed conservative therapy.",
+              "counterfactual_hint": "Add evidence showing failed conservative therapy."
+            }
+          }
+        }
       }
     ]
   },
@@ -23,12 +66,12 @@
       "deny_when": {
         "feature": "requirement__req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001__satisfied",
         "op": "<=",
-        "value": 0.0
+        "value": 0
       },
-      "label": "Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied at or below 0.0",
-      "message": "Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied at or below 0.0.",
+      "label": "Failed conservative therapy is missing",
+      "message": "This rule fires when the packet does not support failed conservative therapy.",
       "severity": null,
-      "counterfactual_hint": "Keep Requirement Req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001 Satisfied above 0.0",
+      "counterfactual_hint": "Add evidence showing failed conservative therapy.",
       "verification_status": "pipeline_unverified"
     }
   ],

@@ -40,10 +40,13 @@
       "diff_expectation": {
         "earlier_ir": "policies/sample_policy_single_conservative_check/diff/earlier.pearl.ir.json",
         "current_ir": "policies/sample_policy_single_conservative_check/diff/current.pearl.ir.json",
-        "summary": {
-          "changed_rules": 1,
-          "reordered_rules": 0,
-          "added_rules": 0,
+      "summary": {
+        "source_schema_changed": false,
+        "learned_rule_changed": true,
+        "rule_explanation_changed": false,
+        "changed_rules": 1,
+        "reordered_rules": 0,
+        "added_rules": 0,
           "removed_rules": 0
         },
         "changed_rule_ids": [
@@ -91,10 +94,13 @@
       "diff_expectation": {
         "earlier_ir": "policies/sample_policy_single_documentation_check/diff/earlier.pearl.ir.json",
         "current_ir": "policies/sample_policy_single_documentation_check/diff/current.pearl.ir.json",
-        "summary": {
-          "changed_rules": 1,
-          "reordered_rules": 0,
-          "added_rules": 0,
+      "summary": {
+        "source_schema_changed": false,
+        "learned_rule_changed": true,
+        "rule_explanation_changed": false,
+        "changed_rules": 1,
+        "reordered_rules": 0,
+        "added_rules": 0,
           "removed_rules": 0
         },
         "changed_rule_ids": [
@@ -169,10 +175,13 @@
       "diff_expectation": {
         "earlier_ir": "policies/sample_policy_dual_documentation_check/diff/earlier.pearl.ir.json",
         "current_ir": "policies/sample_policy_dual_documentation_check/diff/current.pearl.ir.json",
-        "summary": {
-          "changed_rules": 1,
-          "reordered_rules": 0,
-          "added_rules": 1,
+      "summary": {
+        "source_schema_changed": true,
+        "learned_rule_changed": true,
+        "rule_explanation_changed": true,
+        "changed_rules": 1,
+        "reordered_rules": 0,
+        "added_rules": 1,
           "removed_rules": 1
         },
         "changed_rule_ids": [
@@ -251,10 +260,13 @@
       "diff_expectation": {
         "earlier_ir": "policies/sample_policy_dual_step_therapy_check/diff/earlier.pearl.ir.json",
         "current_ir": "policies/sample_policy_dual_step_therapy_check/diff/current.pearl.ir.json",
-        "summary": {
-          "changed_rules": 2,
-          "reordered_rules": 0,
-          "added_rules": 0,
+      "summary": {
+        "source_schema_changed": false,
+        "learned_rule_changed": true,
+        "rule_explanation_changed": false,
+        "changed_rules": 2,
+        "reordered_rules": 0,
+        "added_rules": 0,
           "removed_rules": 0
         },
         "changed_rule_ids": [

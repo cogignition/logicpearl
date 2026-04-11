@@ -11,7 +11,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Clinical documentation",
+          "source_id": "req-004-immune-modulating-drugs-prn-p6-010",
+          "source_anchor": "sample_policy_single_documentation_check:p6-010",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Clinical documentation is missing",
+              "message": "This rule fires when the packet does not support clinical documentation.",
+              "counterfactual_hint": "Add evidence showing clinical documentation."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Clinical documentation is missing",
+              "message": "This rule fires when the packet does not support clinical documentation.",
+              "counterfactual_hint": "Add evidence showing clinical documentation."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Clinical documentation support is incomplete",
+              "message": "This rule fires when the packet only partially supports clinical documentation.",
+              "counterfactual_hint": "Add complete evidence showing clinical documentation."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Clinical documentation is missing",
+              "message": "This rule fires when the packet does not support clinical documentation.",
+              "counterfactual_hint": "Add evidence showing clinical documentation."
+            }
+          }
+        }
       }
     ]
   },
@@ -25,10 +68,10 @@
         "op": "<=",
         "value": 0.5
       },
-      "label": null,
-      "message": null,
+      "label": "Clinical documentation support is incomplete",
+      "message": "This rule fires when the packet only partially supports clinical documentation.",
       "severity": null,
-      "counterfactual_hint": null,
+      "counterfactual_hint": "Add complete evidence showing clinical documentation.",
       "verification_status": "heuristic_unverified"
     }
   ],

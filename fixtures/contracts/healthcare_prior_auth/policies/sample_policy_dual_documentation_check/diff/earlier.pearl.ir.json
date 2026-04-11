@@ -11,7 +11,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Historical documentation requirement",
+          "source_id": "req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-002",
+          "source_anchor": "sample_policy_dual_documentation_check:p1-002",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Historical documentation requirement is missing",
+              "message": "This rule fires when the packet does not support historical documentation requirement.",
+              "counterfactual_hint": "Add evidence showing historical documentation requirement."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Historical documentation requirement is missing",
+              "message": "This rule fires when the packet does not support historical documentation requirement.",
+              "counterfactual_hint": "Add evidence showing historical documentation requirement."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Historical documentation requirement support is incomplete",
+              "message": "This rule fires when the packet only partially supports historical documentation requirement.",
+              "counterfactual_hint": "Add complete evidence showing historical documentation requirement."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Historical documentation requirement is missing",
+              "message": "This rule fires when the packet does not support historical documentation requirement.",
+              "counterfactual_hint": "Add evidence showing historical documentation requirement."
+            }
+          }
+        }
       },
       {
         "id": "requirement__req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008__satisfied",
@@ -20,7 +63,50 @@
         "values": null,
         "min": null,
         "max": null,
-        "editable": null
+        "editable": null,
+        "semantics": {
+          "label": "Genetic test support",
+          "source_id": "req-049-drug-management-retail-pharmacy-prior-authorization-policy-p1-008",
+          "source_anchor": "sample_policy_dual_documentation_check:p1-008",
+          "states": {
+            "missing_at_or_below_zero": {
+              "when": {
+                "op": "<=",
+                "value": 0
+              },
+              "label": "Genetic test support is missing",
+              "message": "This rule fires when the packet does not support genetic test support.",
+              "counterfactual_hint": "Add evidence showing genetic test support."
+            },
+            "missing_below_one": {
+              "when": {
+                "op": "<",
+                "value": 1
+              },
+              "label": "Genetic test support is missing",
+              "message": "This rule fires when the packet does not support genetic test support.",
+              "counterfactual_hint": "Add evidence showing genetic test support."
+            },
+            "incomplete_at_or_below_half": {
+              "when": {
+                "op": "<=",
+                "value": 0.5
+              },
+              "label": "Genetic test support support is incomplete",
+              "message": "This rule fires when the packet only partially supports genetic test support.",
+              "counterfactual_hint": "Add complete evidence showing genetic test support."
+            },
+            "missing_equals_zero": {
+              "when": {
+                "op": "==",
+                "value": 0
+              },
+              "label": "Genetic test support is missing",
+              "message": "This rule fires when the packet does not support genetic test support.",
+              "counterfactual_hint": "Add evidence showing genetic test support."
+            }
+          }
+        }
       }
     ]
   },
@@ -34,10 +120,10 @@
         "op": "<=",
         "value": 0.5
       },
-      "label": null,
-      "message": null,
+      "label": "Historical documentation requirement support is incomplete",
+      "message": "This rule fires when the packet only partially supports historical documentation requirement.",
       "severity": null,
-      "counterfactual_hint": null,
+      "counterfactual_hint": "Add complete evidence showing historical documentation requirement.",
       "verification_status": "heuristic_unverified"
     },
     {
@@ -49,10 +135,10 @@
         "op": "<=",
         "value": 0.5
       },
-      "label": null,
-      "message": null,
+      "label": "Genetic test support support is incomplete",
+      "message": "This rule fires when the packet only partially supports genetic test support.",
       "severity": null,
-      "counterfactual_hint": null,
+      "counterfactual_hint": "Add complete evidence showing genetic test support.",
       "verification_status": "heuristic_unverified"
     }
   ],
