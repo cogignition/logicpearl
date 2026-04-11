@@ -17,6 +17,8 @@ pub(crate) struct LoadedFlatRecords {
     pub(crate) records: Vec<BTreeMap<String, Value>>,
 }
 
+const NORMALIZED_TRACE_INPUT_HINT: &str = "Build and discover inputs must be normalized rectangular decision traces. Normalize missing, null, optional, or domain-specific raw structures in an observer, trace_source plugin, or adapter before discovery.";
+
 pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<DecisionTraceRow>> {
     load_decision_traces_with_labels(csv_path, label_column, None, None)
 }
@@ -94,8 +96,8 @@ fn load_csv_records(path: &Path) -> Result<LoadedFlatRecords> {
         for (header, value) in headers.iter().zip(record.iter()) {
             if value.trim().is_empty() {
                 return Err(LogicPearlError::message(format!(
-                    "row {} has an empty value for field {header:?}",
-                    index + 2
+                    "row {} has an empty value for field {header:?}\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
+                    index + 2,
                 )));
             }
             row.insert(header.to_string(), parse_scalar(value)?);
@@ -169,7 +171,7 @@ fn flatten_json_rows(path: &Path, rows: Vec<Value>) -> Result<LoadedFlatRecords>
     for (index, row) in rows.into_iter().enumerate() {
         let Value::Object(object) = row else {
             return Err(LogicPearlError::message(format!(
-                "decision trace row {} in {} must be a JSON object",
+                "decision trace row {} in {} must be a JSON object\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                 index + 1,
                 path.display()
             )));
@@ -178,7 +180,7 @@ fn flatten_json_rows(path: &Path, rows: Vec<Value>) -> Result<LoadedFlatRecords>
         flatten_json_object(index + 1, None, &Value::Object(object), &mut flat)?;
         if flat.is_empty() {
             return Err(LogicPearlError::message(format!(
-                "decision trace row {} in {} did not produce any scalar fields",
+                "decision trace row {} in {} did not produce any scalar fields\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                 index + 1,
                 path.display()
             )));
@@ -203,7 +205,7 @@ fn flatten_json_object(
         Value::Object(object) => {
             if object.is_empty() {
                 return Err(LogicPearlError::message(format!(
-                    "row {row_number} contains an empty object at {}",
+                    "row {row_number} contains an empty object at {}\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                     prefix.unwrap_or("<root>")
                 )));
             }
@@ -218,7 +220,7 @@ fn flatten_json_object(
         Value::Array(values) => {
             if values.is_empty() {
                 return Err(LogicPearlError::message(format!(
-                    "row {row_number} contains an empty array at {}",
+                    "row {row_number} contains an empty array at {}\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                     prefix.unwrap_or("<root>")
                 )));
             }
@@ -232,14 +234,14 @@ fn flatten_json_object(
         }
         Value::Null => {
             return Err(LogicPearlError::message(format!(
-                "row {row_number} contains null at {}",
+                "row {row_number} contains null at {}\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                 prefix.unwrap_or("<root>")
             )))
         }
         Value::String(raw) => {
             let key = prefix.ok_or_else(|| {
                 LogicPearlError::message(format!(
-                    "row {row_number} contains a bare scalar at the root"
+                    "row {row_number} contains a bare scalar at the root\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}"
                 ))
             })?;
             out.insert(key.to_string(), parse_scalar(raw)?);
@@ -247,7 +249,7 @@ fn flatten_json_object(
         Value::Bool(boolean) => {
             let key = prefix.ok_or_else(|| {
                 LogicPearlError::message(format!(
-                    "row {row_number} contains a bare scalar at the root"
+                    "row {row_number} contains a bare scalar at the root\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}"
                 ))
             })?;
             out.insert(key.to_string(), Value::Bool(*boolean));
@@ -255,7 +257,7 @@ fn flatten_json_object(
         Value::Number(number) => {
             let key = prefix.ok_or_else(|| {
                 LogicPearlError::message(format!(
-                    "row {row_number} contains a bare scalar at the root"
+                    "row {row_number} contains a bare scalar at the root\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}"
                 ))
             })?;
             out.insert(key.to_string(), Value::Number(number.clone()));
@@ -284,7 +286,7 @@ fn ensure_rectangular_schema(path: &Path, rows: &[BTreeMap<String, Value>]) -> R
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(LogicPearlError::message(format!(
-                "decision trace row {} in {} has a different schema; missing: [{}], extra: [{}]",
+                "decision trace row {} in {} has a different schema; missing: [{}], extra: [{}]\n\nHint: {NORMALIZED_TRACE_INPUT_HINT}",
                 index + 1,
                 path.display(),
                 missing,

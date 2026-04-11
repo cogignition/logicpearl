@@ -202,7 +202,9 @@ That runtime layer is responsible for:
 - wasm metadata lookup
 - returning fired rules and hints in a browser-friendly shape
 
-By default, `build` accepts labeled decision traces in `.csv`, `.jsonl` / `.ndjson`, or `.json` form. For JSON inputs, nested objects and arrays are flattened into dotted feature paths such as `account.age_days` or `claims.0.code`.
+By default, `build` accepts labeled decision traces in `.csv`, `.jsonl` / `.ndjson`, or `.json` form. These inputs are normalized decision traces, not raw messy operational records: every row must flatten to the same scalar feature set, CSV cells must be non-empty, and JSON nulls, empty arrays, empty objects, bare root scalars, and ragged row schemas are rejected. Normalize missing or optional source data in an observer, `trace_source` plugin, or adapter before discovery.
+
+For JSON inputs, nested objects and arrays are flattened into dotted feature paths such as `account.age_days` or `claims.0.code`.
 
 It also infers the binary label column when there is one unambiguous candidate and normalizes common human-formatted scalar values such as:
 - `$95,000` -> `95000`
@@ -399,6 +401,8 @@ The same stage model is available to plugins:
 - `verify` plugins annotate proof or audit status
 
 Process plugins are trusted local code. A plugin manifest declares a program to execute, and plugin-backed builds, observers, verifiers, benchmark runs, and pipelines run those programs on your machine. Do not run plugin or pipeline manifests from sources you do not trust. By default, process plugins run with a timeout and without arbitrary PATH or absolute-entrypoint resolution; only relax those defaults with `--allow-no-timeout`, `--allow-absolute-plugin-entrypoint`, or `--allow-plugin-path-lookup` for manifests you trust.
+
+Plugin manifest `input_schema`, `options_schema`, and `output_schema` fields use a LogicPearl schema subset, not full JSON Schema. Supported validation keywords are `type`, `const`, `enum`, `required`, `properties`, `items`, and `additionalProperties`; `title`, `description`, `$schema`, and `$id` are accepted as annotations only. Unsupported JSON Schema keywords such as `minimum`, `maximum`, `pattern`, `oneOf`, `anyOf`, `allOf`, `$ref`, and `format` are rejected instead of silently ignored.
 
 ### Custom plugins and observer profiles
 

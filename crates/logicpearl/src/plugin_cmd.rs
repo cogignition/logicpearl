@@ -63,7 +63,7 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
         }
         println!(
             "  {} input={} options={} output={}",
-            "Schemas".bright_black(),
+            "Schema subset".bright_black(),
             schema_presence(&manifest.input_schema),
             schema_presence(&manifest.options_schema),
             schema_presence(&manifest.output_schema)
@@ -125,7 +125,7 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
         );
         println!(
             "  {} input={} options={} output={}",
-            "Schemas".bright_black(),
+            "Schema subset".bright_black(),
             schema_presence(&manifest.input_schema),
             schema_presence(&manifest.options_schema),
             schema_presence(&manifest.output_schema)

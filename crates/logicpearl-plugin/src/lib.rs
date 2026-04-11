@@ -10,6 +10,16 @@ use std::time::{Duration, Instant};
 const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_TIMEOUT_MS: u64 = 30_000;
+const SUPPORTED_SCHEMA_VALIDATION_KEYWORDS: &[&str] = &[
+    "additionalProperties",
+    "const",
+    "enum",
+    "items",
+    "properties",
+    "required",
+    "type",
+];
+const SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS: &[&str] = &["$id", "$schema", "description", "title"];
 
 #[cfg(unix)]
 const SIGTERM: i32 = 15;
@@ -786,6 +796,8 @@ fn validate_schema_document(label: &str, schema: &Value, path: String) -> Result
             "{label} must be a JSON object at {path}"
         )));
     };
+    validate_schema_keywords(label, object, &path)?;
+    validate_schema_annotations(label, object, &path)?;
     if let Some(value) = object.get("type") {
         validate_schema_type_decl(label, value, &path)?;
     }
@@ -838,6 +850,38 @@ fn validate_schema_document(label: &str, schema: &Value, path: String) -> Result
             return Err(LogicPearlError::message(format!(
                 "{label} enum must be a non-empty array at {path}.enum"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_schema_keywords(label: &str, object: &Map<String, Value>, path: &str) -> Result<()> {
+    for key in object.keys() {
+        if is_supported_schema_keyword(key) {
+            continue;
+        }
+        return Err(LogicPearlError::message(format!(
+            "{label} uses unsupported LogicPearl schema subset keyword {key:?} at {path}; supported validation keywords are: {}; supported annotation keywords are: {}. Use a plugin smoke test or an external JSON Schema validator for full JSON Schema constraints.",
+            SUPPORTED_SCHEMA_VALIDATION_KEYWORDS.join(", "),
+            SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn is_supported_schema_keyword(key: &str) -> bool {
+    SUPPORTED_SCHEMA_VALIDATION_KEYWORDS.contains(&key)
+        || SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS.contains(&key)
+}
+
+fn validate_schema_annotations(label: &str, object: &Map<String, Value>, path: &str) -> Result<()> {
+    for key in SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS {
+        if let Some(value) = object.get(*key) {
+            if !value.is_string() {
+                return Err(LogicPearlError::message(format!(
+                    "{label} annotation keyword {key:?} must be a string at {path}.{key}"
+                )));
+            }
         }
     }
     Ok(())
@@ -1141,6 +1185,60 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         assert!(super::validate_ok_plugin_response(&manifest, &bad_response).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_schema_subset_keywords() {
+        let manifest = PluginManifest {
+            name: "demo".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
+            language: Some("python".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "age": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                }
+            })),
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: None,
+        };
+
+        let err = manifest.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("unsupported LogicPearl schema subset keyword \"minimum\""));
+    }
+
+    #[test]
+    fn accepts_schema_subset_annotation_keywords() {
+        let manifest = PluginManifest {
+            name: "demo".to_string(),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
+            language: Some("python".to_string()),
+            capabilities: None,
+            timeout_ms: None,
+            input_schema: Some(json!({
+                "$schema": "https://logicpearl.com/schema/plugin-contract-subset",
+                "title": "Observer input",
+                "description": "Annotation fields are accepted but do not add validation.",
+                "type": "object"
+            })),
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: None,
+        };
+
+        assert!(manifest.validate().is_ok());
     }
 
     #[cfg(unix)]

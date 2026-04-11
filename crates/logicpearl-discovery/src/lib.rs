@@ -1137,6 +1137,39 @@ mod tests {
     }
 
     #[test]
+    fn decision_trace_loader_errors_explain_normalization_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let csv_path = dir.path().join("empty_value.csv");
+        std::fs::write(&csv_path, "age,allowed\n,yes\n").unwrap();
+        let err = load_decision_traces_auto(&csv_path, None, None, None).unwrap_err();
+        assert!(err.to_string().contains("empty value"));
+        assert!(err
+            .to_string()
+            .contains("normalized rectangular decision traces"));
+
+        let json_path = dir.path().join("null_value.json");
+        std::fs::write(
+            &json_path,
+            r#"[{"age":21,"allowed":"yes"},{"age":null,"allowed":"no"}]"#,
+        )
+        .unwrap();
+        let err = load_decision_traces_auto(&json_path, None, None, None).unwrap_err();
+        assert!(err.to_string().contains("contains null"));
+        assert!(err.to_string().contains("trace_source plugin"));
+
+        let ragged_path = dir.path().join("ragged.jsonl");
+        std::fs::write(
+            &ragged_path,
+            "{\"age\":21,\"allowed\":\"yes\"}\n{\"score\":9,\"allowed\":\"no\"}\n",
+        )
+        .unwrap();
+        let err = load_decision_traces_auto(&ragged_path, None, None, None).unwrap_err();
+        assert!(err.to_string().contains("different schema"));
+        assert!(err.to_string().contains("adapter before discovery"));
+    }
+
+    #[test]
     fn load_decision_traces_requires_explicit_mapping_for_unknown_binary_labels() {
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
