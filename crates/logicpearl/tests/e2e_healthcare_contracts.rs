@@ -301,11 +301,54 @@ fn assert_rule_snapshot_has_readable_metadata(snapshot: &Value, context: &str) {
         !snapshot["expression"].is_null(),
         "{context} should keep raw expression"
     );
+    assert!(
+        !snapshot["raw_expression"].is_null(),
+        "{context} should expose raw_expression"
+    );
+    assert!(
+        same_json_value(&snapshot["raw_expression"], &snapshot["expression"]),
+        "{context} raw_expression should match the raw expression"
+    );
+    assert_non_empty_str(&snapshot["meaning"], &format!("{context} meaning"));
     assert_non_empty_str(&snapshot["label"], &format!("{context} label"));
     assert_non_empty_str(&snapshot["message"], &format!("{context} message"));
     assert_non_empty_str(
         &snapshot["counterfactual_hint"],
         &format!("{context} counterfactual_hint"),
+    );
+    let feature = &snapshot["feature"];
+    assert!(
+        feature.as_object().is_some(),
+        "{context} feature should be an object"
+    );
+    assert_non_empty_str(&feature["id"], &format!("{context} primary feature id"));
+    assert_non_empty_str(
+        &feature["label"],
+        &format!("{context} primary feature label"),
+    );
+    assert_non_empty_str(
+        &feature["source_id"],
+        &format!("{context} primary feature source_id"),
+    );
+    assert_non_empty_str(
+        &feature["source_anchor"],
+        &format!("{context} primary feature source_anchor"),
+    );
+    let raw_feature_id = feature["id"]
+        .as_str()
+        .expect("feature id should be a string");
+    let raw_source_id = feature["source_id"]
+        .as_str()
+        .expect("source_id should be a string");
+    let meaning = snapshot["meaning"]
+        .as_str()
+        .expect("meaning should be a string");
+    assert!(
+        !meaning.contains("Requirement Req-")
+            && !meaning.contains("requirement__")
+            && !meaning.contains(raw_feature_id)
+            && !meaning.contains(raw_source_id),
+        "{context} meaning should use artifact dictionary text, not raw feature IDs: {meaning}"
     );
     let feature_dictionary = snapshot["feature_dictionary"]
         .as_array()
@@ -728,6 +771,12 @@ fn healthcare_contract_artifacts_report_expected_semantic_diffs() {
             .as_array()
             .expect("added_rules should be an array")
         {
+            assert_eq!(
+                snapshot["change_kind"].as_str(),
+                Some("added_rule"),
+                "{} added rule should declare change_kind",
+                policy.policy_id
+            );
             assert_rule_snapshot_has_readable_metadata(
                 snapshot,
                 &format!("{} added rule", policy.policy_id),
@@ -737,6 +786,12 @@ fn healthcare_contract_artifacts_report_expected_semantic_diffs() {
             .as_array()
             .expect("removed_rules should be an array")
         {
+            assert_eq!(
+                snapshot["change_kind"].as_str(),
+                Some("removed_rule"),
+                "{} removed rule should declare change_kind",
+                policy.policy_id
+            );
             assert_rule_snapshot_has_readable_metadata(
                 snapshot,
                 &format!("{} removed rule", policy.policy_id),

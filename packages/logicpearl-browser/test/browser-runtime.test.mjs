@@ -131,6 +131,117 @@ test('loadArtifactFromBundle evaluates through the stable browser API', async ()
   assert.deepEqual(result.counterfactualHints, ['Change A', 'Change B']);
 });
 
+test('evaluate treats all u64 bitmask values as valid payloads', async () => {
+  const metadata = {
+    ...sampleMetadata,
+    feature_count: 1,
+    features: [{ id: 'enabled', index: 0, encoding: 'boolean' }],
+    rules: Array.from({ length: 64 }, (_, bit) => ({
+      id: `rule_${bit}`,
+      bit,
+      label: `Rule ${bit}`,
+    })),
+  };
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: sampleManifest,
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: metadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_status_slots_f64() {
+            return 0;
+          },
+          logicpearl_eval_bitmask_slots_f64() {
+            return 18446744073709551615n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluate({ enabled: true });
+
+  assert.equal(result.bitmask, 18446744073709551615n);
+  assert.equal(result.allow, false);
+  assert.equal(result.firedRules.length, 64);
+  assert.equal(result.firedRuleIds[0], 'rule_0');
+  assert.equal(result.firedRuleIds[63], 'rule_63');
+});
+
+test('evaluate rejects slots through explicit wasm status when available', async () => {
+  let bitmaskCalled = false;
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: sampleManifest,
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_status_slots_f64() {
+            return 2;
+          },
+          logicpearl_eval_bitmask_slots_f64() {
+            bitmaskCalled = true;
+            return 0n;
+          },
+        },
+      }),
+    }
+  );
+
+  assert.throws(
+    () => artifact.evaluate({ is_admin: false }),
+    /rejected the provided feature slots with status 2/
+  );
+  assert.equal(bitmaskCalled, false);
+});
+
+test('loadArtifactFromBundle requires declared status entrypoint export', async () => {
+  await assert.rejects(
+    () =>
+      loadArtifactFromBundle(
+        {
+          manifest: sampleManifest,
+          wasmModule: new ArrayBuffer(8),
+          wasmMetadata: {
+            ...sampleMetadata,
+            status_entrypoint: 'logicpearl_eval_status_slots_f64',
+          },
+        },
+        {
+          instantiateWasm: async () => ({
+            exports: {
+              memory: new WebAssembly.Memory({ initial: 1 }),
+              logicpearl_alloc() {
+                return 0;
+              },
+              logicpearl_dealloc() {},
+              logicpearl_eval_bitmask_slots_f64() {
+                return 0n;
+              },
+            },
+          }),
+        }
+      ),
+    /declares but does not expose the LogicPearl status ABI/
+  );
+});
+
 test('loadArtifact falls back to conventional pearl.wasm layout when artifact.json is absent', async () => {
   const responses = new Map([
     ['/demo/artifact.json', { ok: false, status: 404 }],

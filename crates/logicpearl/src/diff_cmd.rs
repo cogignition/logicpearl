@@ -80,12 +80,19 @@ struct DiffSummary {
 struct RuleSnapshot {
     id: String,
     bit: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    change_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feature: Option<RuleFeatureSemanticsSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    meaning: Option<String>,
     label: Option<String>,
     message: Option<String>,
     severity: Option<String>,
     counterfactual_hint: Option<String>,
     verification_status: Option<String>,
     semantic_signature: String,
+    raw_expression: Value,
     expression: Value,
     feature_dictionary: Vec<RuleFeatureSemanticsSnapshot>,
 }
@@ -199,13 +206,15 @@ fn render_changed_rules(header: &str, changes: &[RuleChange]) {
         println!(
             "    {} {}",
             "Old".bright_black(),
-            change.old_rule.semantic_signature
+            rule_display_meaning(&change.old_rule)
         );
+        render_rule_feature(&change.old_rule);
         println!(
             "    {} {}",
             "New".bright_black(),
-            change.new_rule.semantic_signature
+            rule_display_meaning(&change.new_rule)
         );
+        render_rule_feature(&change.new_rule);
     }
 }
 
@@ -227,8 +236,9 @@ fn render_reordered_rules(header: &str, changes: &[RulePairChange]) {
         println!(
             "    {} {}",
             "Semantics".bright_black(),
-            change.new_rule.semantic_signature
+            rule_display_meaning(&change.new_rule)
         );
+        render_rule_feature(&change.new_rule);
     }
 }
 
@@ -243,8 +253,39 @@ fn render_rule_snapshots(header: &str, rules: &[RuleSnapshot], prefix: &str) {
         println!(
             "    {} {}",
             "Semantics".bright_black(),
-            rule.semantic_signature
+            rule_display_meaning(rule)
         );
+        render_rule_feature(rule);
+    }
+}
+
+fn rule_display_meaning(rule: &RuleSnapshot) -> &str {
+    rule.meaning
+        .as_deref()
+        .or(rule.label.as_deref())
+        .unwrap_or(&rule.semantic_signature)
+}
+
+fn render_rule_feature(rule: &RuleSnapshot) {
+    let Some(feature) = &rule.feature else {
+        return;
+    };
+    let feature_label = feature.label.as_deref().unwrap_or(&feature.id);
+    match (&feature.source_id, &feature.source_anchor) {
+        (Some(source_id), Some(source_anchor)) => println!(
+            "    {} {} ({}, {})",
+            "Feature".bright_black(),
+            feature_label,
+            source_id,
+            source_anchor
+        ),
+        (Some(source_id), None) => println!(
+            "    {} {} ({})",
+            "Feature".bright_black(),
+            feature_label,
+            source_id
+        ),
+        _ => println!("    {} {}", "Feature".bright_black(), feature_label),
     }
 }
 
@@ -375,11 +416,11 @@ fn diff_gates(
 
     let added_rules = new_remaining
         .iter()
-        .map(|idx| snapshot_rule(&new_indexed[*idx], new_gate))
+        .map(|idx| snapshot_rule_with_change_kind(&new_indexed[*idx], new_gate, "added_rule"))
         .collect::<Vec<_>>();
     let removed_rules = old_remaining
         .iter()
-        .map(|idx| snapshot_rule(&old_indexed[*idx], old_gate))
+        .map(|idx| snapshot_rule_with_change_kind(&old_indexed[*idx], old_gate, "removed_rule"))
         .collect::<Vec<_>>();
 
     let learned_rule_changed =
@@ -437,9 +478,29 @@ fn index_rules(gate: &LogicPearlGateIr) -> Vec<IndexedRule<'_>> {
 }
 
 fn snapshot_rule(rule: &IndexedRule<'_>, gate: &LogicPearlGateIr) -> RuleSnapshot {
+    snapshot_rule_inner(rule, gate, None)
+}
+
+fn snapshot_rule_with_change_kind(
+    rule: &IndexedRule<'_>,
+    gate: &LogicPearlGateIr,
+    change_kind: &str,
+) -> RuleSnapshot {
+    snapshot_rule_inner(rule, gate, Some(change_kind))
+}
+
+fn snapshot_rule_inner(
+    rule: &IndexedRule<'_>,
+    gate: &LogicPearlGateIr,
+    change_kind: Option<&str>,
+) -> RuleSnapshot {
+    let raw_expression = serde_json::to_value(&rule.rule.deny_when).unwrap_or(Value::Null);
     RuleSnapshot {
         id: rule.rule.id.clone(),
         bit: rule.rule.bit,
+        change_kind: change_kind.map(ToOwned::to_owned),
+        feature: rule_primary_feature(rule.rule, gate),
+        meaning: rule_meaning(rule.rule, gate),
         label: rule.rule.label.clone(),
         message: rule.rule.message.clone(),
         severity: rule.rule.severity.clone(),
@@ -451,7 +512,8 @@ fn snapshot_rule(rule: &IndexedRule<'_>, gate: &LogicPearlGateIr) -> RuleSnapsho
                 .to_string()
         }),
         semantic_signature: rule.semantic_signature.clone(),
-        expression: serde_json::to_value(&rule.rule.deny_when).unwrap_or(Value::Null),
+        raw_expression: raw_expression.clone(),
+        expression: raw_expression,
         feature_dictionary: rule_feature_semantics(rule.rule, gate),
     }
 }
@@ -575,6 +637,82 @@ fn rule_feature_semantics(
             })
         })
         .collect()
+}
+
+fn rule_primary_feature(
+    rule: &RuleDefinition,
+    gate: &LogicPearlGateIr,
+) -> Option<RuleFeatureSemanticsSnapshot> {
+    let comparison = simple_comparison(&rule.deny_when)?;
+    let semantics = feature_semantics_by_id(gate);
+    let feature_semantics = semantics.get(&comparison.feature);
+    Some(RuleFeatureSemanticsSnapshot {
+        id: comparison.feature.clone(),
+        label: feature_semantics.and_then(|semantics| semantics.label.clone()),
+        source_id: feature_semantics.and_then(|semantics| semantics.source_id.clone()),
+        source_anchor: feature_semantics.and_then(|semantics| semantics.source_anchor.clone()),
+    })
+}
+
+fn rule_meaning(rule: &RuleDefinition, gate: &LogicPearlGateIr) -> Option<String> {
+    let comparison = simple_comparison(&rule.deny_when)?;
+    let semantics = feature_semantics_by_id(gate);
+    if let Some(feature_semantics) = semantics.get(&comparison.feature) {
+        if let Some(state_label) = feature_semantics
+            .states
+            .values()
+            .find(|state| state_matches_comparison(&state.predicate, comparison))
+            .and_then(|state| non_empty_string(state.label.clone()))
+        {
+            return Some(state_label);
+        }
+    }
+    non_empty_string(rule.label.clone())
+}
+
+fn simple_comparison(expression: &Expression) -> Option<&logicpearl_ir::ComparisonExpression> {
+    match expression {
+        Expression::Comparison(comparison) => Some(comparison),
+        Expression::All { .. } | Expression::Any { .. } | Expression::Not { .. } => None,
+    }
+}
+
+fn state_matches_comparison(
+    predicate: &logicpearl_ir::FeatureStatePredicate,
+    comparison: &logicpearl_ir::ComparisonExpression,
+) -> bool {
+    predicate.op == comparison.op && same_comparison_value(&predicate.value, &comparison.value)
+}
+
+fn same_comparison_value(left: &ComparisonValue, right: &ComparisonValue) -> bool {
+    match (left, right) {
+        (
+            ComparisonValue::FeatureRef {
+                feature_ref: left_ref,
+            },
+            ComparisonValue::FeatureRef {
+                feature_ref: right_ref,
+            },
+        ) => left_ref == right_ref,
+        (ComparisonValue::Literal(left), ComparisonValue::Literal(right)) => {
+            same_json_value(left, right)
+        }
+        _ => false,
+    }
+}
+
+fn same_json_value(left: &Value, right: &Value) -> bool {
+    match (left.as_f64(), right.as_f64()) {
+        (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+        _ => left == right,
+    }
+}
+
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }
 
 fn expression_feature_ids(expression: &Expression) -> BTreeSet<String> {
@@ -819,6 +957,41 @@ mod tests {
             .expect("diff should succeed");
         assert_eq!(report.summary.added_rules, 1);
         assert_eq!(report.summary.removed_rules, 1);
+    }
+
+    #[test]
+    fn diff_rule_snapshots_include_readable_artifact_semantics() {
+        let mut old_gate = gate_with_rules(vec![predicate_rule(
+            "minor_guard",
+            0,
+            ComparisonOperator::Lt,
+            json!(18.0),
+        )]);
+        old_gate.rules[0].label = Some("Applicant age below 18".to_string());
+        old_gate.input_schema.features[0].semantics = Some(feature_semantics(
+            "Applicant age",
+            "page-1",
+            "Applicant is a minor",
+        ));
+        let new_gate = gate_with_rules(vec![]);
+        let (old_resolved, new_resolved) = resolved_inputs();
+
+        let report = diff_gates(&old_gate, &new_gate, &old_resolved, &new_resolved)
+            .expect("diff should succeed");
+
+        assert_eq!(report.summary.removed_rules, 1);
+        let snapshot = &report.removed_rules[0];
+        assert_eq!(snapshot.change_kind.as_deref(), Some("removed_rule"));
+        assert_eq!(snapshot.meaning.as_deref(), Some("Applicant is a minor"));
+        assert_eq!(snapshot.raw_expression, snapshot.expression);
+        assert_eq!(snapshot.raw_expression["feature"].as_str(), Some("age"));
+        assert_eq!(snapshot.raw_expression["op"].as_str(), Some("<"));
+        assert_eq!(snapshot.raw_expression["value"].as_f64(), Some(18.0));
+        let feature = snapshot.feature.as_ref().expect("primary feature");
+        assert_eq!(feature.id, "age");
+        assert_eq!(feature.label.as_deref(), Some("Applicant age"));
+        assert_eq!(feature.source_id.as_deref(), Some("policy-1"));
+        assert_eq!(feature.source_anchor.as_deref(), Some("page-1"));
     }
 
     #[test]

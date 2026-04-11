@@ -1,4 +1,5 @@
-const WASM_ERROR_SENTINEL = 18446744073709551615n;
+const DEFAULT_BITMASK_ENTRYPOINT = 'logicpearl_eval_bitmask_slots_f64';
+const DEFAULT_STATUS_ENTRYPOINT = 'logicpearl_eval_status_slots_f64';
 
 export async function loadArtifact(reference, options = {}) {
   const {
@@ -112,13 +113,23 @@ export function normalizeArtifactReference(reference) {
 export class LogicPearlBrowserArtifact {
   constructor({ manifest, wasmMetadata, instance, artifactBaseUrl, manifestUrl }) {
     const exports = instance?.exports ?? {};
+    const bitmaskEntrypoint = wasmMetadata.entrypoint ?? DEFAULT_BITMASK_ENTRYPOINT;
+    const statusEntrypoint = wasmMetadata.status_entrypoint ?? DEFAULT_STATUS_ENTRYPOINT;
+    const declaresStatusEntrypoint =
+      typeof wasmMetadata.status_entrypoint === 'string' &&
+      wasmMetadata.status_entrypoint.length > 0;
     if (
       typeof exports.logicpearl_alloc !== 'function' ||
-      typeof exports.logicpearl_eval_bitmask_slots_f64 !== 'function' ||
+      typeof exports[bitmaskEntrypoint] !== 'function' ||
       !(exports.memory instanceof WebAssembly.Memory)
     ) {
       throw new Error(
         'Loaded wasm module does not expose the expected LogicPearl browser ABI.'
+      );
+    }
+    if (declaresStatusEntrypoint && typeof exports[statusEntrypoint] !== 'function') {
+      throw new Error(
+        'Loaded wasm module declares but does not expose the LogicPearl status ABI.'
       );
     }
 
@@ -128,6 +139,8 @@ export class LogicPearlBrowserArtifact {
     this.artifactBaseUrl = artifactBaseUrl;
     this.manifestUrl = manifestUrl;
     this.featureCount = wasmMetadata.feature_count;
+    this.bitmaskEntrypoint = bitmaskEntrypoint;
+    this.statusEntrypoint = statusEntrypoint;
     this.ruleIndex = new Map((wasmMetadata.rules ?? []).map((rule) => [rule.bit, rule]));
     this.stringCodes = new Map(Object.entries(wasmMetadata.string_codes ?? {}));
   }
@@ -157,11 +170,17 @@ export class LogicPearlBrowserArtifact {
     try {
       const view = new Float64Array(exports.memory.buffer, ptr, this.featureCount);
       view.set(slots);
-      const raw = exports.logicpearl_eval_bitmask_slots_f64(ptr, this.featureCount);
-      const bitmask = BigInt(raw);
-      if (bitmask === WASM_ERROR_SENTINEL) {
-        throw new Error('LogicPearl wasm evaluator rejected the provided feature slots.');
+      const statusFn = exports[this.statusEntrypoint];
+      if (typeof statusFn === 'function') {
+        const status = Number(statusFn(ptr, this.featureCount));
+        if (status !== 0) {
+          throw new Error(
+            `LogicPearl wasm evaluator rejected the provided feature slots with status ${status}.`
+          );
+        }
       }
+      const raw = exports[this.bitmaskEntrypoint](ptr, this.featureCount);
+      const bitmask = BigInt(raw);
       const firedRules = decodeFiredRules(bitmask, this.metadata.rules ?? []);
       return {
         allow: firedRules.length === 0,

@@ -63,6 +63,7 @@ struct WasmArtifactMetadata {
     artifact_version: String,
     gate_id: String,
     entrypoint: String,
+    status_entrypoint: String,
     allow_entrypoint: String,
     feature_count: usize,
     missing_value: String,
@@ -540,6 +541,7 @@ fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
         artifact_version: "1.0".to_string(),
         gate_id: gate.gate_id.clone(),
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
+        status_entrypoint: "logicpearl_eval_status_slots_f64".to_string(),
         allow_entrypoint: "logicpearl_eval_allow_slots_f64".to_string(),
         feature_count: input_features.len(),
         missing_value: "NaN".to_string(),
@@ -690,7 +692,7 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
     }
 
     format!(
-        "const FEATURE_COUNT: usize = {};\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if ptr.is_null() || len < FEATURE_COUNT {{\n        return u64::MAX;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    match logicpearl_eval_bitmask_slots_f64(ptr, len) {{\n        u64::MAX => 2,\n        0 => 1,\n        _ => 0,\n    }}\n}}\n",
+        "const FEATURE_COUNT: usize = {};\nconst LOGICPEARL_STATUS_OK: u32 = 0;\nconst LOGICPEARL_STATUS_NULL_PTR: u32 = 1;\nconst LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[inline]\nfn validate_slots(ptr: *const f64, len: usize) -> u32 {{\n    if ptr.is_null() {{\n        return LOGICPEARL_STATUS_NULL_PTR;\n    }}\n    if len < FEATURE_COUNT {{\n        return LOGICPEARL_STATUS_INSUFFICIENT_LEN;\n    }}\n    LOGICPEARL_STATUS_OK\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_status_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    validate_slots(ptr, len)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 0;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 2;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    if evaluate(values) == 0 {{ 1 }} else {{ 0 }}\n}}\n",
         input_features.len(),
         helpers = helpers,
         derived_assignments = derived_assignments,
@@ -1088,7 +1090,12 @@ fn target_is_windows(target_triple: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::unique_generated_crate_name;
+    use super::{generate_wasm_runner_source, unique_generated_crate_name, write_wasm_metadata};
+    use logicpearl_ir::{
+        ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
+        FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, RuleDefinition, RuleKind,
+    };
+    use serde_json::Value;
 
     #[test]
     fn generated_crate_names_are_isolated_per_invocation() {
@@ -1097,5 +1104,87 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("logicpearl_compiled_demo_"));
         assert!(second.starts_with("logicpearl_compiled_demo_"));
+    }
+
+    #[test]
+    fn generated_wasm_bitmask_abi_does_not_reserve_u64_max() {
+        let gate = gate_with_rule_count(64);
+        let source = generate_wasm_runner_source(&gate);
+
+        assert!(source.contains("pub extern \"C\" fn logicpearl_eval_status_slots_f64"));
+        assert!(source.contains("bitmask |= 1u64 << 63;"));
+        assert!(source.contains("return 0;"));
+        assert!(!source.contains("u64::MAX"));
+    }
+
+    #[test]
+    fn wasm_metadata_declares_explicit_status_entrypoint() {
+        let gate = gate_with_rule_count(1);
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("pearl.wasm.meta.json");
+
+        write_wasm_metadata(&path, &gate).expect("write wasm metadata");
+
+        let metadata: Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("read generated wasm metadata"),
+        )
+        .expect("parse generated wasm metadata");
+        assert_eq!(
+            metadata["entrypoint"].as_str(),
+            Some("logicpearl_eval_bitmask_slots_f64")
+        );
+        assert_eq!(
+            metadata["status_entrypoint"].as_str(),
+            Some("logicpearl_eval_status_slots_f64")
+        );
+        assert_eq!(
+            metadata["allow_entrypoint"].as_str(),
+            Some("logicpearl_eval_allow_slots_f64")
+        );
+    }
+
+    fn gate_with_rule_count(rule_count: u32) -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "test_gate".to_string(),
+            gate_type: "deny_list".to_string(),
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "enabled".to_string(),
+                    feature_type: FeatureType::Bool,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                    semantics: None,
+                    governance: None,
+                    derived: None,
+                }],
+            },
+            rules: (0..rule_count)
+                .map(|bit| RuleDefinition {
+                    id: format!("rule_{bit}"),
+                    kind: RuleKind::Predicate,
+                    bit,
+                    deny_when: Expression::Comparison(ComparisonExpression {
+                        feature: "enabled".to_string(),
+                        op: ComparisonOperator::Eq,
+                        value: ComparisonValue::Literal(Value::Bool(true)),
+                    }),
+                    label: None,
+                    message: None,
+                    severity: None,
+                    counterfactual_hint: None,
+                    verification_status: None,
+                })
+                .collect(),
+            evaluation: EvaluationConfig {
+                combine: "bitmask_any".to_string(),
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
     }
 }
