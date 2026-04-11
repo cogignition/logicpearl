@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tomllib
 from collections import defaultdict, deque
@@ -10,6 +11,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_MANIFEST = REPO_ROOT / "Cargo.toml"
+BROWSER_PACKAGE_JSON = REPO_ROOT / "packages" / "logicpearl-browser" / "package.json"
+PYTHON_PYPROJECT = REPO_ROOT / "reserved-python" / "logicpearl" / "pyproject.toml"
+PYTHON_MANIFEST = REPO_ROOT / "reserved-python" / "logicpearl" / "Cargo.toml"
 
 
 def load_toml(path: Path) -> dict:
@@ -39,6 +43,7 @@ def main() -> int:
     members: list[str] = workspace["workspace"]["members"]
     workspace_package = workspace.get("workspace", {}).get("package", {})
     workspace_dependencies = workspace.get("workspace", {}).get("dependencies", {})
+    workspace_version = workspace_package.get("version")
 
     manifests: dict[str, tuple[Path, dict]] = {}
     crate_names: dict[str, str] = {}
@@ -51,6 +56,34 @@ def main() -> int:
     errors: list[str] = []
     graph: dict[str, set[str]] = defaultdict(set)
     indegree: dict[str, int] = {name: 0 for name in internal_names}
+
+    if not workspace_version:
+        errors.append(f"{WORKSPACE_MANIFEST}: missing workspace.package.version")
+    else:
+        for dep_name in sorted(internal_names):
+            ws_spec = workspace_dependencies.get(dep_name)
+            if isinstance(ws_spec, dict) and ws_spec.get("version") != workspace_version:
+                errors.append(
+                    f"{WORKSPACE_MANIFEST}: workspace dependency `{dep_name}` version {ws_spec.get('version')!r} must match workspace version {workspace_version!r}"
+                )
+
+        browser_version = json.loads(BROWSER_PACKAGE_JSON.read_text()).get("version")
+        if browser_version != workspace_version:
+            errors.append(
+                f"{BROWSER_PACKAGE_JSON}: package version {browser_version!r} must match workspace version {workspace_version!r}"
+            )
+
+        python_project = load_toml(PYTHON_PYPROJECT).get("project", {})
+        if python_project.get("version") != workspace_version:
+            errors.append(
+                f"{PYTHON_PYPROJECT}: project.version {python_project.get('version')!r} must match workspace version {workspace_version!r}"
+            )
+
+        python_package = load_toml(PYTHON_MANIFEST).get("package", {})
+        if python_package.get("version") != workspace_version:
+            errors.append(
+                f"{PYTHON_MANIFEST}: package.version {python_package.get('version')!r} must match workspace version {workspace_version!r}"
+            )
 
     for member, (path, manifest) in manifests.items():
         package = manifest.get("package", {})

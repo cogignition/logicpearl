@@ -9,6 +9,10 @@ All notable user-facing changes should be added here.
 - Dictionary-aware rule text, inspect output, and artifact diffs, including separate diff flags for source/schema changes, learned rule changes, and explanation-only changes.
 - Feature dictionary documentation and repository guidance for LLM agents and integration authors.
 
+### Changed
+- Aligned Rust workspace and reserved Python package metadata with `@logicpearl/browser` at `0.1.4`.
+- Refreshed the Rust lockfile to avoid the yanked `fastrand 2.4.0` transitive dependency.
+
 ## 0.1.2 - 2026-04-08
 
 ### Added

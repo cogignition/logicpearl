@@ -36,7 +36,7 @@ Prebuilt Windows and Linux arm64 bundles are not published yet. If your machine 
 ## Install A Specific Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.2
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.4
 ```
 
 ## Custom Install Locations

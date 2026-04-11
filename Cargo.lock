@@ -318,9 +318,9 @@ dependencies = [
 
 [[package]]
 name = "fastrand"
-version = "2.4.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a043dc74da1e37d6afe657061213aa6f425f855399a11d3463c6ecccc4dfda1f"
+checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fiat-crypto"
@@ -489,7 +489,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logicpearl"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "clap",
  "csv",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-benchmark"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-conformance"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-core"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "csv",
  "serde",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-discovery"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "csv",
  "good_lp",
@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-engine"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-ir"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer-synthesis"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "good_lp",
  "logicpearl-benchmark",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-pipeline"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -629,7 +629,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-plugin"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-render"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-runtime"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-solver"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-verify"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "clap",
  "logicpearl-benchmark",
