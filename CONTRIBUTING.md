@@ -8,28 +8,20 @@ The goal is not just to land code. The goal is to make the public engine better:
 - more honest on parity and benchmarks
 - more generic, not more benchmark-shaped
 
-## Score Tracking
+## Quality Tracking
 
-The repository keeps a visible checked-in score file for the public example and benchmark suites.
+The repository keeps a visible checked-in quality report for the public example and benchmark suites.
 
-Every commit that lands on `main` contributes base participation credit in the score file. Commits that improve the measured public score suites also add improvement credit.
-
-Score file fields:
-- `shells`: base participation credit for landed work
-- `pearls`: measured improvement credit
-- `treasure`: total score (`shells + pearls`)
-
-The scoreboard is generated from:
+The report is generated from:
 - checked-in examples
 - demo datasets
 - the fast open guardrail regression sample
 
 Files:
-- [SCORES.json](./SCORES.json)
-- [scripts/scoreboard/README.md](./scripts/scoreboard/README.md)
-- [scripts/scoreboard/score_model.json](./scripts/scoreboard/score_model.json)
+- [QUALITY.json](./QUALITY.json)
+- [scripts/quality/README.md](./scripts/quality/README.md)
 
-## How To Improve The Score Suites
+## How To Improve The Quality Suites
 
 High-value contribution patterns:
 - improve the generic engine so more datasets build cleanly without special handling
@@ -44,7 +36,7 @@ Low-value or rejected patterns:
 - claims in docs that overstate what a benchmark proves
 - changes that feel magical only because hidden assumptions were baked in
 
-The fastest way to lose the plot here is optimizing for score movement while making the engine less honest.
+The fastest way to lose the plot here is optimizing for metric movement while making the engine less honest.
 
 ## Design Rules
 
@@ -66,9 +58,9 @@ Please make sure:
 - tests pass
 - new public docs are accurate and conservative
 - benchmark framing matches what the code actually proves
-- score movement, if any, comes from a generic improvement
+- metric movement, if any, comes from a generic improvement
 
-If your change is score-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution.
+If your change is metric-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution.
 
 ## Local Development
 
@@ -150,26 +142,8 @@ cargo xtask package-release-bundle \
   --output-dir dist
 ```
 
-Scoreboard maintenance is explicit and stays out of the git hooks. Refresh the score ledger when you actually intend to update it:
+Quality report maintenance is explicit and stays out of the git hooks. Refresh the report when you actually intend to update it:
 
 ```bash
-cargo xtask scoreboard-update
+cargo xtask quality-report
 ```
-
-Rebuild contributor totals:
-
-```bash
-cargo xtask contributor-points
-cargo xtask contributor-summary
-```
-
-## Attribution
-
-Contributor tracking is based on git history.
-
-For the cleanest attribution on `main`:
-- preserve the original author when merging
-- prefer merge strategies that keep contributor identity intact
-- if you use GitHub no-reply emails, the scoreboard will infer the GitHub login when possible
-
-If a squash merge rewrites authorship, the scoreboard will attribute the shells and pearls to the squash author.

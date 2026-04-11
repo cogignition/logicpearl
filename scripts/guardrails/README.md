@@ -65,7 +65,7 @@ If the gated `MT-AgentRisk` dataset is staged at `$LOGICPEARL_DATASETS/mt_agentr
 
 ## Usage
 
-For the full public refresh path, including guardrails, WAF, and scoreboard updates:
+For the full public refresh path, including guardrails, WAF, and the quality report:
 
 ```bash
 cargo xtask refresh-benchmarks

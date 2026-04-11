@@ -29,14 +29,9 @@ const TRACE_PROJECTION_WAF: &str = "benchmarks/waf/prep/trace_projection.waf_v1.
 const FEATURE_GOVERNANCE_WAF: &str = "benchmarks/waf/prep/feature_governance.waf_v1.json";
 const OBSERVER_MANIFEST_WAF: &str = "examples/waf_edge/plugins/observer/manifest.json";
 const ROUTE_AUDIT_MANIFEST_WAF: &str = "examples/waf_edge/plugins/route_audit/manifest.json";
-const SCORE_MODEL_PATH: &str = "scripts/scoreboard/score_model.json";
-const CONTRIBUTOR_POINTS_PATH: &str = "scripts/scoreboard/contributor_points.json";
-const CONTRIBUTOR_SUMMARY_PATH: &str = "scripts/scoreboard/contributor_summary.json";
-const SCORES_PATH: &str = "SCORES.json";
+const QUALITY_REPORT_PATH: &str = "QUALITY.json";
 const GETTING_STARTED_CSV: &str = "examples/getting_started/decision_traces.csv";
 const GETTING_STARTED_INPUT: &str = "examples/getting_started/new_input.json";
-
-const PARTICIPATION_POINTS_PER_COMMIT: f64 = 1.0;
 
 const DEMO_CASES: [(&str, &str); 3] = [
     ("access_control", "examples/demos/access_control/traces.csv"),
@@ -64,24 +59,6 @@ const WAF_TARGETS: [(&str, &str, &str); 3] = [
         "target_suspicious_request",
         "target_suspicious_request_traces.csv",
         "review",
-    ),
-];
-
-const SCORING_TERMS: &[(&str, &str, &str)] = &[
-    (
-        "participation_points",
-        "shells",
-        "Base credit for anything that lands on main.",
-    ),
-    (
-        "improvement_points",
-        "pearls",
-        "Extra credit earned by improving measured scores.",
-    ),
-    (
-        "total_points",
-        "treasure",
-        "Total score, combining shells and pearls.",
     ),
 ];
 
@@ -342,8 +319,8 @@ pub(crate) fn run_refresh_benchmarks(args: RefreshBenchmarksArgs) -> Result<()> 
     );
     println!(
         "  {} {}",
-        "Score ledger".bright_black(),
-        repo_root.join(SCORES_PATH).display()
+        "Quality report".bright_black(),
+        repo_root.join(QUALITY_REPORT_PATH).display()
     );
     Ok(())
 }
@@ -1198,10 +1175,12 @@ pub(crate) fn run_refresh_waf_build(args: RefreshWafBuildArgs) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -> Result<()> {
+pub(crate) fn run_refresh_quality_report(args: RefreshQualityReportArgs) -> Result<()> {
     let repo_root = require_repo_root()?;
     let cli = nested_logicpearl_base_command(args.use_installed_cli)?;
-    let output_path = args.output.unwrap_or_else(|| repo_root.join(SCORES_PATH));
+    let output_path = args
+        .output
+        .unwrap_or_else(|| repo_root.join(QUALITY_REPORT_PATH));
     let guardrail_bundle_dir = args.guardrail_bundle_dir.unwrap_or_else(|| {
         std::env::var(DEFAULT_DATASETS_ENV)
             .ok()
@@ -1239,9 +1218,8 @@ pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -
 
     let payload = json!({
         "schema_version": "1.0",
-        "generated_by": "cargo xtask scoreboard-update",
+        "generated_by": "cargo xtask quality-report",
         "generated_at": unix_timestamp(),
-        "author": author_identity(&repo_root)?,
         "revision": revision_summary(&repo_root)?,
         "suites": suites,
         "metrics": Value::Object(metrics.clone()),
@@ -1253,229 +1231,6 @@ pub(crate) fn run_refresh_scoreboard_update(args: RefreshScoreboardUpdateArgs) -
     });
     write_json_pretty(&output_path, &payload)?;
     let _ = args.pretty;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&payload).into_diagnostic()?
-    );
-    Ok(())
-}
-
-pub(crate) fn run_refresh_contributor_points(args: RefreshContributorPointsArgs) -> Result<()> {
-    let repo_root = require_repo_root()?;
-    let output_path = args
-        .output
-        .unwrap_or_else(|| repo_root.join(CONTRIBUTOR_POINTS_PATH));
-    let score_model: Value = read_json(&repo_root.join(SCORE_MODEL_PATH))?;
-    let score_commits = git_output(
-        &repo_root,
-        &["log", "--reverse", "--format=%H", "--", SCORES_PATH],
-    )?
-    .lines()
-    .map(str::to_string)
-    .collect::<Vec<_>>();
-    if score_commits.is_empty() {
-        return Err(miette::miette!("no SCORES.json history found"));
-    }
-    let first_score_commit = &score_commits[0];
-    let log_lines = git_output(
-        &repo_root,
-        &[
-            "log",
-            "--reverse",
-            "--format=%H\t%an\t%ae\t%aI",
-            &format!("{first_score_commit}^..HEAD"),
-        ],
-    )?;
-
-    let mut commits = Vec::new();
-    let mut contributors: BTreeMap<String, Value> = BTreeMap::new();
-    let mut previous_scores: Option<Value> = None;
-
-    for line in log_lines.lines() {
-        let mut parts = line.splitn(4, '\t');
-        let commit = parts.next().unwrap_or_default().to_string();
-        let author_name = parts.next().unwrap_or_default().to_string();
-        let author_email = parts.next().unwrap_or_default().to_string();
-        let authored_at = parts.next().unwrap_or_default().to_string();
-        let github_login = infer_github_login(&author_email);
-        let contributor_key = github_login.clone().unwrap_or_else(|| author_email.clone());
-        let current_scores =
-            load_scores_for_commit(&repo_root, &commit)?.or(previous_scores.clone());
-
-        let mut suite_changes = Map::new();
-        let mut improvement_points = 0.0;
-        if let (Some(previous_scores), Some(current_scores)) = (&previous_scores, &current_scores) {
-            for suite_model in score_model["suites"].as_array().unwrap_or(&Vec::new()) {
-                let suite_id = suite_model["id"].as_str().unwrap_or_default();
-                let previous_suite_score = suite_score(previous_scores, suite_model);
-                let current_suite_score = suite_score(current_scores, suite_model);
-                let delta = current_suite_score - previous_suite_score;
-                if delta.abs() < 1e-12 {
-                    continue;
-                }
-                let points_budget = suite_model["points_budget"].as_f64().unwrap_or(0.0);
-                let weighted_points = delta.max(0.0) * points_budget;
-                suite_changes.insert(
-                    suite_id.to_string(),
-                    json!({
-                        "previous_score": previous_suite_score,
-                        "current_score": current_suite_score,
-                        "delta": delta,
-                        "points_budget": points_budget,
-                        "target_goal": suite_model.get("target_goal").cloned().unwrap_or(Value::Null),
-                        "weighted_points": weighted_points,
-                        "metrics": suite_model["metrics"].clone(),
-                    }),
-                );
-                improvement_points += weighted_points;
-            }
-        }
-
-        let participation_points = PARTICIPATION_POINTS_PER_COMMIT;
-        let total_points = participation_points + improvement_points;
-        let commit_entry = json!({
-            "commit": commit,
-            "author_name": author_name,
-            "author_email": author_email,
-            "github_login": github_login,
-            "authored_at": authored_at,
-            "participation_points": participation_points,
-            "improvement_points": improvement_points,
-            "total_points": total_points,
-            "shells": participation_points,
-            "pearls": improvement_points,
-            "treasure": total_points,
-            "suite_changes": suite_changes,
-        });
-        commits.push(commit_entry);
-
-        let contributor = contributors.entry(contributor_key).or_insert_with(|| {
-            json!({
-                "author_name": author_name,
-                "author_email": author_email,
-                "github_login": github_login,
-                "participation_points": 0.0,
-                "improvement_points": 0.0,
-                "total_points": 0.0,
-                "shells": 0.0,
-                "pearls": 0.0,
-                "treasure": 0.0,
-                "points": 0.0,
-                "commits": [],
-            })
-        });
-        contributor["author_name"] = Value::String(author_name);
-        contributor["author_email"] = Value::String(author_email);
-        contributor["github_login"] = github_login.map(Value::String).unwrap_or(Value::Null);
-        contributor["participation_points"] = json!(
-            contributor["participation_points"].as_f64().unwrap_or(0.0) + participation_points
-        );
-        contributor["improvement_points"] =
-            json!(contributor["improvement_points"].as_f64().unwrap_or(0.0) + improvement_points);
-        contributor["total_points"] =
-            json!(contributor["total_points"].as_f64().unwrap_or(0.0) + total_points);
-        contributor["shells"] = contributor["participation_points"].clone();
-        contributor["pearls"] = contributor["improvement_points"].clone();
-        contributor["treasure"] = contributor["total_points"].clone();
-        contributor["points"] = contributor["total_points"].clone();
-        contributor["commits"].as_array_mut().unwrap().push(json!({
-            "commit": commit,
-            "authored_at": authored_at,
-            "participation_points": participation_points,
-            "improvement_points": improvement_points,
-            "total_points": total_points,
-            "shells": participation_points,
-            "pearls": improvement_points,
-            "treasure": total_points,
-        }));
-
-        if let Some(current_scores) = current_scores {
-            previous_scores = Some(current_scores);
-        }
-    }
-
-    let mut contributor_rows = contributors.into_values().collect::<Vec<_>>();
-    contributor_rows.sort_by(|left, right| {
-        let left_points = left["total_points"].as_f64().unwrap_or(0.0);
-        let right_points = right["total_points"].as_f64().unwrap_or(0.0);
-        right_points
-            .partial_cmp(&left_points)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                let left_key = left["github_login"]
-                    .as_str()
-                    .or_else(|| left["author_email"].as_str())
-                    .unwrap_or_default();
-                let right_key = right["github_login"]
-                    .as_str()
-                    .or_else(|| right["author_email"].as_str())
-                    .unwrap_or_default();
-                left_key.cmp(right_key)
-            })
-    });
-
-    let payload = json!({
-        "schema_version": "1.0",
-        "generated_by": "cargo xtask contributor-points",
-        "participation_points_per_commit": PARTICIPATION_POINTS_PER_COMMIT,
-        "scoring_terms": scoring_terms_json(),
-        "score_model": score_model,
-        "commits": commits,
-        "contributors": contributor_rows,
-    });
-    write_json_pretty(&output_path, &payload)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&payload).into_diagnostic()?
-    );
-    Ok(())
-}
-
-pub(crate) fn run_refresh_contributor_summary(args: RefreshContributorSummaryArgs) -> Result<()> {
-    let repo_root = require_repo_root()?;
-    let input_path = args
-        .input
-        .unwrap_or_else(|| repo_root.join(CONTRIBUTOR_POINTS_PATH));
-    let output_path = args
-        .output
-        .unwrap_or_else(|| repo_root.join(CONTRIBUTOR_SUMMARY_PATH));
-    let contributor_points: Value = read_json(&input_path)?;
-    let contributors = contributor_points["contributors"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-
-    let mut summary_rows = Vec::new();
-    for (index, contributor) in contributors.iter().enumerate() {
-        let commits = contributor["commits"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let latest_commit = commits.last().cloned().unwrap_or(Value::Null);
-        summary_rows.push(json!({
-            "rank": index + 1,
-            "author_name": contributor["author_name"].clone(),
-            "author_email": contributor["author_email"].clone(),
-            "github_login": contributor["github_login"].clone(),
-            "participation_points": contributor["participation_points"].clone(),
-            "improvement_points": contributor["improvement_points"].clone(),
-            "total_points": contributor["total_points"].clone(),
-            "shells": contributor["shells"].clone(),
-            "pearls": contributor["pearls"].clone(),
-            "treasure": contributor["treasure"].clone(),
-            "points": contributor["total_points"].clone(),
-            "commit_count": commits.len(),
-            "latest_commit": latest_commit,
-        }));
-    }
-
-    let payload = json!({
-        "schema_version": "1.0",
-        "generated_by": "cargo xtask contributor-summary",
-        "scoring_terms": contributor_points["scoring_terms"].clone(),
-        "contributors": summary_rows,
-    });
-    write_json_pretty(&output_path, &payload)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&payload).into_diagnostic()?
@@ -1615,37 +1370,19 @@ fn build_refresh_steps(repo_root: &Path, args: &RefreshBenchmarksArgs) -> Result
         env: Vec::new(),
     });
 
-    let mut scoreboard = refresh_cli.clone();
-    scoreboard.extend([
-        "scoreboard-update".to_string(),
+    let mut quality_report = refresh_cli;
+    quality_report.extend([
+        "quality-report".to_string(),
         "--guardrail-bundle-dir".to_string(),
         args.guardrail_bundle_dir.display().to_string(),
     ]);
     if args.use_installed_cli {
-        scoreboard.push("--use-installed-cli".to_string());
+        quality_report.push("--use-installed-cli".to_string());
     }
     steps.push(RefreshStep {
-        id: "08_scores",
-        title: "Refresh score ledger",
-        command: scoreboard,
-        env: Vec::new(),
-    });
-
-    let mut contributor_points = refresh_cli.clone();
-    contributor_points.push("contributor-points".to_string());
-    steps.push(RefreshStep {
-        id: "09_contributor_points",
-        title: "Rebuild contributor points",
-        command: contributor_points,
-        env: Vec::new(),
-    });
-
-    let mut contributor_summary = refresh_cli;
-    contributor_summary.push("contributor-summary".to_string());
-    steps.push(RefreshStep {
-        id: "10_contributor_summary",
-        title: "Rebuild contributor summary",
-        command: contributor_summary,
+        id: "08_quality_report",
+        title: "Refresh quality report",
+        command: quality_report,
         env: Vec::new(),
     });
 
@@ -3904,7 +3641,7 @@ fn build_waf_learned_pipeline(
 }
 
 fn measure_getting_started(repo_root: &Path, cli: &[String]) -> Result<(Value, Value)> {
-    let temp_dir = unique_temp_dir("logicpearl_scores_getting_started");
+    let temp_dir = unique_temp_dir("logicpearl_quality_getting_started");
     fs::create_dir_all(&temp_dir).into_diagnostic()?;
     let output_dir = temp_dir.join("artifact");
     let build = run_json_command(
@@ -3946,7 +3683,7 @@ fn measure_getting_started(repo_root: &Path, cli: &[String]) -> Result<(Value, V
 }
 
 fn measure_demos(repo_root: &Path, cli: &[String]) -> Result<(Value, Value)> {
-    let temp_dir = unique_temp_dir("logicpearl_scores_demos");
+    let temp_dir = unique_temp_dir("logicpearl_quality_demos");
     fs::create_dir_all(&temp_dir).into_diagnostic()?;
     let mut cases = Map::new();
     let mut metrics = Map::new();
@@ -4015,7 +3752,7 @@ fn measure_guardrails(
         ));
     }
     let target_goal = detect_bundle_target_goal(bundle_dir)?;
-    let temp_dir = unique_temp_dir("logicpearl_scores_guardrails");
+    let temp_dir = unique_temp_dir("logicpearl_quality_guardrails");
     fs::create_dir_all(&temp_dir).into_diagnostic()?;
     let output_dir = temp_dir.join("guardrails");
     let summary = match run_json_command(
@@ -4208,53 +3945,9 @@ fn stable_path(repo_root: &Path, path: &Path) -> String {
         .unwrap_or(display)
 }
 
-fn author_identity(repo_root: &Path) -> Result<Value> {
-    let git_var = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("var")
-        .arg("GIT_AUTHOR_IDENT")
-        .output()
-        .into_diagnostic()?;
-    let raw = if git_var.status.success() {
-        String::from_utf8(git_var.stdout)
-            .into_diagnostic()?
-            .trim()
-            .to_string()
-    } else {
-        String::new()
-    };
-    if let Some((name, email)) = parse_git_author_ident(&raw) {
-        return Ok(json!({ "name": name, "email": email }));
-    }
-    if let Ok(actor) = std::env::var("GITHUB_ACTOR") {
-        if !actor.trim().is_empty() {
-            return Ok(json!({
-                "name": actor,
-                "email": format!("{}@users.noreply.github.com", actor),
-            }));
-        }
-    }
-    Ok(json!({
-        "name": git_output(repo_root, &["config", "--get", "user.name"]).unwrap_or_else(|_| "unknown".to_string()),
-        "email": git_output(repo_root, &["config", "--get", "user.email"]).unwrap_or_else(|_| "unknown@local".to_string()),
-    }))
-}
-
-fn parse_git_author_ident(raw: &str) -> Option<(String, String)> {
-    if raw.contains('<') && raw.contains('>') {
-        let name = raw.split('<').next()?.trim().to_string();
-        let email = raw.split('<').nth(1)?.split('>').next()?.trim().to_string();
-        Some((name, email))
-    } else {
-        None
-    }
-}
-
 fn revision_summary(repo_root: &Path) -> Result<Value> {
     Ok(json!({
         "head": git_output(repo_root, &["rev-parse", "HEAD"])?,
-        "dirty": !git_output(repo_root, &["status", "--short"])?.is_empty(),
     }))
 }
 
@@ -4278,79 +3971,6 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Result<String> {
         .into_diagnostic()?
         .trim()
         .to_string())
-}
-
-fn load_scores_for_commit(repo_root: &Path, commit: &str) -> Result<Option<Value>> {
-    let completed = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("show")
-        .arg(format!("{commit}:{SCORES_PATH}"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .into_diagnostic()?;
-    if !completed.status.success() {
-        return Ok(None);
-    }
-    let stdout = String::from_utf8(completed.stdout).into_diagnostic()?;
-    if stdout.trim().is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(serde_json::from_str(stdout.trim()).into_diagnostic()?))
-}
-
-fn infer_github_login(email: &str) -> Option<String> {
-    let lowered = email.trim().to_lowercase();
-    let suffix = "@users.noreply.github.com";
-    if !lowered.ends_with(suffix) {
-        return None;
-    }
-    let local = lowered.trim_end_matches(suffix);
-    if let Some((_, login)) = local.split_once('+') {
-        if !login.is_empty() {
-            return Some(login.to_string());
-        }
-    }
-    (!local.is_empty()).then(|| local.to_string())
-}
-
-fn suite_score(scores: &Value, suite_model: &Value) -> f64 {
-    let metrics = scores["metrics"].as_object().cloned().unwrap_or_default();
-    let target_goal = suite_model["target_goal"].as_str();
-    let mut total = 0.0;
-    for metric_spec in suite_model["metrics"].as_array().unwrap_or(&Vec::new()) {
-        let Some(id) = metric_spec["id"].as_str() else {
-            continue;
-        };
-        let Some(metric) = metrics.get(id) else {
-            continue;
-        };
-        if let Some(target_goal) = target_goal {
-            if let Some(metric_target_goal) = metric.get("target_goal").and_then(Value::as_str) {
-                if metric_target_goal != target_goal {
-                    continue;
-                }
-            }
-        }
-        total +=
-            metric["value"].as_f64().unwrap_or(0.0) * metric_spec["weight"].as_f64().unwrap_or(0.0);
-    }
-    total
-}
-
-fn scoring_terms_json() -> Value {
-    let mut map = Map::new();
-    for (id, display_name, description) in SCORING_TERMS {
-        map.insert(
-            (*id).to_string(),
-            json!({
-                "display_name": display_name,
-                "description": description,
-            }),
-        );
-    }
-    Value::Object(map)
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

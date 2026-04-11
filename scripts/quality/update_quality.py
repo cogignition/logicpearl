@@ -15,7 +15,7 @@ from typing import Any
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "SCORES.json"
+DEFAULT_OUTPUT = REPO_ROOT / "QUALITY.json"
 DEFAULT_GUARDRAIL_BUNDLE = Path(
     os.environ.get(
         "LOGICPEARL_GUARDRAIL_BUNDLE_DIR",
@@ -99,37 +99,9 @@ def git_output(*args: str) -> str:
     return run(["git", "-C", str(REPO_ROOT), *args]).stdout.strip()
 
 
-def author_identity() -> dict[str, str]:
-    completed = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "var", "GIT_AUTHOR_IDENT"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    raw = completed.stdout.strip() if completed.returncode == 0 else ""
-    if "<" in raw and ">" in raw:
-        name = raw.split("<", 1)[0].strip()
-        email = raw.split("<", 1)[1].split(">", 1)[0].strip()
-        return {"name": name, "email": email}
-
-    github_actor = os.environ.get("GITHUB_ACTOR", "").strip()
-    if github_actor:
-        return {
-            "name": github_actor,
-            "email": f"{github_actor}@users.noreply.github.com",
-        }
-
-    name = git_output("config", "--get", "user.name") or "unknown"
-    email = git_output("config", "--get", "user.email") or "unknown@local"
-    return {"name": name, "email": email}
-
-
 def get_revision() -> dict[str, Any]:
     head = git_output("rev-parse", "HEAD")
-    return {
-        "head": head,
-        "dirty": git_output("status", "--short") != "",
-    }
+    return {"head": head}
 
 
 def metric(
@@ -221,7 +193,7 @@ def run_binary(binary_path: str, input_path: Path) -> str:
 
 
 def measure_getting_started() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    with tempfile.TemporaryDirectory(prefix="logicpearl_scores_getting_started_") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="logicpearl_quality_getting_started_") as temp_dir:
         output_dir = Path(temp_dir) / "artifact"
         build = build_case(GETTING_STARTED_CSV, output_dir)
         actual_bitmask = run_binary(build["output_files"]["native_binary"], GETTING_STARTED_INPUT)
@@ -249,7 +221,7 @@ def measure_getting_started() -> tuple[dict[str, Any], dict[str, dict[str, Any]]
 def measure_demos() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     cases: dict[str, Any] = {}
     metrics: dict[str, dict[str, Any]] = {}
-    with tempfile.TemporaryDirectory(prefix="logicpearl_scores_demos_") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="logicpearl_quality_demos_") as temp_dir:
         base_dir = Path(temp_dir)
         for demo_id, csv_path in DEMO_CASES:
             build = build_case(csv_path, base_dir / demo_id)
@@ -278,7 +250,7 @@ def measure_guardrails() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     target_goal = guardrail_target_goal(DEFAULT_GUARDRAIL_BUNDLE)
     baseline_path = guardrail_baseline_for_goal(200, target_goal)
 
-    with tempfile.TemporaryDirectory(prefix="logicpearl_scores_guardrails_") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="logicpearl_quality_guardrails_") as temp_dir:
         output_dir = Path(temp_dir) / "guardrails"
         cmd = [
             sys.executable,
@@ -387,9 +359,8 @@ def main() -> int:
 
     payload = {
         "schema_version": "1.0",
-        "generated_by": "scripts/scoreboard/update_scores.py",
+        "generated_by": "scripts/quality/update_quality.py",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "author": author_identity(),
         "revision": get_revision(),
         "suites": suites,
         "metrics": metrics,

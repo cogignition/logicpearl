@@ -17,15 +17,15 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 mod refresh_cmd;
 
 use refresh_cmd::{
-    run_refresh_benchmarks, run_refresh_contributor_points, run_refresh_contributor_summary,
-    run_refresh_guardrails_build, run_refresh_guardrails_eval, run_refresh_guardrails_freeze,
-    run_refresh_scoreboard_update, run_refresh_waf_benchmark_cases, run_refresh_waf_build,
+    run_refresh_benchmarks, run_refresh_guardrails_build, run_refresh_guardrails_eval,
+    run_refresh_guardrails_freeze, run_refresh_quality_report, run_refresh_waf_benchmark_cases,
+    run_refresh_waf_build,
 };
 
 const XTASK_LONG_ABOUT: &str = "\
 LogicPearl project automation lives here.
 
-Use xtask for local verification, benchmark refresh flows, bundle rebuilds, and score-ledger maintenance.
+Use xtask for local verification, benchmark refresh flows, bundle rebuilds, and quality report maintenance.
 This surface is intentionally separate from the `logicpearl` product CLI.";
 const COMPARE_SOLVER_TIMEOUT_MS: &str = "5000";
 const COMPARE_COMMAND_TIMEOUT_SECS: u64 = 30;
@@ -58,7 +58,7 @@ enum Commands {
     CompareSelectionBackends(CompareSelectionBackendsArgs),
     /// Package a distributable LogicPearl CLI bundle with a bundled solver.
     PackageReleaseBundle(PackageReleaseBundleArgs),
-    /// Refresh public benchmark bundles, evals, and score ledgers.
+    /// Refresh public benchmark bundles, evals, and the quality report.
     RefreshBenchmarks(RefreshBenchmarksArgs),
     #[command(hide = true)]
     GuardrailsFreeze(RefreshGuardrailsFreezeArgs),
@@ -71,11 +71,7 @@ enum Commands {
     #[command(hide = true)]
     WafBuild(RefreshWafBuildArgs),
     #[command(hide = true)]
-    ScoreboardUpdate(RefreshScoreboardUpdateArgs),
-    #[command(hide = true)]
-    ContributorPoints(RefreshContributorPointsArgs),
-    #[command(hide = true)]
-    ContributorSummary(RefreshContributorSummaryArgs),
+    QualityReport(RefreshQualityReportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -255,7 +251,7 @@ struct RefreshWafBuildArgs {
 }
 
 #[derive(Debug, Args)]
-struct RefreshScoreboardUpdateArgs {
+struct RefreshQualityReportArgs {
     #[arg(long)]
     output: Option<PathBuf>,
     #[arg(long)]
@@ -264,20 +260,6 @@ struct RefreshScoreboardUpdateArgs {
     guardrail_bundle_dir: Option<PathBuf>,
     #[arg(long)]
     use_installed_cli: bool,
-}
-
-#[derive(Debug, Args)]
-struct RefreshContributorPointsArgs {
-    #[arg(long)]
-    output: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct RefreshContributorSummaryArgs {
-    #[arg(long)]
-    input: Option<PathBuf>,
-    #[arg(long)]
-    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -444,11 +426,9 @@ fn run_public_path_hygiene(repo_root: &Path) -> Result<()> {
 fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
     run_repo_command(repo_root, "sh", &["-n", "install.sh"])?;
     run_public_path_hygiene(repo_root)?;
-    run_repo_command(
-        repo_root,
-        "cargo",
-        &["test", "--manifest-path", "Cargo.toml", "--workspace"],
-    )?;
+    run_workspace_clippy(repo_root)?;
+    run_workspace_tests(repo_root)?;
+    run_browser_runtime_tests(repo_root)?;
     run_install_smoke_test(repo_root)?;
     run_repo_command(
         repo_root,
@@ -463,6 +443,13 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
     println!("{}", "Running LogicPearl pre-commit checks".bold());
     run_staged_rustfmt_check(repo_root)?;
     run_public_path_hygiene(repo_root)?;
+    run_workspace_clippy(repo_root)?;
+    run_pre_commit_contract_tests(repo_root)?;
+    run_browser_runtime_tests(repo_root)?;
+    Ok(())
+}
+
+fn run_workspace_clippy(repo_root: &Path) -> Result<()> {
     run_repo_command(
         repo_root,
         "cargo",
@@ -474,7 +461,24 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
             "-D",
             "warnings",
         ],
-    )?;
+    )
+}
+
+fn run_workspace_tests(repo_root: &Path) -> Result<()> {
+    run_repo_command(
+        repo_root,
+        "cargo",
+        &[
+            "test",
+            "--manifest-path",
+            "Cargo.toml",
+            "--workspace",
+            "--all-targets",
+        ],
+    )
+}
+
+fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
     run_repo_command(
         repo_root,
         "cargo",
@@ -500,7 +504,10 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
             "--test",
             "e2e_healthcare_contracts",
         ],
-    )?;
+    )
+}
+
+fn run_browser_runtime_tests(repo_root: &Path) -> Result<()> {
     run_repo_command(
         repo_root,
         "node",
@@ -508,22 +515,12 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
             "--test",
             "packages/logicpearl-browser/test/browser-runtime.test.mjs",
         ],
-    )?;
-    Ok(())
+    )
 }
 
 fn run_verify_pre_push(repo_root: &Path) -> Result<()> {
     println!("{}", "Running LogicPearl pre-push checks".bold());
-    run_verify_ci_internal(repo_root)?;
-    run_repo_command(
-        repo_root,
-        "node",
-        &[
-            "--test",
-            "packages/logicpearl-browser/test/browser-runtime.test.mjs",
-        ],
-    )?;
-    Ok(())
+    run_verify_ci_internal(repo_root)
 }
 
 fn run_verify_ci(repo_root: &Path) -> Result<()> {
@@ -1686,8 +1683,6 @@ fn main() -> Result<()> {
         Commands::GuardrailsEval(args) => run_refresh_guardrails_eval(args),
         Commands::WafCases(args) => run_refresh_waf_benchmark_cases(args),
         Commands::WafBuild(args) => run_refresh_waf_build(args),
-        Commands::ScoreboardUpdate(args) => run_refresh_scoreboard_update(args),
-        Commands::ContributorPoints(args) => run_refresh_contributor_points(args),
-        Commands::ContributorSummary(args) => run_refresh_contributor_summary(args),
+        Commands::QualityReport(args) => run_refresh_quality_report(args),
     }
 }
