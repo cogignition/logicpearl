@@ -1,8 +1,10 @@
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
-use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
 use logicpearl_plugin::PluginExecutionPolicy;
-use logicpearl_runtime::{evaluate_gate, parse_input_payload};
+use logicpearl_runtime::{
+    evaluate_action_policy, evaluate_gate, parse_input_payload, ActionEvaluationResult,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 #[serde(rename_all = "snake_case")]
 pub enum EngineKind {
     Artifact,
+    ActionArtifact,
     Pipeline,
 }
 
@@ -34,9 +37,22 @@ pub struct ArtifactBatchExecution {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionArtifactExecution {
+    pub action_policy_id: String,
+    pub evaluation: ActionEvaluationResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionArtifactBatchExecution {
+    pub action_policy_id: String,
+    pub evaluations: Vec<ActionEvaluationResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EngineSingleExecution {
     Artifact(ArtifactExecution),
+    ActionArtifact(ActionArtifactExecution),
     Pipeline(PipelineExecution),
 }
 
@@ -44,6 +60,7 @@ pub enum EngineSingleExecution {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EngineBatchExecution {
     Artifact(ArtifactBatchExecution),
+    ActionArtifact(ActionArtifactBatchExecution),
     Pipeline(Vec<PipelineExecution>),
 }
 
@@ -57,12 +74,18 @@ pub struct LogicPearlEngine {
 #[derive(Debug, Clone)]
 enum PreparedExecution {
     Artifact(PreparedArtifact),
+    ActionArtifact(PreparedActionArtifact),
     Pipeline(PreparedPipeline),
 }
 
 #[derive(Debug, Clone)]
 struct PreparedArtifact {
     gate: LogicPearlGateIr,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedActionArtifact {
+    policy: LogicPearlActionIr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +95,17 @@ struct NamedArtifactManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactFiles {
+    pearl_ir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ActionArtifactManifest {
+    artifact_kind: String,
+    files: ActionArtifactFiles,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ActionArtifactFiles {
     pearl_ir: String,
 }
 
@@ -113,6 +147,14 @@ impl LogicPearlEngine {
 
     pub fn from_artifact_path(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
+        if let Some(action_policy_ir) = resolve_action_artifact_input(path)? {
+            let policy = LogicPearlActionIr::from_path(&action_policy_ir)?;
+            return Ok(Self {
+                kind: EngineKind::ActionArtifact,
+                source_path: path.to_path_buf(),
+                prepared: PreparedExecution::ActionArtifact(PreparedActionArtifact { policy }),
+            });
+        }
         let resolved = resolve_artifact_input(path)?;
         let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)?;
         Ok(Self {
@@ -203,6 +245,12 @@ impl LogicPearlEngine {
                     evaluation: evaluate_artifact_single(&artifact.gate, input)?,
                 }))
             }
+            PreparedExecution::ActionArtifact(artifact) => Ok(
+                EngineSingleExecution::ActionArtifact(ActionArtifactExecution {
+                    action_policy_id: artifact.policy.action_policy_id.clone(),
+                    evaluation: evaluate_action_artifact_single(&artifact.policy, input)?,
+                }),
+            ),
             PreparedExecution::Pipeline(pipeline) => {
                 Ok(EngineSingleExecution::Pipeline(pipeline.run(input)?))
             }
@@ -220,6 +268,15 @@ impl LogicPearlEngine {
                         .collect::<Result<Vec<_>>>()?,
                 }))
             }
+            PreparedExecution::ActionArtifact(artifact) => Ok(
+                EngineBatchExecution::ActionArtifact(ActionArtifactBatchExecution {
+                    action_policy_id: artifact.policy.action_policy_id.clone(),
+                    evaluations: inputs
+                        .iter()
+                        .map(|input| evaluate_action_artifact_single(&artifact.policy, input))
+                        .collect::<Result<Vec<_>>>()?,
+                }),
+            ),
             PreparedExecution::Pipeline(pipeline) => {
                 Ok(EngineBatchExecution::Pipeline(pipeline.run_batch(inputs)?))
             }
@@ -259,9 +316,68 @@ fn evaluate_artifact_single(gate: &LogicPearlGateIr, input: &Value) -> Result<Ar
     })
 }
 
+fn evaluate_action_artifact_single(
+    policy: &LogicPearlActionIr,
+    input: &Value,
+) -> Result<ActionEvaluationResult> {
+    let parsed = parse_input_payload(input.clone())?;
+    if parsed.len() != 1 {
+        return Err(LogicPearlError::message(
+            "action artifact single execution expects one feature object",
+        ));
+    }
+    evaluate_action_policy(policy, &parsed[0])
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedArtifactInput {
     pearl_ir: PathBuf,
+}
+
+fn resolve_action_artifact_input(path: &Path) -> Result<Option<PathBuf>> {
+    if path.is_dir() {
+        let manifest_path = path.join("artifact.json");
+        if manifest_path.exists() {
+            return resolve_action_manifest_input(&manifest_path);
+        }
+        let pearl_ir = path.join("pearl.ir.json");
+        if pearl_ir.exists() && is_action_policy_ir(&pearl_ir)? {
+            return Ok(Some(pearl_ir));
+        }
+        return Ok(None);
+    }
+
+    if path
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
+    {
+        return resolve_action_manifest_input(path);
+    }
+
+    if path.is_file() && is_action_policy_ir(path)? {
+        return Ok(Some(path.to_path_buf()));
+    }
+
+    Ok(None)
+}
+
+fn resolve_action_manifest_input(manifest_path: &Path) -> Result<Option<PathBuf>> {
+    let content = fs::read_to_string(manifest_path)?;
+    let value: Value = serde_json::from_str(&content)?;
+    if value.get("artifact_kind").and_then(Value::as_str) != Some("action_policy") {
+        return Ok(None);
+    }
+    let manifest: ActionArtifactManifest = serde_json::from_value(value)?;
+    Ok(Some(resolve_manifest_path(
+        manifest_path,
+        &manifest.files.pearl_ir,
+    )))
+}
+
+fn is_action_policy_ir(path: &Path) -> Result<bool> {
+    let content = fs::read_to_string(path)?;
+    let value: Value = serde_json::from_str(&content)?;
+    Ok(value.get("action_policy_id").is_some())
 }
 
 fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInput> {
@@ -393,6 +509,77 @@ mod tests {
         let engine =
             LogicPearlEngine::from_path(dir.path()).expect("manifest-backed artifact loads");
         assert_eq!(engine.kind(), EngineKind::Artifact);
+    }
+
+    #[test]
+    fn loads_and_runs_action_artifact_from_manifest() {
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("pearl.ir.json"),
+            serde_json::to_string_pretty(&json!({
+                "ir_version": "1.0",
+                "action_policy_id": "garden_actions",
+                "action_policy_type": "priority_rules",
+                "action_column": "next_action",
+                "default_action": "do_nothing",
+                "actions": ["do_nothing", "water"],
+                "input_schema": {
+                    "features": [
+                        {"id": "soil_moisture_pct", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {
+                        "id": "rule_000",
+                        "bit": 0,
+                        "action": "water",
+                        "priority": 0,
+                        "when": {"feature": "soil_moisture_pct", "op": "<=", "value": 0.18},
+                        "label": "Soil is dry",
+                        "message": null,
+                        "severity": null,
+                        "counterfactual_hint": null,
+                        "verification_status": null
+                    }
+                ],
+                "evaluation": {"selection": "first_match"},
+                "verification": null,
+                "provenance": null
+            }))
+            .expect("action policy encodes"),
+        )
+        .expect("action policy writes");
+        fs::write(
+            dir.path().join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "artifact_version": "1.0",
+                "artifact_kind": "action_policy",
+                "artifact_name": "garden_actions",
+                "action_column": "next_action",
+                "default_action": "do_nothing",
+                "actions": ["do_nothing", "water"],
+                "files": {
+                    "pearl_ir": "pearl.ir.json",
+                    "action_report": "action_report.json"
+                }
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let engine = LogicPearlEngine::from_path(dir.path()).expect("action artifact should load");
+        assert_eq!(engine.kind(), EngineKind::ActionArtifact);
+        let result = engine
+            .run_single_json(&json!({"soil_moisture_pct": "14%"}))
+            .expect("action artifact should run");
+        match result {
+            EngineSingleExecution::ActionArtifact(output) => {
+                assert_eq!(output.action_policy_id, "garden_actions");
+                assert_eq!(output.evaluation.action, "water");
+                assert_eq!(output.evaluation.bitmask.as_u64(), Some(1));
+            }
+            _ => panic!("expected action artifact result"),
+        }
     }
 
     #[test]

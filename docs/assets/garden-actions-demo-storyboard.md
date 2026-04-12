@@ -61,6 +61,8 @@ Built action artifact garden_actions
   Actions water, do_nothing, fertilize, repot
   Default action do_nothing
   Training parity 100.0%
+  Artifact bundle /tmp/garden-actions
+  Pearl IR /tmp/garden-actions/pearl.ir.json
 ```
 
 Caption: `The demo config keeps the command short. LogicPearl generates readable feature metadata from the trace columns before discovery.`
@@ -71,17 +73,18 @@ Terminal:
 
 ```text
 $ logicpearl inspect
-Rules:
-  water
-    bit 0: Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
-  fertilize
-    bit 0: Growth in the last 14 days at or above 2.2 and Leaf Paleness at or above 4.0
-  repot
-    bit 0: Pot Crack above 0.0
-    bit 1: Root Crowding above 2.0
+Action rules:
+  1. water
+     Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
+  2. fertilize
+     Growth in the last 14 days at or above 2.2 and Leaf Paleness at or above 4.0
+  3. repot
+     Pot Crack above 0.0
+  4. repot
+     Root Crowding above 2.0
 ```
 
-Caption: `The learned logic is inspectable before anyone wires it into an app.`
+Caption: `The learned action policy is inspectable before anyone wires it into an app.`
 
 ### 4. Run today's plant check
 

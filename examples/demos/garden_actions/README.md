@@ -32,4 +32,4 @@ reason:
   - Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
 ```
 
-The feature dictionary is generated during `logicpearl build` from the trace column names. The point is not that LogicPearl knows plants. The point is that reviewed examples can become a small deterministic artifact that returns a next action and a reason.
+The feature dictionary is generated during `logicpearl build` from the trace column names. The build emits one action policy artifact with action-labeled rules. The point is not that LogicPearl knows plants. The point is that reviewed examples can become a small deterministic artifact that returns a next action and a reason.

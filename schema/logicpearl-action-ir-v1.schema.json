@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-action-ir-v1.schema.json",
+  "title": "LogicPearl Action IR v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ir_version",
+    "action_policy_id",
+    "action_policy_type",
+    "action_column",
+    "default_action",
+    "actions",
+    "input_schema",
+    "rules",
+    "evaluation"
+  ],
+  "properties": {
+    "ir_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "action_policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_policy_type": {
+      "type": "string",
+      "const": "priority_rules"
+    },
+    "action_column": {
+      "type": "string",
+      "minLength": 1
+    },
+    "default_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["features"],
+      "properties": {
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/feature"
+          }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/action_rule"
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selection"],
+      "properties": {
+        "selection": {
+          "type": "string",
+          "const": "first_match"
+        }
+      }
+    },
+    "verification": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "domain_constraints": {
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/comparison"
+          }
+        },
+        "correctness_scope": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "provenance": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "generator": { "type": ["string", "null"] },
+        "generator_version": { "type": ["string", "null"] },
+        "source_commit": { "type": ["string", "null"] },
+        "created_at": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "$defs": {
+    "feature": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["bool", "int", "float", "string", "enum"]
+        },
+        "description": {
+          "type": ["string", "null"]
+        },
+        "values": {
+          "type": ["array", "null"],
+          "minItems": 1,
+          "items": {
+            "type": ["string", "number", "integer", "boolean"]
+          }
+        },
+        "min": {
+          "type": ["number", "null"]
+        },
+        "max": {
+          "type": ["number", "null"]
+        },
+        "editable": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "action_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "bit", "action", "priority", "when"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "when": {
+          "$ref": "#/$defs/expression"
+        },
+        "label": {
+          "type": ["string", "null"]
+        },
+        "message": {
+          "type": ["string", "null"]
+        },
+        "severity": {
+          "type": ["string", "null"]
+        },
+        "counterfactual_hint": {
+          "type": ["string", "null"]
+        },
+        "verification_status": {
+          "type": ["string", "null"],
+          "enum": [
+            "solver_verified",
+            "pipeline_unverified",
+            "heuristic_unverified",
+            "refined_unverified",
+            null
+          ]
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature", "op", "value"],
+      "properties": {
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "op": {
+          "type": "string",
+          "enum": ["==", "!=", ">", ">=", "<", "<=", "in", "not_in"]
+        },
+        "value": {}
+      }
+    },
+    "expression": {
+      "oneOf": [
+        { "$ref": "#/$defs/comparison" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all"],
+          "properties": {
+            "all": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["any"],
+          "properties": {
+            "any": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["not"],
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

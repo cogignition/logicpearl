@@ -157,17 +157,20 @@ def run_cli_output() -> tuple[list[str], list[str], list[str]]:
         "  Actions water, do_nothing, fertilize, repot",
         "  Default action do_nothing",
         "  Training parity 100.0%",
+        "  Artifact bundle /tmp/garden-actions",
+        "  Pearl IR /tmp/garden-actions/pearl.ir.json",
     ]
     fallback_inspect = [
         "$ logicpearl inspect",
-        "Rules:",
-        "  water",
-        "    bit 0: Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2",
-        "  fertilize",
-        "    bit 0: Growth in the last 14 days at or above 2.2 and Leaf Paleness at or above 4.0",
-        "  repot",
-        "    bit 0: Pot Crack above 0.0",
-        "    bit 1: Root Crowding above 2.0",
+        "Action rules:",
+        "  1. water",
+        "     Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2",
+        "  2. fertilize",
+        "     Growth in the last 14 days at or above 2.2 and Leaf Paleness at or above 4.0",
+        "  3. repot",
+        "     Pot Crack above 0.0",
+        "  4. repot",
+        "     Root Crowding above 2.0",
     ]
     fallback_run = [
         "$ logicpearl run today.json --explain",
@@ -215,7 +218,7 @@ def run_cli_output() -> tuple[list[str], list[str], list[str]]:
         inspect = clean_terminal_lines(inspect)
         run = clean_terminal_lines(run)
         return (
-            ["$ logicpearl build"] + build[:5],
+            ["$ logicpearl build"] + compact_build(build),
             ["$ logicpearl inspect"] + compact_inspect(inspect),
             ["$ logicpearl run today.json --explain"] + compact_rule_lines(run),
         )
@@ -223,22 +226,41 @@ def run_cli_output() -> tuple[list[str], list[str], list[str]]:
         return fallback_build, fallback_inspect, fallback_run
 
 
+def compact_build(lines: Iterable[str]) -> list[str]:
+    keep: list[str] = []
+    wanted = (
+        "Built action artifact",
+        "Rows",
+        "Actions",
+        "Default action",
+        "Training parity",
+        "Artifact bundle",
+        "Pearl IR",
+    )
+    for line in lines:
+        stripped = line.strip()
+        if any(stripped.startswith(label) for label in wanted):
+            keep.append(line)
+    return keep[:7]
+
+
 def compact_inspect(lines: Iterable[str]) -> list[str]:
     keep: list[str] = []
     in_action = False
     for line in lines:
         stripped = line.strip()
-        if stripped in {"Routes:", "Rules:"}:
-            keep.append("Rules:")
+        if stripped in {"Action rules:", "Routes:", "Rules:"}:
+            keep.append("Action rules:")
             in_action = False
             continue
-        route = stripped.split(maxsplit=1)[0] if stripped else ""
-        if route in {"water", "fertilize", "repot"}:
-            keep.append(f"  {route}")
+        rule_heading = re.match(r"^(\d+)\.\s+([a-z_]+)$", stripped)
+        if rule_heading and rule_heading.group(2) in {"water", "fertilize", "repot"}:
+            keep.append(f"  {rule_heading.group(1)}. {rule_heading.group(2)}")
             in_action = True
             continue
-        if in_action and "bit" in stripped:
-            keep.append("    " + compact_rule_text(stripped))
+        if in_action and stripped:
+            keep.append("     " + compact_rule_text(stripped))
+            in_action = False
     return keep[:9]
 
 

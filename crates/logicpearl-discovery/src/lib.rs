@@ -1,6 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    Expression, FeatureGovernance, FeatureSemantics, RuleDefinition, RuleVerificationStatus,
+    Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
+    RuleVerificationStatus,
 };
 use logicpearl_runtime::evaluate_gate;
 use logicpearl_solver::{
@@ -84,6 +85,16 @@ pub struct BuildResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<BuildProvenance>,
     pub output_files: OutputFiles,
+}
+
+#[derive(Debug, Clone)]
+pub struct LearnedGate {
+    pub gate: LogicPearlGateIr,
+    pub exact_selection: ExactSelectionReport,
+    pub residual_rules_discovered: usize,
+    pub residual_recovery: ResidualRecoveryReport,
+    pub refined_rules_applied: usize,
+    pub pinned_rules_applied: usize,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -856,6 +867,13 @@ pub fn build_pearl_from_rows_without_numeric_interactions(
     build_pearl_from_rows_internal(rows, source_name, options, false)
 }
 
+pub fn learn_gate_from_rows_without_numeric_interactions(
+    rows: &[DecisionTraceRow],
+    options: &BuildOptions,
+) -> Result<LearnedGate> {
+    learn_gate_from_rows_internal(rows, options, false)
+}
+
 fn build_pearl_from_rows_internal(
     rows: &[DecisionTraceRow],
     source_name: String,
@@ -881,54 +899,14 @@ fn build_pearl_from_rows_internal(
         return Ok(cached);
     }
 
-    let (augmented_rows, derived_features) = if numeric_interactions {
-        augment_rows_with_numeric_interactions(rows)
-    } else {
-        (rows.to_vec(), Vec::new())
-    };
-    let feature_governance = options
-        .feature_governance
-        .as_deref()
-        .map(load_feature_governance)
-        .transpose()?
-        .unwrap_or_default();
-    let feature_dictionary = options
-        .feature_dictionary
-        .as_deref()
-        .map(load_feature_dictionary)
-        .transpose()?
-        .unwrap_or_default();
-    validate_feature_dictionary(&feature_dictionary, rows, &derived_features)?;
-    let residual_options = options
-        .residual_pass
-        .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
-    let refinement_options = options
-        .refine
-        .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
-    let pinned_rules = options
-        .pinned_rules
-        .as_ref()
-        .map(|path| load_pinned_rule_set(path))
-        .transpose()?;
-    let (
+    let LearnedGate {
         gate,
         exact_selection,
         residual_rules_discovered,
         residual_recovery,
         refined_rules_applied,
         pinned_rules_applied,
-    ) = build_gate(
-        &augmented_rows,
-        rows,
-        &derived_features,
-        &feature_governance.features,
-        &feature_dictionary.features,
-        &options.gate_id,
-        options.decision_mode,
-        residual_options.as_ref(),
-        refinement_options.as_ref(),
-        pinned_rules.as_ref(),
-    )?;
+    } = learn_gate_from_rows_internal(rows, options, numeric_interactions)?;
     gate.validate()?;
     gate.write_pretty(&pearl_ir_path)?;
 
@@ -984,6 +962,74 @@ fn build_pearl_from_rows_internal(
     write_cache_manifest(&build_cache_path, &build_manifest)?;
 
     Ok(build_report)
+}
+
+fn learn_gate_from_rows_internal(
+    rows: &[DecisionTraceRow],
+    options: &BuildOptions,
+    numeric_interactions: bool,
+) -> Result<LearnedGate> {
+    if rows.is_empty() {
+        return Err(LogicPearlError::message("decision trace CSV is empty"));
+    }
+
+    let (augmented_rows, derived_features) = if numeric_interactions {
+        augment_rows_with_numeric_interactions(rows)
+    } else {
+        (rows.to_vec(), Vec::new())
+    };
+    let feature_governance = options
+        .feature_governance
+        .as_deref()
+        .map(load_feature_governance)
+        .transpose()?
+        .unwrap_or_default();
+    let feature_dictionary = options
+        .feature_dictionary
+        .as_deref()
+        .map(load_feature_dictionary)
+        .transpose()?
+        .unwrap_or_default();
+    validate_feature_dictionary(&feature_dictionary, rows, &derived_features)?;
+    let residual_options = options
+        .residual_pass
+        .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
+    let refinement_options = options
+        .refine
+        .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
+    let pinned_rules = options
+        .pinned_rules
+        .as_ref()
+        .map(|path| load_pinned_rule_set(path))
+        .transpose()?;
+    let (
+        gate,
+        exact_selection,
+        residual_rules_discovered,
+        residual_recovery,
+        refined_rules_applied,
+        pinned_rules_applied,
+    ) = build_gate(
+        &augmented_rows,
+        rows,
+        &derived_features,
+        &feature_governance.features,
+        &feature_dictionary.features,
+        &options.gate_id,
+        options.decision_mode,
+        residual_options.as_ref(),
+        refinement_options.as_ref(),
+        pinned_rules.as_ref(),
+    )?;
+    gate.validate()?;
+    Ok(LearnedGate {
+        gate,
+        exact_selection,
+        residual_rules_discovered,
+        residual_recovery,
+        refined_rules_applied,
+        pinned_rules_applied,
+    })
 }
 
 fn verification_status(rule: &RuleDefinition) -> RuleVerificationStatus {

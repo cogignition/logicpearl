@@ -1,10 +1,35 @@
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
-    LogicPearlGateIr,
+    LogicPearlActionIr, LogicPearlGateIr,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActionEvaluationResult {
+    pub action: String,
+    pub bitmask: RuleMask,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_rules: Vec<ActionRuleMatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_rules: Vec<ActionRuleMatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_actions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambiguity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActionRuleMatch {
+    pub id: String,
+    pub bit: u32,
+    pub action: String,
+    pub priority: u32,
+    pub label: Option<String>,
+    pub message: Option<String>,
+}
 
 pub fn evaluate_gate(
     gate: &LogicPearlGateIr,
@@ -18,6 +43,64 @@ pub fn evaluate_gate(
         }
     }
     Ok(bitmask)
+}
+
+pub fn evaluate_action_policy(
+    policy: &LogicPearlActionIr,
+    features: &HashMap<String, Value>,
+) -> Result<ActionEvaluationResult> {
+    let features = with_action_derived_features(policy, features)?;
+    let mut rules = policy.rules.iter().collect::<Vec<_>>();
+    rules.sort_by_key(|rule| rule.priority);
+
+    let mut matched_rules = Vec::new();
+    let mut candidate_actions = Vec::new();
+    let mut bitmask = RuleMask::zero();
+    for rule in rules {
+        if !evaluate_expression(&rule.predicate, &features)? {
+            continue;
+        }
+        bitmask.set_bit(rule.bit);
+        if !candidate_actions
+            .iter()
+            .any(|action| action == &rule.action)
+        {
+            candidate_actions.push(rule.action.clone());
+        }
+        matched_rules.push(ActionRuleMatch {
+            id: rule.id.clone(),
+            bit: rule.bit,
+            action: rule.action.clone(),
+            priority: rule.priority,
+            label: rule.label.clone(),
+            message: rule.message.clone(),
+        });
+    }
+
+    let action = candidate_actions
+        .first()
+        .cloned()
+        .unwrap_or_else(|| policy.default_action.clone());
+    let selected_rules = matched_rules
+        .iter()
+        .filter(|rule| rule.action == action)
+        .cloned()
+        .collect::<Vec<_>>();
+    let ambiguity = (candidate_actions.len() > 1).then(|| {
+        format!(
+            "multiple action rules matched: {}",
+            candidate_actions.join(", ")
+        )
+    });
+
+    Ok(ActionEvaluationResult {
+        action,
+        bitmask,
+        selected_rules,
+        matched_rules,
+        candidate_actions,
+        ambiguity,
+    })
 }
 
 pub fn parse_input_payload(payload: Value) -> Result<Vec<HashMap<String, Value>>> {
@@ -171,6 +254,44 @@ fn with_derived_features(
     Ok(resolved)
 }
 
+fn with_action_derived_features(
+    policy: &LogicPearlActionIr,
+    features: &HashMap<String, Value>,
+) -> Result<HashMap<String, Value>> {
+    let mut resolved = features.clone();
+    for feature in &policy.input_schema.features {
+        let Some(derived) = &feature.derived else {
+            continue;
+        };
+        if resolved.contains_key(&feature.id) {
+            continue;
+        }
+        let left = numeric_feature_value(&resolved, &derived.left_feature)?;
+        let right = numeric_feature_value(&resolved, &derived.right_feature)?;
+        let value = match derived.op {
+            DerivedFeatureOperator::Difference => left - right,
+            DerivedFeatureOperator::Ratio => {
+                if left.is_nan() || right.is_nan() || right.abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    left / right
+                }
+            }
+        };
+        let sanitized = if value.is_finite() { value } else { 0.0 };
+        resolved.insert(
+            feature.id.clone(),
+            Value::Number(Number::from_f64(sanitized).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "derived feature {} could not be represented as a JSON number",
+                    feature.id
+                ))
+            })?),
+        );
+    }
+    Ok(resolved)
+}
+
 fn numeric_feature_value(features: &HashMap<String, Value>, feature: &str) -> Result<f64> {
     features
         .get(feature)
@@ -243,8 +364,9 @@ fn value_in(left: &Value, right: &Value) -> Result<bool> {
 mod tests {
     use super::*;
     use logicpearl_ir::{
-        EvaluationConfig, FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition,
-        RuleKind, RuleVerificationStatus, VerificationConfig,
+        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, EvaluationConfig,
+        FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition, RuleKind,
+        RuleVerificationStatus, VerificationConfig,
     };
     use serde_json::json;
 
@@ -298,6 +420,109 @@ mod tests {
                 created_at: None,
             }),
         }
+    }
+
+    #[test]
+    fn action_policy_selects_first_matching_action_and_reports_reasons() {
+        let policy = LogicPearlActionIr {
+            ir_version: "1.0".to_string(),
+            action_policy_id: "garden_actions".to_string(),
+            action_policy_type: "priority_rules".to_string(),
+            action_column: "next_action".to_string(),
+            default_action: "do_nothing".to_string(),
+            actions: vec![
+                "do_nothing".to_string(),
+                "water".to_string(),
+                "fertilize".to_string(),
+            ],
+            input_schema: InputSchema {
+                features: vec![
+                    FeatureDefinition {
+                        id: "soil_moisture_pct".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "leaf_paleness_score".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                ],
+            },
+            rules: vec![
+                ActionRuleDefinition {
+                    id: "rule_000".to_string(),
+                    bit: 0,
+                    action: "water".to_string(),
+                    priority: 0,
+                    predicate: Expression::Comparison(ComparisonExpression {
+                        feature: "soil_moisture_pct".to_string(),
+                        op: ComparisonOperator::Lte,
+                        value: ComparisonValue::Literal(json!(0.18)),
+                    }),
+                    label: Some("Soil is dry".to_string()),
+                    message: None,
+                    severity: None,
+                    counterfactual_hint: None,
+                    verification_status: None,
+                },
+                ActionRuleDefinition {
+                    id: "rule_001".to_string(),
+                    bit: 1,
+                    action: "fertilize".to_string(),
+                    priority: 1,
+                    predicate: Expression::Comparison(ComparisonExpression {
+                        feature: "leaf_paleness_score".to_string(),
+                        op: ComparisonOperator::Gte,
+                        value: ComparisonValue::Literal(json!(4.0)),
+                    }),
+                    label: Some("Leaves are pale".to_string()),
+                    message: None,
+                    severity: None,
+                    counterfactual_hint: None,
+                    verification_status: None,
+                },
+            ],
+            evaluation: ActionEvaluationConfig {
+                selection: ActionSelectionStrategy::FirstMatch,
+            },
+            verification: None,
+            provenance: None,
+        };
+        policy
+            .validate()
+            .expect("test action policy should validate");
+        let features = HashMap::from([
+            ("soil_moisture_pct".to_string(), json!(0.14)),
+            ("leaf_paleness_score".to_string(), json!(5.0)),
+        ]);
+
+        let result = evaluate_action_policy(&policy, &features).expect("policy should evaluate");
+
+        assert_eq!(result.action, "water");
+        assert_eq!(result.bitmask.as_u64(), Some(3));
+        assert_eq!(result.selected_rules.len(), 1);
+        assert_eq!(result.selected_rules[0].id, "rule_000");
+        assert_eq!(result.selected_rules[0].bit, 0);
+        assert_eq!(result.candidate_actions, vec!["water", "fertilize"]);
+        assert!(result
+            .ambiguity
+            .as_deref()
+            .is_some_and(|message| message.contains("water, fertilize")));
     }
 
     #[test]

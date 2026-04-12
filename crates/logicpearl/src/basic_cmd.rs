@@ -40,18 +40,13 @@ struct ActionArtifactManifest {
     artifact_name: String,
     action_column: String,
     default_action: String,
-    actions: Vec<ActionRouteManifest>,
+    actions: Vec<String>,
     files: ActionArtifactFiles,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct ActionRouteManifest {
-    action: String,
-    artifact: String,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct ActionArtifactFiles {
+    pearl_ir: String,
     action_report: String,
 }
 
@@ -63,16 +58,17 @@ struct ActionBuildReport {
     default_action: String,
     rows: usize,
     actions: Vec<String>,
-    routes: Vec<ActionRouteBuildReport>,
+    rules: Vec<ActionRuleBuildReport>,
     training_parity: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ActionRouteBuildReport {
+struct ActionRuleBuildReport {
+    id: String,
+    bit: u32,
     action: String,
-    artifact: String,
-    rules: usize,
-    training_parity: f64,
+    priority: u32,
+    label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -87,22 +83,6 @@ struct ExplainedRule {
 struct ExplainedGateOutput {
     bitmask: Value,
     matched_rules: Vec<ExplainedRule>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ExplainedActionOutput {
-    action: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    matched_actions: Vec<MatchedActionOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ambiguity: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct MatchedActionOutput {
-    action: String,
-    bitmask: Value,
-    reasons: Vec<ExplainedRule>,
 }
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -1207,8 +1187,28 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         args.feature_dictionary = Some(dictionary_path);
     }
 
-    let mut route_reports = Vec::new();
-    let mut routes = Vec::new();
+    let stale_actions_dir = output_dir.join("actions");
+    if stale_actions_dir.exists() {
+        fs::remove_dir_all(&stale_actions_dir)
+            .into_diagnostic()
+            .wrap_err("failed to remove stale action route artifacts")?;
+    }
+    for stale_file in [
+        "pearl.ir.json",
+        "action_policy.ir.json",
+        "build_report.json",
+        ".logicpearl-cache.json",
+    ] {
+        let path = output_dir.join(stale_file);
+        if path.exists() {
+            fs::remove_file(&path)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("failed to remove stale artifact file {stale_file}"))?;
+        }
+    }
+
+    let mut input_schema = None;
+    let mut action_rules = Vec::new();
     for action in actions.iter().filter(|action| *action != &default_action) {
         let route_rows = action_by_row
             .iter()
@@ -1219,13 +1219,11 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             })
             .collect::<Vec<_>>();
         let route_name = sanitize_identifier(action);
-        let route_dir = output_dir.join("actions").join(&route_name);
         let route_gate_id = format!("{}_{}", artifact_name, route_name);
-        let build = build_pearl_from_rows_without_numeric_interactions(
+        let learned = learn_gate_from_rows_without_numeric_interactions(
             &route_rows,
-            traces.display().to_string(),
             &BuildOptions {
-                output_dir: route_dir.clone(),
+                output_dir: output_dir.clone(),
                 gate_id: route_gate_id.clone(),
                 label_column: action_column.clone(),
                 positive_label: None,
@@ -1239,30 +1237,63 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             },
         )
         .into_diagnostic()
-        .wrap_err_with(|| format!("failed to build route for action {action:?}"))?;
-        persist_build_report(&build)?;
-        write_named_artifact_manifest(
-            &route_dir,
-            &route_gate_id,
-            &build.gate_id,
-            &build.output_files,
-        )?;
-        let relative_artifact = PathBuf::from("actions")
-            .join(&route_name)
-            .join("pearl.ir.json")
-            .display()
-            .to_string();
-        routes.push(ActionRouteManifest {
-            action: action.clone(),
-            artifact: relative_artifact.clone(),
-        });
-        route_reports.push(ActionRouteBuildReport {
-            action: action.clone(),
-            artifact: relative_artifact,
-            rules: build.rules_discovered,
-            training_parity: build.training_parity,
-        });
+        .wrap_err_with(|| format!("failed to learn action rules for {action:?}"))?;
+        if input_schema.is_none() {
+            input_schema = Some(learned.gate.input_schema.clone());
+        }
+        for rule in learned.gate.rules {
+            let bit = u32::try_from(action_rules.len()).into_diagnostic()?;
+            action_rules.push(ActionRuleDefinition {
+                id: format!("rule_{bit:03}"),
+                bit,
+                action: action.clone(),
+                priority: bit,
+                predicate: rule.deny_when,
+                label: rule.label,
+                message: rule.message,
+                severity: rule.severity,
+                counterfactual_hint: rule.counterfactual_hint,
+                verification_status: rule.verification_status,
+            });
+        }
     }
+
+    let input_schema = input_schema.ok_or_else(|| {
+        guidance(
+            "action build did not produce any non-default action rules",
+            "Add reviewed examples for at least one non-default action.",
+        )
+    })?;
+    let action_policy = LogicPearlActionIr {
+        ir_version: "1.0".to_string(),
+        action_policy_id: artifact_name.clone(),
+        action_policy_type: "priority_rules".to_string(),
+        action_column: action_column.clone(),
+        default_action: default_action.clone(),
+        actions: actions.clone(),
+        input_schema,
+        rules: action_rules,
+        evaluation: ActionEvaluationConfig {
+            selection: ActionSelectionStrategy::FirstMatch,
+        },
+        verification: Some(logicpearl_ir::VerificationConfig {
+            domain_constraints: None,
+            correctness_scope: Some(format!(
+                "training parity against {} action traces",
+                loaded.records.len()
+            )),
+            verification_summary: None,
+        }),
+        provenance: None,
+    };
+    action_policy.validate().into_diagnostic()?;
+    let training_parity =
+        compute_action_training_parity(&action_policy, &features_by_row, &action_by_row)?;
+    let action_policy_path = output_dir.join("pearl.ir.json");
+    action_policy
+        .write_pretty(&action_policy_path)
+        .into_diagnostic()
+        .wrap_err("failed to write action policy IR")?;
 
     let action_report = ActionBuildReport {
         source: traces.display().to_string(),
@@ -1271,14 +1302,18 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         default_action: default_action.clone(),
         rows: loaded.records.len(),
         actions: actions.clone(),
-        routes: route_reports,
-        training_parity: compute_action_training_parity(
-            &output_dir,
-            &routes,
-            &default_action,
-            &features_by_row,
-            &action_by_row,
-        )?,
+        rules: action_policy
+            .rules
+            .iter()
+            .map(|rule| ActionRuleBuildReport {
+                id: rule.id.clone(),
+                bit: rule.bit,
+                action: rule.action.clone(),
+                priority: rule.priority,
+                label: rule.label.clone(),
+            })
+            .collect(),
+        training_parity,
     };
     let action_report_path = output_dir.join("action_report.json");
     fs::write(
@@ -1290,12 +1325,13 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
 
     let manifest = ActionArtifactManifest {
         artifact_version: "1.0".to_string(),
-        artifact_kind: "action_router".to_string(),
+        artifact_kind: "action_policy".to_string(),
         artifact_name: artifact_name.clone(),
         action_column,
         default_action,
-        actions: routes,
+        actions,
         files: ActionArtifactFiles {
+            pearl_ir: "pearl.ir.json".to_string(),
             action_report: "action_report.json".to_string(),
         },
     };
@@ -1343,6 +1379,11 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "CLI entrypoint".bright_black(),
             output_dir.join("artifact.json").display()
         );
+        println!(
+            "  {} {}",
+            "Pearl IR".bright_black(),
+            action_policy_path.display()
+        );
         if let Some(feature_dictionary) =
             generated_feature_dictionary_for_output(&args, &output_dir)
         {
@@ -1388,16 +1429,16 @@ fn resolve_default_action(explicit: Option<&str>, actions: &[String]) -> Result<
 }
 
 fn compute_action_training_parity(
-    output_dir: &Path,
-    routes: &[ActionRouteManifest],
-    default_action: &str,
+    policy: &LogicPearlActionIr,
     features_by_row: &[HashMap<String, Value>],
     action_by_row: &[String],
 ) -> Result<f64> {
-    let route_gates = load_action_route_gates(output_dir, routes)?;
     let mut correct = 0;
     for (features, expected_action) in features_by_row.iter().zip(action_by_row) {
-        let selected = select_action(&route_gates, default_action, features)?.action;
+        let selected = evaluate_action_policy(policy, features)
+            .into_diagnostic()
+            .wrap_err("failed to evaluate action policy during training parity check")?
+            .action;
         if &selected == expected_action {
             correct += 1;
         }
@@ -1672,8 +1713,15 @@ fn load_action_artifact_manifest(
     let value: Value = serde_json::from_str(&payload)
         .into_diagnostic()
         .wrap_err("failed to parse artifact manifest")?;
-    if value.get("artifact_kind").and_then(Value::as_str) != Some("action_router") {
-        return Ok(None);
+    match value.get("artifact_kind").and_then(Value::as_str) {
+        Some("action_policy") => {}
+        Some("action_router") => {
+            return Err(guidance(
+                "action artifact uses the older route layout",
+                "Run `logicpearl build` again to emit a single action policy artifact.",
+            ));
+        }
+        _ => return Ok(None),
     }
     let manifest = serde_json::from_value(value)
         .into_diagnostic()
@@ -1694,18 +1742,20 @@ fn run_action_eval(
     explain: bool,
     json: bool,
 ) -> Result<()> {
-    let route_gates = load_action_route_gates(manifest_dir, &manifest.actions)?;
+    let action_policy = LogicPearlActionIr::from_path(manifest_dir.join(&manifest.files.pearl_ir))
+        .into_diagnostic()
+        .wrap_err("could not load action policy IR")?;
     let payload = read_json_input_argument(input_json, "input")?;
     let parsed = parse_input_payload(payload)
         .into_diagnostic()
         .wrap_err("runtime input shape is invalid")?;
     let mut outputs = Vec::with_capacity(parsed.len());
     for input in parsed {
-        outputs.push(select_action(
-            &route_gates,
-            &manifest.default_action,
-            &input,
-        )?);
+        outputs.push(
+            evaluate_action_policy(&action_policy, &input)
+                .into_diagnostic()
+                .wrap_err("failed to evaluate action policy")?,
+        );
     }
 
     if json {
@@ -1734,22 +1784,20 @@ fn run_action_eval(
     let output = &outputs[0];
     if explain {
         println!("action: {}", output.action.bold());
-        if let Some(match_) = output.matched_actions.first() {
-            if !match_.reasons.is_empty() {
-                println!("reason:");
-                for reason in &match_.reasons {
-                    println!(
-                        "  - {}",
-                        reason
-                            .label
-                            .as_deref()
-                            .or(reason.message.as_deref())
-                            .unwrap_or(&reason.id)
-                    );
-                }
-            }
-        } else {
+        if output.selected_rules.is_empty() {
             println!("reason: no rule matched; using default action");
+        } else {
+            println!("reason:");
+            for reason in &output.selected_rules {
+                println!(
+                    "  - {}",
+                    reason
+                        .label
+                        .as_deref()
+                        .or(reason.message.as_deref())
+                        .unwrap_or(&reason.id)
+                );
+            }
         }
         if let Some(ambiguity) = &output.ambiguity {
             println!("note: {ambiguity}");
@@ -1758,62 +1806,6 @@ fn run_action_eval(
         println!("{}", output.action);
     }
     Ok(())
-}
-
-fn load_action_route_gates(
-    manifest_dir: &Path,
-    routes: &[ActionRouteManifest],
-) -> Result<Vec<(String, LogicPearlGateIr)>> {
-    routes
-        .iter()
-        .map(|route| {
-            let gate = LogicPearlGateIr::from_path(manifest_dir.join(&route.artifact))
-                .into_diagnostic()
-                .wrap_err_with(|| format!("could not load action rule {:?}", route.action))?;
-            Ok((route.action.clone(), gate))
-        })
-        .collect()
-}
-
-fn select_action(
-    route_gates: &[(String, LogicPearlGateIr)],
-    default_action: &str,
-    features: &HashMap<String, Value>,
-) -> Result<ExplainedActionOutput> {
-    let mut matches = Vec::new();
-    for (action, gate) in route_gates {
-        let bitmask = evaluate_gate(gate, features)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("failed to evaluate action rule {action:?}"))?;
-        if bitmask.is_zero() {
-            continue;
-        }
-        let explained = explain_gate_output(gate, bitmask);
-        matches.push(MatchedActionOutput {
-            action: action.clone(),
-            bitmask: explained.bitmask,
-            reasons: explained.matched_rules,
-        });
-    }
-    let selected = matches
-        .first()
-        .map(|matched| matched.action.clone())
-        .unwrap_or_else(|| default_action.to_string());
-    let ambiguity = (matches.len() > 1).then(|| {
-        format!(
-            "multiple action rules matched: {}",
-            matches
-                .iter()
-                .map(|matched| matched.action.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    });
-    Ok(ExplainedActionOutput {
-        action: selected,
-        matched_actions: matches,
-        ambiguity,
-    })
 }
 
 fn explain_gate_output(
@@ -1958,6 +1950,10 @@ fn run_action_inspect(
     manifest: &ActionArtifactManifest,
     json: bool,
 ) -> Result<()> {
+    let action_policy_path = manifest_dir.join(&manifest.files.pearl_ir);
+    let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
+        .into_diagnostic()
+        .wrap_err("could not load action policy IR")?;
     let report_path = manifest_dir.join(&manifest.files.action_report);
     let report: Option<Value> = if report_path.exists() {
         Some(
@@ -1981,6 +1977,20 @@ fn run_action_inspect(
             "default_action": manifest.default_action,
             "actions": manifest.actions,
             "action_report": report,
+            "pearl_ir": action_policy_path,
+            "rules": action_policy.rules.iter().map(|rule| {
+                serde_json::json!({
+                    "id": rule.id,
+                    "bit": rule.bit,
+                    "action": rule.action,
+                    "priority": rule.priority,
+                    "when": rule.predicate,
+                    "label": rule.label,
+                    "message": rule.message,
+                    "counterfactual_hint": rule.counterfactual_hint,
+                    "verification_status": rule.verification_status,
+                })
+            }).collect::<Vec<_>>(),
         });
         println!(
             "{}",
@@ -2001,22 +2011,16 @@ fn run_action_inspect(
         "Default action".bright_black(),
         manifest.default_action
     );
-    println!("Rules:");
-    for route in &manifest.actions {
-        let gate = LogicPearlGateIr::from_path(manifest_dir.join(&route.artifact))
-            .into_diagnostic()
-            .wrap_err_with(|| format!("could not load action rule {:?}", route.action))?;
-        println!("  {} {}", route.action.bold(), route.artifact);
-        for rule in &gate.rules {
-            println!(
-                "    bit {}: {}",
-                rule.bit,
-                rule.label
-                    .as_deref()
-                    .or(rule.message.as_deref())
-                    .unwrap_or(&rule.id)
-            );
-        }
+    println!("Action rules:");
+    for (index, rule) in action_policy.rules.iter().enumerate() {
+        println!("  {}. {}", index + 1, rule.action.bold());
+        println!(
+            "     {}",
+            rule.label
+                .as_deref()
+                .or(rule.message.as_deref())
+                .unwrap_or(&rule.id)
+        );
     }
     if let Some(report) = report {
         if let Some(training_parity) = report.get("training_parity").and_then(Value::as_f64) {

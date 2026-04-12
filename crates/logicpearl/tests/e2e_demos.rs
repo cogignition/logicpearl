@@ -53,6 +53,96 @@ fn run_compiled_binary(binary: &Path, payload: &Value, workdir: &Path) -> String
 }
 
 #[test]
+fn garden_actions_builds_single_action_policy_artifact() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp directory should be created");
+    let output_path = temp.path().join("garden_actions");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(repo_root.join("examples/demos/garden_actions/traces.csv"))
+        .arg("--action-column")
+        .arg("next_action")
+        .arg("--default-action")
+        .arg("do_nothing")
+        .arg("--output-dir")
+        .arg(&output_path)
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build_output.status.success(),
+        "garden action build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    assert!(output_path.join("pearl.ir.json").exists());
+    assert!(!output_path.join("action_policy.ir.json").exists());
+    assert!(!output_path.join("actions").exists());
+
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(output_path.join("artifact.json")).expect("manifest should read"),
+    )
+    .expect("manifest should parse");
+    assert_eq!(manifest["artifact_kind"], "action_policy");
+    assert_eq!(manifest["files"]["pearl_ir"], "pearl.ir.json");
+
+    let inspect_output = Command::new(cli_bin)
+        .arg("inspect")
+        .arg(&output_path)
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .output()
+        .expect("logicpearl inspect should run");
+    assert!(
+        inspect_output.status.success(),
+        "garden action inspect failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&inspect_output.stdout),
+        String::from_utf8_lossy(&inspect_output.stderr)
+    );
+    let inspect_stdout = String::from_utf8_lossy(&inspect_output.stdout);
+    assert!(inspect_stdout.contains("Action rules:"), "{inspect_stdout}");
+    assert!(!inspect_stdout.contains("bit 0:"), "{inspect_stdout}");
+
+    let run_output = Command::new(cli_bin)
+        .arg("run")
+        .arg(&output_path)
+        .arg(repo_root.join("examples/demos/garden_actions/today.json"))
+        .arg("--explain")
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .output()
+        .expect("logicpearl run should run");
+    assert!(
+        run_output.status.success(),
+        "garden action run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert!(run_stdout.contains("action:"), "{run_stdout}");
+    assert!(run_stdout.contains("water"), "{run_stdout}");
+
+    let run_json_output = Command::new(cli_bin)
+        .arg("run")
+        .arg(&output_path)
+        .arg(repo_root.join("examples/demos/garden_actions/today.json"))
+        .arg("--json")
+        .output()
+        .expect("logicpearl run --json should run");
+    assert!(
+        run_json_output.status.success(),
+        "garden action run --json failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_json_output.stdout),
+        String::from_utf8_lossy(&run_json_output.stderr)
+    );
+    let run_json: Value =
+        serde_json::from_slice(&run_json_output.stdout).expect("run output should be JSON");
+    assert_eq!(run_json["action"], "water");
+    assert_eq!(run_json["bitmask"], 1);
+}
+
+#[test]
 fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
     let repo_root = repo_root();
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");

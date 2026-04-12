@@ -18,6 +18,21 @@ pub struct LogicPearlGateIr {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LogicPearlActionIr {
+    pub ir_version: String,
+    pub action_policy_id: String,
+    pub action_policy_type: String,
+    pub action_column: String,
+    pub default_action: String,
+    pub actions: Vec<String>,
+    pub input_schema: InputSchema,
+    pub rules: Vec<ActionRuleDefinition>,
+    pub evaluation: ActionEvaluationConfig,
+    pub verification: Option<VerificationConfig>,
+    pub provenance: Option<Provenance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputSchema {
     pub features: Vec<FeatureDefinition>,
 }
@@ -128,6 +143,21 @@ pub struct RuleDefinition {
     pub verification_status: Option<RuleVerificationStatus>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActionRuleDefinition {
+    pub id: String,
+    pub bit: u32,
+    pub action: String,
+    pub priority: u32,
+    #[serde(rename = "when")]
+    pub predicate: Expression,
+    pub label: Option<String>,
+    pub message: Option<String>,
+    pub severity: Option<String>,
+    pub counterfactual_hint: Option<String>,
+    pub verification_status: Option<RuleVerificationStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleKind {
@@ -149,6 +179,17 @@ pub enum RuleVerificationStatus {
 pub struct EvaluationConfig {
     pub combine: String,
     pub allow_when_bitmask: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionEvaluationConfig {
+    pub selection: ActionSelectionStrategy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionSelectionStrategy {
+    FirstMatch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -271,29 +312,7 @@ impl LogicPearlGateIr {
             ));
         }
 
-        let mut feature_ids = BTreeSet::new();
-        let mut known_features = HashMap::new();
-        for feature in &self.input_schema.features {
-            if feature.id.is_empty() {
-                return Err(LogicPearlError::message("feature id must be non-empty"));
-            }
-            if !feature_ids.insert(feature.id.clone()) {
-                return Err(LogicPearlError::message(format!(
-                    "duplicate feature ids: {}",
-                    feature.id
-                )));
-            }
-            feature.validate()?;
-            if let Some(derived) = &feature.derived {
-                validate_derived_feature(feature, derived, &known_features)?;
-            }
-            known_features.insert(feature.id.clone(), feature);
-        }
-        for feature in &self.input_schema.features {
-            if let Some(semantics) = &feature.semantics {
-                validate_feature_semantics(feature, semantics, &known_features)?;
-            }
-        }
+        let known_features = validate_input_schema(&self.input_schema)?;
 
         let mut rule_ids = BTreeSet::new();
         let mut rule_bits = BTreeSet::new();
@@ -316,19 +335,122 @@ impl LogicPearlGateIr {
             validate_expression(&rule.deny_when, &known_features)?;
         }
 
-        if let Some(verification) = &self.verification {
-            if let Some(constraints) = &verification.domain_constraints {
-                for constraint in constraints {
-                    let feature = known_features.get(&constraint.feature).ok_or_else(|| {
-                        LogicPearlError::message(format!(
-                            "unknown features referenced: {}",
-                            constraint.feature
-                        ))
-                    })?;
-                    validate_comparison(constraint, feature, &known_features)?;
-                }
+        validate_verification(self.verification.as_ref(), &known_features)?;
+
+        Ok(())
+    }
+}
+
+impl LogicPearlActionIr {
+    pub fn from_json_str(input: &str) -> Result<Self> {
+        let policy: Self = serde_json::from_str(input)?;
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        let content = fs::read_to_string(path)?;
+        Self::from_json_str(&content)
+    }
+
+    pub fn write_pretty(&self, path: impl AsRef<Path>) -> Result<()> {
+        fs::write(path, serde_json::to_string_pretty(self)? + "\n")?;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.ir_version != "1.0" {
+            return Err(LogicPearlError::message(format!(
+                "unsupported ir_version: {}",
+                self.ir_version
+            )));
+        }
+        if self.action_policy_type != "priority_rules" {
+            return Err(LogicPearlError::message(format!(
+                "unsupported action_policy_type: {}",
+                self.action_policy_type
+            )));
+        }
+        if self.action_policy_id.is_empty() {
+            return Err(LogicPearlError::message(
+                "action policy id must be non-empty",
+            ));
+        }
+        if self.action_column.is_empty() {
+            return Err(LogicPearlError::message("action column must be non-empty"));
+        }
+        if self.default_action.is_empty() {
+            return Err(LogicPearlError::message("default action must be non-empty"));
+        }
+        if self.actions.is_empty() {
+            return Err(LogicPearlError::message(
+                "action policy must define at least one action",
+            ));
+        }
+        if self.rules.is_empty() {
+            return Err(LogicPearlError::message(
+                "action policy must define at least one rule",
+            ));
+        }
+
+        let known_features = validate_input_schema(&self.input_schema)?;
+        let mut actions = BTreeSet::new();
+        for action in &self.actions {
+            if action.trim().is_empty() {
+                return Err(LogicPearlError::message("actions must be non-empty"));
+            }
+            if !actions.insert(action.clone()) {
+                return Err(LogicPearlError::message(format!(
+                    "duplicate actions: {action}"
+                )));
             }
         }
+        if !actions.contains(&self.default_action) {
+            return Err(LogicPearlError::message(format!(
+                "default action is not listed in actions: {}",
+                self.default_action
+            )));
+        }
+
+        let mut rule_ids = BTreeSet::new();
+        let mut rule_bits = BTreeSet::new();
+        let mut priorities = BTreeSet::new();
+        for rule in &self.rules {
+            if rule.id.is_empty() {
+                return Err(LogicPearlError::message("rule id must be non-empty"));
+            }
+            if !rule_ids.insert(rule.id.clone()) {
+                return Err(LogicPearlError::message(format!(
+                    "duplicate rule ids: {}",
+                    rule.id
+                )));
+            }
+            if !rule_bits.insert(rule.bit) {
+                return Err(LogicPearlError::message(format!(
+                    "duplicate action rule bits: {}",
+                    rule.bit
+                )));
+            }
+            if !actions.contains(&rule.action) {
+                return Err(LogicPearlError::message(format!(
+                    "rule {} references unknown action {}",
+                    rule.id, rule.action
+                )));
+            }
+            if !priorities.insert(rule.priority) {
+                return Err(LogicPearlError::message(format!(
+                    "duplicate action rule priorities: {}",
+                    rule.priority
+                )));
+            }
+            validate_optional_non_empty(&rule.label, "rule label")?;
+            validate_optional_non_empty(&rule.message, "rule message")?;
+            validate_optional_non_empty(&rule.severity, "rule severity")?;
+            validate_optional_non_empty(&rule.counterfactual_hint, "rule counterfactual_hint")?;
+            validate_expression(&rule.predicate, &known_features)?;
+        }
+
+        validate_verification(self.verification.as_ref(), &known_features)?;
 
         Ok(())
     }
@@ -344,6 +466,61 @@ pub fn validate_expression_against_schema(
         .map(|feature| (feature.id.clone(), feature))
         .collect::<HashMap<_, _>>();
     validate_expression(expression, &known_features)
+}
+
+fn validate_input_schema(
+    input_schema: &InputSchema,
+) -> Result<HashMap<String, &FeatureDefinition>> {
+    if input_schema.features.is_empty() {
+        return Err(LogicPearlError::message(
+            "input schema must define at least one feature",
+        ));
+    }
+
+    let mut feature_ids = BTreeSet::new();
+    let mut known_features = HashMap::new();
+    for feature in &input_schema.features {
+        if feature.id.is_empty() {
+            return Err(LogicPearlError::message("feature id must be non-empty"));
+        }
+        if !feature_ids.insert(feature.id.clone()) {
+            return Err(LogicPearlError::message(format!(
+                "duplicate feature ids: {}",
+                feature.id
+            )));
+        }
+        feature.validate()?;
+        if let Some(derived) = &feature.derived {
+            validate_derived_feature(feature, derived, &known_features)?;
+        }
+        known_features.insert(feature.id.clone(), feature);
+    }
+    for feature in &input_schema.features {
+        if let Some(semantics) = &feature.semantics {
+            validate_feature_semantics(feature, semantics, &known_features)?;
+        }
+    }
+    Ok(known_features)
+}
+
+fn validate_verification(
+    verification: Option<&VerificationConfig>,
+    known_features: &HashMap<String, &FeatureDefinition>,
+) -> Result<()> {
+    if let Some(verification) = verification {
+        if let Some(constraints) = &verification.domain_constraints {
+            for constraint in constraints {
+                let feature = known_features.get(&constraint.feature).ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "unknown features referenced: {}",
+                        constraint.feature
+                    ))
+                })?;
+                validate_comparison(constraint, feature, known_features)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl FeatureDefinition {
@@ -1148,5 +1325,86 @@ mod tests {
             comparison.value,
             ComparisonValue::Literal(json!(["admin", "viewer"]))
         );
+    }
+
+    #[test]
+    fn validates_action_policy_ir() {
+        let policy = LogicPearlActionIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "action_policy_id": "garden_actions",
+                "action_policy_type": "priority_rules",
+                "action_column": "next_action",
+                "default_action": "do_nothing",
+                "actions": ["do_nothing", "water"],
+                "input_schema": {
+                    "features": [
+                        {"id": "soil_moisture_pct", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {
+                        "id": "rule_000",
+                        "bit": 0,
+                        "action": "water",
+                        "priority": 0,
+                        "when": {"feature": "soil_moisture_pct", "op": "<=", "value": 0.18},
+                        "label": "Water dry plants",
+                        "message": null,
+                        "severity": null,
+                        "counterfactual_hint": null,
+                        "verification_status": null
+                    }
+                ],
+                "evaluation": {"selection": "first_match"},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect("action policy should validate");
+
+        assert_eq!(policy.default_action, "do_nothing");
+        assert_eq!(policy.rules[0].action, "water");
+    }
+
+    #[test]
+    fn rejects_action_policy_rule_for_unknown_action() {
+        let err = LogicPearlActionIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "action_policy_id": "garden_actions",
+                "action_policy_type": "priority_rules",
+                "action_column": "next_action",
+                "default_action": "do_nothing",
+                "actions": ["do_nothing", "water"],
+                "input_schema": {
+                    "features": [
+                        {"id": "soil_moisture_pct", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {
+                        "id": "rule_000",
+                        "bit": 0,
+                        "action": "repot",
+                        "priority": 0,
+                        "when": {"feature": "soil_moisture_pct", "op": "<=", "value": 0.18},
+                        "label": null,
+                        "message": null,
+                        "severity": null,
+                        "counterfactual_hint": null,
+                        "verification_status": null
+                    }
+                ],
+                "evaluation": {"selection": "first_match"},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect_err("unknown action should fail");
+
+        assert!(err.to_string().contains("unknown action"));
     }
 }

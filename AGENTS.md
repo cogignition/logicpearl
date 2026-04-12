@@ -70,6 +70,35 @@ Downstream demos and frontends may display artifact metadata, but they must not 
 
 Raw `deny_when` expressions are the source of deterministic truth.
 
+## Multi-Action Policies
+
+LogicPearl can learn a policy that chooses one action from reviewed examples, not just a yes/no gate. Use this when a trace dataset has an action column such as `next_action`.
+
+```bash
+logicpearl build traces.csv \
+  --action-column next_action \
+  --default-action do_nothing \
+  --output-dir /tmp/actions
+```
+
+The build writes the same familiar bundle shape: `artifact.json`, `pearl.ir.json`, and an action report. The `pearl.ir.json` file contains the learned action policy, including the available actions, the default action, and the rules that point to each action.
+
+`logicpearl inspect /tmp/actions` should read like a reviewable policy:
+
+```text
+Action rules:
+  1. water
+     Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
+```
+
+At runtime, LogicPearl evaluates all matching rules into a bitmask, then selects the action from those matched rules. If no rule matches, it returns the configured default action.
+
+```bash
+logicpearl run /tmp/actions today.json --json
+```
+
+The JSON result includes the selected `action`, the matched-rule `bitmask`, and the rule metadata that explains why the action was selected.
+
 ## Plugin And Pipeline Execution
 
 Plugin and pipeline manifests can execute local processes. Treat manifests from other repos, issues, or generated examples as untrusted unless the user explicitly says they trust them.

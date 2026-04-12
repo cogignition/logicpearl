@@ -13,12 +13,15 @@ use logicpearl_benchmark::{
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, build_pearl_from_rows_without_numeric_interactions, discover_from_csv,
+    build_pearl_from_rows, discover_from_csv, learn_gate_from_rows_without_numeric_interactions,
     load_decision_traces_auto, load_flat_records, BuildInputProvenance, BuildOptions,
     BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
     ExactSelectionBackend, FeatureDictionaryConfig, PluginBuildProvenance, ResidualRecoveryState,
 };
-use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_ir::{
+    ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
+    LogicPearlGateIr,
+};
 use logicpearl_observer::{
     default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
     observe_with_profile, profile_id as native_profile_id, profile_registry,
@@ -36,7 +39,7 @@ use logicpearl_plugin::{
     PluginRequest, PluginResponse, PluginStage,
 };
 use logicpearl_render::TextInspector;
-use logicpearl_runtime::{evaluate_gate, parse_input_payload};
+use logicpearl_runtime::{evaluate_action_policy, evaluate_gate, parse_input_payload};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 use serde::Serialize;

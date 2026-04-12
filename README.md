@@ -185,7 +185,7 @@ reason:
   - Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
 ```
 
-The demo uses `logicpearl.yaml`, so the command stays short. LogicPearl generates readable feature metadata from the trace columns by default before discovery. The point is not that LogicPearl is a plant expert. The point is that reviewed examples can become a small deterministic artifact that returns the next action and the reason.
+The demo uses `logicpearl.yaml`, so the command stays short. LogicPearl generates readable feature metadata from the trace columns by default and emits one action policy artifact with action-labeled rules. The point is not that LogicPearl is a plant expert. The point is that reviewed examples can become a small deterministic artifact that returns the next action and the reason.
 
 After you inspect the artifact, you can improve it: add edge cases, remove weak examples, make feature labels clearer, rebuild, and compare the result. That improvement loop is the point.
 
@@ -810,7 +810,7 @@ The main directories are:
 
 The public demos write real artifacts you can inspect:
 - `artifact.json`
-- `pearl.ir.json`
+- `pearl.ir.json` for binary gates or multi-action artifacts
 - `build_report.json`
 - optional compiled native binaries when you run `logicpearl compile`
 - optional compiled `.wasm` modules when you compile for `wasm32-unknown-unknown`

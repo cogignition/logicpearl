@@ -8,10 +8,17 @@ All notable user-facing changes should be added here.
 - First-class feature dictionaries for `logicpearl build` and `logicpearl discover` via `--feature-dictionary`, embedding readable feature semantics into emitted artifacts without changing runtime evaluation.
 - Dictionary-aware rule text, inspect output, and artifact diffs, including separate diff flags for source/schema changes, learned rule changes, and explanation-only changes.
 - Feature dictionary documentation and repository guidance for LLM agents and integration authors.
+- Multi-action policies for datasets with an action column, so `logicpearl build --action-column next_action` can learn a deterministic policy that chooses actions such as `water`, `fertilize`, `repot`, or `do_nothing`.
+- Action policy results now include the selected `action`, the matched-rule `bitmask`, and the rule metadata that explains the result.
+- `logicpearl-engine` can load and run action policy bundles for applications that use LogicPearl as a library.
+- JSON schema coverage for action policy artifacts.
 
 ### Changed
-- Aligned Rust workspace and reserved Python package metadata with `@logicpearl/browser` at `0.1.4`.
+- Bumped the Rust workspace and package metadata to `0.1.5` for the next release.
 - Refreshed the Rust lockfile to avoid the yanked `fastrand 2.4.0` transitive dependency.
+- Action builds now produce one normal artifact bundle with `pearl.ir.json`, instead of separate per-action route artifacts.
+- `logicpearl inspect` now shows action policies as readable `Action rules:`.
+- The garden actions demo now uses the shorter config-driven CLI flow, generated feature labels, percent and gallon values in traces, and one inspectable action policy.
 
 ## 0.1.2 - 2026-04-08
 
