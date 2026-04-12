@@ -4,15 +4,34 @@
 
 # LogicPearl
 
-**LogicPearl** turns hard software behavior into deterministic deployable artifacts called `pearls`.
+**Given examples of what went in and what decision came out, LogicPearl builds deterministic decision logic you can inspect, run, diff, and improve.**
 
-If your system makes consequential decisions about policy, eligibility, trust, compliance, claims, approvals, or risk, LogicPearl gives you a way to move that logic into a bounded artifact: messy input stays at the edge, observers normalize it, pearls run deterministic logic, and the result becomes something you can inspect, diff, validate, compile, and deploy.
+Every approval, denial, escalation, block, review flag, and exception path is policy, even when it is scattered across services, scripts, prompts, spreadsheets, and human workarounds.
 
-Many systems accumulate decision logic across handlers, services, scripts, and one-off edge cases. LogicPearl is built to extract a slice of that behavior into something smaller, testable, easier to understand, and parity-checkable against the existing path.
+If you have examples of what went in and what came out, you have enough to start:
 
-LogicPearl does not require AI. The artifact model stands on its own. AI can help extract messy inputs, build observers, synthesize artifacts, and call pearls inside larger workflows, but the runtime contract remains deterministic.
+- requests went in, approvals or denials came out
+- tickets went in, escalation decisions came out
+- prompts went in, moderation outcomes came out
+- claims, access checks, risk reviews, or compliance cases went in, final decisions came out
 
-The goal is straightforward: learn or author an important behavior slice once, distill it into a pearl, then run and validate that artifact directly instead of rebuilding the same logic on every call.
+LogicPearl does not ask you to hand-code a giant rule table. It learns or assembles the decision layer from data: whether someone can change a flight, whether a healthcare claim should be accepted or rejected and why, whether a patient appears eligible for a medical trial, whether an NPC should trust a player, whether a request should be escalated, or whether an AI output should be blocked.
+
+That behavior becomes a `pearl`: a small deterministic artifact that runs the decision logic directly. You can inspect the reasons it uses, run it on new inputs, compare versions, catch weird inherited behavior, and improve the artifact with better examples.
+
+For high-stakes workflows, that boundary matters. A RAG-backed LLM can retrieve papers or notes and still hallucinate the eligibility logic for a medical trial. With LogicPearl, messy extraction can stay at the edge, while the final fit/no-fit decision comes from a deterministic pearl with exact reasons and source references to the papers, criteria, or policy clauses that drove the result.
+
+The direct use case is simple: feed LogicPearl the inputs and outputs from a legacy system, learn an artifact that matches that behavior, verify parity on the cases you care about, and replace the old coded decision path with something smaller, often faster, easier to understand, and easier to review.
+
+At runtime, a pearl does not spend tokens and does not improvise. The same normalized input produces exactly the same output every time.
+
+You do not have to replace your current system first. LogicPearl can start as an audit layer over decisions you already have. Build a pearl from observed inputs and outputs, see what decision logic it recovered, then decide whether to keep auditing, improve the traces, or eventually use the pearl directly.
+
+If you do not have real traces yet, there is a second path: use an LLM to synthesize candidate examples, review them, and build a pearl from the accepted trace data. The garden actions demo shows that shape in a vivid, low-stakes setting.
+
+Messy input stays at the edge. A parser, app, human review step, or LLM turns it into normalized features. The pearl runs the reusable decision logic without spending tokens, and its output is exactly repeatable.
+
+LogicPearl does not require AI. AI is useful for generating examples, extracting features, and calling pearls inside larger workflows. The pearl itself is deterministic software you can inspect and version.
 
 <p align="center">
   <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f172a.svg?style=flat-square"></a>
@@ -23,22 +42,32 @@ The goal is straightforward: learn or author an important behavior slice once, d
 
 New here? Read [Terminology](./TERMINOLOGY.md) first.
 
-[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
+[Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Garden Demo](#try-the-garden-demo) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [What You Can Trust](#what-you-can-trust) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
-Quick proof path with the checked-in example files:
+Quick runnable path with checked-in input/output traces:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
+logicpearl inspect /tmp/logicpearl-output
+logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
 ```
 
-That command takes a small labeled behavior slice and turns it into a deployable artifact bundle you can inspect and run locally.
+That takes a tiny observed behavior slice and emits a reusable artifact bundle you can inspect, run, and improve.
 
 ## What LogicPearl Is
 
-LogicPearl is not just a rules engine. It is a way to compile important behavior into bounded artifacts instead of hiding that behavior inside application code.
+LogicPearl is not a place to hand-code a giant decision table. It is a way to replace complex conditional code with a bounded decision artifact created from behavior data.
 
-A pearl is logic as software artifact:
+The first win is visibility. Once behavior is a pearl, you can see the decision logic that is actually being applied. You can spot paths that look too broad, too narrow, or just wrong. Then you can add better examples, refine the feature dictionary, add maintained logic, rebuild, and diff the new artifact against the old one.
+
+Parity is useful when you want to capture an existing behavior slice. But parity is not the ceiling. LogicPearl also gives you a practical loop for improving behavior because the decision logic is no longer buried in prompts, handlers, scripts, or scattered service code.
+
+When the recovered artifact matches the behavior you need, it can become the replacement path: a compact evaluator with explicit decision logic instead of a legacy service, brittle script, long prompt, or scattered conditional maze.
+
+You also do not have to replace your current system to get value. You can use LogicPearl as an audit layer: build a pearl from observed decisions, inspect the decision logic it recovered, compare the artifact against the current path, find surprising behavior, add better examples, and decide later whether any part should become the runtime path.
+
+A pearl is decision logic packaged as a software artifact:
 - inspectable
 - diffable
 - testable
@@ -59,35 +88,6 @@ The repository includes:
 - reproducible public demos
 - bounded parity examples for external policy slices
 
-## Which Surface To Use
-
-Use the surface that matches where the logic actually runs:
-
-- `logicpearl`
-  - for humans
-  - shell workflows
-  - build/inspect/run/diff from a terminal
-
-- `logicpearl-engine`
-  - for application backends and services
-  - when you want to load a pearl or pipeline once and execute it repeatedly in-process
-  - when your workflow uses plugins, files, or server-side adapters
-
-- `logicpearl` Python package
-  - for Python code that needs the real Rust execution surface
-  - thin bindings over `logicpearl-engine`, not a CLI subprocess wrapper
-  - lives under [`reserved-python/logicpearl`](./reserved-python/logicpearl)
-
-- `@logicpearl/browser`
-  - for browser-safe evaluation only
-  - best when the executed path is really a pearl or browser-safe bundle running client-side
-
-Practical rule:
-- if it needs plugins, Python, files, secrets, or server-only adapters, use `logicpearl-engine`
-- if your app is in Python, use the `logicpearl` Python package as the bridge to `logicpearl-engine`
-- if it is truly browser-safe, use `@logicpearl/browser`
-- if a person is driving it from the terminal, use `logicpearl`
-
 ## Start Here
 
 If you are new, start with the public quickstart command.
@@ -96,7 +96,7 @@ Prerequisites:
 - a supported macOS or Linux machine for the prebuilt installer
 - a willingness to treat logic as a build artifact instead of application glue
 
-Install the public CLI and bundled Z3 once, then ask it for the shortest proof path:
+Install the public CLI once, then ask it for the shortest runnable path:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
@@ -106,8 +106,8 @@ logicpearl quickstart build
 
 The prebuilt installer:
 - installs a versioned LogicPearl bundle under `~/.logicpearl`
-- installs `logicpearl` and `z3` symlinks into `~/.local/bin`
-- keeps the default build path working without separate solver setup
+- installs the `logicpearl` command into `~/.local/bin`
+- keeps the default build path working without separate dependency setup
 
 Full install details and manual bundle instructions live in [docs/install.md](./docs/install.md).
 
@@ -140,17 +140,66 @@ Practical rule:
 - if you only installed from crates.io, point `logicpearl` at your own trace dataset or clone the repository for the checked-in examples
 - `logicpearl quickstart` is the best first command when you are learning the surface
 
-### Build a pearl from decision traces
+## Try The Garden Demo
+
+The garden demo is the shortest way to see the sample without a pile of flags.
+
+<p align="center">
+  <img src="./docs/assets/garden-actions-demo.png" alt="LogicPearl garden demo: journal notes become reviewed CSV traces, then a local CLI build returns the next plant action and reason." width="900" />
+</p>
+
+Someone kept notes about what they tried with each plant and whether it helped:
+
+```text
+Vera, succulent
+- soil moisture read 12%
+- had not been watered for a week
+- used about 0.1 gallons
+- perked up by morning
+```
+
+After review, those notes become ordinary traces with measurements and a `next_action` column:
+
+- [garden notes](./examples/demos/garden_actions/garden_log.md)
+- [garden action traces](./examples/demos/garden_actions/traces.csv)
+
+Build and inspect the action artifact:
+
+```bash
+cd examples/demos/garden_actions
+logicpearl build
+logicpearl inspect
+```
+
+Run it on a new plant check:
+
+```bash
+logicpearl run today.json --explain
+```
+
+Expected shape:
+
+```text
+action: water
+reason:
+  - Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
+```
+
+The demo uses `logicpearl.yaml`, so the command stays short. LogicPearl generates readable feature metadata from the trace columns by default before discovery. The point is not that LogicPearl is a plant expert. The point is that reviewed examples can become a small deterministic artifact that returns the next action and the reason.
+
+After you inspect the artifact, you can improve it: add edge cases, remove weak examples, make feature labels clearer, rebuild, and compare the result. That improvement loop is the point.
+
+## Build A Pearl From Decision Traces
 
 Start with a tiny labeled behavior slice:
 
 - [decision_traces.csv](./examples/getting_started/decision_traces.csv)
 
-Each row is an observed decision:
+Each example is an observed decision:
 - input features
 - final outcome in the `allowed` column
 
-Now emit a pearl with no hand-written rules:
+Now build a pearl from those examples:
 
 ```bash
 logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
@@ -161,7 +210,7 @@ What you should see:
 - one artifact bundle you can treat as the entrypoint for CLI usage
 - `artifact.json`, `pearl.ir.json`, and `build_report.json`
 
-For end users, the important rule is:
+For CLI usage, the important bit is:
 - the bundle directory or `artifact.json` is the logical artifact
 - native binaries and wasm modules are optional deployable derivatives
 - `logicpearl run` executes the artifact bundle directly
@@ -211,7 +260,7 @@ It also infers the binary label column when there is one unambiguous candidate a
 - `22%` -> `0.22`
 - `Yes` / `No` -> `true` / `false`
 
-If your dataset uses a different or ambiguous label column, pass `--label-column <name>`. If the label values are binary but not semantically obvious, pass `--positive-label <value>` or `--negative-label <value>`.
+If your dataset uses a different or ambiguous label column, pass `--label-column <name>`. If the label values are binary but not semantically obvious, pass `--default-label <value>` or `--rule-label <value>`.
 
 Alternative input examples:
 
@@ -220,13 +269,14 @@ logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/loa
 logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/mod-nested
 ```
 
-The public builder already includes solver-backed conjunction recovery for multi-condition deny slices.
+The public builder can recover multi-condition deny slices and records the selection details in `build_report.json`. That keeps the artifact compact without hiding the final `deny_when` logic.
 
 Additional build controls:
 - `--refine` tightens uniquely over-broad rules
 - `--pinned-rules rules.json` merges a maintained rule layer after discovery
 - `--feature-dictionary feature_dictionary.json` gives raw feature IDs readable labels, states, and source anchors
 - `--feature-governance governance.json` constrains how discovery may use specific features
+- `--raw-feature-ids` skips the default generated feature metadata
 
 Example:
 
@@ -234,11 +284,11 @@ Example:
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-build --refine
 ```
 
-### Make learned rules readable with a feature dictionary
+### Make learned logic readable with a feature dictionary
 
-LogicPearl learns deterministic rules from feature IDs. A feature dictionary tells LogicPearl what those features mean before discovery runs, so generated artifact text, `inspect`, and `diff` are readable without changing runtime behavior.
+LogicPearl learns deterministic decision logic from feature IDs. A feature dictionary tells LogicPearl what those features mean before discovery runs, so generated artifact text, `inspect`, and `diff` are readable without changing runtime behavior.
 
-Use it when feature IDs are stable machine names but the artifact should speak in domain language:
+When no dictionary is passed, `logicpearl build` generates starter feature metadata from the trace column names. Pass a dictionary when feature IDs are stable machine names but the artifact should speak in domain language, carry state-specific text, or include source anchors:
 
 ```bash
 logicpearl build traces.csv \
@@ -315,6 +365,17 @@ That suggestion pass is conservative. It uses feature names, types, and audit co
 If you want LogicPearl to learn from synthetic behavior instead of a checked-in dataset, start from a declarative trace-generation spec:
 
 - [synthetic_access_policy.tracegen.json](./examples/getting_started/synthetic_access_policy.tracegen.json)
+
+Synthetic traces can also come from an LLM during setup, as long as you treat the model as a trace author, not as the runtime decision maker.
+
+The plant demo uses that shape:
+- ask an LLM to enumerate realistic plant-care checks from a written watering policy
+- normalize each check into gate-ready features such as `normal_plant_dry_enough`, `succulent_ready_for_water`, `drooping_from_dryness`, and `hot_window_dried_out`
+- label each example with `water_now` or `wait`
+- review and audit the generated trace data
+- build a pearl from the accepted traces
+
+At runtime, an LLM or deterministic parser can read a new plant-care message, emit the normalized feature object, and call the pearl. The agent no longer has to spend tokens re-deciding the watering policy on every request, and the reusable logic remains inspectable.
 
 Generate traces:
 
@@ -507,7 +568,54 @@ That small output shows the core shape:
 - explicit reasons
 - behavior that does not disappear into service code
 
-### Advanced integrations
+## What You Can Trust
+
+A pearl is not a black box and it is not a claim that the training data was perfect.
+
+What LogicPearl gives you is specific and useful:
+
+- the same normalized input produces the same output every time
+- the emitted decision logic can be inspected before you ship it
+- bad inherited behavior can be surfaced instead of silently copied
+- new examples can be added to steer the next artifact
+- artifact diffs can show whether logic changed or only explanation text changed
+- examples, specs, and benchmarks can travel with the artifact as evidence
+- AI can help create traces or read messy inputs, but the pearl itself does not improvise
+
+That means a garden-actions pearl is only as good as the reviewed plant-care examples behind it. A claims, access, or compliance pearl is only as good as the traces, policy sources, review process, and verification checks behind it.
+
+The important shift is that reusable decision logic becomes explicit. You can inspect it, test it, diff it, and decide whether the evidence is strong enough for your use case.
+
+## Which Surface To Use
+
+Use the surface that matches where the logic actually runs:
+
+- `logicpearl`
+  - for humans
+  - shell workflows
+  - build/inspect/run/diff from a terminal
+
+- `logicpearl-engine`
+  - for application backends and services
+  - when you want to load a pearl or pipeline once and execute it repeatedly in-process
+  - when your workflow uses plugins, files, or server-side adapters
+
+- `logicpearl` Python package
+  - for Python code that needs the real Rust execution surface
+  - thin bindings over `logicpearl-engine`, not a CLI subprocess wrapper
+  - lives under [`reserved-python/logicpearl`](./reserved-python/logicpearl)
+
+- `@logicpearl/browser`
+  - for browser-safe evaluation only
+  - best when the executed path is really a pearl or browser-safe bundle running client-side
+
+Practical rule:
+- if it needs plugins, Python, files, secrets, or server-only adapters, use `logicpearl-engine`
+- if your app is in Python, use the `logicpearl` Python package as the bridge to `logicpearl-engine`
+- if it is truly browser-safe, use `@logicpearl/browser`
+- if a person is driving it from the terminal, use `logicpearl`
+
+## Advanced Integrations
 
 Most new users can stop after `build`, `inspect`, `run`, and `pipeline`.
 
@@ -539,7 +647,7 @@ See example outputs:
 ## Why This Is Interesting
 
 Most real decision logic ends up as one of these:
-- a giant rules blob
+- a giant conditional blob
 - conditionals spread across services
 - brittle policy code no one wants to touch
 - AI extraction with no deterministic boundary after it
@@ -549,9 +657,27 @@ LogicPearl is a different shape:
 - normalized features cross a clear boundary
 - the pearl itself is deterministic
 - the output is compact, portable, and explainable
+- the decision paths become visible enough to review and improve
 
-The point is not “yet another rules engine.”
+The point is not another place to hand-code if/else logic.
 The point is a new execution shape for decision logic.
+
+You can use that shape to match an existing system, but you can also use it to make the behavior better. When a pearl exposes an awkward decision path, a missing case, or a confusing label, you have something concrete to change: the traces, the feature contract, the dictionary, or the maintained rule layer. Then `diff` shows what actually changed.
+
+That means LogicPearl can start as an audit tool:
+- learn a readable artifact from current decisions
+- inspect what the current behavior appears to be doing
+- find places where the existing behavior is inconsistent or undesirable
+- improve the trace set or rule layer
+- keep the old system running until you are ready to use the pearl directly
+
+And in research workflows, the same idea can move even earlier: use a pearl during model training to clean or weight training examples. For example, a model may land on the right math answer for the wrong reason. A LogicPearl gate can flag those "lucky correct" examples with readable rules, so the training loop can prefer cleaner reasoning instead of blindly learning from every correct-looking answer. After each training round, you can generate new model outputs, build a new pearl from the model's current failure modes, and use that updated gate in the next round.
+
+How to compare it to familiar tools:
+- A rules engine or decision table gives you a place to write rules. LogicPearl focuses on the artifact lifecycle around a bounded behavior slice: build or layer decision logic, inspect it, diff it, validate parity, and deploy the resulting artifact.
+- OPA/Rego is a strong choice when you want to author and run policy directly. LogicPearl is useful when you want to recover or package a slice from traces, existing behavior, synthetic examples, or adapter output, then keep the result as a compact deterministic artifact.
+- A model prompt can reason about a case once. A pearl captures the reusable part of that reasoning as explicit logic an app or agent can call repeatedly.
+- A decision tree or classifier may explain a dataset. A pearl is meant to be a reviewed runtime boundary with stable inputs, rule metadata, semantic diffs, and optional compiled deployables.
 
 When artifacts change over time, the important question is:
 - which rule was added
@@ -574,7 +700,7 @@ The LogicPearl shape is:
 
 That is why this matters.
 
-If software controls approvals, money, access, policy, risk, or compliance, then “the code runs somewhere” is not a satisfying model anymore.
+If a system controls approvals, money, access, policy, risk, or compliance, then “the code runs somewhere” is not a satisfying model anymore.
 
 And the full promise is broader than “write rules in JSON”:
 - start from behavior, examples, or an existing policy/runtime
@@ -586,6 +712,7 @@ And the full promise is broader than “write rules in JSON”:
 
 Additional guides:
 
+- [Garden actions demo](./examples/demos/garden_actions/README.md) for the notes -> reviewed traces -> next-action artifact loop
 - [Advanced guardrail guide](./docs/advanced-guardrail-guide.md) for the full observer -> traces -> artifact-set workflow
 - [WAF edge demo](./examples/waf_edge/README.md) for raw-request plugins and route mapping
 - [OPA / Rego parity example](./benchmarks/opa_rego/README.md) for a smaller bounded policy-parity walkthrough
@@ -597,6 +724,7 @@ Additional guides:
 - diff two artifacts semantically, even when rule bits moved
 - run pearls through the Rust runtime
 - compile small pearls to WASM
+- reproduce the garden actions demo
 - reproduce the auth demo
 - run a smaller OPA / Rego parity example
 - structure guardrail benchmarks with clean `train / dev / post-freeze external evaluation` separation
@@ -615,6 +743,13 @@ That file covers:
 The separate OPA / Rego parity example lives in [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md).
 
 ## Next Demos
+
+### Garden Actions Demo
+
+A small trace-synthesis demo showing how reviewed journal-style notes can become a reusable `water` / `fertilize` / `repot` / `do_nothing` artifact.
+
+See:
+- [examples/demos/garden_actions/README.md](./examples/demos/garden_actions/README.md)
 
 ### Auth Demo
 
@@ -685,9 +820,9 @@ The core promise is simple:
 
 ## Why Use LogicPearl
 
-- replace brittle logic blobs with explicit artifacts
+- replace brittle conditional logic with explicit artifacts
 - inspect and diff deployable decision logic
-- prove parity on a bounded policy slice
+- demonstrate parity on a bounded trace slice, and prove stronger claims only when an explicit verification workflow is present
 - keep runtime evaluation compact and portable
 - pair human-readable specs with deployable runtime artifacts
 - keep a clean boundary between messy input handling and deterministic logic

@@ -13,9 +13,10 @@ use logicpearl_benchmark::{
 };
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, discover_from_csv, load_decision_traces_auto, BuildInputProvenance,
-    BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    ExactSelectionBackend, PluginBuildProvenance, ResidualRecoveryState,
+    build_pearl_from_rows, build_pearl_from_rows_without_numeric_interactions, discover_from_csv,
+    load_decision_traces_auto, load_flat_records, BuildInputProvenance, BuildOptions,
+    BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
+    ExactSelectionBackend, FeatureDictionaryConfig, PluginBuildProvenance, ResidualRecoveryState,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
@@ -523,7 +524,7 @@ enum DiscoveryDecisionModeArg {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --output-dir /tmp/output\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -538,12 +539,21 @@ struct BuildArgs {
     /// Decision label column. If omitted, LogicPearl infers it when there is one unambiguous binary candidate.
     #[arg(long)]
     label_column: Option<String>,
-    /// Explicit value in the label column that means allow/pass/approved.
+    /// Column containing a multi-action label such as water, fertilize, repot, or do_nothing.
+    #[arg(long)]
+    action_column: Option<String>,
+    /// Default/pass value for binary gate builds. Rules fire for the other value unless --rule-label is set.
     #[arg(long, help_heading = "Advanced")]
-    positive_label: Option<String>,
-    /// Explicit value in the label column that means deny/fail/blocked.
+    default_label: Option<String>,
+    /// Rule/fire value for binary gate builds.
     #[arg(long, help_heading = "Advanced")]
-    negative_label: Option<String>,
+    rule_label: Option<String>,
+    /// Default action when no action route matches. If omitted, LogicPearl prefers do_nothing, wait, none, or noop when present.
+    #[arg(long, help_heading = "Advanced")]
+    default_action: Option<String>,
+    /// Do not generate starter feature metadata when --feature-dictionary is omitted.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    raw_feature_ids: bool,
     /// Plugin manifest for a trace-source plugin that emits decision traces over JSON.
     #[arg(long, help_heading = "Advanced")]
     trace_plugin_manifest: Option<PathBuf>,
@@ -681,9 +691,9 @@ struct ConformanceRuntimeParityArgs {
     #[arg(long)]
     label_column: Option<String>,
     #[arg(long, help_heading = "Advanced")]
-    positive_label: Option<String>,
+    default_label: Option<String>,
     #[arg(long, help_heading = "Advanced")]
-    negative_label: Option<String>,
+    rule_label: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -882,15 +892,21 @@ struct BenchmarkEmitTracesArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl run examples/getting_started/output examples/getting_started/new_input.json\n  logicpearl run examples/getting_started/output -\n  cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output\n  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json"
+    after_help = "Examples:\n  logicpearl run examples/getting_started/output examples/getting_started/new_input.json\n  logicpearl run examples/getting_started/output -\n  cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output\n  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json\n  logicpearl run today.json --explain"
 )]
 struct RunArgs {
-    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
-    #[arg(value_name = "ARTIFACT")]
-    pearl_ir: PathBuf,
-    /// Input JSON file, `-` for stdin, or omit to read stdin.
+    /// Artifact path, or input path when logicpearl.yaml provides run.artifact.
+    #[arg(value_name = "ARTIFACT_OR_INPUT")]
+    pearl_ir: Option<PathBuf>,
+    /// Input JSON file, `-` for stdin, or omit to read stdin or the configured example input.
     #[arg(value_name = "INPUT")]
     input_json: Option<PathBuf>,
+    /// Print matched rules and readable action output instead of only the raw bitmask.
+    #[arg(long)]
+    explain: bool,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -934,7 +950,7 @@ struct CompileArgs {
 struct InspectArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
     #[arg(value_name = "ARTIFACT")]
-    pearl_ir: PathBuf,
+    pearl_ir: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     json: bool,

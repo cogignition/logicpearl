@@ -1,0 +1,10 @@
+build:
+  traces: traces.csv
+  gate_id: garden_actions
+  action_column: next_action
+  default_action: do_nothing
+  output_dir: /tmp/garden-actions
+
+run:
+  artifact: /tmp/garden-actions
+  example_input: today.json

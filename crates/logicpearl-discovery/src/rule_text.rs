@@ -112,14 +112,21 @@ fn comparison_label(comparison: &ComparisonExpression, context: &RuleTextContext
             return label.clone();
         }
         if let Some(label) = semantics.label.as_ref() {
-            return comparison_label_with_feature(comparison, label);
+            return comparison_label_with_feature(comparison, label, Some(semantics));
         }
     }
-    let feature = feature_label(&comparison.feature, context);
-    comparison_label_with_feature(comparison, &feature)
+    let semantics = context.feature_semantics(&comparison.feature);
+    let feature = semantics
+        .and_then(|semantics| semantics.label.clone())
+        .unwrap_or_else(|| humanize_feature_name(&comparison.feature));
+    comparison_label_with_feature(comparison, &feature, semantics)
 }
 
-fn comparison_label_with_feature(comparison: &ComparisonExpression, feature: &str) -> String {
+fn comparison_label_with_feature(
+    comparison: &ComparisonExpression,
+    feature: &str,
+    semantics: Option<&FeatureSemantics>,
+) -> String {
     match (&comparison.op, &comparison.value) {
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(true))) => {
             positive_boolean_label(&comparison.feature, feature)
@@ -161,28 +168,52 @@ fn comparison_label_with_feature(comparison: &ComparisonExpression, feature: &st
             )
         }
         (ComparisonOperator::Eq, ComparisonValue::Literal(value)) => {
-            format!("{feature} equals {}", render_value(value))
+            format!(
+                "{feature} equals {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Ne, ComparisonValue::Literal(value)) => {
-            format!("{feature} differs from {}", render_value(value))
+            format!(
+                "{feature} differs from {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Lt, ComparisonValue::Literal(value)) => {
-            format!("{feature} below {}", render_value(value))
+            format!(
+                "{feature} below {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Lte, ComparisonValue::Literal(value)) => {
-            format!("{feature} at or below {}", render_value(value))
+            format!(
+                "{feature} at or below {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Gt, ComparisonValue::Literal(value)) => {
-            format!("{feature} above {}", render_value(value))
+            format!(
+                "{feature} above {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Gte, ComparisonValue::Literal(value)) => {
-            format!("{feature} at or above {}", render_value(value))
+            format!(
+                "{feature} at or above {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::In, ComparisonValue::Literal(value)) => {
-            format!("{feature} is in {}", render_value(value))
+            format!(
+                "{feature} is in {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::NotIn, ComparisonValue::Literal(value)) => {
-            format!("{feature} is outside {}", render_value(value))
+            format!(
+                "{feature} is outside {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::In, ComparisonValue::FeatureRef { feature_ref }) => {
             format!("{feature} is in {}", humanize_feature_name(feature_ref))
@@ -205,13 +236,17 @@ fn comparison_counterfactual_hint(
             return hint.clone();
         }
     }
-    let feature = feature_label(&comparison.feature, context);
-    comparison_counterfactual_hint_with_feature(comparison, &feature)
+    let semantics = context.feature_semantics(&comparison.feature);
+    let feature = semantics
+        .and_then(|semantics| semantics.label.clone())
+        .unwrap_or_else(|| humanize_feature_name(&comparison.feature));
+    comparison_counterfactual_hint_with_feature(comparison, &feature, semantics)
 }
 
 fn comparison_counterfactual_hint_with_feature(
     comparison: &ComparisonExpression,
     feature: &str,
+    semantics: Option<&FeatureSemantics>,
 ) -> String {
     match (&comparison.op, &comparison.value) {
         (ComparisonOperator::Eq, ComparisonValue::Literal(Value::Bool(true))) => {
@@ -227,22 +262,40 @@ fn comparison_counterfactual_hint_with_feature(
             positive_boolean_counterfactual(&comparison.feature, feature)
         }
         (ComparisonOperator::Lt, ComparisonValue::Literal(value)) => {
-            format!("Keep {feature} at or above {}", render_value(value))
+            format!(
+                "Keep {feature} at or above {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Lte, ComparisonValue::Literal(value)) => {
-            format!("Keep {feature} above {}", render_value(value))
+            format!(
+                "Keep {feature} above {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Gt, ComparisonValue::Literal(value)) => {
-            format!("Keep {feature} at or below {}", render_value(value))
+            format!(
+                "Keep {feature} at or below {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Gte, ComparisonValue::Literal(value)) => {
-            format!("Keep {feature} below {}", render_value(value))
+            format!(
+                "Keep {feature} below {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Eq, ComparisonValue::Literal(value)) => {
-            format!("Change {feature} away from {}", render_value(value))
+            format!(
+                "Change {feature} away from {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Ne, ComparisonValue::Literal(value)) => {
-            format!("Set {feature} to {}", render_value(value))
+            format!(
+                "Set {feature} to {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::Lt, ComparisonValue::FeatureRef { feature_ref }) => {
             format!(
@@ -281,10 +334,16 @@ fn comparison_counterfactual_hint_with_feature(
             )
         }
         (ComparisonOperator::In, ComparisonValue::Literal(value)) => {
-            format!("Keep {feature} outside {}", render_value(value))
+            format!(
+                "Keep {feature} outside {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::NotIn, ComparisonValue::Literal(value)) => {
-            format!("Set {feature} inside {}", render_value(value))
+            format!(
+                "Set {feature} inside {}",
+                render_value_for_feature(value, semantics)
+            )
         }
         (ComparisonOperator::In, ComparisonValue::FeatureRef { feature_ref }) => {
             format!(
@@ -299,13 +358,6 @@ fn comparison_counterfactual_hint_with_feature(
             )
         }
     }
-}
-
-fn feature_label(feature_id: &str, context: &RuleTextContext<'_>) -> String {
-    context
-        .feature_semantics(feature_id)
-        .and_then(|semantics| semantics.label.clone())
-        .unwrap_or_else(|| humanize_feature_name(feature_id))
 }
 
 fn comparison_state_match<'a>(
@@ -431,6 +483,31 @@ fn humanize_token(token: &str) -> String {
     }
 }
 
+fn render_value_for_feature(value: &Value, semantics: Option<&FeatureSemantics>) -> String {
+    if semantics.and_then(|semantics| semantics.unit.as_deref()) == Some("percent") {
+        if let Some(number) = value.as_f64() {
+            let percent = if number.abs() <= 1.0 {
+                number * 100.0
+            } else {
+                number
+            };
+            return format!("{}%", render_number(percent));
+        }
+    }
+    render_value(value)
+}
+
+fn render_number(value: f64) -> String {
+    if (value.fract()).abs() < f64::EPSILON {
+        return format!("{value:.0}");
+    }
+    let rendered = format!("{value:.3}");
+    rendered
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
 fn render_value(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -492,6 +569,36 @@ mod tests {
         assert_eq!(
             generated.counterfactual_hint.as_deref(),
             Some("Keep Clearance Level at or above 5")
+        );
+    }
+
+    #[test]
+    fn percent_unit_renders_fractional_threshold_as_percent() {
+        let expression: Expression = serde_json::from_value(json!({
+            "feature": "soil_moisture_pct",
+            "op": "<=",
+            "value": 0.18
+        }))
+        .unwrap();
+        let mut feature_semantics = BTreeMap::new();
+        feature_semantics.insert(
+            "soil_moisture_pct".to_string(),
+            serde_json::from_value::<FeatureSemantics>(json!({
+                "label": "Soil moisture",
+                "unit": "percent"
+            }))
+            .unwrap(),
+        );
+        let context = RuleTextContext::with_feature_semantics(&feature_semantics);
+
+        let generated = generate_rule_text(&expression, &context);
+        assert_eq!(
+            generated.label.as_deref(),
+            Some("Soil moisture at or below 18%")
+        );
+        assert_eq!(
+            generated.counterfactual_hint.as_deref(),
+            Some("Keep Soil moisture above 18%")
         );
     }
 

@@ -20,11 +20,10 @@ mod trace_loading;
 
 use engine::{build_gate, load_pinned_rule_set};
 use features::augment_rows_with_numeric_interactions;
-use trace_loading::{
-    infer_binary_label_domain, load_flat_records, parse_allowed_label_value, BinaryLabelDomain,
-};
+use trace_loading::{infer_binary_label_domain, parse_allowed_label_value, BinaryLabelDomain};
 pub use trace_loading::{
     load_decision_traces, load_decision_traces_auto, load_decision_traces_with_labels,
+    load_flat_records, LoadedFlatRecords,
 };
 
 #[cfg(test)]
@@ -846,6 +845,23 @@ pub fn build_pearl_from_rows(
     source_name: String,
     options: &BuildOptions,
 ) -> Result<BuildResult> {
+    build_pearl_from_rows_internal(rows, source_name, options, true)
+}
+
+pub fn build_pearl_from_rows_without_numeric_interactions(
+    rows: &[DecisionTraceRow],
+    source_name: String,
+    options: &BuildOptions,
+) -> Result<BuildResult> {
+    build_pearl_from_rows_internal(rows, source_name, options, false)
+}
+
+fn build_pearl_from_rows_internal(
+    rows: &[DecisionTraceRow],
+    source_name: String,
+    options: &BuildOptions,
+    numeric_interactions: bool,
+) -> Result<BuildResult> {
     if rows.is_empty() {
         return Err(LogicPearlError::message("decision trace CSV is empty"));
     }
@@ -865,7 +881,11 @@ pub fn build_pearl_from_rows(
         return Ok(cached);
     }
 
-    let (augmented_rows, derived_features) = augment_rows_with_numeric_interactions(rows);
+    let (augmented_rows, derived_features) = if numeric_interactions {
+        augment_rows_with_numeric_interactions(rows)
+    } else {
+        (rows.to_vec(), Vec::new())
+    };
     let feature_governance = options
         .feature_governance
         .as_deref()
@@ -1178,7 +1198,7 @@ mod tests {
         let err = load_decision_traces_auto(&csv_path, Some("status"), None, None).unwrap_err();
         assert!(err
             .to_string()
-            .contains("pass --positive-label or --negative-label explicitly"));
+            .contains("pass --default-label or --rule-label explicitly"));
 
         let loaded =
             load_decision_traces_auto(&csv_path, Some("status"), Some("alpha"), None).unwrap();

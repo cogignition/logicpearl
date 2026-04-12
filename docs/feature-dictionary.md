@@ -37,6 +37,10 @@ logicpearl discover traces.csv \
 
 LogicPearl validates that dictionary keys reference known input or derived features. The emitted artifact embeds entries under `input_schema.features[].semantics`.
 
+When `--feature-dictionary` is omitted, `logicpearl build` generates a starter dictionary from trace column names into the output bundle and uses it before discovery. Use `--raw-feature-ids` only when you want no generated explanation metadata.
+
+Treat the generated dictionary as a starting point. Source-aware integrations should still emit precise labels, states, and anchors from the same source that emitted the traces.
+
 ## Minimal Dictionary
 
 Most hand-written dictionaries should start with labels only:

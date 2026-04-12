@@ -12,9 +12,9 @@ pub(crate) struct BinaryLabelDomain {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct LoadedFlatRecords {
-    pub(crate) field_names: Vec<String>,
-    pub(crate) records: Vec<BTreeMap<String, Value>>,
+pub struct LoadedFlatRecords {
+    pub field_names: Vec<String>,
+    pub records: Vec<BTreeMap<String, Value>>,
 }
 
 const NORMALIZED_TRACE_INPUT_HINT: &str = "Build and discover inputs must be normalized rectangular decision traces. Normalize missing, null, optional, or domain-specific raw structures in an observer, trace_source plugin, or adapter before discovery.";
@@ -63,7 +63,7 @@ pub fn load_decision_traces_auto(
     })
 }
 
-pub(crate) fn load_flat_records(path: &Path) -> Result<LoadedFlatRecords> {
+pub fn load_flat_records(path: &Path) -> Result<LoadedFlatRecords> {
     match path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -492,24 +492,32 @@ pub(crate) fn infer_binary_label_domain(
     if let Some(label) = explicit_positive.as_ref() {
         if !unique_values.contains_key(label) {
             return Err(LogicPearlError::message(format!(
-                "--positive-label {:?} was not found in field {label_column:?}; distinct values: {}",
+                "--default-label {:?} was not found in field {label_column:?}; distinct values: {}",
                 positive_label.unwrap_or_default(),
-                unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+                unique_values
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )));
         }
     }
     if let Some(label) = explicit_negative.as_ref() {
         if !unique_values.contains_key(label) {
             return Err(LogicPearlError::message(format!(
-                "--negative-label {:?} was not found in field {label_column:?}; distinct values: {}",
+                "--rule-label {:?} was not found in field {label_column:?}; distinct values: {}",
                 negative_label.unwrap_or_default(),
-                unique_values.values().cloned().collect::<Vec<_>>().join(", ")
+                unique_values
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )));
         }
     }
     if explicit_positive.is_some() && explicit_positive == explicit_negative {
         return Err(LogicPearlError::message(
-            "--positive-label and --negative-label must be different",
+            "--default-label and --rule-label must be different",
         ));
     }
 
@@ -569,7 +577,7 @@ pub(crate) fn infer_binary_label_domain(
         });
     }
     Err(LogicPearlError::message(format!(
-        "could not infer which value in label field {label_column:?} means allow/pass from binary values {}; pass --positive-label or --negative-label explicitly",
+        "could not infer which value in label field {label_column:?} is the default/pass value from binary values {}; pass --default-label or --rule-label explicitly",
         unique_values.values().cloned().collect::<Vec<_>>().join(", ")
     )))
 }

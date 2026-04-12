@@ -3,7 +3,7 @@ use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
     LogicPearlGateIr,
 };
-use serde_json::{Number, Value};
+use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 
 pub fn evaluate_gate(
@@ -22,14 +22,14 @@ pub fn evaluate_gate(
 
 pub fn parse_input_payload(payload: Value) -> Result<Vec<HashMap<String, Value>>> {
     match payload {
-        Value::Object(object) => Ok(vec![object.into_iter().collect()]),
+        Value::Object(object) => Ok(vec![normalize_input_object(object)?]),
         Value::Array(items) => {
             let mut parsed = Vec::with_capacity(items.len());
             for item in items {
                 let object = item.as_object().ok_or_else(|| {
                     LogicPearlError::message("input JSON array must contain only feature objects")
                 })?;
-                parsed.push(object.clone().into_iter().collect());
+                parsed.push(normalize_input_object(object.clone())?);
             }
             Ok(parsed)
         }
@@ -37,6 +37,77 @@ pub fn parse_input_payload(payload: Value) -> Result<Vec<HashMap<String, Value>>
             "input JSON must be an object or an array of feature objects",
         )),
     }
+}
+
+fn normalize_input_object(object: Map<String, Value>) -> Result<HashMap<String, Value>> {
+    object
+        .into_iter()
+        .map(|(key, value)| Ok((key, normalize_input_scalar(value)?)))
+        .collect()
+}
+
+fn normalize_input_scalar(value: Value) -> Result<Value> {
+    match value {
+        Value::String(raw) => parse_runtime_scalar(&raw),
+        other => Ok(other),
+    }
+}
+
+fn parse_runtime_scalar(raw: &str) -> Result<Value> {
+    let value = raw.trim();
+    let lowered = value.to_ascii_lowercase();
+    match lowered.as_str() {
+        "true" | "yes" | "y" | "on" => return Ok(Value::Bool(true)),
+        "false" | "no" | "n" | "off" => return Ok(Value::Bool(false)),
+        _ => {}
+    }
+    if let Some(number) = parse_runtime_number(value)? {
+        return Ok(number);
+    }
+    Ok(Value::String(value.to_string()))
+}
+
+fn parse_runtime_number(raw: &str) -> Result<Option<Value>> {
+    let mut candidate = raw.trim();
+    let mut is_percent = false;
+    if let Some(stripped) = candidate.strip_suffix('%') {
+        candidate = stripped.trim();
+        is_percent = true;
+    }
+    candidate = candidate
+        .strip_prefix('$')
+        .or_else(|| candidate.strip_prefix('€'))
+        .or_else(|| candidate.strip_prefix('£'))
+        .or_else(|| candidate.strip_prefix('¥'))
+        .unwrap_or(candidate)
+        .trim();
+    let negative_wrapped = candidate.starts_with('(') && candidate.ends_with(')');
+    if negative_wrapped {
+        candidate = candidate
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+            .unwrap_or(candidate)
+            .trim();
+    }
+    let mut normalized = candidate.replace(',', "");
+    if negative_wrapped {
+        normalized = format!("-{normalized}");
+    }
+
+    if !is_percent {
+        if let Ok(parsed) = normalized.parse::<i64>() {
+            return Ok(Some(Value::Number(Number::from(parsed))));
+        }
+    }
+    if let Ok(mut parsed) = normalized.parse::<f64>() {
+        if is_percent {
+            parsed /= 100.0;
+        }
+        return Ok(Some(Value::Number(Number::from_f64(parsed).ok_or_else(
+            || LogicPearlError::message("encountered non-finite float"),
+        )?)));
+    }
+    Ok(None)
 }
 
 fn evaluate_expression(expression: &Expression, features: &HashMap<String, Value>) -> Result<bool> {
@@ -235,6 +306,22 @@ mod tests {
         let features = HashMap::from([("flag".to_string(), json!(1))]);
         let bitmask = evaluate_gate(&gate, &features).expect("runtime evaluation should succeed");
         assert_eq!(bitmask.as_u64(), Some(1));
+    }
+
+    #[test]
+    fn parse_input_payload_normalizes_human_numeric_strings() {
+        let parsed = parse_input_payload(json!({
+            "soil_moisture_pct": "14%",
+            "cost": "$1,200",
+            "flag": "yes",
+            "label": "fern"
+        }))
+        .expect("input should parse");
+        let row = &parsed[0];
+        assert_eq!(row["soil_moisture_pct"], json!(0.14));
+        assert_eq!(row["cost"], json!(1200));
+        assert_eq!(row["flag"], json!(true));
+        assert_eq!(row["label"], json!("fern"));
     }
 
     #[test]
