@@ -16,7 +16,8 @@ use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, learn_gate_from_rows_without_numeric_interactions,
     load_decision_traces_auto, load_flat_records, BuildInputProvenance, BuildOptions,
     BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    ExactSelectionBackend, FeatureDictionaryConfig, PluginBuildProvenance, ResidualRecoveryState,
+    ExactSelectionBackend, FeatureDictionaryConfig, LoadedFlatRecords, PluginBuildProvenance,
+    ResidualRecoveryState,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -39,7 +40,10 @@ use logicpearl_plugin::{
     PluginRequest, PluginResponse, PluginStage,
 };
 use logicpearl_render::TextInspector;
-use logicpearl_runtime::{evaluate_action_policy, evaluate_gate, parse_input_payload};
+use logicpearl_runtime::{
+    evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
+    GateEvaluationResult,
+};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -59,10 +63,11 @@ mod plugin_cmd;
 mod trace_cmd;
 
 use artifact_cmd::{
-    compile_native_runner, compile_wasm_module, is_rust_target_installed,
-    load_artifact_bundle_descriptor, native_artifact_output_path, persist_build_report,
-    resolve_artifact_input, run_embedded_native_runner_if_present, wasm_artifact_output_path,
-    write_named_artifact_manifest,
+    build_deployable_bundle_descriptor, compile_native_runner, compile_wasm_module,
+    is_rust_target_installed, load_artifact_bundle_descriptor, native_artifact_output_path,
+    pearl_artifact_id, persist_build_report, resolve_artifact_input,
+    run_embedded_native_runner_if_present, wasm_artifact_output_path,
+    write_named_artifact_manifest, ArtifactBundleDescriptor,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,

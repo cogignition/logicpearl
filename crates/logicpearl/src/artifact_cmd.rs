@@ -2,7 +2,7 @@ use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_discovery::{BuildResult, OutputFiles};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, DerivedFeatureDefinition, DerivedFeatureOperator,
-    Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
+    Expression, FeatureDefinition, FeatureType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -65,7 +65,14 @@ pub(crate) struct ArtifactSidecar {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WasmArtifactMetadata {
     artifact_version: String,
+    decision_kind: String,
     gate_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_policy_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    actions: Vec<String>,
     entrypoint: String,
     status_entrypoint: String,
     allow_entrypoint: String,
@@ -107,6 +114,10 @@ enum WasmFeatureEncoding {
 struct WasmRuleMetadata {
     id: String,
     bit: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<u32>,
     label: Option<String>,
     message: Option<String>,
     severity: Option<String>,
@@ -130,6 +141,25 @@ struct UsedWasmOperators {
 }
 
 #[derive(Debug, Clone)]
+enum CompilablePearl {
+    Gate(LogicPearlGateIr),
+    Action(LogicPearlActionIr),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WasmRuleView<'a> {
+    id: &'a str,
+    bit: u32,
+    expression: &'a Expression,
+    action: Option<&'a str>,
+    priority: Option<u32>,
+    label: Option<&'a String>,
+    message: Option<&'a String>,
+    severity: Option<&'a String>,
+    counterfactual_hint: Option<&'a String>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ResolvedArtifactInput {
     pub(crate) artifact_dir: PathBuf,
     pub(crate) pearl_ir: PathBuf,
@@ -139,10 +169,10 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
     if path.is_dir() {
         let manifest_path = path.join("artifact.json");
         if manifest_path.exists() {
-            let manifest = load_named_artifact_manifest(&manifest_path)?;
+            let pearl_ir = load_manifest_pearl_ir(&manifest_path)?;
             return Ok(ResolvedArtifactInput {
                 artifact_dir: path.to_path_buf(),
-                pearl_ir: resolve_manifest_path(&manifest_path, &manifest.files.pearl_ir),
+                pearl_ir: resolve_manifest_path(&manifest_path, &pearl_ir),
             });
         }
 
@@ -164,13 +194,13 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
         .file_name()
         .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
     {
-        let manifest = load_named_artifact_manifest(path)?;
+        let pearl_ir = load_manifest_pearl_ir(path)?;
         return Ok(ResolvedArtifactInput {
             artifact_dir: path
                 .parent()
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf(),
-            pearl_ir: resolve_manifest_path(path, &manifest.files.pearl_ir),
+            pearl_ir: resolve_manifest_path(path, &pearl_ir),
         });
     }
 
@@ -181,6 +211,108 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
             .to_path_buf(),
         pearl_ir: path.to_path_buf(),
     })
+}
+
+pub(crate) fn pearl_artifact_id(pearl_ir: &Path) -> Result<String> {
+    Ok(CompilablePearl::from_path(pearl_ir)?
+        .artifact_id()
+        .to_string())
+}
+
+impl CompilablePearl {
+    fn from_path(path: &Path) -> Result<Self> {
+        let content = fs::read_to_string(path)
+            .into_diagnostic()
+            .wrap_err("failed to read pearl IR")?;
+        Self::from_json_str(&content)
+    }
+
+    fn from_json_str(input: &str) -> Result<Self> {
+        let value: Value = serde_json::from_str(input)
+            .into_diagnostic()
+            .wrap_err("pearl IR is not valid JSON")?;
+        if value.get("action_policy_id").is_some() {
+            let policy = LogicPearlActionIr::from_json_str(input)
+                .into_diagnostic()
+                .wrap_err("pearl IR is not a valid action policy")?;
+            Ok(Self::Action(policy))
+        } else {
+            let gate = LogicPearlGateIr::from_json_str(input)
+                .into_diagnostic()
+                .wrap_err("pearl IR is not a valid gate")?;
+            Ok(Self::Gate(gate))
+        }
+    }
+
+    fn artifact_id(&self) -> &str {
+        match self {
+            Self::Gate(gate) => &gate.gate_id,
+            Self::Action(policy) => &policy.action_policy_id,
+        }
+    }
+
+    fn decision_kind(&self) -> &'static str {
+        match self {
+            Self::Gate(_) => "gate",
+            Self::Action(_) => "action",
+        }
+    }
+
+    fn input_schema(&self) -> &InputSchema {
+        match self {
+            Self::Gate(gate) => &gate.input_schema,
+            Self::Action(policy) => &policy.input_schema,
+        }
+    }
+
+    fn wasm_rules(&self) -> Vec<WasmRuleView<'_>> {
+        match self {
+            Self::Gate(gate) => gate
+                .rules
+                .iter()
+                .map(|rule| WasmRuleView {
+                    id: &rule.id,
+                    bit: rule.bit,
+                    expression: &rule.deny_when,
+                    action: None,
+                    priority: None,
+                    label: rule.label.as_ref(),
+                    message: rule.message.as_ref(),
+                    severity: rule.severity.as_ref(),
+                    counterfactual_hint: rule.counterfactual_hint.as_ref(),
+                })
+                .collect(),
+            Self::Action(policy) => policy
+                .rules
+                .iter()
+                .map(|rule| WasmRuleView {
+                    id: &rule.id,
+                    bit: rule.bit,
+                    expression: &rule.predicate,
+                    action: Some(&rule.action),
+                    priority: Some(rule.priority),
+                    label: rule.label.as_ref(),
+                    message: rule.message.as_ref(),
+                    severity: rule.severity.as_ref(),
+                    counterfactual_hint: rule.counterfactual_hint.as_ref(),
+                })
+                .collect(),
+        }
+    }
+
+    fn default_action(&self) -> Option<&str> {
+        match self {
+            Self::Gate(_) => None,
+            Self::Action(policy) => Some(&policy.default_action),
+        }
+    }
+
+    fn actions(&self) -> &[String] {
+        match self {
+            Self::Gate(_) => &[],
+            Self::Action(policy) => &policy.actions,
+        }
+    }
 }
 
 pub(crate) fn native_artifact_output_path(
@@ -196,13 +328,6 @@ pub(crate) fn native_artifact_output_path(
 
 pub(crate) fn wasm_artifact_output_path(artifact_dir: &Path, artifact_name: &str) -> PathBuf {
     artifact_dir.join(format!("{}.pearl.wasm", artifact_file_stem(artifact_name)))
-}
-
-pub(crate) fn wasm_metadata_output_path(artifact_dir: &Path, artifact_name: &str) -> PathBuf {
-    artifact_dir.join(format!(
-        "{}.pearl.wasm.meta.json",
-        artifact_file_stem(artifact_name)
-    ))
 }
 
 pub(crate) fn write_named_artifact_manifest(
@@ -253,6 +378,46 @@ pub(crate) fn write_named_artifact_manifest(
     Ok(())
 }
 
+pub(crate) fn build_deployable_bundle_descriptor(
+    native_binary: Option<String>,
+    wasm_module: Option<String>,
+    wasm_metadata: Option<String>,
+) -> ArtifactBundleDescriptor {
+    let mut deployables = Vec::new();
+    if let Some(path) = &native_binary {
+        deployables.push(ArtifactDeployable {
+            kind: "native_binary".to_string(),
+            path: path.clone(),
+        });
+    }
+    if let Some(path) = &wasm_module {
+        deployables.push(ArtifactDeployable {
+            kind: "wasm_module".to_string(),
+            path: path.clone(),
+        });
+    }
+
+    let mut metadata_files = Vec::new();
+    if let Some(path) = &wasm_metadata {
+        metadata_files.push(ArtifactSidecar {
+            kind: "wasm_metadata".to_string(),
+            path: path.clone(),
+            companion_to: wasm_module.clone(),
+        });
+    }
+
+    ArtifactBundleDescriptor {
+        bundle_kind: "direct_pearl_bundle".to_string(),
+        cli_entrypoint: "artifact.json".to_string(),
+        primary_runtime: native_binary
+            .as_ref()
+            .map(|_| "native_binary".to_string())
+            .or_else(|| wasm_module.as_ref().map(|_| "wasm_module".to_string())),
+        deployables,
+        metadata_files,
+    }
+}
+
 pub(crate) fn load_artifact_bundle_descriptor(
     artifact_dir: &Path,
 ) -> Result<Option<ArtifactBundleDescriptor>> {
@@ -295,45 +460,11 @@ fn build_artifact_bundle_descriptor(output_files: &OutputFiles) -> ArtifactBundl
 fn build_bundle_descriptor_from_named_files(
     files: &NamedArtifactFiles,
 ) -> ArtifactBundleDescriptor {
-    let mut deployables = Vec::new();
-    if let Some(path) = &files.native_binary {
-        deployables.push(ArtifactDeployable {
-            kind: "native_binary".to_string(),
-            path: path.clone(),
-        });
-    }
-    if let Some(path) = &files.wasm_module {
-        deployables.push(ArtifactDeployable {
-            kind: "wasm_module".to_string(),
-            path: path.clone(),
-        });
-    }
-
-    let mut metadata_files = Vec::new();
-    if let Some(path) = &files.wasm_metadata {
-        metadata_files.push(ArtifactSidecar {
-            kind: "wasm_metadata".to_string(),
-            path: path.clone(),
-            companion_to: files.wasm_module.clone(),
-        });
-    }
-
-    ArtifactBundleDescriptor {
-        bundle_kind: "direct_pearl_bundle".to_string(),
-        cli_entrypoint: "artifact.json".to_string(),
-        primary_runtime: files
-            .native_binary
-            .as_ref()
-            .map(|_| "native_binary".to_string())
-            .or_else(|| {
-                files
-                    .wasm_module
-                    .as_ref()
-                    .map(|_| "wasm_module".to_string())
-            }),
-        deployables,
-        metadata_files,
-    }
+    build_deployable_bundle_descriptor(
+        files.native_binary.clone(),
+        files.wasm_module.clone(),
+        files.wasm_metadata.clone(),
+    )
 }
 
 fn file_name_or_fallback(path: &str, fallback: &str) -> String {
@@ -401,9 +532,7 @@ pub(crate) fn compile_native_runner(
         .to_string()
         .replace('\\', "\\\\")
         .replace('\"', "\\\"");
-    let main_rs = format!(
-        "use logicpearl_ir::LogicPearlGateIr;\nuse logicpearl_runtime::{{evaluate_gate, parse_input_payload}};\nuse serde_json::Value;\nuse std::fs;\nuse std::process::ExitCode;\n\nconst PEARL_JSON: &str = include_str!(\"{escaped_pearl_path}\");\n\nfn main() -> ExitCode {{\n    match run() {{\n        Ok(()) => ExitCode::SUCCESS,\n        Err(err) => {{\n            eprintln!(\"{{}}\", err);\n            ExitCode::FAILURE\n        }}\n    }}\n}}\n\nfn run() -> Result<(), Box<dyn std::error::Error>> {{\n    let args: Vec<String> = std::env::args().collect();\n    if args.len() != 2 {{\n        return Err(\"usage: compiled-pearl <input.json>\".into());\n    }}\n    let gate = LogicPearlGateIr::from_json_str(PEARL_JSON)?;\n    let payload: Value = serde_json::from_str(&fs::read_to_string(&args[1])?)?;\n    let parsed = parse_input_payload(payload)?;\n    let mut outputs = Vec::with_capacity(parsed.len());\n    for input in parsed {{\n        outputs.push(evaluate_gate(&gate, &input)?);\n    }}\n    if outputs.len() == 1 {{\n        println!(\"{{}}\", outputs[0]);\n    }} else {{\n        println!(\"{{}}\", serde_json::to_string_pretty(&outputs)?);\n    }}\n    Ok(())\n}}\n"
-    );
+    let main_rs = generated_native_runner_source(&escaped_pearl_path);
     fs::write(src_dir.join("main.rs"), main_rs)
         .into_diagnostic()
         .wrap_err("failed to write generated runner source")?;
@@ -496,6 +625,12 @@ fn compile_embedded_native_runner(pearl_ir: &Path, output_path: &Path) -> Result
     Ok(output_path.to_path_buf())
 }
 
+fn generated_native_runner_source(escaped_pearl_path: &str) -> String {
+    format!(
+        "use logicpearl_ir::{{LogicPearlActionIr, LogicPearlGateIr}};\nuse logicpearl_runtime::{{evaluate_action_policy, evaluate_gate, parse_input_payload}};\nuse serde_json::Value;\nuse std::fs;\nuse std::io::Read;\nuse std::process::ExitCode;\n\nconst PEARL_JSON: &str = include_str!(\"{escaped_pearl_path}\");\n\nfn main() -> ExitCode {{\n    match run() {{\n        Ok(()) => ExitCode::SUCCESS,\n        Err(err) => {{\n            eprintln!(\"{{}}\", err);\n            ExitCode::FAILURE\n        }}\n    }}\n}}\n\nfn run() -> Result<(), Box<dyn std::error::Error>> {{\n    let args: Vec<String> = std::env::args().collect();\n    if args.len() != 2 {{\n        return Err(\"usage: compiled-pearl <input.json>\".into());\n    }}\n    let input = if args[1] == \"-\" {{\n        let mut buffer = String::new();\n        std::io::stdin().read_to_string(&mut buffer)?;\n        buffer\n    }} else {{\n        fs::read_to_string(&args[1])?\n    }};\n    let payload: Value = serde_json::from_str(&input)?;\n    let parsed = parse_input_payload(payload)?;\n    let pearl_value: Value = serde_json::from_str(PEARL_JSON)?;\n    if pearl_value.get(\"action_policy_id\").is_some() {{\n        let policy = LogicPearlActionIr::from_json_str(PEARL_JSON)?;\n        let mut outputs = Vec::with_capacity(parsed.len());\n        for input in parsed {{\n            outputs.push(evaluate_action_policy(&policy, &input)?);\n        }}\n        if outputs.len() == 1 {{\n            println!(\"{{}}\", serde_json::to_string_pretty(&outputs[0])?);\n        }} else {{\n            println!(\"{{}}\", serde_json::to_string_pretty(&outputs)?);\n        }}\n    }} else {{\n        let gate = LogicPearlGateIr::from_json_str(PEARL_JSON)?;\n        let mut outputs = Vec::with_capacity(parsed.len());\n        for input in parsed {{\n            outputs.push(evaluate_gate(&gate, &input)?);\n        }}\n        if outputs.len() == 1 {{\n            println!(\"{{}}\", outputs[0]);\n        }} else {{\n            println!(\"{{}}\", serde_json::to_string_pretty(&outputs)?);\n        }}\n    }}\n    Ok(())\n}}\n"
+    )
+}
+
 pub(crate) fn run_embedded_native_runner_if_present() -> Result<bool> {
     let Some(payload) = read_embedded_native_runner_payload()? else {
         return Ok(false);
@@ -503,8 +638,7 @@ pub(crate) fn run_embedded_native_runner_if_present() -> Result<bool> {
     let pearl_json = std::str::from_utf8(&payload)
         .into_diagnostic()
         .wrap_err("embedded pearl payload is not valid UTF-8")?;
-    let gate = LogicPearlGateIr::from_json_str(pearl_json)
-        .into_diagnostic()
+    let pearl = CompilablePearl::from_json_str(pearl_json)
         .wrap_err("embedded pearl payload is not valid LogicPearl IR")?;
     let args = std::env::args_os()
         .skip(1)
@@ -536,21 +670,46 @@ pub(crate) fn run_embedded_native_runner_if_present() -> Result<bool> {
     let parsed = logicpearl_runtime::parse_input_payload(payload)
         .into_diagnostic()
         .wrap_err("compiled pearl input does not match the expected payload shape")?;
-    let mut outputs = Vec::with_capacity(parsed.len());
-    for input in parsed {
-        outputs.push(
-            logicpearl_runtime::evaluate_gate(&gate, &input)
-                .into_diagnostic()
-                .wrap_err("failed to evaluate compiled pearl")?,
-        );
-    }
-    if outputs.len() == 1 {
-        println!("{}", outputs[0]);
-    } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&outputs).into_diagnostic()?
-        );
+    match pearl {
+        CompilablePearl::Gate(gate) => {
+            let mut outputs = Vec::with_capacity(parsed.len());
+            for input in parsed {
+                outputs.push(
+                    logicpearl_runtime::evaluate_gate(&gate, &input)
+                        .into_diagnostic()
+                        .wrap_err("failed to evaluate compiled pearl")?,
+                );
+            }
+            if outputs.len() == 1 {
+                println!("{}", outputs[0]);
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outputs).into_diagnostic()?
+                );
+            }
+        }
+        CompilablePearl::Action(policy) => {
+            let mut outputs = Vec::with_capacity(parsed.len());
+            for input in parsed {
+                outputs.push(
+                    logicpearl_runtime::evaluate_action_policy(&policy, &input)
+                        .into_diagnostic()
+                        .wrap_err("failed to evaluate compiled action policy")?,
+                );
+            }
+            if outputs.len() == 1 {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outputs[0]).into_diagnostic()?
+                );
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outputs).into_diagnostic()?
+                );
+            }
+        }
     }
     Ok(true)
 }
@@ -666,27 +825,26 @@ fn mark_executable(path: &Path) -> Result<()> {
 pub(crate) fn compile_wasm_module(
     pearl_ir: &Path,
     artifact_dir: &Path,
-    gate_id: &str,
+    artifact_id: &str,
     name: Option<String>,
     output: Option<PathBuf>,
 ) -> Result<WasmArtifactOutput> {
-    let pearl_name = name.unwrap_or_else(|| gate_id.to_string());
+    let pearl_name = name.unwrap_or_else(|| artifact_id.to_string());
     let output_path =
         output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pearl_name));
-    let metadata_path = wasm_metadata_output_path(artifact_dir, &pearl_name);
+    let metadata_path = wasm_metadata_path_for_module(&output_path);
     let workspace_root = workspace_root();
     let generated_root = generated_build_root(&workspace_root);
     let crate_name = unique_generated_crate_name(&format!(
         "logicpearl_compiled_{}_wasm",
         sanitize_identifier(&pearl_name)
     ));
-    let gate = LogicPearlGateIr::from_path(pearl_ir)
-        .into_diagnostic()
+    let pearl = CompilablePearl::from_path(pearl_ir)
         .wrap_err("failed to load pearl IR for wasm compilation")?;
-    if let Some(rule) = gate.rules.iter().find(|rule| rule.bit >= 64) {
+    if let Some(rule) = pearl.wasm_rules().into_iter().find(|rule| rule.bit >= 64) {
         return Err(miette::miette!(
-            "wasm compilation currently supports only rule bits 0-63; gate `{}` includes rule `{}` at bit {}\n\nHint: Use the native compile target for wider gates, or keep wasm-targeted gates at 64 rules or fewer for now.",
-            gate.gate_id,
+            "wasm compilation currently supports only rule bits 0-63; artifact `{}` includes rule `{}` at bit {}\n\nHint: Use the native compile target for wider artifacts, or keep wasm-targeted artifacts at 64 rules or fewer for now.",
+            pearl.artifact_id(),
             rule.id,
             rule.bit
         ));
@@ -704,11 +862,11 @@ pub(crate) fn compile_wasm_module(
         .into_diagnostic()
         .wrap_err("failed to write generated wasm Cargo.toml")?;
 
-    let lib_rs = generate_wasm_runner_source(&gate);
+    let lib_rs = generate_wasm_runner_source_for_pearl(&pearl);
     fs::write(src_dir.join("lib.rs"), lib_rs)
         .into_diagnostic()
         .wrap_err("failed to write generated wasm runner source")?;
-    write_wasm_metadata(&metadata_path, &gate)?;
+    write_wasm_metadata_for_pearl(&metadata_path, &pearl)?;
 
     let status = std::process::Command::new("cargo")
         .arg("build")
@@ -747,17 +905,40 @@ pub(crate) fn compile_wasm_module(
     })
 }
 
+fn wasm_metadata_path_for_module(module_path: &Path) -> PathBuf {
+    let file_name = module_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("pearl.wasm");
+    let metadata_name = file_name
+        .strip_suffix(".wasm")
+        .map(|stem| format!("{stem}.wasm.meta.json"))
+        .unwrap_or_else(|| format!("{file_name}.meta.json"));
+    module_path.with_file_name(metadata_name)
+}
+
+#[cfg(test)]
 fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
-    let string_codes = build_string_codes(gate);
-    let input_features = gate
-        .input_schema
+    write_wasm_metadata_for_pearl(path, &CompilablePearl::Gate(gate.clone()))
+}
+
+fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result<()> {
+    let wasm_rules = pearl.wasm_rules();
+    let string_codes = build_string_codes(pearl.input_schema(), &wasm_rules);
+    let input_features = pearl
+        .input_schema()
         .features
         .iter()
         .filter(|feature| feature.derived.is_none())
         .collect::<Vec<_>>();
     let metadata = WasmArtifactMetadata {
         artifact_version: "1.0".to_string(),
-        gate_id: gate.gate_id.clone(),
+        decision_kind: pearl.decision_kind().to_string(),
+        gate_id: pearl.artifact_id().to_string(),
+        action_policy_id: matches!(pearl, CompilablePearl::Action(_))
+            .then(|| pearl.artifact_id().to_string()),
+        default_action: pearl.default_action().map(ToOwned::to_owned),
+        actions: pearl.actions().to_vec(),
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
         status_entrypoint: "logicpearl_eval_status_slots_f64".to_string(),
         allow_entrypoint: "logicpearl_eval_allow_slots_f64".to_string(),
@@ -777,8 +958,8 @@ fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
                 },
             })
             .collect(),
-        derived_features: gate
-            .input_schema
+        derived_features: pearl
+            .input_schema()
             .features
             .iter()
             .filter_map(|feature| {
@@ -794,16 +975,17 @@ fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
             })
             .collect(),
         string_codes,
-        rules: gate
-            .rules
+        rules: wasm_rules
             .iter()
             .map(|rule| WasmRuleMetadata {
-                id: rule.id.clone(),
+                id: rule.id.to_string(),
                 bit: rule.bit,
-                label: rule.label.clone(),
-                message: rule.message.clone(),
-                severity: rule.severity.clone(),
-                counterfactual_hint: rule.counterfactual_hint.clone(),
+                action: rule.action.map(ToOwned::to_owned),
+                priority: rule.priority,
+                label: rule.label.cloned(),
+                message: rule.message.cloned(),
+                severity: rule.severity.cloned(),
+                counterfactual_hint: rule.counterfactual_hint.cloned(),
             })
             .collect(),
     };
@@ -816,9 +998,15 @@ fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
-    let input_features = gate
-        .input_schema
+    generate_wasm_runner_source_for_pearl(&CompilablePearl::Gate(gate.clone()))
+}
+
+fn generate_wasm_runner_source_for_pearl(pearl: &CompilablePearl) -> String {
+    let wasm_rules = pearl.wasm_rules();
+    let input_features = pearl
+        .input_schema()
         .features
         .iter()
         .filter(|feature| feature.derived.is_none())
@@ -828,14 +1016,14 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
         .enumerate()
         .map(|(index, feature)| (feature.id.as_str(), index))
         .collect();
-    let feature_defs: HashMap<&str, &FeatureDefinition> = gate
-        .input_schema
+    let feature_defs: HashMap<&str, &FeatureDefinition> = pearl
+        .input_schema()
         .features
         .iter()
         .map(|feature| (feature.id.as_str(), feature))
         .collect();
-    let derived_identifiers: HashMap<&str, String> = gate
-        .input_schema
+    let derived_identifiers: HashMap<&str, String> = pearl
+        .input_schema()
         .features
         .iter()
         .filter(|feature| feature.derived.is_some())
@@ -846,11 +1034,11 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
             )
         })
         .collect();
-    let string_codes = build_string_codes(gate);
-    let mut used_ops = collect_used_comparison_operators(gate);
-    collect_used_derived_operators(gate, &mut used_ops);
-    let derived_assignments = gate
-        .input_schema
+    let string_codes = build_string_codes(pearl.input_schema(), &wasm_rules);
+    let mut used_ops = collect_used_comparison_operators(&wasm_rules);
+    collect_used_derived_operators(pearl.input_schema(), &mut used_ops);
+    let derived_assignments = pearl
+        .input_schema()
         .features
         .iter()
         .filter_map(|feature| {
@@ -862,17 +1050,18 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
         })
         .collect::<String>();
 
-    let mut rules = String::new();
-    for rule in &gate.rules {
+    let mut rule_source = String::new();
+    for rule in &wasm_rules {
         let expression = emit_wasm_expression(
-            &rule.deny_when,
+            rule.expression,
             &feature_defs,
             &feature_indexes,
             &derived_identifiers,
             &string_codes,
         );
-        rules.push_str(&format!(
-            "    if {expression} {{ bitmask |= 1u64 << {}; }}\n",
+        let condition = wasm_if_condition(&expression);
+        rule_source.push_str(&format!(
+            "    if {condition} {{ bitmask |= 1u64 << {}; }}\n",
             rule.bit
         ));
     }
@@ -914,13 +1103,21 @@ fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
         input_features.len(),
         helpers = helpers,
         derived_assignments = derived_assignments,
+        rules = rule_source,
     )
 }
 
-fn collect_used_comparison_operators(gate: &LogicPearlGateIr) -> UsedWasmOperators {
+fn wasm_if_condition(expression: &str) -> &str {
+    expression
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(expression)
+}
+
+fn collect_used_comparison_operators(rules: &[WasmRuleView<'_>]) -> UsedWasmOperators {
     let mut ops = UsedWasmOperators::default();
-    for rule in &gate.rules {
-        collect_expression_operators(&rule.deny_when, &mut ops);
+    for rule in rules {
+        collect_expression_operators(rule.expression, &mut ops);
     }
     ops
 }
@@ -953,8 +1150,8 @@ fn collect_expression_operators(expression: &Expression, ops: &mut UsedWasmOpera
     }
 }
 
-fn collect_used_derived_operators(gate: &LogicPearlGateIr, ops: &mut UsedWasmOperators) {
-    for feature in &gate.input_schema.features {
+fn collect_used_derived_operators(input_schema: &InputSchema, ops: &mut UsedWasmOperators) {
+    for feature in &input_schema.features {
         match feature.derived.as_ref().map(|derived| &derived.op) {
             Some(DerivedFeatureOperator::Ratio) => ops.ratio = true,
             Some(DerivedFeatureOperator::Difference) | None => {}
@@ -1135,9 +1332,12 @@ fn rust_f64_literal(value: f64) -> String {
     }
 }
 
-fn build_string_codes(gate: &LogicPearlGateIr) -> BTreeMap<String, u32> {
+fn build_string_codes(
+    input_schema: &InputSchema,
+    rules: &[WasmRuleView<'_>],
+) -> BTreeMap<String, u32> {
     let mut values = BTreeMap::new();
-    for feature in &gate.input_schema.features {
+    for feature in &input_schema.features {
         if matches!(
             feature.feature_type,
             FeatureType::String | FeatureType::Enum
@@ -1151,8 +1351,8 @@ fn build_string_codes(gate: &LogicPearlGateIr) -> BTreeMap<String, u32> {
             }
         }
     }
-    for rule in &gate.rules {
-        collect_expression_strings(&rule.deny_when, &mut values);
+    for rule in rules {
+        collect_expression_strings(rule.expression, &mut values);
     }
     values
 }
@@ -1221,6 +1421,22 @@ fn load_named_artifact_manifest(path: &Path) -> Result<NamedArtifactManifest> {
     )
     .into_diagnostic()
     .wrap_err("artifact manifest is not valid JSON")
+}
+
+fn load_manifest_pearl_ir(path: &Path) -> Result<String> {
+    let value: Value = serde_json::from_str(
+        &fs::read_to_string(path)
+            .into_diagnostic()
+            .wrap_err("failed to read artifact manifest")?,
+    )
+    .into_diagnostic()
+    .wrap_err("artifact manifest is not valid JSON")?;
+    value
+        .get("files")
+        .and_then(|files| files.get("pearl_ir"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| miette::miette!("artifact manifest is missing files.pearl_ir"))
 }
 
 fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> PathBuf {
@@ -1321,10 +1537,15 @@ fn target_is_windows(target_triple: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_wasm_runner_source, unique_generated_crate_name, write_wasm_metadata};
+    use super::{
+        generate_wasm_runner_source, unique_generated_crate_name, write_wasm_metadata,
+        write_wasm_metadata_for_pearl, CompilablePearl,
+    };
     use logicpearl_ir::{
+        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy,
         ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
-        FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, RuleDefinition, RuleKind,
+        FeatureDefinition, FeatureType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
+        RuleDefinition, RuleKind,
     };
     use serde_json::Value;
 
@@ -1374,6 +1595,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn action_wasm_metadata_declares_policy_selection_metadata() {
+        let policy = action_policy();
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("pearl.wasm.meta.json");
+
+        write_wasm_metadata_for_pearl(&path, &CompilablePearl::Action(policy))
+            .expect("write action wasm metadata");
+
+        let metadata: Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("read generated wasm metadata"),
+        )
+        .expect("parse generated wasm metadata");
+        assert_eq!(metadata["decision_kind"], "action");
+        assert_eq!(metadata["action_policy_id"], "garden_actions");
+        assert_eq!(metadata["default_action"], "do_nothing");
+        assert_eq!(metadata["rules"][0]["bit"], 0);
+        assert_eq!(metadata["rules"][0]["action"], "water");
+        assert_eq!(metadata["rules"][0]["priority"], 0);
+    }
+
     fn gate_with_rule_count(rule_count: u32) -> LogicPearlGateIr {
         LogicPearlGateIr {
             ir_version: "1.0".to_string(),
@@ -1413,6 +1655,52 @@ mod tests {
             evaluation: EvaluationConfig {
                 combine: "bitmask_any".to_string(),
                 allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
+    }
+
+    fn action_policy() -> LogicPearlActionIr {
+        LogicPearlActionIr {
+            ir_version: "1.0".to_string(),
+            action_policy_id: "garden_actions".to_string(),
+            action_policy_type: "priority_rules".to_string(),
+            action_column: "next_action".to_string(),
+            default_action: "do_nothing".to_string(),
+            actions: vec!["do_nothing".to_string(), "water".to_string()],
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "enabled".to_string(),
+                    feature_type: FeatureType::Bool,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                    semantics: None,
+                    governance: None,
+                    derived: None,
+                }],
+            },
+            rules: vec![ActionRuleDefinition {
+                id: "rule_0".to_string(),
+                bit: 0,
+                action: "water".to_string(),
+                priority: 0,
+                predicate: Expression::Comparison(ComparisonExpression {
+                    feature: "enabled".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Bool(true)),
+                }),
+                label: Some("Water enabled plants".to_string()),
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: None,
+            }],
+            evaluation: ActionEvaluationConfig {
+                selection: ActionSelectionStrategy::FirstMatch,
             },
             verification: None,
             provenance: None,

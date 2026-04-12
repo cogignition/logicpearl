@@ -70,7 +70,8 @@ export async function loadArtifactFromBundle(bundle, options = {}) {
   const resolvedManifest =
     manifest ??
     buildFallbackManifest({
-      gateId: wasmMetadata.gate_id,
+      gateId: wasmMetadata.gate_id ?? wasmMetadata.action_policy_id,
+      decisionKind: wasmMetadata.decision_kind,
     });
 
   const instance = await instantiateWasm(wasmModule);
@@ -146,8 +147,11 @@ export class LogicPearlBrowserArtifact {
   }
 
   inspect() {
+    const decisionKind = this.metadata.decision_kind ?? 'gate';
     return {
+      decisionKind,
       gateId: this.metadata.gate_id,
+      actionPolicyId: this.metadata.action_policy_id ?? null,
       artifactName: this.manifest.artifact_name,
       featureCount: this.metadata.feature_count,
       ruleCount: (this.metadata.rules ?? []).length,
@@ -165,6 +169,11 @@ export class LogicPearlBrowserArtifact {
   evaluate(input) {
     const slots = encodeFeatureSlots(input, this.metadata);
     const exports = this.instance.exports;
+    const artifactId =
+      this.metadata.action_policy_id ??
+      this.metadata.gate_id ??
+      this.manifest.artifact_name ??
+      'logicpearl_artifact';
     const ptr = exports.logicpearl_alloc(this.featureCount * 8);
 
     try {
@@ -182,8 +191,49 @@ export class LogicPearlBrowserArtifact {
       const raw = exports[this.bitmaskEntrypoint](ptr, this.featureCount);
       const bitmask = BigInt(raw);
       const firedRules = decodeFiredRules(bitmask, this.metadata.rules ?? []);
+      if ((this.metadata.decision_kind ?? 'gate') === 'action') {
+        const orderedRules = [...firedRules].sort(
+          (left, right) => (left.priority ?? left.bit) - (right.priority ?? right.bit)
+        );
+        const candidateActions = dedupe(
+          orderedRules.map((rule) => rule.action).filter(Boolean)
+        );
+        const defaulted = candidateActions.length === 0;
+        const action = defaulted
+          ? this.metadata.default_action
+          : candidateActions[0];
+        const selectedRules = orderedRules.filter((rule) => rule.action === action);
+        const ambiguity =
+          candidateActions.length > 1
+            ? `multiple action rules matched: ${candidateActions.join(', ')}`
+            : null;
+        return {
+          decisionKind: 'action',
+          artifactId,
+          policyId: artifactId,
+          actionPolicyId: this.metadata.action_policy_id ?? artifactId,
+          action,
+          defaulted,
+          ambiguity,
+          bitmask,
+          matchedRuleIds: orderedRules.map((rule) => rule.id),
+          matchedRules: orderedRules,
+          selectedRules,
+          candidateActions,
+          primaryReason: selectedRules[0] ?? null,
+          counterfactualHints: dedupe(
+            selectedRules.map((rule) => rule.counterfactual_hint).filter(Boolean)
+          ),
+        };
+      }
       return {
+        decisionKind: 'gate',
+        artifactId,
+        policyId: artifactId,
+        gateId: this.metadata.gate_id ?? artifactId,
         allow: firedRules.length === 0,
+        defaulted: false,
+        ambiguity: null,
         bitmask,
         firedRuleIds: firedRules.map((rule) => rule.id),
         firedRules,
@@ -236,7 +286,7 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
     case 'boolean':
       return rawValue === true || rawValue === 1 || rawValue === 'true' ? 1 : 0;
     case 'numeric': {
-      const numeric = Number(rawValue);
+      const numeric = parseNumericValue(rawValue);
       return Number.isFinite(numeric) ? numeric : Number.NaN;
     }
     case 'string_code': {
@@ -250,6 +300,18 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
     default:
       return Number.NaN;
   }
+}
+
+function parseNumericValue(rawValue) {
+  if (typeof rawValue === 'number') {
+    return rawValue;
+  }
+  const raw = String(rawValue).trim();
+  const isPercent = raw.endsWith('%');
+  let normalized = isPercent ? raw.slice(0, -1).trim() : raw;
+  normalized = normalized.replace(/,/g, '').replace(/^[$€£¥]/, '').trim();
+  const numeric = Number(normalized);
+  return isPercent ? numeric / 100 : numeric;
 }
 
 async function fetchJson(fetchImpl, url) {
@@ -268,10 +330,11 @@ async function fetchArrayBuffer(fetchImpl, url) {
   return response.arrayBuffer();
 }
 
-function buildFallbackManifest({ gateId }) {
+function buildFallbackManifest({ gateId, decisionKind }) {
   return {
     artifact_version: '1.0',
     artifact_name: gateId ?? 'logicpearl_artifact',
+    artifact_kind: decisionKind === 'action' ? 'action_policy' : undefined,
     gate_id: gateId ?? 'logicpearl_artifact',
     files: {
       pearl_ir: 'pearl.ir.json',

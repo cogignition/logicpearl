@@ -189,6 +189,14 @@ The demo uses `logicpearl.yaml`, so the command stays short. LogicPearl generate
 
 After you inspect the artifact, you can improve it: add edge cases, remove weak examples, make feature labels clearer, rebuild, and compare the result. That improvement loop is the point.
 
+When you need deployables for the same action policy, build with `--compile`:
+
+```bash
+logicpearl build --compile
+```
+
+That emits a native runner and, if the local Wasm target is installed, `pearl.wasm` plus `pearl.wasm.meta.json`.
+
 ## Build A Pearl From Decision Traces
 
 Start with a tiny labeled behavior slice:
@@ -812,8 +820,8 @@ The public demos write real artifacts you can inspect:
 - `artifact.json`
 - `pearl.ir.json` for binary gates or multi-action artifacts
 - `build_report.json`
-- optional compiled native binaries when you run `logicpearl compile`
-- optional compiled `.wasm` modules when you compile for `wasm32-unknown-unknown`
+- optional compiled native binaries when you run `logicpearl compile` or build an action policy with `--compile`
+- optional compiled `.wasm` modules when you compile for `wasm32-unknown-unknown` or build an action policy with `--compile` and have the Wasm target installed
 
 The core promise is simple:
 - you should be able to build, run, inspect, and validate pearls yourself

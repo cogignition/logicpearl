@@ -1,7 +1,7 @@
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
-    LogicPearlActionIr, LogicPearlGateIr,
+    InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -9,15 +9,20 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionEvaluationResult {
+    pub artifact_id: String,
+    pub policy_id: String,
+    pub action_policy_id: String,
+    pub decision_kind: String,
     pub action: String,
     pub bitmask: RuleMask,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub defaulted: bool,
+    #[serde(default)]
     pub selected_rules: Vec<ActionRuleMatch>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub matched_rules: Vec<ActionRuleMatch>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub candidate_actions: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub ambiguity: Option<String>,
 }
 
@@ -29,6 +34,48 @@ pub struct ActionRuleMatch {
     pub priority: u32,
     pub label: Option<String>,
     pub message: Option<String>,
+    pub severity: Option<String>,
+    pub counterfactual_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<RuleFeatureExplanation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GateRuleMatch {
+    pub id: String,
+    pub bit: u32,
+    pub label: Option<String>,
+    pub message: Option<String>,
+    pub severity: Option<String>,
+    pub counterfactual_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<RuleFeatureExplanation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GateEvaluationResult {
+    pub artifact_id: String,
+    pub policy_id: String,
+    pub gate_id: String,
+    pub decision_kind: String,
+    pub allow: bool,
+    pub bitmask: RuleMask,
+    pub defaulted: bool,
+    #[serde(default)]
+    pub ambiguity: Option<String>,
+    #[serde(default)]
+    pub matched_rules: Vec<GateRuleMatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleFeatureExplanation {
+    pub feature_id: String,
+    pub feature_label: Option<String>,
+    pub source_id: Option<String>,
+    pub source_anchor: Option<String>,
+    pub state_label: Option<String>,
+    pub state_message: Option<String>,
+    pub counterfactual_hint: Option<String>,
 }
 
 pub fn evaluate_gate(
@@ -43,6 +90,14 @@ pub fn evaluate_gate(
         }
     }
     Ok(bitmask)
+}
+
+pub fn evaluate_gate_with_explanation(
+    gate: &LogicPearlGateIr,
+    features: &HashMap<String, Value>,
+) -> Result<GateEvaluationResult> {
+    let bitmask = evaluate_gate(gate, features)?;
+    Ok(explain_gate_result(gate, bitmask))
 }
 
 pub fn evaluate_action_policy(
@@ -74,6 +129,9 @@ pub fn evaluate_action_policy(
             priority: rule.priority,
             label: rule.label.clone(),
             message: rule.message.clone(),
+            severity: rule.severity.clone(),
+            counterfactual_hint: rule.counterfactual_hint.clone(),
+            features: explain_rule_features(&policy.input_schema, &rule.predicate),
         });
     }
 
@@ -81,6 +139,7 @@ pub fn evaluate_action_policy(
         .first()
         .cloned()
         .unwrap_or_else(|| policy.default_action.clone());
+    let defaulted = candidate_actions.is_empty();
     let selected_rules = matched_rules
         .iter()
         .filter(|rule| rule.action == action)
@@ -94,13 +153,114 @@ pub fn evaluate_action_policy(
     });
 
     Ok(ActionEvaluationResult {
+        artifact_id: policy.action_policy_id.clone(),
+        policy_id: policy.action_policy_id.clone(),
+        action_policy_id: policy.action_policy_id.clone(),
+        decision_kind: "action".to_string(),
         action,
         bitmask,
+        defaulted,
         selected_rules,
         matched_rules,
         candidate_actions,
         ambiguity,
     })
+}
+
+pub fn explain_gate_result(gate: &LogicPearlGateIr, bitmask: RuleMask) -> GateEvaluationResult {
+    GateEvaluationResult {
+        artifact_id: gate.gate_id.clone(),
+        policy_id: gate.gate_id.clone(),
+        gate_id: gate.gate_id.clone(),
+        decision_kind: "gate".to_string(),
+        allow: bitmask.is_zero(),
+        matched_rules: explain_gate_matches(gate, bitmask.clone()),
+        bitmask,
+        defaulted: false,
+        ambiguity: None,
+    }
+}
+
+pub fn explain_gate_matches(gate: &LogicPearlGateIr, bitmask: RuleMask) -> Vec<GateRuleMatch> {
+    gate.rules
+        .iter()
+        .filter(|rule| bitmask.test_bit(rule.bit))
+        .map(|rule| GateRuleMatch {
+            id: rule.id.clone(),
+            bit: rule.bit,
+            label: rule.label.clone(),
+            message: rule.message.clone(),
+            severity: rule.severity.clone(),
+            counterfactual_hint: rule.counterfactual_hint.clone(),
+            features: explain_rule_features(&gate.input_schema, &rule.deny_when),
+        })
+        .collect()
+}
+
+fn explain_rule_features(
+    input_schema: &InputSchema,
+    expression: &Expression,
+) -> Vec<RuleFeatureExplanation> {
+    let feature_defs = input_schema
+        .features
+        .iter()
+        .map(|feature| (feature.id.as_str(), feature))
+        .collect::<HashMap<_, _>>();
+    let mut comparisons = Vec::new();
+    collect_rule_comparisons(expression, &mut comparisons);
+
+    let mut explanations = Vec::new();
+    for comparison in comparisons {
+        let Some(feature) = feature_defs.get(comparison.feature.as_str()) else {
+            continue;
+        };
+        let semantics = feature.semantics.as_ref();
+        let state = semantics.and_then(|semantics| {
+            semantics.states.values().find(|state| {
+                state.predicate.op == comparison.op && state.predicate.value == comparison.value
+            })
+        });
+        let explanation = RuleFeatureExplanation {
+            feature_id: feature.id.clone(),
+            feature_label: semantics.and_then(|semantics| semantics.label.clone()),
+            source_id: semantics.and_then(|semantics| semantics.source_id.clone()),
+            source_anchor: semantics.and_then(|semantics| semantics.source_anchor.clone()),
+            state_label: state.and_then(|state| state.label.clone()),
+            state_message: state.and_then(|state| state.message.clone()),
+            counterfactual_hint: state.and_then(|state| state.counterfactual_hint.clone()),
+        };
+        if !explanations
+            .iter()
+            .any(|existing: &RuleFeatureExplanation| {
+                existing.feature_id == explanation.feature_id
+                    && existing.state_label == explanation.state_label
+                    && existing.state_message == explanation.state_message
+            })
+        {
+            explanations.push(explanation);
+        }
+    }
+    explanations
+}
+
+fn collect_rule_comparisons<'a>(
+    expression: &'a Expression,
+    comparisons: &mut Vec<&'a ComparisonExpression>,
+) {
+    match expression {
+        Expression::Comparison(comparison) => comparisons.push(comparison),
+        Expression::All { all } => {
+            for child in all {
+                collect_rule_comparisons(child, comparisons);
+            }
+        }
+        Expression::Any { any } => {
+            for child in any {
+                collect_rule_comparisons(child, comparisons);
+            }
+        }
+        Expression::Not { expr } => collect_rule_comparisons(expr, comparisons),
+    }
 }
 
 pub fn parse_input_payload(payload: Value) -> Result<Vec<HashMap<String, Value>>> {

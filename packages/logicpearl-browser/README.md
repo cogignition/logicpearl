@@ -46,6 +46,7 @@ This v1 package supports:
 - one compiled LogicPearl artifact bundle
 - Wasm evaluation
 - rule decoding from wasm metadata
+- binary gate and action-policy bundles
 
 It does **not** support:
 - full string-of-pearls pipeline orchestration

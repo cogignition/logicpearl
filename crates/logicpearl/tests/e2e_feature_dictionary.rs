@@ -147,6 +147,43 @@ fn feature_dictionary_makes_artifacts_readable_without_changing_runtime() {
         Some("Failed conservative therapy")
     );
 
+    let run_explain = Command::new(cli_bin)
+        .arg("run")
+        .arg(&annotated_artifact)
+        .arg(&input)
+        .arg("--json")
+        .arg("--explain")
+        .output()
+        .expect("logicpearl run --json --explain should run");
+    assert!(
+        run_explain.status.success(),
+        "logicpearl run --json --explain failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_explain.stdout),
+        String::from_utf8_lossy(&run_explain.stderr)
+    );
+    let run_explain_json: Value =
+        serde_json::from_slice(&run_explain.stdout).expect("runtime explain output should parse");
+    assert_eq!(run_explain_json["decision_kind"].as_str(), Some("gate"));
+    assert_eq!(run_explain_json["allow"].as_bool(), Some(false));
+    assert_eq!(run_explain_json["defaulted"].as_bool(), Some(false));
+    let feature_explanation = &run_explain_json["matched_rules"][0]["features"][0];
+    assert_eq!(
+        feature_explanation["feature_label"].as_str(),
+        Some("Failed conservative therapy")
+    );
+    assert_eq!(
+        feature_explanation["source_id"].as_str(),
+        Some("req-003-transcutaneous-electrical-nerve-stimulation-prn-p1-001")
+    );
+    assert_eq!(
+        feature_explanation["source_anchor"].as_str(),
+        Some("page-1")
+    );
+    assert_eq!(
+        feature_explanation["state_message"].as_str(),
+        Some("This rule fires when the packet does not support failed conservative therapy.")
+    );
+
     assert_eq!(
         run_bitmask(cli_bin, &plain_artifact, &input),
         run_bitmask(cli_bin, &annotated_artifact, &input)

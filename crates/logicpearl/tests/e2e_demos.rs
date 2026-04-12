@@ -66,6 +66,8 @@ fn garden_actions_builds_single_action_policy_artifact() {
         .arg("next_action")
         .arg("--default-action")
         .arg("do_nothing")
+        .arg("--gate-id")
+        .arg("garden_actions")
         .arg("--output-dir")
         .arg(&output_path)
         .output()
@@ -138,8 +140,95 @@ fn garden_actions_builds_single_action_policy_artifact() {
     );
     let run_json: Value =
         serde_json::from_slice(&run_json_output.stdout).expect("run output should be JSON");
+    assert_eq!(run_json["decision_kind"], "action");
+    assert_eq!(run_json["action_policy_id"], "garden_actions");
     assert_eq!(run_json["action"], "water");
+    assert_eq!(run_json["defaulted"], false);
     assert_eq!(run_json["bitmask"], 1);
+
+    let direct_ir_run_output = Command::new(cli_bin)
+        .arg("run")
+        .arg(output_path.join("pearl.ir.json"))
+        .arg(repo_root.join("examples/demos/garden_actions/today.json"))
+        .arg("--json")
+        .output()
+        .expect("logicpearl action IR run should run");
+    assert!(
+        direct_ir_run_output.status.success(),
+        "garden action direct IR run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&direct_ir_run_output.stdout),
+        String::from_utf8_lossy(&direct_ir_run_output.stderr)
+    );
+    let direct_ir_run_json: Value =
+        serde_json::from_slice(&direct_ir_run_output.stdout).expect("direct IR output JSON");
+    assert_eq!(direct_ir_run_json["action"], "water");
+
+    let plugin_output_path = temp.path().join("garden_actions_plugin");
+    let plugin_build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg("--trace-plugin-manifest")
+        .arg(repo_root.join("examples/plugins/python_action_trace_source/manifest.json"))
+        .arg("--trace-plugin-input")
+        .arg(repo_root.join("examples/demos/garden_actions/traces.csv"))
+        .arg("--action-column")
+        .arg("next_action")
+        .arg("--default-action")
+        .arg("do_nothing")
+        .arg("--gate-id")
+        .arg("garden_actions_plugin")
+        .arg("--output-dir")
+        .arg(&plugin_output_path)
+        .arg("--compile")
+        .output()
+        .expect("logicpearl action plugin build should run");
+    assert!(
+        plugin_build_output.status.success(),
+        "garden action plugin build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&plugin_build_output.stdout),
+        String::from_utf8_lossy(&plugin_build_output.stderr)
+    );
+
+    let plugin_manifest: Value = serde_json::from_str(
+        &fs::read_to_string(plugin_output_path.join("artifact.json"))
+            .expect("plugin manifest should read"),
+    )
+    .expect("plugin manifest should parse");
+    assert_eq!(plugin_manifest["artifact_kind"], "action_policy");
+    let native_binary = plugin_manifest["files"]["native_binary"]
+        .as_str()
+        .expect("action --compile should emit a native binary");
+    let today: Value = serde_json::from_str(
+        &fs::read_to_string(repo_root.join("examples/demos/garden_actions/today.json"))
+            .expect("today input should read"),
+    )
+    .expect("today input should parse");
+    let compiled_stdout =
+        run_compiled_binary(&plugin_output_path.join(native_binary), &today, temp.path());
+    let compiled_json: Value =
+        serde_json::from_str(&compiled_stdout).expect("compiled action output should be JSON");
+    assert_eq!(compiled_json["decision_kind"], "action");
+    assert_eq!(compiled_json["action_policy_id"], "garden_actions_plugin");
+    assert_eq!(compiled_json["action"], "water");
+    assert_eq!(compiled_json["defaulted"], false);
+    assert_eq!(compiled_json["bitmask"], 1);
+
+    if let Some(wasm_module) = plugin_manifest["files"]["wasm_module"].as_str() {
+        assert_eq!(wasm_module, "pearl.wasm");
+        assert!(plugin_output_path.join("pearl.wasm").exists());
+        assert!(plugin_output_path.join("pearl.wasm.meta.json").exists());
+        let wasm_metadata: Value = serde_json::from_str(
+            &fs::read_to_string(plugin_output_path.join("pearl.wasm.meta.json"))
+                .expect("wasm metadata should read"),
+        )
+        .expect("wasm metadata should parse");
+        assert_eq!(wasm_metadata["decision_kind"], "action");
+        assert_eq!(wasm_metadata["action_policy_id"], "garden_actions_plugin");
+        assert_eq!(wasm_metadata["default_action"], "do_nothing");
+        assert_eq!(wasm_metadata["rules"][0]["action"], "water");
+        assert!(wasm_metadata["rules"][0]["label"]
+            .as_str()
+            .is_some_and(|label| label.contains("Soil Moisture")));
+    }
 }
 
 #[test]

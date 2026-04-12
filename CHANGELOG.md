@@ -7,17 +7,23 @@ All notable user-facing changes should be added here.
 ### Added
 - First-class feature dictionaries for `logicpearl build` and `logicpearl discover` via `--feature-dictionary`, embedding readable feature semantics into emitted artifacts without changing runtime evaluation.
 - Dictionary-aware rule text, inspect output, and artifact diffs, including separate diff flags for source/schema changes, learned rule changes, and explanation-only changes.
-- Feature dictionary documentation and repository guidance for LLM agents and integration authors.
+- Feature dictionary documentation for developers building demos and integrations.
 - Multi-action policies for datasets with an action column, so `logicpearl build --action-column next_action` can learn a deterministic policy that chooses actions such as `water`, `fertilize`, `repot`, or `do_nothing`.
 - Action policy results now include the selected `action`, the matched-rule `bitmask`, and the rule metadata that explains the result.
 - `logicpearl-engine` can load and run action policy bundles for applications that use LogicPearl as a library.
 - JSON schema coverage for action policy artifacts.
+- `logicpearl build --action-column ... --compile` now emits deployable action policies, including a native runner and, when the local Wasm target is installed, `pearl.wasm` plus `pearl.wasm.meta.json`.
+- Action policy builds can now read normalized records from `trace_source` plugins, so adapters can turn source configs or fixtures into action traces before discovery.
+- Runtime JSON explanations now include source-grounded feature details for matched rules, including feature labels, source ids, source anchors, state messages, and counterfactual hints when the artifact has feature dictionary metadata.
+- The browser runtime can evaluate compiled action-policy Wasm bundles and return the selected action, candidate actions, matched rules, default/no-match state, and ambiguity note from the bitmask and metadata.
+- `logicpearl diff` now understands action-policy bundles and reports action set, default action, rule predicate, rule priority, source/schema, and explanation-only changes separately.
 
 ### Changed
 - Bumped the Rust workspace and package metadata to `0.1.5` for the next release.
 - Refreshed the Rust lockfile to avoid the yanked `fastrand 2.4.0` transitive dependency.
 - Action builds now produce one normal artifact bundle with `pearl.ir.json`, instead of separate per-action route artifacts.
 - `logicpearl inspect` now shows action policies as readable `Action rules:`.
+- `logicpearl run --json --explain` now uses a fuller result shape for gates and action policies, including artifact/policy ids, `decision_kind`, bitmask, matched rules, and rule explanations.
 - The garden actions demo now uses the shorter config-driven CLI flow, generated feature labels, percent and gallon values in traces, and one inspectable action policy.
 
 ## 0.1.2 - 2026-04-08

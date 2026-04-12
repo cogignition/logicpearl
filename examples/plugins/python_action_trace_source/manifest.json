@@ -1,0 +1,57 @@
+{
+  "name": "python-action-trace-source-demo",
+  "protocol_version": "1",
+  "language": "python",
+  "stage": "trace_source",
+  "entrypoint": [
+    "python3",
+    "plugin.py"
+  ],
+  "input_schema": {
+    "type": "string"
+  },
+  "options_schema": {
+    "type": "object",
+    "properties": {
+      "action_column": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "ok",
+      "records"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "records": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "capabilities": [
+    "action_records_output"
+  ]
+}

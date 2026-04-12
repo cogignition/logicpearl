@@ -83,6 +83,29 @@ logicpearl build traces.csv \
 
 The build writes the same familiar bundle shape: `artifact.json`, `pearl.ir.json`, and an action report. The `pearl.ir.json` file contains the learned action policy, including the available actions, the default action, and the rules that point to each action.
 
+Use `--compile` when the action policy should be deployed like any other pearl:
+
+```bash
+logicpearl build traces.csv \
+  --action-column next_action \
+  --default-action do_nothing \
+  --output-dir /tmp/actions \
+  --compile
+```
+
+Compiled action builds emit a native runner. When the local Rust `wasm32-unknown-unknown` target is installed, they also emit `pearl.wasm` and `pearl.wasm.meta.json` for browser/runtime use.
+
+Action traces can also come from a `trace_source` plugin. The plugin should return flat scalar records, or rows shaped as `features` plus the action column:
+
+```bash
+logicpearl build \
+  --trace-plugin-manifest plugins/revenue_pack_trace_source/manifest.json \
+  --trace-plugin-input va_tricare_notification_readiness \
+  --action-column next_action \
+  --feature-dictionary feature_dictionary.json \
+  --output-dir artifacts/revenue_packs/va_tricare_notification_readiness/actions
+```
+
 `logicpearl inspect /tmp/actions` should read like a reviewable policy:
 
 ```text
@@ -97,7 +120,11 @@ At runtime, LogicPearl evaluates all matching rules into a bitmask, then selects
 logicpearl run /tmp/actions today.json --json
 ```
 
-The JSON result includes the selected `action`, the matched-rule `bitmask`, and the rule metadata that explains why the action was selected.
+The JSON result includes the artifact/policy id, `decision_kind: "action"`, selected `action`, matched-rule `bitmask`, `defaulted`, `ambiguity`, selected and matched rules, and the feature dictionary semantics for the matched rule predicates.
+
+Gate runtime JSON follows the same pattern for the fields that apply to gates: artifact/policy id, `decision_kind: "gate"`, `allow`, `bitmask`, matched rules, and source-grounded feature explanations.
+
+`logicpearl diff` understands action-policy bundles. Its JSON summary separates action set changes, default action changes, rule predicate changes, rule priority changes, source/schema changes, and explanation-only changes.
 
 ## Plugin And Pipeline Execution
 

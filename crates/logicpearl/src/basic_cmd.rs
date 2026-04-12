@@ -42,12 +42,20 @@ struct ActionArtifactManifest {
     default_action: String,
     actions: Vec<String>,
     files: ActionArtifactFiles,
+    #[serde(default)]
+    bundle: ArtifactBundleDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct ActionArtifactFiles {
     pearl_ir: String,
     action_report: String,
+    #[serde(default)]
+    native_binary: Option<String>,
+    #[serde(default)]
+    wasm_module: Option<String>,
+    #[serde(default)]
+    wasm_metadata: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,20 +77,6 @@ struct ActionRuleBuildReport {
     action: String,
     priority: u32,
     label: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct ExplainedRule {
-    id: String,
-    bit: u32,
-    label: Option<String>,
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct ExplainedGateOutput {
-    bitmask: Value,
-    matched_rules: Vec<ExplainedRule>,
 }
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -631,14 +625,12 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
 
 pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
     let resolved = resolve_artifact_input(&args.pearl_ir)?;
-    let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
-        .into_diagnostic()
-        .wrap_err("failed to load pearl IR for compilation")?;
+    let artifact_id = pearl_artifact_id(&resolved.pearl_ir)?;
     if args.target.as_deref() == Some("wasm32-unknown-unknown") {
         let output = compile_wasm_module(
             &resolved.pearl_ir,
             &resolved.artifact_dir,
-            &gate.gate_id,
+            &artifact_id,
             args.name,
             args.output,
         )?;
@@ -656,7 +648,7 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
         let output_path = compile_native_runner(
             &resolved.pearl_ir,
             &resolved.artifact_dir,
-            &gate.gate_id,
+            &artifact_id,
             args.name,
             args.target,
             args.output,
@@ -1073,20 +1065,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
 }
 
 fn run_action_build(mut args: BuildArgs) -> Result<()> {
-    if args.trace_plugin_manifest.is_some()
-        || args.enricher_plugin_manifest.is_some()
-        || !args.trace_plugin_options.is_empty()
-        || args.trace_plugin_input.is_some()
-    {
+    if args.enricher_plugin_manifest.is_some() {
         return Err(guidance(
-            "action-column builds do not support plugins yet",
-            "Build action demos from a normalized CSV, JSONL, or JSON trace file.",
-        ));
-    }
-    if args.compile {
-        return Err(guidance(
-            "action-column artifacts cannot be compiled yet",
-            "Use `logicpearl run --explain` with the action artifact directory.",
+            "action-column builds do not support enricher plugins yet",
+            "Use a trace-source plugin or normalized trace file that already includes the action column.",
         ));
     }
     let action_column = args.action_column.clone().ok_or_else(|| {
@@ -1095,15 +1077,8 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "Pass --action-column <column> or set build.action_column in logicpearl.yaml.",
         )
     })?;
-    let traces = args.decision_traces.clone().ok_or_else(|| {
-        guidance(
-            "action build is missing traces",
-            "Pass a trace dataset path or set build.traces in logicpearl.yaml.",
-        )
-    })?;
-    let loaded = load_flat_records(&traces)
-        .into_diagnostic()
-        .wrap_err("failed to load action traces")?;
+    let (loaded, source_name, default_output_base, default_artifact_name) =
+        load_action_trace_records(&args, &action_column)?;
     if !loaded.field_names.iter().any(|name| name == &action_column) {
         return Err(guidance(
             format!("action trace input is missing action column {action_column:?}"),
@@ -1167,19 +1142,14 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
     }
 
     let default_action = resolve_default_action(args.default_action.as_deref(), &actions)?;
-    let output_dir = args.output_dir.clone().unwrap_or_else(|| {
-        traces
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("output")
-    });
+    let output_dir = args
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| default_output_base.join("output"));
     fs::create_dir_all(&output_dir)
         .into_diagnostic()
         .wrap_err("failed to create action artifact directory")?;
-    let artifact_name = args
-        .gate_id
-        .clone()
-        .unwrap_or_else(|| default_gate_id_from_path(&traces));
+    let artifact_name = args.gate_id.clone().unwrap_or(default_artifact_name);
 
     if should_generate_feature_dictionary(&args) {
         let dictionary_path = generated_feature_dictionary_path(&output_dir);
@@ -1195,6 +1165,8 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
     }
     for stale_file in [
         "pearl.ir.json",
+        "pearl.wasm",
+        "pearl.wasm.meta.json",
         "action_policy.ir.json",
         "build_report.json",
         ".logicpearl-cache.json",
@@ -1296,7 +1268,7 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         .wrap_err("failed to write action policy IR")?;
 
     let action_report = ActionBuildReport {
-        source: traces.display().to_string(),
+        source: source_name,
         artifact_name: artifact_name.clone(),
         action_column: action_column.clone(),
         default_action: default_action.clone(),
@@ -1323,6 +1295,42 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
     .into_diagnostic()
     .wrap_err("failed to write action report")?;
 
+    let mut native_binary_file = None;
+    let mut wasm_module_file = None;
+    let mut wasm_metadata_file = None;
+    if args.compile {
+        let native_binary_path = native_artifact_output_path(&output_dir, &artifact_name, None);
+        let native_binary = compile_native_runner(
+            &action_policy_path,
+            &output_dir,
+            &artifact_name,
+            Some(artifact_name.clone()),
+            None,
+            Some(native_binary_path),
+        )?;
+        native_binary_file = native_binary
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+
+        if is_rust_target_installed("wasm32-unknown-unknown") {
+            let wasm_output = compile_wasm_module(
+                &action_policy_path,
+                &output_dir,
+                &artifact_name,
+                Some(artifact_name.clone()),
+                Some(output_dir.join("pearl.wasm")),
+            )?;
+            wasm_module_file = wasm_output
+                .module_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            wasm_metadata_file = wasm_output
+                .metadata_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+        }
+    }
+
     let manifest = ActionArtifactManifest {
         artifact_version: "1.0".to_string(),
         artifact_kind: "action_policy".to_string(),
@@ -1333,7 +1341,15 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         files: ActionArtifactFiles {
             pearl_ir: "pearl.ir.json".to_string(),
             action_report: "action_report.json".to_string(),
+            native_binary: native_binary_file.clone(),
+            wasm_module: wasm_module_file.clone(),
+            wasm_metadata: wasm_metadata_file.clone(),
         },
+        bundle: build_deployable_bundle_descriptor(
+            native_binary_file.clone(),
+            wasm_module_file.clone(),
+            wasm_metadata_file.clone(),
+        ),
     };
     fs::write(
         output_dir.join("artifact.json"),
@@ -1393,8 +1409,246 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
                 feature_dictionary.display()
             );
         }
+        if let Some(native_binary) = &native_binary_file {
+            println!(
+                "  {} {}",
+                "Deployable".bright_black(),
+                output_dir.join(native_binary).display()
+            );
+        }
+        if let Some(wasm_module) = &wasm_module_file {
+            println!(
+                "  {} {}",
+                "Deployable".bright_black(),
+                output_dir.join(wasm_module).display()
+            );
+            if let Some(wasm_metadata) = &wasm_metadata_file {
+                println!(
+                    "  {} {}",
+                    "Wasm metadata".bright_black(),
+                    output_dir.join(wasm_metadata).display()
+                );
+            }
+        } else if args.compile {
+            println!(
+                "  {} {}",
+                "Wasm module".bright_black(),
+                "skipped (install wasm32-unknown-unknown to emit it)".bright_black()
+            );
+        }
     }
     Ok(())
+}
+
+fn load_action_trace_records(
+    args: &BuildArgs,
+    action_column: &str,
+) -> Result<(LoadedFlatRecords, String, PathBuf, String)> {
+    if args.trace_plugin_manifest.is_none()
+        && (!args.trace_plugin_options.is_empty() || args.trace_plugin_input.is_some())
+    {
+        return Err(guidance(
+            "trace plugin input/options were provided without a trace plugin manifest",
+            "Pass --trace-plugin-manifest before using --trace-plugin-input or --trace-plugin-option.",
+        ));
+    }
+
+    match (&args.trace_plugin_manifest, &args.decision_traces) {
+        (Some(manifest_path), None) => {
+            let manifest = PluginManifest::from_path(manifest_path)
+                .into_diagnostic()
+                .wrap_err("failed to load trace plugin manifest")?;
+            if manifest.stage != PluginStage::TraceSource {
+                return Err(guidance(
+                    format!(
+                        "plugin manifest stage mismatch: expected trace_source, got {:?}",
+                        manifest.stage
+                    ),
+                    "Use a trace_source-stage manifest with --trace-plugin-manifest.",
+                ));
+            }
+            let mut options = build_trace_plugin_options(args)?;
+            options
+                .entry("action_column".to_string())
+                .or_insert_with(|| action_column.to_string());
+            let source = args.trace_plugin_input.clone().ok_or_else(|| {
+                guidance(
+                    "--trace-plugin-manifest was provided without --trace-plugin-input",
+                    "Pass the raw source string or path with --trace-plugin-input when using a trace_source plugin.",
+                )
+            })?;
+            let request = PluginRequest {
+                protocol_version: "1".to_string(),
+                stage: PluginStage::TraceSource,
+                payload: logicpearl_plugin::build_canonical_payload(
+                    &PluginStage::TraceSource,
+                    Value::String(source.clone()),
+                    Some(serde_json::to_value(&options).into_diagnostic()?),
+                ),
+            };
+            let policy = plugin_execution_policy(&args.plugin_execution);
+            let response = run_plugin_with_policy(&manifest, &request, &policy)
+                .into_diagnostic()
+                .wrap_err("trace plugin execution failed")?;
+            let loaded = action_records_from_plugin_response(&response, action_column)?;
+            let source_name = format!("plugin:{}:{source}", manifest.name);
+            let default_artifact_name = default_action_artifact_name_from_plugin_input(&source);
+            Ok((
+                loaded,
+                source_name,
+                PathBuf::from("."),
+                if default_artifact_name.is_empty() {
+                    "action_policy".to_string()
+                } else {
+                    default_artifact_name
+                },
+            ))
+        }
+        (None, Some(traces)) => {
+            let loaded = load_flat_records(traces)
+                .into_diagnostic()
+                .wrap_err("failed to load action traces")?;
+            Ok((
+                loaded,
+                traces.display().to_string(),
+                traces
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf(),
+                default_gate_id_from_path(traces),
+            ))
+        }
+        (Some(_), Some(_)) => Err(guidance(
+            "action build received both a trace file and a trace plugin",
+            "Use either the positional trace dataset input or --trace-plugin-manifest, not both.",
+        )),
+        (None, None) => Err(guidance(
+            "action build is missing traces",
+            "Pass a trace dataset path or use --trace-plugin-manifest with --trace-plugin-input.",
+        )),
+    }
+}
+
+fn default_action_artifact_name_from_plugin_input(source: &str) -> String {
+    let path = Path::new(source);
+    if path.exists() {
+        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+            let name = sanitize_identifier(stem);
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    sanitize_identifier(source)
+}
+
+fn action_records_from_plugin_response(
+    response: &PluginResponse,
+    action_column: &str,
+) -> Result<LoadedFlatRecords> {
+    let records_value = response
+        .extra
+        .get("records")
+        .or_else(|| response.extra.get("decision_traces"))
+        .cloned()
+        .ok_or_else(|| {
+            guidance(
+                "trace plugin response is missing action records",
+                "For action builds, return a top-level `records` array of flat trace rows, or `decision_traces` rows with features plus the action column.",
+            )
+        })?;
+    let rows = records_value.as_array().ok_or_else(|| {
+        guidance(
+            "trace plugin action records must be an array",
+            "Return `records: [...]` or `decision_traces: [...]` from the trace_source plugin.",
+        )
+    })?;
+
+    let mut records = Vec::with_capacity(rows.len());
+    for (index, row) in rows.iter().enumerate() {
+        records.push(flatten_plugin_action_record(index + 1, row, action_column)?);
+    }
+    let field_names = action_record_field_names(&records)?;
+    Ok(LoadedFlatRecords {
+        field_names,
+        records,
+    })
+}
+
+fn flatten_plugin_action_record(
+    row_number: usize,
+    row: &Value,
+    action_column: &str,
+) -> Result<BTreeMap<String, Value>> {
+    let object = row.as_object().ok_or_else(|| {
+        guidance(
+            format!("trace plugin action row {row_number} is not an object"),
+            "Each action trace row must be a flat object, or an object with `features` plus the action column.",
+        )
+    })?;
+    let mut out = BTreeMap::new();
+    if let Some(features) = object.get("features") {
+        let features = features.as_object().ok_or_else(|| {
+            guidance(
+                format!("trace plugin action row {row_number} has non-object features"),
+                "`features` must be an object of scalar feature values.",
+            )
+        })?;
+        for (key, value) in features {
+            insert_plugin_scalar(&mut out, key, value, row_number)?;
+        }
+        let action = object
+            .get(action_column)
+            .or_else(|| object.get("action"))
+            .ok_or_else(|| {
+                guidance(
+                    format!("trace plugin action row {row_number} is missing {action_column:?}"),
+                    "Put the action label at the top level beside `features`, or return flat records.",
+                )
+            })?;
+        insert_plugin_scalar(&mut out, action_column, action, row_number)?;
+        return Ok(out);
+    }
+
+    for (key, value) in object {
+        insert_plugin_scalar(&mut out, key, value, row_number)?;
+    }
+    Ok(out)
+}
+
+fn insert_plugin_scalar(
+    out: &mut BTreeMap<String, Value>,
+    key: &str,
+    value: &Value,
+    row_number: usize,
+) -> Result<()> {
+    match value {
+        Value::Null | Value::Array(_) | Value::Object(_) => Err(guidance(
+            format!("trace plugin action row {row_number} has a non-scalar value for {key:?}"),
+            "Action trace plugins must emit normalized scalar fields before discovery.",
+        )),
+        scalar => {
+            out.insert(key.to_string(), scalar.clone());
+            Ok(())
+        }
+    }
+}
+
+fn action_record_field_names(records: &[BTreeMap<String, Value>]) -> Result<Vec<String>> {
+    let Some(first) = records.first() else {
+        return Ok(Vec::new());
+    };
+    let field_names = first.keys().cloned().collect::<Vec<_>>();
+    for (index, record) in records.iter().enumerate().skip(1) {
+        let names = record.keys().cloned().collect::<Vec<_>>();
+        if names != field_names {
+            return Err(guidance(
+                format!("trace plugin action row {} has a different schema", index + 1),
+                "Action trace plugins must emit rectangular records with the same fields in every row.",
+            ));
+        }
+    }
+    Ok(field_names)
 }
 
 fn action_value_to_string(value: &Value) -> Result<String> {
@@ -1584,6 +1838,14 @@ pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
         );
     }
     let resolved = resolve_artifact_input(&artifact)?;
+    if let Some(action_policy) = load_direct_action_policy(&resolved.pearl_ir)? {
+        return run_action_policy_eval(
+            &action_policy,
+            input_json.as_ref(),
+            args.explain,
+            args.json,
+        );
+    }
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
@@ -1745,6 +2007,15 @@ fn run_action_eval(
     let action_policy = LogicPearlActionIr::from_path(manifest_dir.join(&manifest.files.pearl_ir))
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
+    run_action_policy_eval(&action_policy, input_json, explain, json)
+}
+
+fn run_action_policy_eval(
+    action_policy: &LogicPearlActionIr,
+    input_json: Option<&PathBuf>,
+    explain: bool,
+    json: bool,
+) -> Result<()> {
     let payload = read_json_input_argument(input_json, "input")?;
     let parsed = parse_input_payload(payload)
         .into_diagnostic()
@@ -1752,7 +2023,7 @@ fn run_action_eval(
     let mut outputs = Vec::with_capacity(parsed.len());
     for input in parsed {
         outputs.push(
-            evaluate_action_policy(&action_policy, &input)
+            evaluate_action_policy(action_policy, &input)
                 .into_diagnostic()
                 .wrap_err("failed to evaluate action policy")?,
         );
@@ -1808,29 +2079,31 @@ fn run_action_eval(
     Ok(())
 }
 
+fn load_direct_action_policy(pearl_ir: &Path) -> Result<Option<LogicPearlActionIr>> {
+    let payload = fs::read_to_string(pearl_ir)
+        .into_diagnostic()
+        .wrap_err("could not read pearl IR")?;
+    let value: Value = serde_json::from_str(&payload)
+        .into_diagnostic()
+        .wrap_err("pearl IR is not valid JSON")?;
+    if value.get("action_policy_id").is_none() {
+        return Ok(None);
+    }
+    LogicPearlActionIr::from_json_str(&payload)
+        .into_diagnostic()
+        .map(Some)
+        .wrap_err("could not load action policy IR")
+}
+
 fn explain_gate_output(
     gate: &LogicPearlGateIr,
     bitmask: logicpearl_core::RuleMask,
-) -> ExplainedGateOutput {
-    let matched_rules = gate
-        .rules
-        .iter()
-        .filter(|rule| bitmask.test_bit(rule.bit))
-        .map(|rule| ExplainedRule {
-            id: rule.id.clone(),
-            bit: rule.bit,
-            label: rule.label.clone(),
-            message: rule.message.clone(),
-        })
-        .collect();
-    ExplainedGateOutput {
-        bitmask: bitmask.to_json_value(),
-        matched_rules,
-    }
+) -> GateEvaluationResult {
+    explain_gate_result(gate, bitmask)
 }
 
 fn print_explained_gate_output(value: &Value) -> Result<()> {
-    let output: ExplainedGateOutput = serde_json::from_value(value.clone())
+    let output: GateEvaluationResult = serde_json::from_value(value.clone())
         .into_diagnostic()
         .wrap_err("failed to render explained output")?;
     println!("bitmask: {}", output.bitmask);

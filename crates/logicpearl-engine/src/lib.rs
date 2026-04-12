@@ -1,9 +1,10 @@
-use logicpearl_core::{LogicPearlError, Result, RuleMask};
+use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
 use logicpearl_plugin::PluginExecutionPolicy;
 use logicpearl_runtime::{
-    evaluate_action_policy, evaluate_gate, parse_input_payload, ActionEvaluationResult,
+    evaluate_action_policy, evaluate_gate_with_explanation, parse_input_payload,
+    ActionEvaluationResult, GateEvaluationResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,11 +19,7 @@ pub enum EngineKind {
     Pipeline,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ArtifactEvaluation {
-    pub bitmask: RuleMask,
-    pub allow: bool,
-}
+pub type ArtifactEvaluation = GateEvaluationResult;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtifactExecution {
@@ -290,7 +287,7 @@ impl LogicPearlEngine {
                 .map(EngineExecutionEnvelope::Batch),
             _ => self
                 .run_single_json(input)
-                .map(EngineExecutionEnvelope::Single),
+                .map(|execution| EngineExecutionEnvelope::Single(Box::new(execution))),
         }
     }
 }
@@ -298,7 +295,7 @@ impl LogicPearlEngine {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum EngineExecutionEnvelope {
-    Single(EngineSingleExecution),
+    Single(Box<EngineSingleExecution>),
     Batch(EngineBatchExecution),
 }
 
@@ -309,11 +306,7 @@ fn evaluate_artifact_single(gate: &LogicPearlGateIr, input: &Value) -> Result<Ar
             "artifact single execution expects one feature object",
         ));
     }
-    let bitmask = evaluate_gate(gate, &parsed[0])?;
-    Ok(ArtifactEvaluation {
-        allow: bitmask.is_zero(),
-        bitmask,
-    })
+    evaluate_gate_with_explanation(gate, &parsed[0])
 }
 
 fn evaluate_action_artifact_single(

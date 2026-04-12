@@ -53,6 +53,38 @@ const sampleMetadataWithObjectEncodings = {
   })),
 };
 
+const sampleActionMetadata = {
+  decision_kind: 'action',
+  gate_id: 'garden_actions',
+  action_policy_id: 'garden_actions',
+  default_action: 'do_nothing',
+  actions: ['water', 'do_nothing', 'fertilize'],
+  feature_count: 2,
+  features: [
+    { id: 'soil_moisture_pct', index: 0, encoding: 'numeric' },
+    { id: 'leaf_paleness_score', index: 1, encoding: 'numeric' },
+  ],
+  string_codes: {},
+  rules: [
+    {
+      id: 'rule_000',
+      bit: 0,
+      action: 'water',
+      priority: 0,
+      label: 'Soil is dry',
+      counterfactual_hint: 'Increase moisture',
+    },
+    {
+      id: 'rule_001',
+      bit: 1,
+      action: 'fertilize',
+      priority: 1,
+      label: 'Leaves are pale',
+      counterfactual_hint: 'Reduce paleness',
+    },
+  ],
+};
+
 test('normalizeArtifactReference handles bundle dirs and artifact manifests', () => {
   assert.deepEqual(normalizeArtifactReference('/demo/authz'), {
     manifestUrl: '/demo/authz/artifact.json',
@@ -66,11 +98,11 @@ test('normalizeArtifactReference handles bundle dirs and artifact manifests', ()
 
 test('encodeFeatureSlots maps booleans, numerics, and string codes', () => {
   const slots = encodeFeatureSlots(
-    { is_admin: true, risk_score: '42', risk_band: 'high' },
+    { is_admin: true, risk_score: '42%', risk_band: 'high' },
     sampleMetadata
   );
   assert.equal(slots[0], 1);
-  assert.equal(slots[1], 42);
+  assert.equal(slots[1], 0.42);
   assert.equal(slots[2], 3);
 });
 
@@ -125,10 +157,60 @@ test('loadArtifactFromBundle evaluates through the stable browser API', async ()
   });
 
   assert.deepEqual(captured, [0, 17, 2]);
+  assert.equal(result.decisionKind, 'gate');
+  assert.equal(result.artifactId, 'demo_gate');
+  assert.equal(result.defaulted, false);
+  assert.equal(result.ambiguity, null);
   assert.equal(result.allow, false);
   assert.deepEqual(result.firedRuleIds, ['rule_a', 'rule_b']);
   assert.equal(result.primaryReason?.id, 'rule_a');
   assert.deepEqual(result.counterfactualHints, ['Change A', 'Change B']);
+});
+
+test('loadArtifactFromBundle evaluates action policies from wasm metadata', async () => {
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: {
+        ...sampleManifest,
+        artifact_kind: 'action_policy',
+        artifact_name: 'garden_actions',
+      },
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleActionMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_bitmask_slots_f64() {
+            return 3n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluate({
+    soil_moisture_pct: 0.14,
+    leaf_paleness_score: 5,
+  });
+
+  assert.equal(result.decisionKind, 'action');
+  assert.equal(result.artifactId, 'garden_actions');
+  assert.equal(result.actionPolicyId, 'garden_actions');
+  assert.equal(result.action, 'water');
+  assert.equal(result.defaulted, false);
+  assert.equal(result.ambiguity, 'multiple action rules matched: water, fertilize');
+  assert.deepEqual(result.candidateActions, ['water', 'fertilize']);
+  assert.deepEqual(
+    result.selectedRules.map((rule) => rule.id),
+    ['rule_000']
+  );
+  assert.deepEqual(result.counterfactualHints, ['Increase moisture']);
 });
 
 test('evaluate treats all u64 bitmask values as valid payloads', async () => {
