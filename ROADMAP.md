@@ -21,4 +21,4 @@ This is a living document. Items are not commitments — they reflect current di
 
 - [ ] Stable Pearl IR v2 schema
 - [ ] `logicpearl-wasm` crate for Wasm-first deployments
-- [ ] Hosted evaluation API (opt-in, no telemetry in the open-source CLI)
+- [ ] Commercial tooling: monitoring dashboards, trace ingestion, artifact management UI (separate from the open-source engine)

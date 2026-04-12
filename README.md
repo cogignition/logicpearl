@@ -804,7 +804,7 @@ See:
 
 ## Project Status
 
-LogicPearl is a single-maintainer project at version 0.1.x. The core engine is fully open-source under MIT and will stay that way — there are no plans to relicense, dual-license, or restrict the open-source engine. A hosted evaluation service may exist in the future, but the CLI, the runtime, the discovery engine, and the artifact format are the open-source core and will not be gated behind a paid tier.
+LogicPearl is a single-maintainer project at version 0.1.x. The core engine is fully open-source under MIT and will stay that way — there are no plans to relicense, dual-license, or restrict the open-source engine. Commercial tooling (monitoring, ingestion, UI) may exist alongside the open-source core in the future, but the CLI, the runtime, the discovery engine, and the artifact format are the permanent open-source foundation and will not be gated behind a paid tier.
 
 The fixtures include conformance contracts derived from real domain work (healthcare prior authorization, revenue recovery) — these domains motivate the engine design but the engine itself is domain-agnostic. There is no telemetry, no analytics, and no network calls in this tool.
 
