@@ -1,0 +1,80 @@
+{
+  "schema_version": "logicpearl.action_result.v1",
+  "engine_version": "0.1.5",
+  "artifact_hash": "sha256:65da6c16f81dd283957eb0c36c6015dbb0a99192022164904d23ce012265a5f9",
+  "artifact_id": "garden_actions",
+  "policy_id": "garden_actions",
+  "action_policy_id": "garden_actions",
+  "decision_kind": "action",
+  "action": "water",
+  "bitmask": 1,
+  "defaulted": false,
+  "selected_rules": [
+    {
+      "id": "rule_000",
+      "bit": 0,
+      "action": "water",
+      "priority": 0,
+      "label": "Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2",
+      "message": "Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Soil Moisture above 18%; Keep Water used in the last 7 days above 0.2",
+      "features": [
+        {
+          "feature_id": "soil_moisture_pct",
+          "feature_label": "Soil Moisture",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "water_last_7_days_gallons",
+          "feature_label": "Water used in the last 7 days",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    }
+  ],
+  "matched_rules": [
+    {
+      "id": "rule_000",
+      "bit": 0,
+      "action": "water",
+      "priority": 0,
+      "label": "Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2",
+      "message": "Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Soil Moisture above 18%; Keep Water used in the last 7 days above 0.2",
+      "features": [
+        {
+          "feature_id": "soil_moisture_pct",
+          "feature_label": "Soil Moisture",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "water_last_7_days_gallons",
+          "feature_label": "Water used in the last 7 days",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    }
+  ],
+  "candidate_actions": [
+    "water"
+  ],
+  "ambiguity": null
+}

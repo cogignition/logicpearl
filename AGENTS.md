@@ -126,6 +126,36 @@ Gate runtime JSON follows the same pattern for the fields that apply to gates: a
 
 `logicpearl diff` understands action-policy bundles. Its JSON summary separates action set changes, default action changes, rule predicate changes, rule priority changes, source/schema changes, and explanation-only changes.
 
+## Runtime JSON Schemas
+
+Runtime JSON is a public engine contract. Gate, action, pipeline, rule explanation, feature explanation, runtime result, and artifact error schemas live under `schema/` as versioned `logicpearl.*.v1` contracts.
+
+Every v1 runtime result emitted by `logicpearl run --json` or `logicpearl pipeline run --json` should include:
+
+- `schema_version`
+- `engine_version`
+- `artifact_id`
+- `artifact_hash`
+- `decision_kind`
+
+Gate results use `schema_version: "logicpearl.gate_result.v1"`. Action results use `schema_version: "logicpearl.action_result.v1"`. Pipeline results use `schema_version: "logicpearl.pipeline_result.v1"`.
+
+Do not hand-patch downstream demos or frontends to infer result meaning. The engine result should already contain the stable IDs, bitmask, selected or matched rules, and explanation metadata. Browser code that needs the exact wire shape should use `evaluateJson()` from `@logicpearl/browser`; app code may still use the ergonomic BigInt-returning `evaluate()` API.
+
+Compatibility policy for v1:
+
+- Additive fields are allowed.
+- Removing fields, renaming fields, changing field meaning, or changing scalar encoding requires a v2 schema.
+- Plugin stage `raw_result` values may remain plugin-defined JSON unless the plugin contract supplies its own schema.
+
+Proof checklist before claiming runtime JSON schemas work:
+
+- Run `logicpearl run <gate> <input> --json` and validate the result against `schema/logicpearl-gate-result-v1.schema.json`.
+- Run `logicpearl run <action_artifact> <input> --json` and validate the result against `schema/logicpearl-action-result-v1.schema.json`.
+- Run `logicpearl pipeline run <pipeline> <input> --json` and validate the result against `schema/logicpearl-pipeline-result-v1.schema.json`.
+- Confirm golden fixtures under `fixtures/runtime/` validate against the committed schemas.
+- Confirm browser `evaluateJson()` returns schema-shaped snake_case JSON, while `evaluate()` still returns the browser-friendly BigInt shape.
+
 ## Plugin And Pipeline Execution
 
 Plugin and pipeline manifests can execute local processes. Treat manifests from other repos, issues, or generated examples as untrusted unless the user explicitly says they trust them.

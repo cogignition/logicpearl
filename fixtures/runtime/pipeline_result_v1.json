@@ -1,0 +1,115 @@
+{
+  "schema_version": "logicpearl.pipeline_result.v1",
+  "engine_version": "0.1.5",
+  "artifact_id": "authz_pipeline",
+  "artifact_hash": "sha256:691ccddbcc102053c212b57d2d03ce95777433fc8d5c1f1629e83e6ce78e7b15",
+  "decision_kind": "pipeline",
+  "pipeline_id": "authz_pipeline",
+  "ok": true,
+  "output": {
+    "bitmask": 7,
+    "allow": false
+  },
+  "stages": [
+    {
+      "id": "authz",
+      "kind": "pearl",
+      "ok": true,
+      "skipped": false,
+      "exports": {
+        "allow": false,
+        "bitmask": 7
+      },
+      "raw_result": {
+        "allow": false,
+        "ambiguity": null,
+        "artifact_hash": "sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f",
+        "artifact_id": "auth_demo_v1",
+        "bitmask": 7,
+        "decision_kind": "gate",
+        "defaulted": false,
+        "engine_version": "0.1.5",
+        "gate_id": "auth_demo_v1",
+        "matched_rules": [
+          {
+            "bit": 0,
+            "counterfactual_hint": null,
+            "features": [
+              {
+                "counterfactual_hint": null,
+                "feature_id": "resource_archived",
+                "feature_label": null,
+                "source_anchor": null,
+                "source_id": null,
+                "state_label": null,
+                "state_message": null
+              },
+              {
+                "counterfactual_hint": null,
+                "feature_id": "action",
+                "feature_label": null,
+                "source_anchor": null,
+                "source_id": null,
+                "state_label": null,
+                "state_message": null
+              }
+            ],
+            "id": "archive_read_only",
+            "label": null,
+            "message": "Archived resources are read-only.",
+            "severity": null
+          },
+          {
+            "bit": 1,
+            "counterfactual_hint": null,
+            "features": [
+              {
+                "counterfactual_hint": null,
+                "feature_id": "failed_attempts",
+                "feature_label": null,
+                "source_anchor": null,
+                "source_id": null,
+                "state_label": null,
+                "state_message": null
+              }
+            ],
+            "id": "too_many_failed_attempts",
+            "label": null,
+            "message": "Too many failed attempts.",
+            "severity": null
+          },
+          {
+            "bit": 2,
+            "counterfactual_hint": null,
+            "features": [
+              {
+                "counterfactual_hint": null,
+                "feature_id": "user_role",
+                "feature_label": null,
+                "source_anchor": null,
+                "source_id": null,
+                "state_label": null,
+                "state_message": null
+              },
+              {
+                "counterfactual_hint": null,
+                "feature_id": "action",
+                "feature_label": null,
+                "source_anchor": null,
+                "source_id": null,
+                "state_label": null,
+                "state_message": null
+              }
+            ],
+            "id": "viewer_cannot_write",
+            "label": null,
+            "message": "Viewer role is read-only.",
+            "severity": null
+          }
+        ],
+        "policy_id": "auth_demo_v1",
+        "schema_version": "logicpearl.gate_result.v1"
+      }
+    }
+  ]
+}

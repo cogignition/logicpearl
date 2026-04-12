@@ -27,6 +27,8 @@ const sampleManifest = {
 };
 
 const sampleMetadata = {
+  engine_version: '0.1.5',
+  artifact_hash: 'sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f',
   gate_id: 'demo_gate',
   feature_count: 3,
   features: [
@@ -54,6 +56,8 @@ const sampleMetadataWithObjectEncodings = {
 };
 
 const sampleActionMetadata = {
+  engine_version: '0.1.5',
+  artifact_hash: 'sha256:65da6c16f81dd283957eb0c36c6015dbb0a99192022164904d23ce012265a5f9',
   decision_kind: 'action',
   gate_id: 'garden_actions',
   action_policy_id: 'garden_actions',
@@ -158,6 +162,12 @@ test('loadArtifactFromBundle evaluates through the stable browser API', async ()
 
   assert.deepEqual(captured, [0, 17, 2]);
   assert.equal(result.decisionKind, 'gate');
+  assert.equal(result.schemaVersion, 'logicpearl.gate_result.v1');
+  assert.equal(result.engineVersion, '0.1.5');
+  assert.equal(
+    result.artifactHash,
+    'sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f'
+  );
   assert.equal(result.artifactId, 'demo_gate');
   assert.equal(result.defaulted, false);
   assert.equal(result.ambiguity, null);
@@ -165,6 +175,50 @@ test('loadArtifactFromBundle evaluates through the stable browser API', async ()
   assert.deepEqual(result.firedRuleIds, ['rule_a', 'rule_b']);
   assert.equal(result.primaryReason?.id, 'rule_a');
   assert.deepEqual(result.counterfactualHints, ['Change A', 'Change B']);
+});
+
+test('evaluateJson returns gate runtime JSON v1 shape', async () => {
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: sampleManifest,
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_bitmask_slots_f64() {
+            return 5n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluateJson({
+    is_admin: false,
+    risk_score: 17,
+    risk_band: 'medium',
+  });
+
+  assert.equal(result.schema_version, 'logicpearl.gate_result.v1');
+  assert.equal(result.engine_version, '0.1.5');
+  assert.equal(
+    result.artifact_hash,
+    'sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f'
+  );
+  assert.equal(result.decision_kind, 'gate');
+  assert.equal(result.bitmask, '5');
+  assert.deepEqual(
+    result.matched_rules.map((rule) => rule.id),
+    ['rule_a', 'rule_b']
+  );
+  assert.equal(result.matched_rules[0].message, null);
 });
 
 test('loadArtifactFromBundle evaluates action policies from wasm metadata', async () => {
@@ -203,6 +257,7 @@ test('loadArtifactFromBundle evaluates action policies from wasm metadata', asyn
   assert.equal(result.artifactId, 'garden_actions');
   assert.equal(result.actionPolicyId, 'garden_actions');
   assert.equal(result.action, 'water');
+  assert.equal(result.schemaVersion, 'logicpearl.action_result.v1');
   assert.equal(result.defaulted, false);
   assert.equal(result.ambiguity, 'multiple action rules matched: water, fertilize');
   assert.deepEqual(result.candidateActions, ['water', 'fertilize']);
@@ -211,6 +266,50 @@ test('loadArtifactFromBundle evaluates action policies from wasm metadata', asyn
     ['rule_000']
   );
   assert.deepEqual(result.counterfactualHints, ['Increase moisture']);
+});
+
+test('evaluateJson returns action runtime JSON v1 shape', async () => {
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: {
+        ...sampleManifest,
+        artifact_kind: 'action_policy',
+        artifact_name: 'garden_actions',
+      },
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleActionMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_bitmask_slots_f64() {
+            return 1n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluateJson({
+    soil_moisture_pct: 0.12,
+    leaf_paleness_score: 0.1,
+  });
+
+  assert.equal(result.schema_version, 'logicpearl.action_result.v1');
+  assert.equal(result.action_policy_id, 'garden_actions');
+  assert.equal(result.decision_kind, 'action');
+  assert.equal(result.action, 'water');
+  assert.equal(result.bitmask, '1');
+  assert.deepEqual(result.candidate_actions, ['water']);
+  assert.deepEqual(
+    result.selected_rules.map((rule) => rule.id),
+    ['rule_000']
+  );
 });
 
 test('evaluate treats all u64 bitmask values as valid payloads', async () => {

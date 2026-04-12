@@ -29,6 +29,19 @@ console.log(result.primaryReason);
 console.log(result.counterfactualHints);
 ```
 
+When an integration needs the exact versioned runtime JSON contract, use
+`evaluateJson()`:
+
+```js
+const wireResult = artifact.evaluateJson(input);
+console.log(wireResult.schema_version);
+console.log(wireResult.artifact_hash);
+```
+
+`evaluate()` keeps the browser-friendly camelCase shape with a `BigInt`
+bitmask. `evaluateJson()` returns the snake_case `logicpearl.*_result.v1`
+shape for schema validation and cross-language handoff.
+
 ## Supported Inputs
 
 `loadArtifact(...)` accepts:

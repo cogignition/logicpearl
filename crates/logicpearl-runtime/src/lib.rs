@@ -6,7 +6,14 @@ use logicpearl_ir::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+pub const LOGICPEARL_ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const GATE_RESULT_SCHEMA_VERSION: &str = "logicpearl.gate_result.v1";
+pub const ACTION_RESULT_SCHEMA_VERSION: &str = "logicpearl.action_result.v1";
+pub const PIPELINE_RESULT_SCHEMA_VERSION: &str = "logicpearl.pipeline_result.v1";
+pub const ARTIFACT_ERROR_SCHEMA_VERSION: &str = "logicpearl.artifact_error.v1";
 
 /// Result of evaluating an action policy artifact.
 ///
@@ -14,6 +21,9 @@ use std::collections::HashMap;
 /// to the same value. See `GateEvaluationResult` for rationale.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionEvaluationResult {
+    pub schema_version: String,
+    pub engine_version: String,
+    pub artifact_hash: String,
     pub artifact_id: String,
     pub policy_id: String,
     pub action_policy_id: String,
@@ -67,6 +77,9 @@ pub struct GateRuleMatch {
 /// differs from artifact identity (e.g., versioned artifact bundles).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GateEvaluationResult {
+    pub schema_version: String,
+    pub engine_version: String,
+    pub artifact_hash: String,
     pub artifact_id: String,
     pub policy_id: String,
     pub gate_id: String,
@@ -90,6 +103,85 @@ pub struct RuleFeatureExplanation {
     pub state_label: Option<String>,
     pub state_message: Option<String>,
     pub counterfactual_hint: Option<String>,
+}
+
+/// Stable runtime error payload for integrations that need a JSON contract.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArtifactError {
+    pub schema_version: String,
+    pub engine_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_hash: Option<String>,
+    pub error_code: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl ArtifactError {
+    pub fn new(error_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            schema_version: ARTIFACT_ERROR_SCHEMA_VERSION.to_string(),
+            engine_version: LOGICPEARL_ENGINE_VERSION.to_string(),
+            artifact_id: None,
+            artifact_hash: None,
+            error_code: error_code.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_artifact(
+        mut self,
+        artifact_id: impl Into<String>,
+        artifact_hash: impl Into<String>,
+    ) -> Self {
+        self.artifact_id = Some(artifact_id.into());
+        self.artifact_hash = Some(artifact_hash.into());
+        self
+    }
+
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+}
+
+pub fn artifact_hash<T: Serialize>(artifact: &T) -> String {
+    let value = serde_json::to_value(artifact)
+        .expect("LogicPearl runtime artifacts should serialize to canonical JSON bytes");
+    let canonical = canonicalize_json_value(value);
+    let bytes = serde_json::to_vec(&canonical)
+        .expect("canonical LogicPearl runtime artifact JSON should serialize");
+    sha256_prefixed(&bytes)
+}
+
+pub fn sha256_prefixed(bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    format!("sha256:{}", hex::encode(digest.finalize()))
+}
+
+fn canonicalize_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(canonicalize_json_value)
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(map) => {
+            let mut entries = map
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json_value(value)))
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            Value::Object(entries.into_iter().collect())
+        }
+        other => other,
+    }
 }
 
 /// Evaluate a gate artifact against input features and return the matched-rule bitmask.
@@ -170,6 +262,9 @@ pub fn evaluate_action_policy(
     });
 
     Ok(ActionEvaluationResult {
+        schema_version: ACTION_RESULT_SCHEMA_VERSION.to_string(),
+        engine_version: LOGICPEARL_ENGINE_VERSION.to_string(),
+        artifact_hash: artifact_hash(policy),
         artifact_id: policy.action_policy_id.clone(),
         policy_id: policy.action_policy_id.clone(),
         action_policy_id: policy.action_policy_id.clone(),
@@ -187,6 +282,9 @@ pub fn evaluate_action_policy(
 /// Build a full gate evaluation result from a pre-computed bitmask.
 pub fn explain_gate_result(gate: &LogicPearlGateIr, bitmask: RuleMask) -> GateEvaluationResult {
     GateEvaluationResult {
+        schema_version: GATE_RESULT_SCHEMA_VERSION.to_string(),
+        engine_version: LOGICPEARL_ENGINE_VERSION.to_string(),
+        artifact_hash: artifact_hash(gate),
         artifact_id: gate.gate_id.clone(),
         policy_id: gate.gate_id.clone(),
         gate_id: gate.gate_id.clone(),

@@ -66,6 +66,8 @@ pub(crate) struct ArtifactSidecar {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WasmArtifactMetadata {
     artifact_version: String,
+    engine_version: String,
+    artifact_hash: String,
     decision_kind: String,
     gate_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -934,6 +936,11 @@ fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result
         .collect::<Vec<_>>();
     let metadata = WasmArtifactMetadata {
         artifact_version: "1.0".to_string(),
+        engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
+        artifact_hash: match pearl {
+            CompilablePearl::Gate(gate) => logicpearl_runtime::artifact_hash(gate),
+            CompilablePearl::Action(policy) => logicpearl_runtime::artifact_hash(policy),
+        },
         decision_kind: pearl.decision_kind().to_string(),
         gate_id: pearl.artifact_id().to_string(),
         action_policy_id: matches!(pearl, CompilablePearl::Action(_))

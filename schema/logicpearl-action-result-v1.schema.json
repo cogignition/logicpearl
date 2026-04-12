@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-action-result-v1.schema.json",
+  "title": "LogicPearl Action Result v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "artifact_id",
+    "artifact_hash",
+    "policy_id",
+    "action_policy_id",
+    "decision_kind",
+    "action",
+    "bitmask",
+    "defaulted",
+    "selected_rules",
+    "matched_rules",
+    "candidate_actions",
+    "ambiguity"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "logicpearl.action_result.v1"
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action_policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision_kind": {
+      "type": "string",
+      "const": "action"
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bitmask": {
+      "$ref": "#/$defs/rule_mask"
+    },
+    "defaulted": {
+      "type": "boolean"
+    },
+    "selected_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule_explanation"
+      }
+    },
+    "matched_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule_explanation"
+      }
+    },
+    "candidate_actions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "ambiguity": {
+      "type": ["string", "null"]
+    }
+  },
+  "$defs": {
+    "rule_mask": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      ]
+    },
+    "rule_explanation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "bit",
+        "action",
+        "priority",
+        "label",
+        "message",
+        "severity",
+        "counterfactual_hint"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": ["string", "null"]
+        },
+        "message": {
+          "type": ["string", "null"]
+        },
+        "severity": {
+          "type": ["string", "null"]
+        },
+        "counterfactual_hint": {
+          "type": ["string", "null"]
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/feature_explanation"
+          }
+        }
+      }
+    },
+    "feature_explanation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "feature_id",
+        "feature_label",
+        "source_id",
+        "source_anchor",
+        "state_label",
+        "state_message",
+        "counterfactual_hint"
+      ],
+      "properties": {
+        "feature_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_label": {
+          "type": ["string", "null"]
+        },
+        "source_id": {
+          "type": ["string", "null"]
+        },
+        "source_anchor": {
+          "type": ["string", "null"]
+        },
+        "state_label": {
+          "type": ["string", "null"]
+        },
+        "state_message": {
+          "type": ["string", "null"]
+        },
+        "counterfactual_hint": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

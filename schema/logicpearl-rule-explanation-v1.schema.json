@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-rule-explanation-v1.schema.json",
+  "title": "LogicPearl Rule Explanation v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "bit",
+    "label",
+    "message",
+    "severity",
+    "counterfactual_hint"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "label": {
+      "type": ["string", "null"]
+    },
+    "message": {
+      "type": ["string", "null"]
+    },
+    "severity": {
+      "type": ["string", "null"]
+    },
+    "counterfactual_hint": {
+      "type": ["string", "null"]
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/feature_explanation"
+      }
+    }
+  },
+  "$defs": {
+    "feature_explanation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "feature_id",
+        "feature_label",
+        "source_id",
+        "source_anchor",
+        "state_label",
+        "state_message",
+        "counterfactual_hint"
+      ],
+      "properties": {
+        "feature_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_label": {
+          "type": ["string", "null"]
+        },
+        "source_id": {
+          "type": ["string", "null"]
+        },
+        "source_anchor": {
+          "type": ["string", "null"]
+        },
+        "state_label": {
+          "type": ["string", "null"]
+        },
+        "state_message": {
+          "type": ["string", "null"]
+        },
+        "counterfactual_hint": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

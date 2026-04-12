@@ -1,0 +1,11 @@
+{
+  "schema_version": "logicpearl.artifact_error.v1",
+  "engine_version": "0.1.5",
+  "artifact_id": "auth_demo_v1",
+  "artifact_hash": "sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f",
+  "error_code": "invalid_input",
+  "message": "runtime input shape is invalid",
+  "details": {
+    "field": "input"
+  }
+}

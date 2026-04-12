@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-pipeline-result-v1.schema.json",
+  "title": "LogicPearl Pipeline Result v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "artifact_id",
+    "artifact_hash",
+    "decision_kind",
+    "pipeline_id",
+    "ok",
+    "output",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "logicpearl.pipeline_result.v1"
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "decision_kind": {
+      "type": "string",
+      "const": "pipeline"
+    },
+    "pipeline_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stage_result"
+      }
+    }
+  },
+  "$defs": {
+    "stage_result": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "ok", "skipped", "exports", "raw_result"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "pearl",
+            "observer_plugin",
+            "trace_source_plugin",
+            "enricher_plugin",
+            "verify_plugin"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "exports": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "raw_result": true
+      }
+    }
+  }
+}

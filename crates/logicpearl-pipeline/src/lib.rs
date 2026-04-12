@@ -72,6 +72,11 @@ pub struct ValidatedStage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PipelineExecution {
+    pub schema_version: String,
+    pub engine_version: String,
+    pub artifact_id: String,
+    pub artifact_hash: String,
+    pub decision_kind: String,
     pub pipeline_id: String,
     pub ok: bool,
     pub output: HashMap<String, Value>,
@@ -342,6 +347,11 @@ impl PreparedPipeline {
         }
 
         Ok(PipelineExecution {
+            schema_version: logicpearl_runtime::PIPELINE_RESULT_SCHEMA_VERSION.to_string(),
+            engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
+            artifact_id: self.definition.pipeline_id.clone(),
+            artifact_hash: logicpearl_runtime::artifact_hash(&self.definition),
+            decision_kind: "pipeline".to_string(),
             pipeline_id: self.definition.pipeline_id.clone(),
             ok: true,
             output,
@@ -431,6 +441,11 @@ impl PreparedPipeline {
                     );
                 }
                 Ok(PipelineExecution {
+                    schema_version: logicpearl_runtime::PIPELINE_RESULT_SCHEMA_VERSION.to_string(),
+                    engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
+                    artifact_id: self.definition.pipeline_id.clone(),
+                    artifact_hash: logicpearl_runtime::artifact_hash(&self.definition),
+                    decision_kind: "pipeline".to_string(),
                     pipeline_id: self.definition.pipeline_id.clone(),
                     ok: true,
                     output,
@@ -670,12 +685,10 @@ fn run_prepared_stage(
     match &prepared_stage.executable {
         PreparedStageExecutable::Pearl(gate) => {
             let features = build_stage_input_object(stage, root_input, stage_exports)?;
-            let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
-            Ok(Value::Object(Map::from_iter([
-                ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                ("bitmask".to_string(), bitmask.to_json_value()),
-                ("allow".to_string(), Value::Bool(bitmask.is_zero())),
-            ])))
+            serde_json::to_value(logicpearl_runtime::evaluate_gate_with_explanation(
+                gate, &features,
+            )?)
+            .map_err(Into::into)
         }
         PreparedStageExecutable::Plugin {
             manifest,
@@ -714,12 +727,10 @@ fn run_prepared_stage_batch(
             .map(|index| {
                 let features =
                     build_stage_input_object(stage, &root_inputs[*index], &stage_exports[*index])?;
-                let bitmask = logicpearl_runtime::evaluate_gate(gate, &features)?;
-                Ok(Value::Object(Map::from_iter([
-                    ("gate_id".to_string(), Value::String(gate.gate_id.clone())),
-                    ("bitmask".to_string(), bitmask.to_json_value()),
-                    ("allow".to_string(), Value::Bool(bitmask.is_zero())),
-                ])))
+                serde_json::to_value(logicpearl_runtime::evaluate_gate_with_explanation(
+                    gate, &features,
+                )?)
+                .map_err(Into::into)
             })
             .collect(),
         PreparedStageExecutable::Plugin {

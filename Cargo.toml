@@ -43,6 +43,7 @@ ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 good_lp = { version = "1.15.1", default-features = false, features = ["microlp"] }
 hex = "0.4"
 indicatif = "0.18"
+jsonschema = { version = "0.33", default-features = false }
 miette = { version = "7.4", features = ["fancy"] }
 owo-colors = { version = "4.1", features = ["supports-colors"] }
 rand = "0.10"

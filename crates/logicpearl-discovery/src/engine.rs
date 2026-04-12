@@ -2372,20 +2372,16 @@ mod tests {
         CandidateRule, CandidateSelectionContext, CandidateSetScore,
         DISCOVERY_SELECTION_BACKEND_ENV,
     };
-    use crate::{DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions};
+    use crate::{
+        discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
+    };
     use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression};
     use logicpearl_solver::{check_sat, SolverSettings};
     use serde_json::{Number, Value};
     use std::collections::{BTreeMap, HashMap};
-    use std::sync::{Mutex, OnceLock};
 
     fn solver_available() -> bool {
         check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
-    }
-
-    fn discovery_selection_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     fn with_discovery_selection_backend<T>(backend: &str, test: impl FnOnce() -> T) -> T {

@@ -153,6 +153,8 @@ export class LogicPearlBrowserArtifact {
       gateId: this.metadata.gate_id,
       actionPolicyId: this.metadata.action_policy_id ?? null,
       artifactName: this.manifest.artifact_name,
+      engineVersion: this.metadata.engine_version ?? this.manifest.engine_version ?? null,
+      artifactHash: this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null,
       featureCount: this.metadata.feature_count,
       ruleCount: (this.metadata.rules ?? []).length,
       artifactVersion: this.manifest.artifact_version,
@@ -174,6 +176,8 @@ export class LogicPearlBrowserArtifact {
       this.metadata.gate_id ??
       this.manifest.artifact_name ??
       'logicpearl_artifact';
+    const engineVersion = this.metadata.engine_version ?? this.manifest.engine_version ?? null;
+    const artifactHash = this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null;
     const ptr = exports.logicpearl_alloc(this.featureCount * 8);
 
     try {
@@ -208,6 +212,9 @@ export class LogicPearlBrowserArtifact {
             ? `multiple action rules matched: ${candidateActions.join(', ')}`
             : null;
         return {
+          schemaVersion: 'logicpearl.action_result.v1',
+          engineVersion,
+          artifactHash,
           decisionKind: 'action',
           artifactId,
           policyId: artifactId,
@@ -227,6 +234,9 @@ export class LogicPearlBrowserArtifact {
         };
       }
       return {
+        schemaVersion: 'logicpearl.gate_result.v1',
+        engineVersion,
+        artifactHash,
         decisionKind: 'gate',
         artifactId,
         policyId: artifactId,
@@ -252,6 +262,47 @@ export class LogicPearlBrowserArtifact {
   evaluateBatch(inputs) {
     return inputs.map((input) => this.evaluate(input));
   }
+
+  evaluateJson(input) {
+    const result = this.evaluate(input);
+    const context = requireRuntimeJsonContext(result);
+    if (result.decisionKind === 'action') {
+      return {
+        schema_version: 'logicpearl.action_result.v1',
+        engine_version: context.engineVersion,
+        artifact_hash: context.artifactHash,
+        artifact_id: result.artifactId,
+        policy_id: result.policyId,
+        action_policy_id: result.actionPolicyId,
+        decision_kind: 'action',
+        action: result.action,
+        bitmask: bitmaskToJson(result.bitmask),
+        defaulted: result.defaulted,
+        selected_rules: result.selectedRules.map(normalizeActionRuleExplanation),
+        matched_rules: result.matchedRules.map(normalizeActionRuleExplanation),
+        candidate_actions: result.candidateActions,
+        ambiguity: result.ambiguity,
+      };
+    }
+    return {
+      schema_version: 'logicpearl.gate_result.v1',
+      engine_version: context.engineVersion,
+      artifact_hash: context.artifactHash,
+      artifact_id: result.artifactId,
+      policy_id: result.policyId,
+      gate_id: result.gateId,
+      decision_kind: 'gate',
+      allow: result.allow,
+      bitmask: bitmaskToJson(result.bitmask),
+      defaulted: result.defaulted,
+      ambiguity: result.ambiguity,
+      matched_rules: result.firedRules.map(normalizeGateRuleExplanation),
+    };
+  }
+
+  evaluateJsonBatch(inputs) {
+    return inputs.map((input) => this.evaluateJson(input));
+  }
 }
 
 export function encodeFeatureSlots(input, metadata) {
@@ -270,6 +321,60 @@ export function decodeFiredRules(bitmask, rules) {
   return [...rules]
     .filter((rule) => (bitmask & (1n << BigInt(rule.bit))) !== 0n)
     .sort((left, right) => left.bit - right.bit);
+}
+
+function requireRuntimeJsonContext(result) {
+  if (!result.engineVersion || !result.artifactHash) {
+    throw new Error(
+      'Loaded artifact metadata does not include engine_version and artifact_hash required for runtime JSON v1.'
+    );
+  }
+  return {
+    engineVersion: result.engineVersion,
+    artifactHash: result.artifactHash,
+  };
+}
+
+function bitmaskToJson(bitmask) {
+  return BigInt(bitmask).toString();
+}
+
+function normalizeGateRuleExplanation(rule) {
+  return {
+    id: rule.id,
+    bit: rule.bit,
+    label: rule.label ?? null,
+    message: rule.message ?? null,
+    severity: rule.severity ?? null,
+    counterfactual_hint: rule.counterfactual_hint ?? null,
+    features: normalizeFeatureExplanations(rule.features),
+  };
+}
+
+function normalizeActionRuleExplanation(rule) {
+  return {
+    id: rule.id,
+    bit: rule.bit,
+    action: rule.action,
+    priority: rule.priority ?? rule.bit,
+    label: rule.label ?? null,
+    message: rule.message ?? null,
+    severity: rule.severity ?? null,
+    counterfactual_hint: rule.counterfactual_hint ?? null,
+    features: normalizeFeatureExplanations(rule.features),
+  };
+}
+
+function normalizeFeatureExplanations(features) {
+  return (features ?? []).map((feature) => ({
+    feature_id: feature.feature_id ?? feature.featureId,
+    feature_label: feature.feature_label ?? feature.featureLabel ?? null,
+    source_id: feature.source_id ?? feature.sourceId ?? null,
+    source_anchor: feature.source_anchor ?? feature.sourceAnchor ?? null,
+    state_label: feature.state_label ?? feature.stateLabel ?? null,
+    state_message: feature.state_message ?? feature.stateMessage ?? null,
+    counterfactual_hint: feature.counterfactual_hint ?? feature.counterfactualHint ?? null,
+  }));
 }
 
 function encodeFeatureValue(rawValue, feature, stringCodes) {

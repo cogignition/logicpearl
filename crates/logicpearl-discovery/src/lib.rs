@@ -345,6 +345,12 @@ const DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS: UniqueCoverageRefinementOption
         min_true_positive_retention: 0.5,
     };
 
+#[cfg(test)]
+pub(crate) fn discovery_selection_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn default_rule_set_version() -> String {
     "1.0".to_string()
 }
@@ -1076,10 +1082,11 @@ impl CreateDirAllExt for PathBuf {
 mod tests {
     use super::{
         build_pearl_from_csv, build_pearl_from_rows, canonicalize_rules, dedupe_rules_by_signature,
-        discover_from_csv, discover_residual_rules, gate_from_rules, load_decision_traces,
-        load_decision_traces_auto, merge_discovered_and_pinned_rules, prune_redundant_rules,
-        rule_from_candidate, BuildOptions, CandidateRule, DecisionTraceRow, DiscoverOptions,
-        DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions, ResidualRecoveryState,
+        discover_from_csv, discover_residual_rules, discovery_selection_env_lock, gate_from_rules,
+        load_decision_traces, load_decision_traces_auto, merge_discovered_and_pinned_rules,
+        prune_redundant_rules, rule_from_candidate, BuildOptions, CandidateRule, DecisionTraceRow,
+        DiscoverOptions, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
+        ResidualRecoveryState,
     };
     use logicpearl_ir::{
         ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
@@ -2147,6 +2154,9 @@ mod tests {
 
     #[test]
     fn build_reuses_cached_output_when_rows_and_options_match() {
+        let _guard = discovery_selection_env_lock()
+            .lock()
+            .expect("env lock should be available");
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("decision_traces.csv");
         std::fs::write(&csv_path, "flag,allowed\n0,allowed\n1,denied\n1,denied\n").unwrap();
@@ -2271,6 +2281,9 @@ mod tests {
 
     #[test]
     fn discover_reuses_cached_output_when_dataset_and_options_match() {
+        let _guard = discovery_selection_env_lock()
+            .lock()
+            .expect("env lock should be available");
         let dir = tempfile::tempdir().unwrap();
         let csv_path = dir.path().join("multi_target.csv");
         std::fs::write(
