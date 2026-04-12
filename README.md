@@ -308,6 +308,7 @@ Additional build controls:
 - `--refine` tightens uniquely over-broad rules
 - `--pinned-rules rules.json` merges a maintained rule layer after discovery
 - `--feature-dictionary feature_dictionary.json` gives raw feature IDs readable labels, states, and source anchors
+- `--source-manifest sources.json` records where traces, dictionaries, or plugin outputs came from
 - `--feature-governance governance.json` constrains how discovery may use specific features
 - `--raw-feature-ids` skips the default generated feature metadata
 
@@ -345,6 +346,38 @@ Dictionary entries are embedded into the emitted `pearl.ir.json` under `input_sc
 The dictionary is generic. Do not encode healthcare, payer, or policy-specific parsing in the LogicPearl core. Domain adapters should generate the dictionary alongside traces and pass it to `build` or `discover`; CSV users can start with labels only and add state text when they want higher-quality diffs.
 
 See [Feature dictionaries](./docs/feature-dictionary.md) for the schema, examples, and guidance for integration authors.
+
+### Record source provenance with a source manifest
+
+Use a source manifest when traces or feature dictionaries were derived from policy documents, customer exports, public URLs, PDFs, manual notes, or synthetic fixtures. The manifest is generic provenance metadata. LogicPearl validates and hashes it, then records it in `build_report.json` under `provenance.source_manifest`.
+
+```bash
+logicpearl build traces.csv \
+  --feature-dictionary feature_dictionary.json \
+  --source-manifest sources.json \
+  --output-dir /tmp/logicpearl-build
+```
+
+Minimal shape:
+
+```json
+{
+  "schema_version": "logicpearl.source_manifest.v1",
+  "sources": [
+    {
+      "source_id": "policy_manual_2026_04",
+      "kind": "manual_policy",
+      "title": "April policy manual",
+      "uri": "s3://example/policy_manual_2026_04.pdf",
+      "retrieved_at": "2026-04-12T14:30:00Z",
+      "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "data_classification": "customer_confidential"
+    }
+  ]
+}
+```
+
+Core does not fetch `uri`, parse PDFs, interpret source names, or change learning based on `data_classification`. Domain integrations own those meanings. The engine preserves declared source metadata and hashes so audit tools can connect an artifact back to the exact source set used to produce its inputs.
 
 ### Constrain one-sided evidence with feature governance
 

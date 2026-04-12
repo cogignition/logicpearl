@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -62,6 +62,14 @@ fn run_cli_json(args: &[String]) -> Value {
     serde_json::from_slice(&output.stdout).expect("logicpearl output should be JSON")
 }
 
+fn run_cli_output(args: &[String]) -> std::process::Output {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    Command::new(cli_bin)
+        .args(args)
+        .output()
+        .expect("logicpearl command should run")
+}
+
 #[test]
 fn file_backed_gate_build_records_v1_provenance() {
     let root = repo_root();
@@ -96,6 +104,108 @@ fn file_backed_gate_build_records_v1_provenance() {
 
     let persisted = load_json(artifact_dir.join("build_report.json"));
     assert_eq!(&persisted["provenance"], provenance);
+}
+
+#[test]
+fn source_manifest_is_validated_and_attached_to_provenance() {
+    let root = repo_root();
+    let temp = tempdir().expect("temp dir should exist");
+    let artifact_dir = temp.path().join("gate");
+    let source_manifest = temp.path().join("sources.json");
+    fs::write(
+        &source_manifest,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": "logicpearl.source_manifest.v1",
+            "sources": [
+                {
+                    "source_id": "getting_started_fixture",
+                    "kind": "synthetic_fixture",
+                    "title": "Getting started decision trace fixture",
+                    "uri": "repo:examples/getting_started/decision_traces.csv",
+                    "retrieved_at": "2026-04-12T00:00:00Z",
+                    "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    "data_classification": "synthetic"
+                }
+            ]
+        }))
+        .expect("source manifest should encode"),
+    )
+    .expect("source manifest should write");
+
+    let report = run_cli_json(&[
+        "build".to_string(),
+        root.join("examples/getting_started/decision_traces.csv")
+            .display()
+            .to_string(),
+        "--source-manifest".to_string(),
+        source_manifest.display().to_string(),
+        "--output-dir".to_string(),
+        artifact_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+
+    let provenance = &report["provenance"];
+    validate_build_provenance(provenance);
+    assert_sha256(&provenance["source_manifest"]["hash"]);
+    assert_eq!(
+        provenance["source_manifest"]["sources"][0]["source_id"].as_str(),
+        Some("getting_started_fixture")
+    );
+    assert_eq!(
+        provenance["source_manifest"]["sources"][0]["data_classification"].as_str(),
+        Some("synthetic")
+    );
+    assert_eq!(
+        provenance["build_options"]["source_manifest"].as_str(),
+        Some(source_manifest.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn invalid_source_manifest_is_rejected_before_build() {
+    let root = repo_root();
+    let temp = tempdir().expect("temp dir should exist");
+    let source_manifest = temp.path().join("bad_sources.json");
+    fs::write(
+        &source_manifest,
+        serde_json::to_string_pretty(&json!({
+            "schema_version": "logicpearl.source_manifest.v1",
+            "sources": [
+                {
+                    "source_id": "bad",
+                    "kind": "public_url",
+                    "title": "Bad source",
+                    "content_hash": "not-a-sha",
+                    "data_classification": "public"
+                }
+            ]
+        }))
+        .expect("source manifest should encode"),
+    )
+    .expect("source manifest should write");
+
+    let output = run_cli_output(&[
+        "build".to_string(),
+        root.join("examples/getting_started/decision_traces.csv")
+            .display()
+            .to_string(),
+        "--source-manifest".to_string(),
+        source_manifest.display().to_string(),
+        "--output-dir".to_string(),
+        temp.path().join("out").display().to_string(),
+        "--json".to_string(),
+    ]);
+    assert!(
+        !output.status.success(),
+        "invalid source manifest should fail:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid content_hash"),
+        "stderr should explain source manifest hash failure:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

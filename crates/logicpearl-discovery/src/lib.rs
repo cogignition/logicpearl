@@ -165,7 +165,7 @@ pub struct BuildProvenance {
     #[serde(default)]
     pub plugins: Vec<PluginBuildProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_manifest: Option<FileProvenance>,
+    pub source_manifest: Option<SourceManifestProvenance>,
     #[serde(default)]
     pub environment: BTreeMap<String, Value>,
     #[serde(default)]
@@ -216,6 +216,35 @@ pub struct TraceInputProvenance {
 pub struct FileProvenance {
     pub path: String,
     pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct SourceManifestProvenance {
+    pub path: String,
+    pub hash: String,
+    #[serde(default)]
+    pub sources: Vec<SourceManifestSource>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct SourceManifest {
+    pub schema_version: String,
+    #[serde(default)]
+    pub sources: Vec<SourceManifestSource>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct SourceManifestSource {
+    pub source_id: String,
+    pub kind: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieved_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    pub data_classification: String,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]

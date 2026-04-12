@@ -38,7 +38,7 @@ pub(crate) struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -89,6 +89,9 @@ pub(crate) struct BuildArgs {
     /// Repeated key=value source references to record in build_report.json, such as document_id=claim_1234.
     #[arg(long = "source-ref", help_heading = "Advanced")]
     pub source_references: Vec<String>,
+    /// Generic source manifest to hash and attach to build provenance.
+    #[arg(long, help_heading = "Advanced")]
+    pub source_manifest: Option<PathBuf>,
     /// Tighten over-broad rules using unique-coverage refinement over binary features.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub refine: bool,
@@ -267,6 +270,7 @@ struct LogicPearlBuildConfig {
     #[serde(default)]
     raw_feature_ids: bool,
     feature_dictionary: Option<PathBuf>,
+    source_manifest: Option<PathBuf>,
     feature_governance: Option<PathBuf>,
 }
 
@@ -355,6 +359,16 @@ struct LoadedActionTraceRecords {
     default_output_base: PathBuf,
     default_artifact_name: String,
     trace_plugin: Option<PluginBuildProvenance>,
+}
+
+struct BuildProvenanceInputs {
+    input_traces: Vec<TraceInputProvenance>,
+    trace_plugin: Option<PluginBuildProvenance>,
+    enricher_plugin: Option<PluginBuildProvenance>,
+    feature_dictionary_path: Option<PathBuf>,
+    source_manifest: Option<SourceManifestProvenance>,
+    build_options: Value,
+    build_options_hash: String,
 }
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -626,6 +640,11 @@ fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     if args.feature_dictionary.is_none() {
         args.feature_dictionary = build
             .feature_dictionary
+            .map(|path| resolve_config_path(&config_path, path));
+    }
+    if args.source_manifest.is_none() {
+        args.source_manifest = build
+            .source_manifest
             .map(|path| resolve_config_path(&config_path, path));
     }
     if args.feature_governance.is_none() {
@@ -1245,6 +1264,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .feature_dictionary
             .as_ref()
             .map(|path| path.display().to_string()),
+        "source_manifest": args
+            .source_manifest
+            .as_ref()
+            .map(|path| path.display().to_string()),
         "feature_governance": build_options
             .feature_governance
             .as_ref()
@@ -1316,12 +1339,15 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
 
     let build_provenance = build_build_provenance(
         &args,
-        input_traces,
-        trace_plugin_provenance,
-        enricher_plugin_provenance,
-        args.feature_dictionary.as_deref(),
-        build_options_value,
-        build_options_digest.clone(),
+        BuildProvenanceInputs {
+            input_traces,
+            trace_plugin: trace_plugin_provenance,
+            enricher_plugin: enricher_plugin_provenance,
+            feature_dictionary_path: args.feature_dictionary.clone(),
+            source_manifest: load_source_manifest_for_provenance(args.source_manifest.as_deref())?,
+            build_options: build_options_value,
+            build_options_hash: build_options_digest.clone(),
+        },
     )?;
 
     let spinner = if !args.json {
@@ -1688,6 +1714,8 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         write_feature_dictionary_from_columns(&dictionary_path, feature_columns.clone())?;
         args.feature_dictionary = Some(dictionary_path);
     }
+    let source_manifest_provenance =
+        load_source_manifest_for_provenance(args.source_manifest.as_deref())?;
 
     let stale_actions_dir = output_dir.join("actions");
     if stale_actions_dir.exists() {
@@ -1861,6 +1889,10 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             .feature_dictionary
             .as_ref()
             .map(|path| path.display().to_string()),
+        "source_manifest": args
+            .source_manifest
+            .as_ref()
+            .map(|path| path.display().to_string()),
         "feature_governance": args
             .feature_governance
             .as_ref()
@@ -1891,12 +1923,15 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         training_parity,
         provenance: Some(build_build_provenance(
             &args,
-            input_traces,
-            trace_plugin_provenance,
-            None,
-            args.feature_dictionary.as_deref(),
-            build_options_value,
-            build_options_digest.clone(),
+            BuildProvenanceInputs {
+                input_traces,
+                trace_plugin: trace_plugin_provenance,
+                enricher_plugin: None,
+                feature_dictionary_path: args.feature_dictionary.clone(),
+                source_manifest: source_manifest_provenance,
+                build_options: build_options_value,
+                build_options_hash: build_options_digest.clone(),
+            },
         )?),
     };
     let action_report_path = output_dir.join("action_report.json");
@@ -2556,12 +2591,7 @@ fn compute_action_training_parity(
 
 fn build_build_provenance(
     args: &BuildArgs,
-    input_traces: Vec<TraceInputProvenance>,
-    trace_plugin: Option<PluginBuildProvenance>,
-    enricher_plugin: Option<PluginBuildProvenance>,
-    feature_dictionary_path: Option<&Path>,
-    build_options: Value,
-    build_options_hash_value: String,
+    inputs: BuildProvenanceInputs,
 ) -> Result<BuildProvenance> {
     let source_references = parse_key_value_entries(&args.source_references, "source-ref")?;
     let decision_trace_source = if let Some(path) = &args.decision_traces {
@@ -2580,15 +2610,16 @@ fn build_build_provenance(
             })
     };
 
-    let plugins = [trace_plugin.clone(), enricher_plugin.clone()]
+    let plugins = [inputs.trace_plugin.clone(), inputs.enricher_plugin.clone()]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    let feature_dictionary = feature_dictionary_path
+    let feature_dictionary = inputs
+        .feature_dictionary_path
+        .as_deref()
         .filter(|path| path.exists())
         .map(file_provenance)
         .transpose()?;
-    let source_manifest = source_manifest_provenance()?;
     let build_command = build_command_provenance();
     let mut redactions = Vec::new();
     if build_command.redacted {
@@ -2600,12 +2631,12 @@ fn build_build_provenance(
         engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
         engine_commit: resolve_engine_commit(),
         build_command: Some(build_command),
-        build_options: Some(build_options),
-        build_options_hash: Some(build_options_hash_value),
-        input_traces,
+        build_options: Some(inputs.build_options),
+        build_options_hash: Some(inputs.build_options_hash),
+        input_traces: inputs.input_traces,
         feature_dictionary,
         plugins,
-        source_manifest,
+        source_manifest: inputs.source_manifest,
         environment: build_environment_summary(),
         generated_files: BTreeMap::new(),
         generated_file_notes: vec![
@@ -2614,8 +2645,8 @@ fn build_build_provenance(
         ],
         redactions,
         decision_trace_source,
-        trace_plugin,
-        enricher_plugin,
+        trace_plugin: inputs.trace_plugin,
+        enricher_plugin: inputs.enricher_plugin,
         source_references,
     })
 }
@@ -2859,10 +2890,124 @@ fn trace_input_provenance(path: &Path, row_count: usize) -> Result<TraceInputPro
     })
 }
 
-fn source_manifest_provenance() -> Result<Option<FileProvenance>> {
-    load_project_config()?
-        .map(|(path, _)| file_provenance(&path))
-        .transpose()
+fn load_source_manifest_for_provenance(
+    path: Option<&Path>,
+) -> Result<Option<SourceManifestProvenance>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let content = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read source manifest: {}", path.display()))?;
+    let manifest: SourceManifest = serde_json::from_str(&content)
+        .into_diagnostic()
+        .wrap_err("source manifest is not valid JSON")?;
+    validate_source_manifest(&manifest)?;
+    Ok(Some(SourceManifestProvenance {
+        path: path.display().to_string(),
+        hash: hash_file_for_provenance(path)?,
+        sources: manifest.sources,
+    }))
+}
+
+fn validate_source_manifest(manifest: &SourceManifest) -> Result<()> {
+    if manifest.schema_version != "logicpearl.source_manifest.v1" {
+        return Err(guidance(
+            format!(
+                "unsupported source manifest schema_version {:?}",
+                manifest.schema_version
+            ),
+            "Use schema_version: \"logicpearl.source_manifest.v1\".",
+        ));
+    }
+    if manifest.sources.is_empty() {
+        return Err(guidance(
+            "source manifest must declare at least one source",
+            "Add a source entry with source_id, kind, title, and data_classification.",
+        ));
+    }
+
+    let mut seen = BTreeSet::new();
+    for source in &manifest.sources {
+        if source.source_id.trim().is_empty() {
+            return Err(guidance(
+                "source manifest contains an empty source_id",
+                "Use stable source IDs that feature dictionaries or trace generators can reference.",
+            ));
+        }
+        if !seen.insert(source.source_id.clone()) {
+            return Err(guidance(
+                format!("source manifest repeats source_id {:?}", source.source_id),
+                "Each source_id must be unique within one source manifest.",
+            ));
+        }
+        if source.title.trim().is_empty() {
+            return Err(guidance(
+                format!("source {:?} has an empty title", source.source_id),
+                "Give every source a reviewer-facing title.",
+            ));
+        }
+        if !is_allowed_source_kind(&source.kind) {
+            return Err(guidance(
+                format!(
+                    "source {:?} has unsupported kind {:?}",
+                    source.source_id, source.kind
+                ),
+                "Use one of: public_url, pdf, customer_export, manual_policy, synthetic_fixture.",
+            ));
+        }
+        if !is_allowed_data_classification(&source.data_classification) {
+            return Err(guidance(
+                format!(
+                    "source {:?} has unsupported data_classification {:?}",
+                    source.source_id, source.data_classification
+                ),
+                "Use one of: public, synthetic, customer_confidential, phi.",
+            ));
+        }
+        if let Some(hash) = &source.content_hash {
+            validate_sha256_prefixed(hash).map_err(|message| {
+                guidance(
+                    format!(
+                        "source {:?} has invalid content_hash: {message}",
+                        source.source_id
+                    ),
+                    "Use sha256:<64 lowercase hex characters>.",
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn is_allowed_source_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "public_url" | "pdf" | "customer_export" | "manual_policy" | "synthetic_fixture"
+    )
+}
+
+fn is_allowed_data_classification(classification: &str) -> bool {
+    matches!(
+        classification,
+        "public" | "synthetic" | "customer_confidential" | "phi"
+    )
+}
+
+fn validate_sha256_prefixed(value: &str) -> std::result::Result<(), &'static str> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err("missing sha256: prefix");
+    };
+    if hex.len() != 64 {
+        return Err("digest must be 64 hex characters");
+    }
+    if !hex
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("digest must use lowercase hex");
+    }
+    Ok(())
 }
 
 fn plugin_provenance_from_execution(

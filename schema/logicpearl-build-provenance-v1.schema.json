@@ -137,7 +137,20 @@
       }
     },
     "source_manifest": {
-      "$ref": "#/$defs/file_provenance"
+      "allOf": [
+        { "$ref": "#/$defs/file_provenance" },
+        {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/source"
+              }
+            }
+          }
+        }
+      ]
     },
     "environment": {
       "type": "object",
@@ -176,6 +189,49 @@
         },
         "hash": {
           "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "required": ["source_id", "kind", "title", "data_classification"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "public_url",
+            "pdf",
+            "customer_export",
+            "manual_policy",
+            "synthetic_fixture"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retrieved_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "data_classification": {
+          "enum": [
+            "public",
+            "synthetic",
+            "customer_confidential",
+            "phi"
+          ]
         }
       },
       "additionalProperties": true

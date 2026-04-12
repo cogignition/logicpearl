@@ -16,7 +16,8 @@ use logicpearl_discovery::{
     load_decision_traces_auto, load_flat_records, BuildCommandProvenance, BuildInputProvenance,
     BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
     ExactSelectionBackend, FeatureDictionaryConfig, FileProvenance, LoadedFlatRecords,
-    PluginBuildProvenance, ResidualRecoveryState, TraceInputProvenance,
+    PluginBuildProvenance, ResidualRecoveryState, SourceManifest, SourceManifestProvenance,
+    TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,

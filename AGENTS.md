@@ -112,6 +112,38 @@ tokens, passwords, secrets, API keys, credentials, and auth fields.
 `build_report.provenance.generated_files`; use the artifact manifest file hashes
 and `logicpearl artifact verify` for bundle integrity.
 
+## Source Manifests
+
+`logicpearl build` accepts `--source-manifest sources.json` as a generic
+provenance input. The source manifest is not a feature dictionary and must not
+change discovery, runtime evaluation, labels, bitmasks, or rule text.
+
+Expected shape:
+
+```json
+{
+  "schema_version": "logicpearl.source_manifest.v1",
+  "sources": [
+    {
+      "source_id": "policy_manual_2026_04",
+      "kind": "manual_policy",
+      "title": "April policy manual",
+      "uri": "s3://example/policy_manual_2026_04.pdf",
+      "retrieved_at": "2026-04-12T14:30:00Z",
+      "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "data_classification": "customer_confidential"
+    }
+  ]
+}
+```
+
+Core should validate the v1 shape, preserve `sources[]`, hash the manifest, and
+attach it to `build_report.provenance.source_manifest`. Do not fetch `uri`,
+parse PDFs, read remote source content, interpret `source_id`, or add
+domain-specific, customer-specific, or benchmark-specific behavior to core.
+Domain integrations own source semantics and should express links through
+feature dictionary `source_id` / `source_anchor` fields and source manifests.
+
 ## Multi-Action Policies
 
 LogicPearl can learn a policy that chooses one action from reviewed examples, not just a yes/no gate. Use this when a trace dataset has an action column such as `next_action`.

@@ -14,6 +14,7 @@ All notable user-facing changes should be added here.
 - Priority-aware action learning with optional `--action-priority`, so higher-priority actions learn first and lower-priority actions learn against residual rows.
 - Pre-commit verification now runs artifact entrypoint smoke tests that cover `inspect`, `run`, and `diff` for bundle directories, `artifact.json`, and direct `pearl.ir.json` paths.
 - Versioned `logicpearl.build_provenance.v1` provenance in build reports, including trace hashes, feature dictionary hashes, plugin boundary hashes, redacted build commands, build option hashes, limited environment metadata, and generated artifact file hashes.
+- Versioned `logicpearl.source_manifest.v1` support via `logicpearl build --source-manifest`, with validated source metadata attached to build provenance without changing learned logic or runtime behavior.
 
 ### Changed
 - `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
