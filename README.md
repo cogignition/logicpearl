@@ -201,6 +201,8 @@ reason:
 
 The demo uses `logicpearl.yaml`, so the command stays short. LogicPearl generates readable feature metadata from the trace columns by default and emits one action policy artifact with action-labeled rules. The point is not that LogicPearl is a plant expert. The point is that reviewed examples can become a small deterministic artifact that returns the next action and the reason.
 
+For multi-action policies with an explicit override order, pass `--action-priority block,redact`. Higher-priority actions learn first; lower-priority actions learn from the residual rows not already captured by earlier routes. Use `--action-max-rules N` when you need a hard total rule cap; otherwise LogicPearl scales action budgets from trace support.
+
 After you inspect the artifact, you can improve it: add edge cases, remove weak examples, make feature labels clearer, rebuild, and compare the result. That improvement loop is the point.
 
 When you need deployables for the same action policy, build with `--compile`:

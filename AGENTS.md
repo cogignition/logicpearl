@@ -141,6 +141,8 @@ At runtime, LogicPearl evaluates all matching rules into a bitmask, then selects
 logicpearl run /tmp/actions today.json --json
 ```
 
+Action learning is priority-aware. By default, non-default actions are learned in support-based order, with rarer actions first and first-seen order as the tie breaker. Use `--action-priority block,redact` when the domain has an explicit high-to-low priority order. Earlier actions learn first, then lower-priority actions learn against residual rows not already captured by earlier routes. Use `--action-max-rules N` to cap the total emitted non-default action rules; when omitted, LogicPearl scales per-action budgets from trace support.
+
 The JSON result includes the artifact/policy id, `decision_kind: "action"`, selected `action`, matched-rule `bitmask`, `defaulted`, `ambiguity`, selected and matched rules, and the feature dictionary semantics for the matched rule predicates.
 
 Gate runtime JSON follows the same pattern for the fields that apply to gates: artifact/policy id, `decision_kind: "gate"`, `allow`, `bitmask`, matched rules, and source-grounded feature explanations.

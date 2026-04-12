@@ -149,7 +149,8 @@ fn garden_actions_builds_single_action_policy_artifact() {
     assert_eq!(run_json["action_policy_id"], "garden_actions");
     assert_eq!(run_json["action"], "water");
     assert_eq!(run_json["defaulted"], false);
-    assert_eq!(run_json["bitmask"], 1);
+    assert!(run_json["bitmask"].as_u64().unwrap_or_default() > 0);
+    assert_eq!(run_json["selected_rules"][0]["action"], "water");
 
     let direct_ir_run_output = Command::new(cli_bin)
         .arg("run")
@@ -215,7 +216,8 @@ fn garden_actions_builds_single_action_policy_artifact() {
     assert_eq!(compiled_json["action_policy_id"], "garden_actions_plugin");
     assert_eq!(compiled_json["action"], "water");
     assert_eq!(compiled_json["defaulted"], false);
-    assert_eq!(compiled_json["bitmask"], 1);
+    assert!(compiled_json["bitmask"].as_u64().unwrap_or_default() > 0);
+    assert_eq!(compiled_json["selected_rules"][0]["action"], "water");
 
     if let Some(wasm_module) = plugin_manifest["files"]["wasm"].as_str() {
         assert_eq!(wasm_module, "pearl.wasm");

@@ -49,6 +49,7 @@ pub struct BuildOptions {
     pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
+    pub max_rules: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Hash, Default)]
@@ -425,6 +426,7 @@ fn build_cache_manifest(
         feature_governance_path: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        max_rules: Option<usize>,
         solver_backend_env: Option<String>,
         resolved_solver_backend: Option<String>,
         solver_timeout_ms_env: Option<String>,
@@ -460,7 +462,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "4".to_string(),
+        cache_version: "5".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -487,6 +489,7 @@ fn build_cache_manifest(
                 .map(|path| path.display().to_string()),
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            max_rules: options.max_rules,
             solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
             resolved_solver_backend: resolved_solver_backend_name(),
             solver_timeout_ms_env: std::env::var(SOLVER_TIMEOUT_MS_ENV).ok(),
@@ -642,6 +645,7 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         feature_dictionary: options.feature_dictionary.clone(),
         feature_governance: options.feature_governance.clone(),
         decision_mode: options.decision_mode,
+        max_rules: options.max_rules,
     };
     build_pearl_from_rows(
         &loaded.rows,
@@ -807,6 +811,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
+                max_rules: None,
             },
         ) {
             Ok(build) => build,
@@ -1011,9 +1016,13 @@ fn learn_gate_from_rows_internal(
         .transpose()?
         .unwrap_or_default();
     validate_feature_dictionary(&feature_dictionary, rows, &derived_features)?;
-    let residual_options = options
-        .residual_pass
-        .then_some(DEFAULT_RESIDUAL_PASS_OPTIONS.clone());
+    let residual_options = options.residual_pass.then(|| {
+        let mut residual_options = DEFAULT_RESIDUAL_PASS_OPTIONS.clone();
+        if let Some(max_rules) = options.max_rules {
+            residual_options.max_rules = max_rules;
+        }
+        residual_options
+    });
     let refinement_options = options
         .refine
         .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
@@ -1037,6 +1046,7 @@ fn learn_gate_from_rows_internal(
         &feature_dictionary.features,
         &options.gate_id,
         options.decision_mode,
+        options.max_rules,
         residual_options.as_ref(),
         refinement_options.as_ref(),
         pinned_rules.as_ref(),
@@ -1312,6 +1322,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1352,6 +1363,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1512,6 +1524,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1607,6 +1620,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1873,6 +1887,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1897,6 +1912,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1941,6 +1957,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -1985,6 +2002,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -2047,6 +2065,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();
@@ -2173,6 +2192,7 @@ mod tests {
             feature_dictionary: None,
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
+            max_rules: None,
         };
 
         let first = build_pearl_from_csv(&csv_path, &options).unwrap();
@@ -2388,6 +2408,7 @@ mod tests {
                 feature_dictionary: None,
                 feature_governance: None,
                 decision_mode: DiscoveryDecisionMode::Standard,
+                max_rules: None,
             },
         )
         .unwrap();

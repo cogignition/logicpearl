@@ -459,13 +459,46 @@ fn load_named_artifact_manifest(path: &Path) -> Result<NamedArtifactManifest> {
 fn resolve_manifest_path(manifest_path: &Path, value: &str) -> PathBuf {
     let candidate = Path::new(value);
     if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        manifest_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(candidate)
+        return candidate.to_path_buf();
     }
+
+    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let joined = base_dir.join(candidate);
+    if joined.exists() {
+        return joined;
+    }
+
+    if let Some(relative) = manifest_member_without_base_prefix(base_dir, candidate) {
+        let repaired = base_dir.join(relative);
+        if repaired.exists() {
+            return repaired;
+        }
+    }
+
+    if candidate.exists() {
+        return candidate.to_path_buf();
+    }
+
+    joined
+}
+
+fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
+    if let Ok(relative) = path.strip_prefix(base_dir) {
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+
+    let base_name = base_dir.file_name()?;
+    let mut components = path.components();
+    let first = components.next()?;
+    if first.as_os_str() == base_name {
+        let relative = components.as_path();
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+    None
 }
 
 fn looks_like_pipeline_path(path: &Path) -> bool {
@@ -544,6 +577,33 @@ mod tests {
 
         let engine =
             LogicPearlEngine::from_path(dir.path()).expect("manifest-backed artifact loads");
+        assert_eq!(engine.kind(), EngineKind::Artifact);
+    }
+
+    #[test]
+    fn loads_manifest_with_redundant_artifact_dir_prefix() {
+        let repo_root = repo_root();
+        let dir = tempdir().expect("tempdir should exist");
+        let artifact_dir = dir.path().join("gate");
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should exist");
+        let ir_path = repo_root.join("fixtures/ir/valid/auth-demo-v1.json");
+        fs::copy(&ir_path, artifact_dir.join("pearl.ir.json")).expect("fixture should copy");
+        fs::write(
+            artifact_dir.join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "artifact_version": "1.0",
+                "artifact_name": "auth-demo",
+                "gate_id": "auth_demo_v1",
+                "files": {
+                    "pearl_ir": "gate/pearl.ir.json"
+                }
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let engine =
+            LogicPearlEngine::from_path(&artifact_dir).expect("prefixed manifest path loads");
         assert_eq!(engine.kind(), EngineKind::Artifact);
     }
 

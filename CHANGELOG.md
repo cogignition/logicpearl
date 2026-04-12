@@ -10,12 +10,18 @@ All notable user-facing changes should be added here.
 - Browser runtime TypeScript declarations and `evaluateJson()` / `evaluateJsonBatch()` helpers for schema-shaped gate and action results.
 - Versioned `logicpearl.artifact_manifest.v1` schema-backed artifact manifests for gate, action, and composed pipeline bundles.
 - `logicpearl artifact inspect`, `logicpearl artifact digest`, and `logicpearl artifact verify` for public bundle inspection and integrity checks.
+- Configurable action-policy rule budgets via `--action-max-rules`, plus support-scaled default budgets for multi-action builds.
+- Priority-aware action learning with optional `--action-priority`, so higher-priority actions learn first and lower-priority actions learn against residual rows.
 
 ### Changed
 - `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
 - `artifact.json` now carries stable v1 bundle metadata including artifact kind, engine version, IR version, artifact hash, file hashes, and build option/input schema digests.
 - Pipeline pearl stages now preserve canonical gate runtime details in `stages[].raw_result` while keeping exported fields such as `bitmask` and `allow` available.
 - Wasm metadata now carries `engine_version` and `artifact_hash` so browser integrations can return v1 runtime JSON results.
+- Action-policy discovery now preserves ordinal/count generalization across lower-priority actions instead of forcing every action route to learn against rows already captured by higher-priority rules.
+
+### Fixed
+- Artifact manifests written from relative `--output-dir` paths no longer double-prefix `files.ir`, and CLI/engine loaders tolerate already-written manifests with that redundant artifact-directory prefix.
 
 ## 0.1.5 - 2026-04-12
 

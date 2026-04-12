@@ -763,6 +763,20 @@ fn relative_manifest_file(base_dir: &Path, path: &Path, fallback: &str) -> Strin
     } else {
         base_dir.join(path)
     };
+    if candidate.exists() {
+        if let Ok(relative) = candidate.strip_prefix(base_dir) {
+            let rendered = relative.display().to_string();
+            if !rendered.is_empty() {
+                return rendered;
+            }
+        }
+    }
+    if let Some(relative) = manifest_member_without_base_prefix(base_dir, path) {
+        let rendered = relative.display().to_string();
+        if !rendered.is_empty() {
+            return rendered;
+        }
+    }
     if let Ok(relative) = candidate.strip_prefix(base_dir) {
         let rendered = relative.display().to_string();
         if !rendered.is_empty() {
@@ -775,6 +789,25 @@ fn relative_manifest_file(base_dir: &Path, path: &Path, fallback: &str) -> Strin
         .unwrap_or_else(|| fallback.to_string())
 }
 
+fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
+    if let Ok(relative) = path.strip_prefix(base_dir) {
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+
+    let base_name = base_dir.file_name()?;
+    let mut components = path.components();
+    let first = components.next()?;
+    if first.as_os_str() == base_name {
+        let relative = components.as_path();
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+    None
+}
+
 fn insert_file_hash(
     base_dir: &Path,
     file_hashes: &mut BTreeMap<String, String>,
@@ -784,7 +817,7 @@ fn insert_file_hash(
     let Some(relative_path) = relative_path else {
         return Ok(());
     };
-    let path = base_dir.join(relative_path);
+    let path = resolve_manifest_member_path(base_dir, relative_path);
     if path.exists() {
         file_hashes.insert(role.to_string(), hash_file_canonical_if_json(&path)?);
     }
@@ -964,7 +997,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
             }),
     );
 
-    let ir_path = context.base_dir.join(&context.manifest.files.ir);
+    let ir_path = resolve_manifest_member_path(&context.base_dir, &context.manifest.files.ir);
     push_check(
         &mut checks,
         "files.ir_exists",
@@ -1011,7 +1044,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         .into_iter()
         .filter(|(role, _)| role != "ir")
     {
-        let path = context.base_dir.join(&relative_path);
+        let path = resolve_manifest_member_path(&context.base_dir, &relative_path);
         push_check(
             &mut checks,
             format!("files.{role}_exists"),
@@ -1036,7 +1069,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         context.manifest.files.feature_dictionary.as_ref(),
         context.manifest.feature_dictionary_hash.as_ref(),
     ) {
-        let dictionary_path = context.base_dir.join(path);
+        let dictionary_path = resolve_manifest_member_path(&context.base_dir, path);
         if dictionary_path.exists() {
             let actual = hash_file_canonical_if_json(&dictionary_path)?;
             push_check(
@@ -1199,7 +1232,7 @@ fn legacy_manifest_from_value(base_dir: &Path, value: &Value) -> Result<Artifact
         .and_then(Value::as_str)
         .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))?
         .to_string();
-    let ir_path = base_dir.join(&ir);
+    let ir_path = resolve_manifest_member_path(base_dir, &ir);
     let ir_value = read_json_file(&ir_path)?;
     let (artifact_kind, artifact_id, ir_version, input_schema_hash) =
         artifact_identity_from_value(&ir_value)?;
@@ -1436,7 +1469,14 @@ fn resolved_manifest_files(
 ) -> BTreeMap<String, String> {
     manifest_file_roles(files)
         .into_iter()
-        .map(|(role, path)| (role, base_dir.join(path).display().to_string()))
+        .map(|(role, path)| {
+            (
+                role,
+                resolve_manifest_member_path(base_dir, &path)
+                    .display()
+                    .to_string(),
+            )
+        })
         .collect()
 }
 
@@ -2451,16 +2491,36 @@ fn load_manifest_pearl_ir(path: &Path) -> Result<String> {
         .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))
 }
 
-fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> PathBuf {
+pub(crate) fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> PathBuf {
     let candidate = PathBuf::from(raw_path);
     if candidate.is_absolute() {
-        candidate
-    } else {
-        manifest_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(candidate)
+        return candidate;
     }
+
+    let joined = base_dir.join(&candidate);
+    if joined.exists() {
+        return joined;
+    }
+
+    if let Some(relative) = manifest_member_without_base_prefix(base_dir, &candidate) {
+        let repaired = base_dir.join(relative);
+        if repaired.exists() {
+            return repaired;
+        }
+    }
+
+    if candidate.exists() {
+        return candidate;
+    }
+
+    joined
+}
+
+fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> PathBuf {
+    resolve_manifest_member_path(
+        manifest_path.parent().unwrap_or_else(|| Path::new(".")),
+        raw_path,
+    )
 }
 
 fn artifact_file_stem(name: &str) -> String {
@@ -2550,8 +2610,9 @@ fn target_is_windows(target_triple: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        generate_wasm_runner_source, unique_generated_crate_name, write_wasm_metadata,
-        write_wasm_metadata_for_pearl, CompilablePearl,
+        generate_wasm_runner_source, relative_manifest_file, resolve_manifest_member_path,
+        unique_generated_crate_name, write_wasm_metadata, write_wasm_metadata_for_pearl,
+        CompilablePearl,
     };
     use logicpearl_ir::{
         ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
@@ -2560,6 +2621,7 @@ mod tests {
         LogicPearlGateIr, RuleDefinition, RuleKind,
     };
     use serde_json::Value;
+    use std::path::Path;
 
     #[test]
     fn generated_crate_names_are_isolated_per_invocation() {
@@ -2568,6 +2630,36 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("logicpearl_compiled_demo_"));
         assert!(second.starts_with("logicpearl_compiled_demo_"));
+    }
+
+    #[test]
+    fn manifest_paths_do_not_double_prefix_relative_output_dirs() {
+        assert_eq!(
+            relative_manifest_file(
+                Path::new("gate"),
+                Path::new("gate/pearl.ir.json"),
+                "pearl.ir.json"
+            ),
+            "pearl.ir.json"
+        );
+        assert_eq!(
+            relative_manifest_file(
+                Path::new("/tmp/project/gate"),
+                Path::new("gate/pearl.ir.json"),
+                "pearl.ir.json"
+            ),
+            "pearl.ir.json"
+        );
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let artifact_dir = temp_dir.path().join("gate");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        std::fs::write(artifact_dir.join("pearl.ir.json"), "{}").expect("pearl file");
+
+        assert_eq!(
+            resolve_manifest_member_path(&artifact_dir, "gate/pearl.ir.json"),
+            artifact_dir.join("pearl.ir.json")
+        );
     }
 
     #[test]

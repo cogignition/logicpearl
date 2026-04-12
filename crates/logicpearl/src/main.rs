@@ -66,11 +66,11 @@ use artifact_cmd::{
     build_deployable_bundle_descriptor, build_options_hash, compile_native_runner,
     compile_wasm_module, is_rust_target_installed, load_artifact_bundle_descriptor,
     native_artifact_output_path, pearl_artifact_id, persist_build_report,
-    refresh_artifact_manifest_deployables, resolve_artifact_input, run_artifact_digest,
-    run_artifact_inspect, run_artifact_verify, run_embedded_native_runner_if_present,
-    wasm_artifact_output_path, write_artifact_manifest_v1, write_named_artifact_manifest,
-    ArtifactBundleDescriptor, ArtifactDigestArgs, ArtifactInspectArgs,
-    ArtifactManifestWriteOptions, ArtifactVerifyArgs,
+    refresh_artifact_manifest_deployables, resolve_artifact_input, resolve_manifest_member_path,
+    run_artifact_digest, run_artifact_inspect, run_artifact_verify,
+    run_embedded_native_runner_if_present, wasm_artifact_output_path, write_artifact_manifest_v1,
+    write_named_artifact_manifest, ArtifactBundleDescriptor, ArtifactDigestArgs,
+    ArtifactInspectArgs, ArtifactManifestWriteOptions, ArtifactVerifyArgs,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
@@ -342,6 +342,7 @@ enum ColorChoice {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Show the quickest ways to try LogicPearl.
     Quickstart(QuickstartArgs),

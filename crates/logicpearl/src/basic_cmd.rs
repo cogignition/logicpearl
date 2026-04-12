@@ -65,6 +65,12 @@ pub(crate) struct BuildArgs {
     /// Default action when no action route matches. If omitted, LogicPearl prefers do_nothing, wait, none, or noop when present.
     #[arg(long, help_heading = "Advanced")]
     pub default_action: Option<String>,
+    /// Maximum total rules emitted across non-default action routes. If omitted, LogicPearl scales per-action budgets from trace support.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub action_max_rules: Option<usize>,
+    /// Comma-separated high-to-low action priority order. Unlisted actions keep LogicPearl's support-based order after the listed actions.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub action_priority: Option<String>,
     /// Do not generate starter feature metadata when --feature-dictionary is omitted.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub raw_feature_ids: bool,
@@ -256,6 +262,8 @@ struct LogicPearlBuildConfig {
     default_label: Option<String>,
     rule_label: Option<String>,
     default_action: Option<String>,
+    action_max_rules: Option<usize>,
+    action_priority: Option<String>,
     #[serde(default)]
     raw_feature_ids: bool,
     feature_dictionary: Option<PathBuf>,
@@ -315,8 +323,19 @@ struct ActionBuildReport {
     default_action: String,
     rows: usize,
     actions: Vec<String>,
+    rule_budget: ActionRuleBudgetReport,
     rules: Vec<ActionRuleBuildReport>,
     training_parity: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ActionRuleBudgetReport {
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_max_rules: Option<usize>,
+    total_budget: usize,
+    priority_order: Vec<String>,
+    per_action: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -584,6 +603,12 @@ fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     }
     if args.default_action.is_none() {
         args.default_action = build.default_action;
+    }
+    if args.action_max_rules.is_none() {
+        args.action_max_rules = build.action_max_rules;
+    }
+    if args.action_priority.is_none() {
+        args.action_priority = build.action_priority;
     }
     if !args.raw_feature_ids {
         args.raw_feature_ids = build.raw_feature_ids;
@@ -1182,6 +1207,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         feature_dictionary: args.feature_dictionary.clone(),
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
+        max_rules: None,
     };
     let build_options_digest = build_options_hash(&serde_json::json!({
         "gate_id": &build_options.gate_id,
@@ -1203,6 +1229,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .as_ref()
             .map(|path| path.display().to_string()),
         "decision_mode": build_options.decision_mode,
+        "max_rules": build_options.max_rules,
     }));
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
@@ -1612,17 +1639,46 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         }
     }
 
+    let support_counts = action_support_counts(&action_by_row);
+    let priority_order = resolve_action_priority_order(
+        &actions,
+        &default_action,
+        args.action_priority.as_deref(),
+        &support_counts,
+    )?;
+    let rule_budget =
+        allocate_action_rule_budget(&priority_order, &support_counts, args.action_max_rules)?;
+
     let mut input_schema = None;
     let mut action_rules = Vec::new();
-    for action in actions.iter().filter(|action| *action != &default_action) {
+    let mut covered_by_priority = vec![false; action_by_row.len()];
+    for action in &priority_order {
+        let action_rule_budget = rule_budget.per_action.get(action).copied().unwrap_or(0);
+        if action_rule_budget == 0 {
+            continue;
+        }
+        let mut target_rows = 0usize;
         let route_rows = action_by_row
             .iter()
             .zip(features_by_row.iter())
-            .map(|(row_action, features)| DecisionTraceRow {
-                features: features.clone(),
-                allowed: row_action != action,
+            .enumerate()
+            .filter_map(|(index, (row_action, features))| {
+                if covered_by_priority[index] {
+                    return None;
+                }
+                let is_target_action = row_action == action;
+                if is_target_action {
+                    target_rows += 1;
+                }
+                Some(DecisionTraceRow {
+                    features: features.clone(),
+                    allowed: !is_target_action,
+                })
             })
             .collect::<Vec<_>>();
+        if target_rows == 0 {
+            continue;
+        }
         let route_name = sanitize_identifier(action);
         let route_gate_id = format!("{}_{}", artifact_name, route_name);
         let learned = learn_gate_from_rows_without_numeric_interactions(
@@ -1639,14 +1695,29 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
                 feature_dictionary: args.feature_dictionary.clone(),
                 feature_governance: args.feature_governance.clone(),
                 decision_mode: to_discovery_decision_mode(args.discovery_mode),
+                max_rules: Some(action_rule_budget),
             },
         )
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to learn action rules for {action:?}"))?;
+        let learned_gate = learned.gate;
         if input_schema.is_none() {
-            input_schema = Some(learned.gate.input_schema.clone());
+            input_schema = Some(learned_gate.input_schema.clone());
         }
-        for rule in learned.gate.rules {
+        for (index, features) in features_by_row.iter().enumerate() {
+            if covered_by_priority[index] {
+                continue;
+            }
+            let bitmask = evaluate_gate(&learned_gate, features)
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!("failed to evaluate learned priority route for action {action:?}")
+                })?;
+            if !bitmask.is_zero() {
+                covered_by_priority[index] = true;
+            }
+        }
+        for rule in learned_gate.rules {
             let bit = u32::try_from(action_rules.len()).into_diagnostic()?;
             action_rules.push(ActionRuleDefinition {
                 id: format!("rule_{bit:03}"),
@@ -1707,6 +1778,7 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         default_action: default_action.clone(),
         rows: loaded.records.len(),
         actions: actions.clone(),
+        rule_budget: rule_budget.clone(),
         rules: action_policy
             .rules
             .iter()
@@ -1769,6 +1841,10 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "action_column": &action_column,
         "default_action": &default_action,
         "actions": &actions,
+        "action_priority": &args.action_priority,
+        "priority_order": &priority_order,
+        "action_max_rules": args.action_max_rules,
+        "rule_budget": &rule_budget,
         "refine": args.refine,
         "pinned_rules": args
             .pinned_rules
@@ -1799,6 +1875,14 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         serde_json::json!(default_action),
     );
     extensions.insert("actions".to_string(), serde_json::json!(actions));
+    extensions.insert(
+        "action_priority".to_string(),
+        serde_json::json!(priority_order),
+    );
+    extensions.insert(
+        "action_rule_budget".to_string(),
+        serde_json::json!(rule_budget),
+    );
     write_artifact_manifest_v1(
         &output_dir,
         ArtifactManifestWriteOptions {
@@ -1848,6 +1932,17 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "  {} {}",
             "Default action".bright_black(),
             action_report.default_action
+        );
+        println!(
+            "  {} {}",
+            "Action priority".bright_black(),
+            action_report.rule_budget.priority_order.join(", ")
+        );
+        println!(
+            "  {} {} ({})",
+            "Rule budget".bright_black(),
+            action_report.rule_budget.total_budget,
+            action_report.rule_budget.mode
         );
         println!(
             "  {} {}",
@@ -2149,6 +2244,168 @@ fn resolve_default_action(explicit: Option<&str>, actions: &[String]) -> Result<
         }
     }
     Ok(actions[0].clone())
+}
+
+fn action_support_counts(action_by_row: &[String]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for action in action_by_row {
+        *counts.entry(action.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn default_action_priority_order(
+    actions: &[String],
+    default_action: &str,
+    support_counts: &BTreeMap<String, usize>,
+) -> Vec<String> {
+    let action_positions = actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| (action.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut priority_order = actions
+        .iter()
+        .filter(|action| action.as_str() != default_action)
+        .cloned()
+        .collect::<Vec<_>>();
+    priority_order.sort_by(|left, right| {
+        support_counts
+            .get(left)
+            .copied()
+            .unwrap_or(0)
+            .cmp(&support_counts.get(right).copied().unwrap_or(0))
+            .then_with(|| {
+                action_positions
+                    .get(left)
+                    .copied()
+                    .unwrap_or(usize::MAX)
+                    .cmp(&action_positions.get(right).copied().unwrap_or(usize::MAX))
+            })
+    });
+    priority_order
+}
+
+fn resolve_action_priority_order(
+    actions: &[String],
+    default_action: &str,
+    explicit_priority: Option<&str>,
+    support_counts: &BTreeMap<String, usize>,
+) -> Result<Vec<String>> {
+    let mut priority_order = Vec::new();
+    let mut seen = BTreeSet::new();
+    if let Some(explicit_priority) = explicit_priority {
+        for action in explicit_priority.split(',') {
+            let action = action.trim();
+            if action.is_empty() {
+                return Err(guidance(
+                    "--action-priority contains an empty action name",
+                    "Use a comma-separated list such as --action-priority block,redact.",
+                ));
+            }
+            if !actions.iter().any(|known| known == action) {
+                return Err(guidance(
+                    format!("--action-priority references unknown action {action:?}"),
+                    format!("Available actions: {}", actions.join(", ")),
+                ));
+            }
+            if !seen.insert(action.to_string()) {
+                return Err(guidance(
+                    format!("--action-priority lists {action:?} more than once"),
+                    "List each action at most once.",
+                ));
+            }
+            if action != default_action {
+                priority_order.push(action.to_string());
+            }
+        }
+    }
+
+    for action in default_action_priority_order(actions, default_action, support_counts) {
+        if !seen.contains(&action) {
+            priority_order.push(action);
+        }
+    }
+    Ok(priority_order)
+}
+
+fn ceil_sqrt_usize(value: usize) -> usize {
+    if value <= 1 {
+        return value;
+    }
+    let mut root = (value as f64).sqrt() as usize;
+    while root.saturating_mul(root) < value {
+        root += 1;
+    }
+    root
+}
+
+fn auto_action_rule_budget(support: usize) -> usize {
+    if support == 0 {
+        return 0;
+    }
+    ceil_sqrt_usize(support).saturating_mul(8).clamp(16, 256)
+}
+
+fn allocate_action_rule_budget(
+    priority_order: &[String],
+    support_counts: &BTreeMap<String, usize>,
+    requested_max_rules: Option<usize>,
+) -> Result<ActionRuleBudgetReport> {
+    if requested_max_rules == Some(0) {
+        return Err(guidance(
+            "--action-max-rules must be greater than zero",
+            "Omit the flag for support-scaled budgets, or pass a positive rule cap.",
+        ));
+    }
+
+    let auto_per_action = priority_order
+        .iter()
+        .map(|action| {
+            (
+                action.clone(),
+                auto_action_rule_budget(support_counts.get(action).copied().unwrap_or(0)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let per_action = if let Some(max_rules) = requested_max_rules {
+        let mut remaining = max_rules;
+        let mut per_action = BTreeMap::new();
+        for (index, action) in priority_order.iter().enumerate() {
+            let budget = if remaining == 0 {
+                0
+            } else {
+                let remaining_actions = priority_order.len().saturating_sub(index + 1);
+                let reserved_for_later = remaining_actions.min(remaining.saturating_sub(1));
+                let available = remaining.saturating_sub(reserved_for_later);
+                auto_per_action
+                    .get(action)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(available)
+                    .max(1)
+            };
+            remaining = remaining.saturating_sub(budget);
+            per_action.insert(action.clone(), budget);
+        }
+        per_action
+    } else {
+        auto_per_action
+    };
+
+    let total_budget = per_action.values().copied().sum();
+    Ok(ActionRuleBudgetReport {
+        mode: if requested_max_rules.is_some() {
+            "explicit_total".to_string()
+        } else {
+            "support_scaled".to_string()
+        },
+        requested_max_rules,
+        total_budget,
+        priority_order: priority_order.to_vec(),
+        per_action,
+    })
 }
 
 fn compute_action_training_parity(
@@ -2473,7 +2730,8 @@ fn run_action_eval(
     explain: bool,
     json: bool,
 ) -> Result<()> {
-    let action_policy = LogicPearlActionIr::from_path(manifest_dir.join(&manifest.files.pearl_ir))
+    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir);
+    let action_policy = LogicPearlActionIr::from_path(action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
     run_action_policy_eval(&action_policy, input_json, explain, json)
@@ -2692,7 +2950,7 @@ fn run_action_inspect(
     manifest: &ActionArtifactManifest,
     json: bool,
 ) -> Result<()> {
-    let action_policy_path = manifest_dir.join(&manifest.files.pearl_ir);
+    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir);
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
@@ -2701,7 +2959,7 @@ fn run_action_inspect(
     } else {
         Some(manifest.files.action_report.as_str())
     };
-    let report_path = report_file.map(|file| manifest_dir.join(file));
+    let report_path = report_file.map(|file| resolve_manifest_member_path(manifest_dir, file));
     let report: Option<Value> = if report_path.as_ref().is_some_and(|path| path.exists()) {
         let report_path = report_path.as_ref().expect("report path should exist");
         Some(
