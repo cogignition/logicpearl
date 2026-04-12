@@ -76,6 +76,8 @@ pattern_count,severity_score,context_present,next_action
         "next_action".to_string(),
         "--default-action".to_string(),
         "allow".to_string(),
+        "--gate-id".to_string(),
+        "generic_actions".to_string(),
         "--action-priority".to_string(),
         "block,redact".to_string(),
         "--action-max-rules".to_string(),
@@ -100,6 +102,16 @@ pattern_count,severity_score,context_present,next_action
     );
     assert_eq!(report["rules"][0]["action"], "block");
     assert_eq!(report["rules"][1]["action"], "redact");
+
+    let direct_ir_inspect = run_cli_json(&[
+        "inspect".to_string(),
+        artifact_dir.join("pearl.ir.json").display().to_string(),
+        "--json".to_string(),
+    ]);
+    assert_eq!(direct_ir_inspect["artifact_kind"], "action");
+    assert_eq!(direct_ir_inspect["action_policy_id"], "generic_actions");
+    assert_eq!(direct_ir_inspect["rules"][0]["action"], "block");
+    assert!(!direct_ir_inspect["rules"][0]["when"].is_null());
 
     let low_severity_two_count = run_artifact_action(
         &artifact_dir,

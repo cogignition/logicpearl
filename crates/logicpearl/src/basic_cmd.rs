@@ -2858,6 +2858,17 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         return run_action_inspect(&manifest_dir, &manifest, args.json);
     }
     let resolved = resolve_artifact_input(&artifact)?;
+    if let Some(action_policy) = load_direct_action_policy(&resolved.pearl_ir)? {
+        return run_action_policy_inspect(
+            &resolved.artifact_dir,
+            "action",
+            &action_policy.action_policy_id,
+            &resolved.pearl_ir,
+            &action_policy,
+            None,
+            args.json,
+        );
+    }
     let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
@@ -2974,14 +2985,37 @@ fn run_action_inspect(
     } else {
         None
     };
+    run_action_policy_inspect(
+        manifest_dir,
+        &manifest.artifact_kind,
+        &manifest.artifact_name,
+        &action_policy_path,
+        &action_policy,
+        report,
+        json,
+    )
+}
+
+fn run_action_policy_inspect(
+    artifact_dir: &Path,
+    artifact_kind: &str,
+    artifact_name: &str,
+    action_policy_path: &Path,
+    action_policy: &LogicPearlActionIr,
+    report: Option<Value>,
+    json: bool,
+) -> Result<()> {
     if json {
         let summary = serde_json::json!({
-            "artifact_dir": manifest_dir,
-            "artifact_kind": manifest.artifact_kind,
-            "artifact_name": manifest.artifact_name,
-            "action_column": manifest.action_column,
-            "default_action": manifest.default_action,
-            "actions": manifest.actions,
+            "artifact_dir": artifact_dir,
+            "artifact_kind": artifact_kind,
+            "artifact_name": artifact_name,
+            "action_policy_id": action_policy.action_policy_id,
+            "ir_version": action_policy.ir_version,
+            "action_column": action_policy.action_column,
+            "default_action": action_policy.default_action,
+            "actions": action_policy.actions,
+            "features": action_policy.input_schema.features.len(),
             "action_report": report,
             "pearl_ir": action_policy_path,
             "rules": action_policy.rules.iter().map(|rule| {
@@ -3006,16 +3040,21 @@ fn run_action_inspect(
     }
 
     println!("{}", "LogicPearl Action Artifact".bold().bright_blue());
-    println!("  {} {}", "Bundle".bright_black(), manifest_dir.display());
+    println!("  {} {}", "Bundle".bright_black(), artifact_dir.display());
+    println!(
+        "  {} {}",
+        "Action policy".bright_black(),
+        action_policy.action_policy_id
+    );
     println!(
         "  {} {}",
         "Action column".bright_black(),
-        manifest.action_column
+        action_policy.action_column
     );
     println!(
         "  {} {}",
         "Default action".bright_black(),
-        manifest.default_action
+        action_policy.default_action
     );
     println!("Action rules:");
     for (index, rule) in action_policy.rules.iter().enumerate() {

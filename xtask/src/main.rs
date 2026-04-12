@@ -556,6 +556,19 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "-p",
             "logicpearl",
             "--test",
+            "e2e_artifact_entrypoints",
+        ],
+    )?;
+    run_repo_command(
+        repo_root,
+        "cargo",
+        &[
+            "test",
+            "--manifest-path",
+            "Cargo.toml",
+            "-p",
+            "logicpearl",
+            "--test",
             "e2e_plugins",
         ],
     )?;
