@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_TIMEOUT_MS: u64 = 30_000;
+const PLUGIN_SPAWN_TEXT_BUSY_RETRIES: usize = 5;
+const PLUGIN_SPAWN_TEXT_BUSY_BACKOFF_MS: u64 = 20;
 const SUPPORTED_SCHEMA_VALIDATION_KEYWORDS: &[&str] = &[
     "additionalProperties",
     "const",
@@ -342,7 +344,7 @@ fn run_plugin_raw<T: Serialize>(
         .stderr(Stdio::piped());
 
     let timeout_ms = effective_timeout_ms(manifest, policy)?;
-    let mut child = command.spawn()?;
+    let mut child = spawn_plugin_process(&mut command)?;
     let stdin = child
         .stdin
         .as_mut()
@@ -578,6 +580,34 @@ fn effective_timeout_ms(
         ))),
         None => Ok(Some(policy.default_timeout_ms)),
     }
+}
+
+fn spawn_plugin_process(command: &mut Command) -> std::io::Result<Child> {
+    for attempt in 0..=PLUGIN_SPAWN_TEXT_BUSY_RETRIES {
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error)
+                if is_executable_file_busy(&error) && attempt < PLUGIN_SPAWN_TEXT_BUSY_RETRIES =>
+            {
+                let backoff =
+                    PLUGIN_SPAWN_TEXT_BUSY_BACKOFF_MS * u64::try_from(attempt + 1).unwrap_or(1);
+                thread::sleep(Duration::from_millis(backoff));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("spawn loop returns after the final attempt")
+}
+
+#[cfg(unix)]
+fn is_executable_file_busy(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(26)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file_busy(_error: &std::io::Error) -> bool {
+    false
 }
 
 fn spawn_pipe_reader<R: Read + Send + 'static>(

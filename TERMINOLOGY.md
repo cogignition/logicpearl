@@ -16,6 +16,7 @@ You can build and run pearls with deterministic observers only.
 
 But AI fits naturally in this model:
 - generating training traces
+- synthesizing candidate trace examples from an English policy or behavior description
 - synthesizing observers
 - extracting candidate assertions from messy evidence
 - calling pearls as deterministic tools inside larger agent workflows
@@ -52,10 +53,10 @@ The tables below break that model into concrete terms.
 
 | Term | Definition | When it runs |
 |---|---|---|
-| **Trace Synthesis** | Generating labeled examples of correct (allowed) and incorrect (denied) decisions. Can be from historical data, hand-written archetypes, or LLM-generated from English policy descriptions. | Setup |
-| **CIR Mining / Rule Discovery** | Analyzing traces to find separating invariants — the minimal set of rules that explain every decision. Uses decision trees with sequential covering. No LLM involved. | Setup |
-| **Z3 Verification** | Mathematically proving each discovered rule is correct across all training data. Not testing — formal proof. Uses the Z3 SMT solver. | Setup |
-| **Gate Compilation** | Compiling verified rules into a stateless, deterministic bitmask evaluator. Can target Python, Rust, or WASM (~500 bytes). | Setup |
+| **Trace Synthesis** | Generating labeled examples of correct (allowed) and incorrect (denied) decisions. Traces can come from historical data, hand-written archetypes, a declarative generator, or an LLM translating an English policy into reviewed examples. | Setup |
+| **Rule Discovery** | Analyzing traces to find compact rules that reproduce a bounded behavior slice. Discovery can use greedy selection plus solver-backed exact selection or conjunction recovery. No LLM is involved in the deterministic runtime. | Setup |
+| **Verification / Conformance** | Checking a pearl against its stated evidence: training traces, held-out traces, runtime parity cases, or an explicit formal spec. Stronger formal claims require an explicit spec or verification workflow, and artifact metadata should state that scope. | Setup |
+| **Gate Compilation** | Compiling rules into a stateless, deterministic bitmask evaluator. Can target Rust-native execution or WASM. | Setup |
 
 ## Runtime (what runs on each request)
 
@@ -68,7 +69,7 @@ The tables below break that model into concrete terms.
 | **Intake Bundle** | The full inbound request packet for a consequential workflow: request metadata, submission channel, structured history, uploaded documents, guided questions, and policy context. This is the realistic runtime input shape for prior auth / UM workflows. | Every request |
 | **Guided Question** | A fixed documentation or policy question presented during intake or review. Guided questions are the human-facing prompts that LogicPearl maps to requirement IDs and deterministic cluster checks. | Every request |
 | **Feature Extraction** | The process observers perform — turning raw input into a flat dict of `{feature_name: float}` or other typed gate-ready values. Same contract at training time and runtime, but different data sources may supply the raw inputs. | Every request |
-| **Gate Evaluation** | Checking the feature dict against compiled threshold rules. Returns a bitmask where each bit = one rule (pass/fail). Pure function, no I/O, no allocation. | Every request |
+| **Gate Evaluation** | Checking the feature dict against compiled rules. Returns a bitmask where each bit = one rule. The runtime path is intended to be side-effect-free and deterministic. | Every request |
 
 ## Pearl And Gate Concepts
 
@@ -78,12 +79,14 @@ The tables below break that model into concrete terms.
 | **String Of Pearls** | An ordered composition of multiple pearls evaluated together. Use this when policy is layered or staged across multiple deterministic artifacts. |
 | **Pipeline** | The executable artifact that wires a string of pearls together. In public product surfaces, the composition artifact should be a `pipeline.json` that maps stage inputs, outputs, and conditions explicitly. |
 | **Bitmask** | An integer where each bit position represents one invariant rule. Bit=0 means the rule passed, bit=1 means it failed. `bitmask == 0` means all rules passed (ALLOWED). Any set bit means DENIED. |
-| **Invariant / Rule** | A conjunction of conditions: `feature1 > threshold1 AND feature2 <= threshold2`. Discovered from data, not hand-written. Each rule occupies one bit in the bitmask. |
+| **Invariant / Rule** | A predicate or conjunction of conditions, such as `feature1 > threshold1 AND feature2 <= threshold2`. Rules can be discovered from traces or layered from maintained/pinned rule files. Each rule occupies one bit in the bitmask. |
 | **Condition** | A single threshold check: `feature_name operator threshold`. Operators: `>`, `>=`, `<`, `<=`, `==`, `!=`, `in`, or `not_in`, depending on the IR/runtime layer. |
 | **Counterfactual** | For a denied verdict, the minimum change to the input that would flip the decision. "Change education from 11 to 13 to allow." |
+| **Correctness Scope** | The evidence boundary for a pearl's current claim, such as training parity against a trace file, held-out benchmark scoring, runtime parity against an existing system, or solver verification against a formal spec. |
+| **Training Parity** | The fraction of supplied decision traces reproduced by the emitted pearl. High training parity is useful evidence, but it is not a universal proof of the real-world policy. |
 | **Soundness** | A rule is sound if it holds for 100% of allowed training traces — it never falsely denies an allowed case. |
 | **Usefulness** | A rule is useful if it fires for at least some denied training traces — it actually catches denied cases. |
-| **Denial Path** | A root-to-leaf path in a decision tree where the leaf predicts `denied`. Each denial path becomes one gate rule. |
+| **Denial Path** | In tree-style discovery, a root-to-leaf path where the leaf predicts `denied`. More generally, this is one recoverable reason a trace should deny. |
 
 ## Claims Audit Terms
 
@@ -115,7 +118,7 @@ The tables below break that model into concrete terms.
 
 | Term | Definition |
 |---|---|
-| **LLM Trace Synthesis** | Using an LLM to generate labeled training traces from an English policy description. |
+| **LLM Trace Synthesis** | Using an LLM during setup to generate candidate labeled traces from an English policy or behavior description. The traces should be reviewed, audited, and treated as synthetic evidence, not as automatic truth. |
 | **LLM Rule Critique** | After discovery, an LLM reviews rules against the original policy and generates counterexample traces for overgeneralized rules. |
 | **LLM Observer Synthesis** | Using an LLM to generate a deterministic observer or adapter spec that maps raw domain artifacts into the normalized feature contract consumed by Gate IR. |
 | **LLM Runtime Extraction** | Using an LLM inside an observer at runtime to extract candidate assertions from freeform domain artifacts. This is acceptable when the extracted assertions remain provenance-carrying and advisory until reviewed. |
