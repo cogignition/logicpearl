@@ -64,7 +64,7 @@ checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
 
 [[package]]
 name = "logicpearl-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "csv",
  "serde",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-engine"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-ir"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-pipeline"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-plugin"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-python"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "logicpearl-engine",
@@ -128,10 +128,11 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-runtime"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
+ "serde",
  "serde_json",
 ]
 
