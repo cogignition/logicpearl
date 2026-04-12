@@ -3,6 +3,7 @@ use super::*;
 use anstream::println;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
+use logicpearl_core::ArtifactKind;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -269,8 +270,18 @@ struct LogicPearlRunConfig {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct ActionArtifactManifest {
+    #[serde(default)]
+    schema_version: Option<String>,
     artifact_version: String,
     artifact_kind: String,
+    #[serde(default)]
+    artifact_id: Option<String>,
+    #[serde(default)]
+    engine_version: Option<String>,
+    #[serde(default)]
+    ir_version: Option<String>,
+    #[serde(default)]
+    artifact_hash: Option<String>,
     artifact_name: String,
     action_column: String,
     default_action: String,
@@ -282,11 +293,15 @@ struct ActionArtifactManifest {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct ActionArtifactFiles {
+    #[serde(alias = "ir")]
     pearl_ir: String,
+    #[serde(default)]
     action_report: String,
     #[serde(default)]
+    build_report: Option<String>,
+    #[serde(default, alias = "native")]
     native_binary: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "wasm")]
     wasm_module: Option<String>,
     #[serde(default)]
     wasm_metadata: Option<String>,
@@ -939,6 +954,43 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
         .write_pretty(&args.output)
         .into_diagnostic()
         .wrap_err("failed to write composed pipeline artifact")?;
+    let mut extensions = BTreeMap::new();
+    extensions.insert("artifact_version".to_string(), serde_json::json!("1.0"));
+    extensions.insert(
+        "artifact_name".to_string(),
+        serde_json::json!(plan.pipeline.pipeline_id.clone()),
+    );
+    write_artifact_manifest_v1(
+        base_dir,
+        ArtifactManifestWriteOptions {
+            artifact_kind: ArtifactKind::Pipeline,
+            artifact_id: plan.pipeline.pipeline_id.clone(),
+            ir_path: args.output.clone(),
+            build_report_path: None,
+            feature_dictionary_path: None,
+            native_path: None,
+            wasm_path: None,
+            wasm_metadata_path: None,
+            build_options_hash: Some(build_options_hash(&serde_json::json!({
+                "pipeline_id": plan.pipeline.pipeline_id,
+                "artifacts": args
+                    .artifacts
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>(),
+            }))),
+            bundle: ArtifactBundleDescriptor {
+                bundle_kind: "pipeline_bundle".to_string(),
+                cli_entrypoint: "artifact.json".to_string(),
+                primary_runtime: None,
+                deployables: Vec::new(),
+                metadata_files: Vec::new(),
+            },
+            extensions,
+            file_extensions: BTreeMap::new(),
+        },
+    )
+    .wrap_err("failed to write pipeline artifact manifest")?;
 
     println!(
         "{} {}",
@@ -972,6 +1024,13 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
             "Wasm metadata".bright_black(),
             output.metadata_path.display()
         );
+        refresh_artifact_manifest_deployables(
+            &resolved.artifact_dir,
+            &resolved.pearl_ir,
+            None,
+            Some(&output.module_path),
+            Some(&output.metadata_path),
+        )?;
     } else {
         let output_path = compile_native_runner(
             &resolved.pearl_ir,
@@ -986,6 +1045,13 @@ pub(crate) fn run_compile(args: CompileArgs) -> Result<()> {
             "Compiled".bold().bright_green(),
             output_path.display()
         );
+        refresh_artifact_manifest_deployables(
+            &resolved.artifact_dir,
+            &resolved.pearl_ir,
+            Some(&output_path),
+            None,
+            None,
+        )?;
     }
     Ok(())
 }
@@ -1117,6 +1183,27 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
     };
+    let build_options_digest = build_options_hash(&serde_json::json!({
+        "gate_id": &build_options.gate_id,
+        "label_column": &build_options.label_column,
+        "positive_label": &build_options.positive_label,
+        "negative_label": &build_options.negative_label,
+        "residual_pass": build_options.residual_pass,
+        "refine": build_options.refine,
+        "pinned_rules": build_options
+            .pinned_rules
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_dictionary": build_options
+            .feature_dictionary
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_governance": build_options
+            .feature_governance
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "decision_mode": build_options.decision_mode,
+    }));
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
         let manifest = PluginManifest::from_path(manifest_path)
@@ -1244,6 +1331,8 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         &artifact_name,
         &result.gate_id,
         &result.output_files,
+        generated_feature_dictionary_for_output(&args, &artifact_dir).map(|path| path.as_path()),
+        Some(build_options_digest),
     )?;
 
     if args.json {
@@ -1675,31 +1764,67 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         }
     }
 
-    let manifest = ActionArtifactManifest {
-        artifact_version: "1.0".to_string(),
-        artifact_kind: "action_policy".to_string(),
-        artifact_name: artifact_name.clone(),
-        action_column,
-        default_action,
-        actions,
-        files: ActionArtifactFiles {
-            pearl_ir: "pearl.ir.json".to_string(),
-            action_report: "action_report.json".to_string(),
-            native_binary: native_binary_file.clone(),
-            wasm_module: wasm_module_file.clone(),
-            wasm_metadata: wasm_metadata_file.clone(),
+    let build_options_digest = build_options_hash(&serde_json::json!({
+        "artifact_name": &artifact_name,
+        "action_column": &action_column,
+        "default_action": &default_action,
+        "actions": &actions,
+        "refine": args.refine,
+        "pinned_rules": args
+            .pinned_rules
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_dictionary": args
+            .feature_dictionary
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_governance": args
+            .feature_governance
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "decision_mode": to_discovery_decision_mode(args.discovery_mode),
+    }));
+    let mut extensions = BTreeMap::new();
+    extensions.insert("artifact_version".to_string(), serde_json::json!("1.0"));
+    extensions.insert(
+        "artifact_name".to_string(),
+        serde_json::json!(artifact_name.clone()),
+    );
+    extensions.insert(
+        "action_column".to_string(),
+        serde_json::json!(action_column),
+    );
+    extensions.insert(
+        "default_action".to_string(),
+        serde_json::json!(default_action),
+    );
+    extensions.insert("actions".to_string(), serde_json::json!(actions));
+    write_artifact_manifest_v1(
+        &output_dir,
+        ArtifactManifestWriteOptions {
+            artifact_kind: ArtifactKind::Action,
+            artifact_id: artifact_name.clone(),
+            ir_path: action_policy_path.clone(),
+            build_report_path: Some(action_report_path.clone()),
+            feature_dictionary_path: generated_feature_dictionary_for_output(&args, &output_dir)
+                .map(|path| path.as_path().to_path_buf()),
+            native_path: native_binary_file
+                .as_ref()
+                .map(|file| output_dir.join(file)),
+            wasm_path: wasm_module_file.as_ref().map(|file| output_dir.join(file)),
+            wasm_metadata_path: wasm_metadata_file
+                .as_ref()
+                .map(|file| output_dir.join(file)),
+            build_options_hash: Some(build_options_digest),
+            bundle: build_deployable_bundle_descriptor(
+                native_binary_file.clone(),
+                wasm_module_file.clone(),
+                wasm_metadata_file.clone(),
+            ),
+            extensions,
+            file_extensions: BTreeMap::new(),
         },
-        bundle: build_deployable_bundle_descriptor(
-            native_binary_file.clone(),
-            wasm_module_file.clone(),
-            wasm_metadata_file.clone(),
-        ),
-    };
-    fs::write(
-        output_dir.join("artifact.json"),
-        serde_json::to_string_pretty(&manifest).into_diagnostic()? + "\n",
     )
-    .into_diagnostic()
     .wrap_err("failed to write action artifact manifest")?;
 
     if args.json {
@@ -2320,7 +2445,7 @@ fn load_action_artifact_manifest(
         .into_diagnostic()
         .wrap_err("failed to parse artifact manifest")?;
     match value.get("artifact_kind").and_then(Value::as_str) {
-        Some("action_policy") => {}
+        Some("action") | Some("action_policy") => {}
         Some("action_router") => {
             return Err(guidance(
                 "action artifact uses the older route layout",
@@ -2571,11 +2696,17 @@ fn run_action_inspect(
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
-    let report_path = manifest_dir.join(&manifest.files.action_report);
-    let report: Option<Value> = if report_path.exists() {
+    let report_file = if manifest.files.action_report.is_empty() {
+        manifest.files.build_report.as_deref()
+    } else {
+        Some(manifest.files.action_report.as_str())
+    };
+    let report_path = report_file.map(|file| manifest_dir.join(file));
+    let report: Option<Value> = if report_path.as_ref().is_some_and(|path| path.exists()) {
+        let report_path = report_path.as_ref().expect("report path should exist");
         Some(
             serde_json::from_str(
-                &fs::read_to_string(&report_path)
+                &fs::read_to_string(report_path)
                     .into_diagnostic()
                     .wrap_err("failed to read action report")?,
             )

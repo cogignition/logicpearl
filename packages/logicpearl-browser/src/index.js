@@ -26,6 +26,7 @@ export async function loadArtifact(reference, options = {}) {
   }
 
   const wasmModulePath =
+    manifest?.files?.wasm ??
     manifest?.files?.wasm_module ??
     manifest?.bundle?.deployables?.find((item) => item.kind === 'wasm_module')?.path ??
     'pearl.wasm';
@@ -437,13 +438,17 @@ async function fetchArrayBuffer(fetchImpl, url) {
 
 function buildFallbackManifest({ gateId, decisionKind }) {
   return {
+    schema_version: 'logicpearl.artifact_manifest.v1',
     artifact_version: '1.0',
+    artifact_id: gateId ?? 'logicpearl_artifact',
     artifact_name: gateId ?? 'logicpearl_artifact',
-    artifact_kind: decisionKind === 'action' ? 'action_policy' : undefined,
+    artifact_kind: decisionKind === 'action' ? 'action' : 'gate',
     gate_id: gateId ?? 'logicpearl_artifact',
     files: {
+      ir: 'pearl.ir.json',
       pearl_ir: 'pearl.ir.json',
       build_report: 'build_report.json',
+      wasm: 'pearl.wasm',
       native_binary: null,
       wasm_module: 'pearl.wasm',
       wasm_metadata: 'pearl.wasm.meta.json',

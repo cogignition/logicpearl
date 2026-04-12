@@ -8,9 +8,12 @@ All notable user-facing changes should be added here.
 - Versioned runtime JSON schemas for gate, action, pipeline, rule explanation, feature explanation, runtime result, and artifact error payloads under `schema/`.
 - Golden runtime JSON fixtures plus Rust schema-validation coverage for CLI-emitted gate, action, and pipeline results.
 - Browser runtime TypeScript declarations and `evaluateJson()` / `evaluateJsonBatch()` helpers for schema-shaped gate and action results.
+- Versioned `logicpearl.artifact_manifest.v1` schema-backed artifact manifests for gate, action, and composed pipeline bundles.
+- `logicpearl artifact inspect`, `logicpearl artifact digest`, and `logicpearl artifact verify` for public bundle inspection and integrity checks.
 
 ### Changed
 - `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
+- `artifact.json` now carries stable v1 bundle metadata including artifact kind, engine version, IR version, artifact hash, file hashes, and build option/input schema digests.
 - Pipeline pearl stages now preserve canonical gate runtime details in `stages[].raw_result` while keeping exported fields such as `bitmask` and `allow` available.
 - Wasm metadata now carries `engine_version` and `artifact_hash` so browser integrations can return v1 runtime JSON results.
 

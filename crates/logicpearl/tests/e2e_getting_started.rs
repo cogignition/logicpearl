@@ -127,6 +127,18 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
     );
     let native_binary = output_path.join("decision_traces.pearl");
     assert!(native_binary.exists());
+    let compiled_manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(&build_result.output_files.artifact_manifest)
+            .expect("compiled artifact manifest should be readable"),
+    )
+    .expect("compiled artifact manifest should be valid JSON");
+    assert_eq!(
+        compiled_manifest["files"]["native"].as_str(),
+        Some("decision_traces.pearl")
+    );
+    assert!(compiled_manifest["file_hashes"]["native"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("sha256:")));
 
     let compiled_output = Command::new(&native_binary)
         .arg(&sample_input)

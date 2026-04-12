@@ -46,7 +46,7 @@ shape for schema validation and cross-language handoff.
 
 `loadArtifact(...)` accepts:
 - an artifact directory path or URL
-- an `artifact.json` path or URL
+- an `artifact.json` path or URL using `logicpearl.artifact_manifest.v1`
 
 `loadArtifactFromBundle(...)` accepts:
 - a manifest object

@@ -70,6 +70,27 @@ Downstream demos and frontends may display artifact metadata, but they must not 
 
 Raw `deny_when` expressions are the source of deterministic truth.
 
+## Artifact Manifests
+
+`artifact.json` is a public bundle contract, not only a CLI pointer. New gate,
+action, and composed pipeline bundles should emit
+`schema_version: "logicpearl.artifact_manifest.v1"`.
+
+The v1 manifest should identify the artifact with `artifact_id`,
+`artifact_kind` (`gate`, `action`, or `pipeline`), `engine_version`,
+`ir_version`, `created_at`, and the deterministic `artifact_hash`. Use
+`files.ir` as the canonical pointer to `pearl.ir.json` or a pipeline JSON file.
+Optional sidecars belong under `files.build_report`, `files.feature_dictionary`,
+`files.native`, `files.wasm`, and `files.wasm_metadata`.
+
+Use `logicpearl artifact inspect <artifact> --json`,
+`logicpearl artifact digest <artifact> --json`, and
+`logicpearl artifact verify <artifact> --json` when checking bundle behavior.
+`artifact verify` should validate the manifest version, referenced files,
+file hashes, artifact hash, IR kind, and input schema hash. Keep old manifest
+aliases readable for compatibility, but prefer the v1 field names in new code,
+tests, and docs.
+
 ## Multi-Action Policies
 
 LogicPearl can learn a policy that chooses one action from reviewed examples, not just a yes/no gate. Use this when a trace dataset has an action column such as `next_action`.

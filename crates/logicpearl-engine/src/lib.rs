@@ -93,6 +93,7 @@ struct NamedArtifactManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactFiles {
+    #[serde(alias = "ir")]
     pearl_ir: String,
 }
 
@@ -104,6 +105,7 @@ struct ActionArtifactManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActionArtifactFiles {
+    #[serde(alias = "ir")]
     pearl_ir: String,
 }
 
@@ -112,6 +114,9 @@ impl LogicPearlEngine {
         let path = path.as_ref();
         if looks_like_pipeline_path(path) {
             return Self::from_pipeline_path(path);
+        }
+        if let Some(pipeline_path) = resolve_pipeline_manifest_input(path)? {
+            return Self::from_pipeline_path(pipeline_path);
         }
         if looks_like_artifact_path(path) {
             return Self::from_artifact_path(path);
@@ -173,6 +178,9 @@ impl LogicPearlEngine {
         let path = path.as_ref();
         if looks_like_pipeline_path(path) {
             return Self::from_pipeline_path_with_plugin_policy(path, plugin_policy);
+        }
+        if let Some(pipeline_path) = resolve_pipeline_manifest_input(path)? {
+            return Self::from_pipeline_path_with_plugin_policy(pipeline_path, plugin_policy);
         }
         if looks_like_artifact_path(path) {
             return Self::from_artifact_path(path);
@@ -355,10 +363,44 @@ fn resolve_action_artifact_input(path: &Path) -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
+fn resolve_pipeline_manifest_input(path: &Path) -> Result<Option<PathBuf>> {
+    let manifest_path = if path.is_dir() {
+        let candidate = path.join("artifact.json");
+        if candidate.exists() {
+            candidate
+        } else {
+            return Ok(None);
+        }
+    } else if path
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
+    {
+        path.to_path_buf()
+    } else {
+        return Ok(None);
+    };
+    let content = fs::read_to_string(&manifest_path)?;
+    let value: Value = serde_json::from_str(&content)?;
+    if value.get("artifact_kind").and_then(Value::as_str) != Some("pipeline") {
+        return Ok(None);
+    }
+    let ir = value
+        .get("files")
+        .and_then(|files| files.get("ir").or_else(|| files.get("pearl_ir")))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            LogicPearlError::message("pipeline artifact manifest is missing files.ir")
+        })?;
+    Ok(Some(resolve_manifest_path(&manifest_path, ir)))
+}
+
 fn resolve_action_manifest_input(manifest_path: &Path) -> Result<Option<PathBuf>> {
     let content = fs::read_to_string(manifest_path)?;
     let value: Value = serde_json::from_str(&content)?;
-    if value.get("artifact_kind").and_then(Value::as_str) != Some("action_policy") {
+    if !matches!(
+        value.get("artifact_kind").and_then(Value::as_str),
+        Some("action") | Some("action_policy")
+    ) {
         return Ok(None);
     }
     let manifest: ActionArtifactManifest = serde_json::from_value(value)?;
@@ -595,6 +637,46 @@ mod tests {
                     output.output.get("audit_status"),
                     Some(&json!("clean_pass"))
                 );
+            }
+            _ => panic!("expected pipeline result"),
+        }
+    }
+
+    #[test]
+    fn loads_and_runs_pipeline_from_artifact_manifest_v1() {
+        let repo_root = repo_root();
+        let pipeline =
+            repo_root.join("examples/pipelines/observer_membership_verify/pipeline.json");
+        let dir = tempdir().expect("tempdir should exist");
+        fs::write(
+            dir.path().join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "observer_membership_verify",
+                "artifact_kind": "pipeline",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "files": {
+                    "ir": pipeline.display().to_string()
+                }
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let input = json!({
+            "age": 34,
+            "member": true,
+            "country": "US"
+        });
+        let engine = LogicPearlEngine::from_path(dir.path()).expect("pipeline manifest loads");
+        assert_eq!(engine.kind(), EngineKind::Pipeline);
+        let result = engine.run_single_json(&input).expect("pipeline runs");
+        match result {
+            EngineSingleExecution::Pipeline(output) => {
+                assert_eq!(output.output.get("allow"), Some(&json!(true)));
             }
             _ => panic!("expected pipeline result"),
         }

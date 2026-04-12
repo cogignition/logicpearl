@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// Stable schema identifier for LogicPearl artifact bundle manifests.
+pub const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "logicpearl.artifact_manifest.v1";
 
 /// Convenience alias for results returned by LogicPearl operations.
 pub type Result<T> = std::result::Result<T, LogicPearlError>;
@@ -33,6 +37,62 @@ impl LogicPearlError {
 pub trait ArtifactRenderer<T> {
     /// Produce a textual representation of `value`.
     fn render(&self, value: &T) -> Result<String>;
+}
+
+/// Stable kind names for public artifact manifests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    Gate,
+    Action,
+    Pipeline,
+}
+
+/// Files declared by a LogicPearl artifact bundle manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactManifestFiles {
+    /// Deterministic artifact definition: pearl.ir.json for gate/action artifacts,
+    /// or a pipeline definition JSON file for pipeline artifacts.
+    pub ir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_report: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_dictionary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm_metadata: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<String>,
+    /// Backward-compatible aliases or future file roles.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// Versioned public contract for a LogicPearl artifact bundle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactManifestV1 {
+    pub schema_version: String,
+    pub artifact_id: String,
+    pub artifact_kind: ArtifactKind,
+    pub engine_version: String,
+    pub ir_version: String,
+    pub created_at: String,
+    pub artifact_hash: String,
+    pub files: ArtifactManifestFiles,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_dictionary_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_options_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub file_hashes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_hash: Option<String>,
+    /// Backward-compatible aliases or future manifest metadata.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
 }
 
 /// Variable-width bitmask that tracks which rules matched during evaluation.

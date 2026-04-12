@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.com/schema/logicpearl-artifact-manifest-v1.schema.json",
+  "title": "LogicPearl Artifact Manifest v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "artifact_kind",
+    "engine_version",
+    "ir_version",
+    "created_at",
+    "artifact_hash",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "logicpearl.artifact_manifest.v1"
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_kind": {
+      "enum": ["gate", "action", "pipeline"]
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ir_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "files": {
+      "type": "object",
+      "required": ["ir"],
+      "properties": {
+        "ir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "build_report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_dictionary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wasm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wasm_metadata": {
+          "type": "string",
+          "minLength": 1
+        },
+        "native": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "object", "array", "null"]
+      }
+    },
+    "input_schema_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "feature_dictionary_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "build_options_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "file_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "bundle_hash": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

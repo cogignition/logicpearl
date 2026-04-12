@@ -10,13 +10,20 @@ import {
 } from '../src/index.js';
 
 const sampleManifest = {
+  schema_version: 'logicpearl.artifact_manifest.v1',
   artifact_version: '1.0',
+  artifact_id: 'demo_gate',
+  artifact_kind: 'gate',
+  engine_version: '0.1.5',
+  ir_version: '1.0',
+  created_at: '2026-04-12T00:00:00Z',
+  artifact_hash: 'sha256:4b40f32b955a3f0325b05e39f06534b0aaed8691563d78e73761bd3d54e78a3f',
   artifact_name: 'demo',
   gate_id: 'demo_gate',
   files: {
-    pearl_ir: 'pearl.ir.json',
+    ir: 'pearl.ir.json',
     build_report: 'build_report.json',
-    wasm_module: 'demo.pearl.wasm',
+    wasm: 'demo.pearl.wasm',
     wasm_metadata: 'demo.pearl.wasm.meta.json',
   },
   bundle: {
@@ -226,7 +233,8 @@ test('loadArtifactFromBundle evaluates action policies from wasm metadata', asyn
     {
       manifest: {
         ...sampleManifest,
-        artifact_kind: 'action_policy',
+        artifact_id: 'garden_actions',
+        artifact_kind: 'action',
         artifact_name: 'garden_actions',
       },
       wasmModule: new ArrayBuffer(8),
@@ -273,7 +281,8 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
     {
       manifest: {
         ...sampleManifest,
-        artifact_kind: 'action_policy',
+        artifact_id: 'garden_actions',
+        artifact_kind: 'action',
         artifact_name: 'garden_actions',
       },
       wasmModule: new ArrayBuffer(8),

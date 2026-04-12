@@ -97,6 +97,37 @@ export interface ArtifactErrorV1 {
 
 export type RuntimeResultV1 = GateResultV1 | ActionResultV1 | PipelineResultV1 | ArtifactErrorV1;
 
+export interface ArtifactManifestFilesV1 {
+  ir: string;
+  build_report?: string;
+  feature_dictionary?: string;
+  wasm?: string;
+  wasm_metadata?: string;
+  native?: string;
+  pearl_ir?: string;
+  action_report?: string;
+  wasm_module?: string;
+  native_binary?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ArtifactManifestV1 {
+  schema_version: 'logicpearl.artifact_manifest.v1';
+  artifact_id: string;
+  artifact_kind: 'gate' | 'action' | 'pipeline';
+  engine_version: string;
+  ir_version: string;
+  created_at: string;
+  artifact_hash: string;
+  files: ArtifactManifestFilesV1;
+  input_schema_hash?: string;
+  feature_dictionary_hash?: string;
+  build_options_hash?: string;
+  file_hashes?: Record<string, string>;
+  bundle_hash?: string;
+  [key: string]: unknown;
+}
+
 export interface BrowserRuleMetadata {
   id: string;
   bit: number;

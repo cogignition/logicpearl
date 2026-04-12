@@ -234,8 +234,17 @@ What you should see:
 
 For CLI usage, the important bit is:
 - the bundle directory or `artifact.json` is the logical artifact
+- `artifact.json` is a `logicpearl.artifact_manifest.v1` bundle manifest with the artifact kind, engine version, IR version, artifact hash, file hashes, and sidecar paths
 - native binaries and wasm modules are optional deployable derivatives
 - `logicpearl run` executes the artifact bundle directly
+
+Artifact integrity commands:
+
+```bash
+logicpearl artifact inspect examples/getting_started/output --json
+logicpearl artifact digest examples/getting_started/output
+logicpearl artifact verify examples/getting_started/output
+```
 
 If you want deployable binaries, compile them explicitly after the bundle exists:
 
@@ -846,14 +855,14 @@ The main directories are:
 ## Reproducible Artifacts
 
 The public demos write real artifacts you can inspect:
-- `artifact.json`
+- `artifact.json` (`logicpearl.artifact_manifest.v1`)
 - `pearl.ir.json` for binary gates or multi-action artifacts
 - `build_report.json`
 - optional compiled native binaries when you run `logicpearl compile` or build an action policy with `--compile`
 - optional compiled `.wasm` modules when you compile for `wasm32-unknown-unknown` or build an action policy with `--compile` and have the Wasm target installed
 
 The core promise is simple:
-- you should be able to build, run, inspect, and validate pearls yourself
+- you should be able to build, run, inspect, digest, and verify pearls yourself
 
 ## Why Use LogicPearl
 

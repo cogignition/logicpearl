@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MIT
+use clap::Args;
 use logicpearl_benchmark::sanitize_identifier;
+use logicpearl_core::{
+    ArtifactKind, ArtifactManifestFiles, ArtifactManifestV1, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+};
 use logicpearl_discovery::{BuildResult, OutputFiles};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, DerivedFeatureDefinition, DerivedFeatureOperator,
     Expression, FeatureDefinition, FeatureType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
+use logicpearl_pipeline::PipelineDefinition;
+use logicpearl_runtime::{artifact_hash, sha256_prefixed, LOGICPEARL_ENGINE_VERSION};
 use miette::{IntoDiagnostic, Result, WrapErr};
+use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -18,10 +25,57 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const EMBEDDED_NATIVE_RUNNER_MAGIC: &[u8; 16] = b"LPEARL_RUNNER_V1";
 const EMBEDDED_NATIVE_RUNNER_TRAILER_LEN: u64 = 24;
 
+#[derive(Debug, Args)]
+pub(crate) struct ArtifactInspectArgs {
+    /// Artifact bundle directory, artifact.json, pearl.ir.json, or pipeline JSON path.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ArtifactDigestArgs {
+    /// Artifact bundle directory, artifact.json, pearl.ir.json, or pipeline JSON path.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ArtifactVerifyArgs {
+    /// Artifact bundle directory or artifact.json to verify.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactManifest {
+    #[serde(default)]
+    schema_version: Option<String>,
+    #[serde(default)]
+    artifact_id: Option<String>,
+    #[serde(default)]
+    artifact_kind: Option<String>,
+    #[serde(default)]
+    engine_version: Option<String>,
+    #[serde(default)]
+    ir_version: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    artifact_hash: Option<String>,
+    #[serde(default)]
     artifact_version: String,
+    #[serde(default)]
     artifact_name: String,
+    #[serde(default)]
     gate_id: String,
     files: NamedArtifactFiles,
     #[serde(default)]
@@ -30,10 +84,17 @@ struct NamedArtifactManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedArtifactFiles {
+    #[serde(alias = "ir")]
     pearl_ir: String,
+    #[serde(default)]
     build_report: String,
+    #[serde(default)]
+    feature_dictionary: Option<String>,
+    #[serde(default, alias = "native")]
     native_binary: Option<String>,
+    #[serde(default, alias = "wasm")]
     wasm_module: Option<String>,
+    #[serde(default)]
     wasm_metadata: Option<String>,
 }
 
@@ -61,6 +122,64 @@ pub(crate) struct ArtifactSidecar {
     pub(crate) path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) companion_to: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ArtifactManifestWriteOptions {
+    pub(crate) artifact_kind: ArtifactKind,
+    pub(crate) artifact_id: String,
+    pub(crate) ir_path: PathBuf,
+    pub(crate) build_report_path: Option<PathBuf>,
+    pub(crate) feature_dictionary_path: Option<PathBuf>,
+    pub(crate) native_path: Option<PathBuf>,
+    pub(crate) wasm_path: Option<PathBuf>,
+    pub(crate) wasm_metadata_path: Option<PathBuf>,
+    pub(crate) build_options_hash: Option<String>,
+    pub(crate) bundle: ArtifactBundleDescriptor,
+    pub(crate) extensions: BTreeMap<String, Value>,
+    pub(crate) file_extensions: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactManifestInspection {
+    manifest_path: Option<String>,
+    artifact_dir: String,
+    manifest: ArtifactManifestV1,
+    resolved_files: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactDigestReport {
+    manifest_path: Option<String>,
+    artifact_id: String,
+    artifact_kind: ArtifactKind,
+    artifact_hash: String,
+    bundle_hash: Option<String>,
+    file_hashes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactVerificationReport {
+    ok: bool,
+    manifest_path: Option<String>,
+    artifact_id: Option<String>,
+    artifact_kind: Option<ArtifactKind>,
+    checks: Vec<ArtifactVerificationCheck>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ArtifactVerificationCheck {
+    name: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+struct ArtifactManifestContext {
+    manifest_path: Option<PathBuf>,
+    base_dir: PathBuf,
+    manifest: ArtifactManifestV1,
+    raw_manifest: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,40 +457,144 @@ pub(crate) fn write_named_artifact_manifest(
     artifact_name: &str,
     gate_id: &str,
     output_files: &OutputFiles,
+    feature_dictionary_path: Option<&Path>,
+    build_options_hash: Option<String>,
 ) -> Result<()> {
-    let manifest = NamedArtifactManifest {
-        artifact_version: "1.0".to_string(),
-        artifact_name: artifact_name.to_string(),
-        gate_id: gate_id.to_string(),
-        files: NamedArtifactFiles {
-            pearl_ir: PathBuf::from(&output_files.pearl_ir)
-                .file_name()
-                .unwrap_or_else(|| std::ffi::OsStr::new("pearl.ir.json"))
-                .to_string_lossy()
-                .into_owned(),
-            build_report: PathBuf::from(&output_files.build_report)
-                .file_name()
-                .unwrap_or_else(|| std::ffi::OsStr::new("build_report.json"))
-                .to_string_lossy()
-                .into_owned(),
-            native_binary: output_files.native_binary.as_ref().and_then(|path| {
-                PathBuf::from(path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            }),
-            wasm_module: output_files.wasm_module.as_ref().and_then(|path| {
-                PathBuf::from(path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            }),
-            wasm_metadata: output_files.wasm_metadata.as_ref().and_then(|path| {
-                PathBuf::from(path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            }),
+    let native_path = output_files.native_binary.as_ref().map(PathBuf::from);
+    let wasm_path = output_files.wasm_module.as_ref().map(PathBuf::from);
+    let wasm_metadata_path = output_files.wasm_metadata.as_ref().map(PathBuf::from);
+    let mut extensions = BTreeMap::new();
+    extensions.insert("artifact_version".to_string(), json!("1.0"));
+    extensions.insert("artifact_name".to_string(), json!(artifact_name));
+    extensions.insert("gate_id".to_string(), json!(gate_id));
+    extensions.insert(
+        "bundle".to_string(),
+        serde_json::to_value(build_artifact_bundle_descriptor(output_files)).into_diagnostic()?,
+    );
+    write_artifact_manifest_v1(
+        output_dir,
+        ArtifactManifestWriteOptions {
+            artifact_kind: ArtifactKind::Gate,
+            artifact_id: gate_id.to_string(),
+            ir_path: PathBuf::from(&output_files.pearl_ir),
+            build_report_path: Some(PathBuf::from(&output_files.build_report)),
+            feature_dictionary_path: feature_dictionary_path.map(Path::to_path_buf),
+            native_path,
+            wasm_path,
+            wasm_metadata_path,
+            build_options_hash,
+            bundle: build_artifact_bundle_descriptor(output_files),
+            extensions,
+            file_extensions: BTreeMap::new(),
         },
-        bundle: build_artifact_bundle_descriptor(output_files),
+    )
+}
+
+pub(crate) fn write_artifact_manifest_v1(
+    output_dir: &Path,
+    options: ArtifactManifestWriteOptions,
+) -> Result<()> {
+    let ir_value = read_json_file(&options.ir_path).wrap_err("failed to read artifact IR")?;
+    let ir_version = artifact_ir_version(&ir_value, options.artifact_kind)?;
+    let artifact_hash_value = artifact_hash(&ir_value);
+    let input_schema_hash = ir_value.get("input_schema").map(artifact_hash);
+    let feature_dictionary_hash = options
+        .feature_dictionary_path
+        .as_ref()
+        .filter(|path| path.exists())
+        .map(|path| hash_file_canonical_if_json(path))
+        .transpose()?;
+
+    let ir_file = relative_manifest_file(output_dir, &options.ir_path, "pearl.ir.json");
+    let build_report_file = options
+        .build_report_path
+        .as_ref()
+        .map(|path| relative_manifest_file(output_dir, path, "build_report.json"));
+    let feature_dictionary_file = options
+        .feature_dictionary_path
+        .as_ref()
+        .filter(|path| path.exists())
+        .map(|path| relative_manifest_file(output_dir, path, "feature_dictionary.generated.json"));
+    let native_file = options
+        .native_path
+        .as_ref()
+        .map(|path| relative_manifest_file(output_dir, path, ""));
+    let wasm_file = options
+        .wasm_path
+        .as_ref()
+        .map(|path| relative_manifest_file(output_dir, path, "pearl.wasm"));
+    let wasm_metadata_file = options
+        .wasm_metadata_path
+        .as_ref()
+        .map(|path| relative_manifest_file(output_dir, path, "pearl.wasm.meta.json"));
+
+    let mut file_hashes = BTreeMap::new();
+    insert_file_hash(output_dir, &mut file_hashes, "ir", Some(&ir_file))?;
+    insert_file_hash(
+        output_dir,
+        &mut file_hashes,
+        "build_report",
+        build_report_file.as_deref(),
+    )?;
+    insert_file_hash(
+        output_dir,
+        &mut file_hashes,
+        "feature_dictionary",
+        feature_dictionary_file.as_deref(),
+    )?;
+    insert_file_hash(
+        output_dir,
+        &mut file_hashes,
+        "native",
+        native_file.as_deref(),
+    )?;
+    insert_file_hash(output_dir, &mut file_hashes, "wasm", wasm_file.as_deref())?;
+    insert_file_hash(
+        output_dir,
+        &mut file_hashes,
+        "wasm_metadata",
+        wasm_metadata_file.as_deref(),
+    )?;
+
+    let files = ArtifactManifestFiles {
+        ir: ir_file,
+        build_report: build_report_file,
+        feature_dictionary: feature_dictionary_file,
+        wasm: wasm_file,
+        wasm_metadata: wasm_metadata_file,
+        native: native_file,
+        extensions: options.file_extensions,
     };
+
+    let bundle_hash = Some(artifact_hash(&json!({
+        "artifact_hash": artifact_hash_value.clone(),
+        "files": files.clone(),
+        "file_hashes": file_hashes.clone(),
+    })));
+
+    let mut extensions = options.extensions;
+    extensions.insert(
+        "bundle".to_string(),
+        serde_json::to_value(options.bundle).into_diagnostic()?,
+    );
+
+    let manifest = ArtifactManifestV1 {
+        schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION.to_string(),
+        artifact_id: options.artifact_id,
+        artifact_kind: options.artifact_kind,
+        engine_version: LOGICPEARL_ENGINE_VERSION.to_string(),
+        ir_version,
+        created_at: current_timestamp()?,
+        artifact_hash: artifact_hash_value,
+        files,
+        input_schema_hash,
+        feature_dictionary_hash,
+        build_options_hash: options.build_options_hash,
+        file_hashes,
+        bundle_hash,
+        extensions,
+    };
+
     fs::write(
         output_dir.join("artifact.json"),
         serde_json::to_string_pretty(&manifest).into_diagnostic()? + "\n",
@@ -379,6 +602,87 @@ pub(crate) fn write_named_artifact_manifest(
     .into_diagnostic()
     .wrap_err("failed to write artifact manifest")?;
     Ok(())
+}
+
+pub(crate) fn refresh_artifact_manifest_deployables(
+    artifact_dir: &Path,
+    pearl_ir: &Path,
+    native_path: Option<&Path>,
+    wasm_path: Option<&Path>,
+    wasm_metadata_path: Option<&Path>,
+) -> Result<()> {
+    let manifest_path = artifact_dir.join("artifact.json");
+    if !manifest_path.exists() {
+        return Ok(());
+    }
+    let context = load_artifact_manifest_context(artifact_dir)?;
+    if context.manifest.artifact_kind == ArtifactKind::Pipeline {
+        return Ok(());
+    }
+    let native_path = native_path.map(Path::to_path_buf).or_else(|| {
+        context
+            .manifest
+            .files
+            .native
+            .map(|path| artifact_dir.join(path))
+    });
+    let wasm_path = wasm_path.map(Path::to_path_buf).or_else(|| {
+        context
+            .manifest
+            .files
+            .wasm
+            .map(|path| artifact_dir.join(path))
+    });
+    let wasm_metadata_path = wasm_metadata_path.map(Path::to_path_buf).or_else(|| {
+        context
+            .manifest
+            .files
+            .wasm_metadata
+            .map(|path| artifact_dir.join(path))
+    });
+    let build_report_path = context
+        .manifest
+        .files
+        .build_report
+        .as_ref()
+        .map(|path| artifact_dir.join(path));
+    let feature_dictionary_path = context
+        .manifest
+        .files
+        .feature_dictionary
+        .as_ref()
+        .map(|path| artifact_dir.join(path));
+    let native_file = native_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let wasm_file = wasm_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let wasm_metadata_file = wasm_metadata_path
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let bundle = build_deployable_bundle_descriptor(native_file, wasm_file, wasm_metadata_file);
+
+    write_artifact_manifest_v1(
+        artifact_dir,
+        ArtifactManifestWriteOptions {
+            artifact_kind: context.manifest.artifact_kind,
+            artifact_id: context.manifest.artifact_id,
+            ir_path: pearl_ir.to_path_buf(),
+            build_report_path,
+            feature_dictionary_path,
+            native_path,
+            wasm_path,
+            wasm_metadata_path,
+            build_options_hash: context.manifest.build_options_hash,
+            bundle,
+            extensions: context.manifest.extensions,
+            file_extensions: context.manifest.files.extensions,
+        },
+    )
 }
 
 pub(crate) fn build_deployable_bundle_descriptor(
@@ -421,6 +725,92 @@ pub(crate) fn build_deployable_bundle_descriptor(
     }
 }
 
+fn current_timestamp() -> Result<String> {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .into_diagnostic()
+        .wrap_err("failed to format artifact timestamp")
+}
+
+fn read_json_file(path: &Path) -> Result<Value> {
+    serde_json::from_str(
+        &fs::read_to_string(path)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to read JSON file {}", path.display()))?,
+    )
+    .into_diagnostic()
+    .wrap_err_with(|| format!("JSON file is invalid: {}", path.display()))
+}
+
+fn artifact_ir_version(value: &Value, artifact_kind: ArtifactKind) -> Result<String> {
+    match artifact_kind {
+        ArtifactKind::Gate | ArtifactKind::Action => value
+            .get("ir_version")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| miette::miette!("artifact IR is missing ir_version")),
+        ArtifactKind::Pipeline => value
+            .get("pipeline_version")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| miette::miette!("pipeline artifact is missing pipeline_version")),
+    }
+}
+
+fn relative_manifest_file(base_dir: &Path, path: &Path, fallback: &str) -> String {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    };
+    if let Ok(relative) = candidate.strip_prefix(base_dir) {
+        let rendered = relative.display().to_string();
+        if !rendered.is_empty() {
+            return rendered;
+        }
+    }
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn insert_file_hash(
+    base_dir: &Path,
+    file_hashes: &mut BTreeMap<String, String>,
+    role: &str,
+    relative_path: Option<&str>,
+) -> Result<()> {
+    let Some(relative_path) = relative_path else {
+        return Ok(());
+    };
+    let path = base_dir.join(relative_path);
+    if path.exists() {
+        file_hashes.insert(role.to_string(), hash_file_canonical_if_json(&path)?);
+    }
+    Ok(())
+}
+
+fn hash_file_canonical_if_json(path: &Path) -> Result<String> {
+    let bytes = fs::read(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read file for hashing: {}", path.display()))?;
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            return Ok(artifact_hash(&value));
+        }
+    }
+    Ok(sha256_prefixed(&bytes))
+}
+
+pub(crate) fn build_options_hash(value: &Value) -> String {
+    artifact_hash(value)
+}
+
 pub(crate) fn load_artifact_bundle_descriptor(
     artifact_dir: &Path,
 ) -> Result<Option<ArtifactBundleDescriptor>> {
@@ -437,10 +827,624 @@ pub(crate) fn load_artifact_bundle_descriptor(
     Ok(Some(manifest.bundle))
 }
 
+pub(crate) fn run_artifact_inspect(args: ArtifactInspectArgs) -> Result<()> {
+    let inspection = inspect_artifact(&args.artifact)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&inspection).into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Artifact".bold().bright_cyan(),
+            inspection.manifest.artifact_id.bold()
+        );
+        println!(
+            "  {} {:?}",
+            "Kind".bright_black(),
+            inspection.manifest.artifact_kind
+        );
+        println!(
+            "  {} {}",
+            "Schema".bright_black(),
+            inspection.manifest.schema_version
+        );
+        println!(
+            "  {} {}",
+            "Artifact hash".bright_black(),
+            inspection.manifest.artifact_hash
+        );
+        if let Some(bundle_hash) = &inspection.manifest.bundle_hash {
+            println!("  {} {}", "Bundle hash".bright_black(), bundle_hash);
+        }
+        println!("  {} {}", "IR".bright_black(), inspection.manifest.files.ir);
+        for (role, path) in &inspection.resolved_files {
+            println!("  {} {} {}", "File".bright_black(), role, path);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn run_artifact_digest(args: ArtifactDigestArgs) -> Result<()> {
+    let inspection = inspect_artifact(&args.artifact)?;
+    let report = ArtifactDigestReport {
+        manifest_path: inspection.manifest_path,
+        artifact_id: inspection.manifest.artifact_id,
+        artifact_kind: inspection.manifest.artifact_kind,
+        artifact_hash: inspection.manifest.artifact_hash,
+        bundle_hash: inspection.manifest.bundle_hash,
+        file_hashes: inspection.manifest.file_hashes,
+    };
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
+    } else {
+        println!("{}", report.artifact_hash);
+        if let Some(bundle_hash) = &report.bundle_hash {
+            println!("bundle {bundle_hash}");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn run_artifact_verify(args: ArtifactVerifyArgs) -> Result<()> {
+    let report = verify_artifact(&args.artifact)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
+    } else if report.ok {
+        println!(
+            "{} {}",
+            "Verified".bold().bright_green(),
+            report.artifact_id.as_deref().unwrap_or("artifact").bold()
+        );
+        for check in &report.checks {
+            println!("  {} {}", "ok".bright_black(), check.name);
+        }
+    } else {
+        println!("{}", "Artifact verification failed".bold().bright_red());
+        for check in &report.checks {
+            let status = if check.ok { "ok" } else { "fail" };
+            if let Some(message) = &check.message {
+                println!("  {} {} - {}", status.bright_black(), check.name, message);
+            } else {
+                println!("  {} {}", status.bright_black(), check.name);
+            }
+        }
+    }
+    if report.ok {
+        Ok(())
+    } else {
+        Err(miette::miette!("artifact verification failed"))
+    }
+}
+
+fn inspect_artifact(path: &Path) -> Result<ArtifactManifestInspection> {
+    let context = load_artifact_manifest_context(path)?;
+    let resolved_files = resolved_manifest_files(&context.base_dir, &context.manifest.files);
+    Ok(ArtifactManifestInspection {
+        manifest_path: context
+            .manifest_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        artifact_dir: context.base_dir.display().to_string(),
+        manifest: context.manifest,
+        resolved_files,
+    })
+}
+
+fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
+    let context = load_artifact_manifest_context(path)?;
+    let mut checks = Vec::new();
+    let raw_schema_version = context.raw_manifest.as_ref().and_then(|value| {
+        value
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+    push_check(
+        &mut checks,
+        "schema_version",
+        raw_schema_version.as_deref() == Some(ARTIFACT_MANIFEST_SCHEMA_VERSION),
+        raw_schema_version
+            .as_deref()
+            .filter(|value| *value != ARTIFACT_MANIFEST_SCHEMA_VERSION)
+            .map(|value| format!("expected {ARTIFACT_MANIFEST_SCHEMA_VERSION}, found {value}"))
+            .or_else(|| {
+                if raw_schema_version.is_none() {
+                    Some(format!("expected {ARTIFACT_MANIFEST_SCHEMA_VERSION}"))
+                } else {
+                    None
+                }
+            }),
+    );
+
+    let ir_path = context.base_dir.join(&context.manifest.files.ir);
+    push_check(
+        &mut checks,
+        "files.ir_exists",
+        ir_path.exists(),
+        (!ir_path.exists()).then(|| format!("missing {}", ir_path.display())),
+    );
+
+    if ir_path.exists() {
+        let ir_value = read_json_file(&ir_path)?;
+        let actual_hash = artifact_hash(&ir_value);
+        push_check(
+            &mut checks,
+            "artifact_hash",
+            actual_hash == context.manifest.artifact_hash,
+            (actual_hash != context.manifest.artifact_hash).then(|| {
+                format!(
+                    "expected {}, computed {}",
+                    context.manifest.artifact_hash, actual_hash
+                )
+            }),
+        );
+        match validate_manifest_kind_and_ir(&context.manifest, &context.base_dir, &ir_path) {
+            Ok(()) => push_check(&mut checks, "ir_valid", true, None),
+            Err(err) => push_check(&mut checks, "ir_valid", false, Some(err.to_string())),
+        }
+        if let Some(expected) = &context.manifest.input_schema_hash {
+            let actual = ir_value.get("input_schema").map(artifact_hash);
+            push_check(
+                &mut checks,
+                "input_schema_hash",
+                actual.as_ref() == Some(expected),
+                (actual.as_ref() != Some(expected)).then(|| {
+                    format!(
+                        "expected {}, computed {}",
+                        expected,
+                        actual.unwrap_or_else(|| "missing input_schema".to_string())
+                    )
+                }),
+            );
+        }
+    }
+
+    for (role, relative_path) in manifest_file_roles(&context.manifest.files)
+        .into_iter()
+        .filter(|(role, _)| role != "ir")
+    {
+        let path = context.base_dir.join(&relative_path);
+        push_check(
+            &mut checks,
+            format!("files.{role}_exists"),
+            path.exists(),
+            (!path.exists()).then(|| format!("missing {}", path.display())),
+        );
+        if path.exists() {
+            let actual = hash_file_canonical_if_json(&path)?;
+            if let Some(expected) = context.manifest.file_hashes.get(&role) {
+                push_check(
+                    &mut checks,
+                    format!("file_hashes.{role}"),
+                    &actual == expected,
+                    (&actual != expected)
+                        .then(|| format!("expected {expected}, computed {actual}")),
+                );
+            }
+        }
+    }
+
+    if let (Some(path), Some(expected)) = (
+        context.manifest.files.feature_dictionary.as_ref(),
+        context.manifest.feature_dictionary_hash.as_ref(),
+    ) {
+        let dictionary_path = context.base_dir.join(path);
+        if dictionary_path.exists() {
+            let actual = hash_file_canonical_if_json(&dictionary_path)?;
+            push_check(
+                &mut checks,
+                "feature_dictionary_hash",
+                &actual == expected,
+                (&actual != expected).then(|| format!("expected {expected}, computed {actual}")),
+            );
+        }
+    }
+
+    push_check(
+        &mut checks,
+        "build_options_hash_format",
+        context
+            .manifest
+            .build_options_hash
+            .as_ref()
+            .map(|value| value.starts_with("sha256:"))
+            .unwrap_or(true),
+        context
+            .manifest
+            .build_options_hash
+            .as_ref()
+            .filter(|value| !value.starts_with("sha256:"))
+            .map(|value| format!("not a sha256 digest: {value}")),
+    );
+
+    let ok = checks.iter().all(|check| check.ok);
+    Ok(ArtifactVerificationReport {
+        ok,
+        manifest_path: context
+            .manifest_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        artifact_id: Some(context.manifest.artifact_id),
+        artifact_kind: Some(context.manifest.artifact_kind),
+        checks,
+    })
+}
+
+fn push_check(
+    checks: &mut Vec<ArtifactVerificationCheck>,
+    name: impl Into<String>,
+    ok: bool,
+    message: Option<String>,
+) {
+    checks.push(ArtifactVerificationCheck {
+        name: name.into(),
+        ok,
+        message,
+    });
+}
+
+fn load_artifact_manifest_context(path: &Path) -> Result<ArtifactManifestContext> {
+    if path.is_dir() {
+        let manifest_path = path.join("artifact.json");
+        if manifest_path.exists() {
+            return load_manifest_file(&manifest_path);
+        }
+        let pipeline_path = path.join("pipeline.json");
+        if pipeline_path.exists() {
+            return derive_manifest_from_artifact_file(&pipeline_path);
+        }
+        let ir_path = path.join("pearl.ir.json");
+        if ir_path.exists() {
+            return derive_manifest_from_artifact_file(&ir_path);
+        }
+    }
+    if path
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
+    {
+        return load_manifest_file(path);
+    }
+    derive_manifest_from_artifact_file(path)
+}
+
+fn load_manifest_file(path: &Path) -> Result<ArtifactManifestContext> {
+    let raw_manifest = read_json_file(path)?;
+    let base_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let manifest = if raw_manifest.get("schema_version").and_then(Value::as_str)
+        == Some(ARTIFACT_MANIFEST_SCHEMA_VERSION)
+    {
+        serde_json::from_value(raw_manifest.clone())
+            .into_diagnostic()
+            .wrap_err("artifact manifest does not match v1 shape")?
+    } else {
+        legacy_manifest_from_value(&base_dir, &raw_manifest)?
+    };
+    Ok(ArtifactManifestContext {
+        manifest_path: Some(path.to_path_buf()),
+        base_dir,
+        manifest,
+        raw_manifest: Some(raw_manifest),
+    })
+}
+
+fn derive_manifest_from_artifact_file(path: &Path) -> Result<ArtifactManifestContext> {
+    let value = read_json_file(path)?;
+    let base_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let relative = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let (artifact_kind, artifact_id, ir_version, input_schema_hash) =
+        artifact_identity_from_value(&value)?;
+    let file_hash = hash_file_canonical_if_json(path)?;
+    let mut file_hashes = BTreeMap::new();
+    file_hashes.insert("ir".to_string(), file_hash);
+    let files = ArtifactManifestFiles {
+        ir: relative,
+        build_report: None,
+        feature_dictionary: None,
+        wasm: None,
+        wasm_metadata: None,
+        native: None,
+        extensions: BTreeMap::new(),
+    };
+    let artifact_hash_value = artifact_hash(&value);
+    Ok(ArtifactManifestContext {
+        manifest_path: None,
+        base_dir,
+        manifest: ArtifactManifestV1 {
+            schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION.to_string(),
+            artifact_id,
+            artifact_kind,
+            engine_version: LOGICPEARL_ENGINE_VERSION.to_string(),
+            ir_version,
+            created_at: current_timestamp()?,
+            artifact_hash: artifact_hash_value.clone(),
+            files: files.clone(),
+            input_schema_hash,
+            feature_dictionary_hash: None,
+            build_options_hash: None,
+            file_hashes,
+            bundle_hash: Some(artifact_hash(&json!({
+                "artifact_hash": artifact_hash_value,
+                "files": files.clone(),
+            }))),
+            extensions: BTreeMap::new(),
+        },
+        raw_manifest: None,
+    })
+}
+
+fn legacy_manifest_from_value(base_dir: &Path, value: &Value) -> Result<ArtifactManifestV1> {
+    let files_value = value
+        .get("files")
+        .ok_or_else(|| miette::miette!("artifact manifest is missing files"))?;
+    let ir = files_value
+        .get("ir")
+        .or_else(|| files_value.get("pearl_ir"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))?
+        .to_string();
+    let ir_path = base_dir.join(&ir);
+    let ir_value = read_json_file(&ir_path)?;
+    let (artifact_kind, artifact_id, ir_version, input_schema_hash) =
+        artifact_identity_from_value(&ir_value)?;
+    let build_report = files_value
+        .get("build_report")
+        .or_else(|| files_value.get("action_report"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let feature_dictionary = files_value
+        .get("feature_dictionary")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let native = files_value
+        .get("native")
+        .or_else(|| files_value.get("native_binary"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let wasm = files_value
+        .get("wasm")
+        .or_else(|| files_value.get("wasm_module"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let wasm_metadata = files_value
+        .get("wasm_metadata")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let mut file_hashes = BTreeMap::new();
+    insert_file_hash(base_dir, &mut file_hashes, "ir", Some(&ir))?;
+    insert_file_hash(
+        base_dir,
+        &mut file_hashes,
+        "build_report",
+        build_report.as_deref(),
+    )?;
+    insert_file_hash(
+        base_dir,
+        &mut file_hashes,
+        "feature_dictionary",
+        feature_dictionary.as_deref(),
+    )?;
+    insert_file_hash(base_dir, &mut file_hashes, "native", native.as_deref())?;
+    insert_file_hash(base_dir, &mut file_hashes, "wasm", wasm.as_deref())?;
+    insert_file_hash(
+        base_dir,
+        &mut file_hashes,
+        "wasm_metadata",
+        wasm_metadata.as_deref(),
+    )?;
+    let files = ArtifactManifestFiles {
+        ir,
+        build_report,
+        feature_dictionary,
+        wasm,
+        wasm_metadata,
+        native,
+        extensions: BTreeMap::new(),
+    };
+    let artifact_hash_value = artifact_hash(&ir_value);
+    Ok(ArtifactManifestV1 {
+        schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION.to_string(),
+        artifact_id: value
+            .get("artifact_id")
+            .or_else(|| value.get("gate_id"))
+            .or_else(|| value.get("artifact_name"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or(artifact_id),
+        artifact_kind,
+        engine_version: value
+            .get("engine_version")
+            .and_then(Value::as_str)
+            .unwrap_or(LOGICPEARL_ENGINE_VERSION)
+            .to_string(),
+        ir_version,
+        created_at: value
+            .get("created_at")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or(current_timestamp()?),
+        artifact_hash: value
+            .get("artifact_hash")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or(artifact_hash_value.clone()),
+        files: files.clone(),
+        input_schema_hash,
+        feature_dictionary_hash: None,
+        build_options_hash: None,
+        file_hashes,
+        bundle_hash: Some(artifact_hash(&json!({
+            "artifact_hash": artifact_hash_value,
+            "files": files.clone(),
+        }))),
+        extensions: BTreeMap::new(),
+    })
+}
+
+fn artifact_identity_from_value(
+    value: &Value,
+) -> Result<(ArtifactKind, String, String, Option<String>)> {
+    if value.get("pipeline_version").is_some() {
+        return Ok((
+            ArtifactKind::Pipeline,
+            value
+                .get("pipeline_id")
+                .and_then(Value::as_str)
+                .unwrap_or("logicpearl_pipeline")
+                .to_string(),
+            value
+                .get("pipeline_version")
+                .and_then(Value::as_str)
+                .unwrap_or("1.0")
+                .to_string(),
+            None,
+        ));
+    }
+    if value.get("action_policy_id").is_some() {
+        return Ok((
+            ArtifactKind::Action,
+            value
+                .get("action_policy_id")
+                .and_then(Value::as_str)
+                .unwrap_or("logicpearl_action")
+                .to_string(),
+            value
+                .get("ir_version")
+                .and_then(Value::as_str)
+                .unwrap_or("1.0")
+                .to_string(),
+            value.get("input_schema").map(artifact_hash),
+        ));
+    }
+    Ok((
+        ArtifactKind::Gate,
+        value
+            .get("gate_id")
+            .and_then(Value::as_str)
+            .unwrap_or("logicpearl_gate")
+            .to_string(),
+        value
+            .get("ir_version")
+            .and_then(Value::as_str)
+            .unwrap_or("1.0")
+            .to_string(),
+        value.get("input_schema").map(artifact_hash),
+    ))
+}
+
+fn validate_manifest_kind_and_ir(
+    manifest: &ArtifactManifestV1,
+    base_dir: &Path,
+    ir_path: &Path,
+) -> Result<()> {
+    match manifest.artifact_kind {
+        ArtifactKind::Gate => {
+            let gate = LogicPearlGateIr::from_path(ir_path)
+                .into_diagnostic()
+                .wrap_err("could not parse gate IR")?;
+            gate.validate()
+                .into_diagnostic()
+                .wrap_err("gate IR did not validate")?;
+            if gate.gate_id != manifest.artifact_id {
+                return Err(miette::miette!(
+                    "manifest artifact_id {} does not match gate_id {}",
+                    manifest.artifact_id,
+                    gate.gate_id
+                ));
+            }
+        }
+        ArtifactKind::Action => {
+            let policy = LogicPearlActionIr::from_path(ir_path)
+                .into_diagnostic()
+                .wrap_err("could not parse action policy IR")?;
+            policy
+                .validate()
+                .into_diagnostic()
+                .wrap_err("action policy IR did not validate")?;
+            if policy.action_policy_id != manifest.artifact_id {
+                return Err(miette::miette!(
+                    "manifest artifact_id {} does not match action_policy_id {}",
+                    manifest.artifact_id,
+                    policy.action_policy_id
+                ));
+            }
+        }
+        ArtifactKind::Pipeline => {
+            let pipeline = PipelineDefinition::from_path(ir_path)
+                .into_diagnostic()
+                .wrap_err("could not parse pipeline definition")?;
+            let pipeline_base = if ir_path.is_absolute() {
+                ir_path.parent().unwrap_or(base_dir)
+            } else {
+                base_dir
+            };
+            pipeline
+                .validate(pipeline_base)
+                .into_diagnostic()
+                .wrap_err("pipeline definition did not validate")?;
+            if pipeline.pipeline_id != manifest.artifact_id {
+                return Err(miette::miette!(
+                    "manifest artifact_id {} does not match pipeline_id {}",
+                    manifest.artifact_id,
+                    pipeline.pipeline_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn manifest_file_roles(files: &ArtifactManifestFiles) -> Vec<(String, String)> {
+    let mut roles = vec![("ir".to_string(), files.ir.clone())];
+    if let Some(path) = &files.build_report {
+        roles.push(("build_report".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.feature_dictionary {
+        roles.push(("feature_dictionary".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.native {
+        roles.push(("native".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.wasm {
+        roles.push(("wasm".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.wasm_metadata {
+        roles.push(("wasm_metadata".to_string(), path.clone()));
+    }
+    roles
+}
+
+fn resolved_manifest_files(
+    base_dir: &Path,
+    files: &ArtifactManifestFiles,
+) -> BTreeMap<String, String> {
+    manifest_file_roles(files)
+        .into_iter()
+        .map(|(role, path)| (role, base_dir.join(path).display().to_string()))
+        .collect()
+}
+
 fn build_artifact_bundle_descriptor(output_files: &OutputFiles) -> ArtifactBundleDescriptor {
     let files = NamedArtifactFiles {
         pearl_ir: file_name_or_fallback(&output_files.pearl_ir, "pearl.ir.json"),
         build_report: file_name_or_fallback(&output_files.build_report, "build_report.json"),
+        feature_dictionary: None,
         native_binary: output_files.native_binary.as_ref().and_then(|path| {
             PathBuf::from(path)
                 .file_name()
@@ -1441,10 +2445,10 @@ fn load_manifest_pearl_ir(path: &Path) -> Result<String> {
     .wrap_err("artifact manifest is not valid JSON")?;
     value
         .get("files")
-        .and_then(|files| files.get("pearl_ir"))
+        .and_then(|files| files.get("ir").or_else(|| files.get("pearl_ir")))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-        .ok_or_else(|| miette::miette!("artifact manifest is missing files.pearl_ir"))
+        .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))
 }
 
 fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> PathBuf {

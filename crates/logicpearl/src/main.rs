@@ -63,11 +63,14 @@ mod plugin_cmd;
 mod trace_cmd;
 
 use artifact_cmd::{
-    build_deployable_bundle_descriptor, compile_native_runner, compile_wasm_module,
-    is_rust_target_installed, load_artifact_bundle_descriptor, native_artifact_output_path,
-    pearl_artifact_id, persist_build_report, resolve_artifact_input,
-    run_embedded_native_runner_if_present, wasm_artifact_output_path,
-    write_named_artifact_manifest, ArtifactBundleDescriptor,
+    build_deployable_bundle_descriptor, build_options_hash, compile_native_runner,
+    compile_wasm_module, is_rust_target_installed, load_artifact_bundle_descriptor,
+    native_artifact_output_path, pearl_artifact_id, persist_build_report,
+    refresh_artifact_manifest_deployables, resolve_artifact_input, run_artifact_digest,
+    run_artifact_inspect, run_artifact_verify, run_embedded_native_runner_if_present,
+    wasm_artifact_output_path, write_artifact_manifest_v1, write_named_artifact_manifest,
+    ArtifactBundleDescriptor, ArtifactDigestArgs, ArtifactInspectArgs,
+    ArtifactManifestWriteOptions, ArtifactVerifyArgs,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
@@ -212,6 +215,12 @@ Examples:
   logicpearl diff old_output/artifact.json new_output/artifact.json --json
   logicpearl diff old_output/pearl.ir.json new_output/pearl.ir.json";
 
+const ARTIFACT_AFTER_HELP: &str = "\
+Examples:
+  logicpearl artifact inspect output/artifact.json --json
+  logicpearl artifact digest output
+  logicpearl artifact verify output/artifact.json";
+
 const TRACES_AFTER_HELP: &str = "\
 Examples:
   logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl
@@ -347,6 +356,11 @@ enum Commands {
     Inspect(InspectArgs),
     /// Compare two artifacts semantically instead of by raw bit position.
     Diff(DiffArgs),
+    /// Inspect, digest, and verify artifact bundle manifests.
+    Artifact {
+        #[command(subcommand)]
+        command: ArtifactCommand,
+    },
     /// Run a pearl on an input file.
     Run(RunArgs),
     /// Work with string-of-pearls pipelines.
@@ -455,6 +469,17 @@ enum PipelineCommand {
     Run(PipelineRunArgs),
     /// Run a pipeline and show every stage in the trace.
     Trace(PipelineTraceArgs),
+}
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = ARTIFACT_AFTER_HELP)]
+enum ArtifactCommand {
+    /// Inspect the normalized artifact manifest.
+    Inspect(ArtifactInspectArgs),
+    /// Print the artifact and bundle digests.
+    Digest(ArtifactDigestArgs),
+    /// Validate the manifest, hashes, and referenced files.
+    Verify(ArtifactVerifyArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -568,6 +593,15 @@ fn main() -> Result<()> {
             command: ConformanceCommand::SpecVerify(args),
         } => run_conformance_spec_verify(args),
         Commands::Diff(args) => run_diff(args),
+        Commands::Artifact {
+            command: ArtifactCommand::Inspect(args),
+        } => run_artifact_inspect(args),
+        Commands::Artifact {
+            command: ArtifactCommand::Digest(args),
+        } => run_artifact_digest(args),
+        Commands::Artifact {
+            command: ArtifactCommand::Verify(args),
+        } => run_artifact_verify(args),
         Commands::Run(args) => run_eval(args),
         Commands::Inspect(args) => run_inspect(args),
         Commands::Verify(args) => run_verify(args),

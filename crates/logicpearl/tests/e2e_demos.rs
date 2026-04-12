@@ -87,8 +87,12 @@ fn garden_actions_builds_single_action_policy_artifact() {
         &fs::read_to_string(output_path.join("artifact.json")).expect("manifest should read"),
     )
     .expect("manifest should parse");
-    assert_eq!(manifest["artifact_kind"], "action_policy");
-    assert_eq!(manifest["files"]["pearl_ir"], "pearl.ir.json");
+    assert_eq!(
+        manifest["schema_version"],
+        "logicpearl.artifact_manifest.v1"
+    );
+    assert_eq!(manifest["artifact_kind"], "action");
+    assert_eq!(manifest["files"]["ir"], "pearl.ir.json");
 
     let inspect_output = Command::new(cli_bin)
         .arg("inspect")
@@ -194,8 +198,8 @@ fn garden_actions_builds_single_action_policy_artifact() {
             .expect("plugin manifest should read"),
     )
     .expect("plugin manifest should parse");
-    assert_eq!(plugin_manifest["artifact_kind"], "action_policy");
-    let native_binary = plugin_manifest["files"]["native_binary"]
+    assert_eq!(plugin_manifest["artifact_kind"], "action");
+    let native_binary = plugin_manifest["files"]["native"]
         .as_str()
         .expect("action --compile should emit a native binary");
     let today: Value = serde_json::from_str(
@@ -213,7 +217,7 @@ fn garden_actions_builds_single_action_policy_artifact() {
     assert_eq!(compiled_json["defaulted"], false);
     assert_eq!(compiled_json["bitmask"], 1);
 
-    if let Some(wasm_module) = plugin_manifest["files"]["wasm_module"].as_str() {
+    if let Some(wasm_module) = plugin_manifest["files"]["wasm"].as_str() {
         assert_eq!(wasm_module, "pearl.wasm");
         assert!(plugin_output_path.join("pearl.wasm").exists());
         assert!(plugin_output_path.join("pearl.wasm.meta.json").exists());
