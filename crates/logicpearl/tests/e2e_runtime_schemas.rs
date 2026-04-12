@@ -78,6 +78,7 @@ fn runtime_schema_files_are_valid_draft_2020_12() {
         "logicpearl-artifact-error-v1.schema.json",
         "logicpearl-artifact-manifest-v1.schema.json",
         "logicpearl-build-provenance-v1.schema.json",
+        "logicpearl-plugin-run-provenance-v1.schema.json",
         "logicpearl-source-manifest-v1.schema.json",
     ] {
         let schema = load_json(root.join("schema").join(schema_name));

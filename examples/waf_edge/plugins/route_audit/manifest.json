@@ -1,5 +1,7 @@
 {
   "name": "waf-edge-route-audit",
+  "plugin_id": "waf-edge-route-audit",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "verify",

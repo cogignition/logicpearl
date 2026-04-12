@@ -47,6 +47,25 @@ fn validate_build_provenance(instance: &Value) {
     );
 }
 
+fn validate_plugin_run_provenance(instance: &Value) {
+    let schema =
+        load_json(repo_root().join("schema/logicpearl-plugin-run-provenance-v1.schema.json"));
+    jsonschema::draft202012::meta::validate(&schema)
+        .unwrap_or_else(|err| panic!("plugin run provenance schema is invalid: {err}"));
+    let validator = jsonschema::draft202012::new(&schema)
+        .unwrap_or_else(|err| panic!("failed to compile plugin run provenance schema: {err}"));
+    let errors = validator
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        errors.is_empty(),
+        "plugin run provenance validation failed:\n{}\ninstance:\n{}",
+        errors.join("\n"),
+        serde_json::to_string_pretty(instance).expect("instance should encode")
+    );
+}
+
 fn run_cli_json(args: &[String]) -> Value {
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
     let output = Command::new(cli_bin)
@@ -281,12 +300,42 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
     assert!(!encoded.contains("supersecret"));
 
     let plugin = &provenance["plugins"][0];
+    validate_plugin_run_provenance(plugin);
+    assert_eq!(
+        plugin["schema_version"].as_str(),
+        Some("logicpearl.plugin_run_provenance.v1")
+    );
     assert_eq!(plugin["stage"].as_str(), Some("trace_source"));
+    assert_eq!(plugin["plugin_id"].as_str(), Some("python-trace-source"));
+    assert_eq!(plugin["plugin_version"].as_str(), Some("0.1.0"));
+    assert_sha256(&plugin["plugin_run_id"]);
     assert_sha256(&plugin["manifest_hash"]);
+    assert_sha256(&plugin["entrypoint_hash"]);
     assert_sha256(&plugin["input_hash"]);
     assert_sha256(&plugin["input"]["hash"]);
     assert_sha256(&plugin["request_hash"]);
     assert_sha256(&plugin["output_hash"]);
+    assert_eq!(plugin["rows_emitted"].as_u64(), Some(12));
+    assert_eq!(
+        plugin["timeout_policy"]["effective_timeout_ms"].as_u64(),
+        Some(30_000)
+    );
+    assert_eq!(
+        plugin["execution_policy"]["allow_path_lookup"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(plugin["access"]["network"].as_str(), Some("not_enforced"));
+    assert_eq!(
+        plugin["access"]["filesystem"].as_str(),
+        Some("process_default")
+    );
+    assert!(plugin["stdio"]["stdout_hash"].as_str().is_some());
+    assert!(plugin["stdio"]["stdout_summary"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+    assert!(plugin["entrypoint"]["hashes"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
     assert!(plugin["options"]["api_key"]
         .as_str()
         .is_some_and(|value| value.starts_with("<redacted:sha256:")));

@@ -1173,19 +1173,20 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                     Some(serde_json::to_value(&trace_plugin_options).into_diagnostic()?),
                 ),
             };
-            let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
-                .into_diagnostic()
-                .wrap_err("trace plugin execution failed")?;
+            let execution =
+                run_plugin_with_policy_and_metadata(&manifest, &request, &plugin_policy)
+                    .into_diagnostic()
+                    .wrap_err("trace plugin execution failed")?;
             trace_plugin_provenance = Some(plugin_provenance_from_execution(
                 "trace_source",
                 manifest_path,
                 &manifest,
-                &request,
-                &response,
+                &execution,
                 Some(source_input_provenance(&source)),
                 trace_plugin_options.clone(),
             )?);
-            let traces_value = response
+            let traces_value = execution
+                .response
                 .extra
                 .get("decision_traces")
                 .cloned()
@@ -1299,19 +1300,23 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                 None,
             ),
         };
-        let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
+        let execution = run_plugin_with_policy_and_metadata(&manifest, &request, &plugin_policy)
             .into_diagnostic()
             .wrap_err("enricher plugin execution failed")?;
         enricher_plugin_provenance = Some(plugin_provenance_from_execution(
             "enricher",
             manifest_path,
             &manifest,
-            &request,
-            &response,
+            &execution,
             None,
             BTreeMap::new(),
         )?);
-        let records_value = response.extra.get("records").cloned().ok_or_else(|| {
+        let records_value = execution
+            .response
+            .extra
+            .get("records")
+            .cloned()
+            .ok_or_else(|| {
             guidance(
                 "enricher plugin response is missing `records`",
                 "An enricher plugin must return a top-level records array compatible with decision traces.",
@@ -2187,19 +2192,18 @@ fn load_action_trace_records(
                 ),
             };
             let policy = plugin_execution_policy(&args.plugin_execution);
-            let response = run_plugin_with_policy(&manifest, &request, &policy)
+            let execution = run_plugin_with_policy_and_metadata(&manifest, &request, &policy)
                 .into_diagnostic()
                 .wrap_err("trace plugin execution failed")?;
             let provenance = plugin_provenance_from_execution(
                 "trace_source",
                 manifest_path,
                 &manifest,
-                &request,
-                &response,
+                &execution,
                 Some(source_input_provenance(&source)),
                 options.clone(),
             )?;
-            let loaded = action_records_from_plugin_response(&response, action_column)?;
+            let loaded = action_records_from_plugin_response(&execution.response, action_column)?;
             let source_name = format!(
                 "plugin:{}:{}",
                 manifest.name,
@@ -3014,29 +3018,65 @@ fn plugin_provenance_from_execution(
     stage: &str,
     manifest_path: &Path,
     manifest: &PluginManifest,
-    request: &PluginRequest,
-    response: &PluginResponse,
+    execution: &PluginExecutionResult,
     input: Option<BuildInputProvenance>,
     options: BTreeMap<String, String>,
 ) -> Result<PluginBuildProvenance> {
-    let request_value = serde_json::to_value(request).into_diagnostic()?;
-    let response_value = serde_json::to_value(response).into_diagnostic()?;
-    let input_hash = request_value
-        .get("payload")
-        .and_then(|payload| payload.get("input"))
-        .map(artifact_hash);
+    let run = &execution.run;
     Ok(PluginBuildProvenance {
+        schema_version: run.schema_version.clone(),
+        plugin_run_id: Some(run.plugin_run_id.clone()),
+        plugin_id: Some(run.plugin_id.clone()),
+        plugin_version: run.plugin_version.clone(),
         name: manifest.name.clone(),
+        plugin_name: Some(run.plugin_name.clone()),
         stage: stage.to_string(),
+        protocol_version: Some(run.protocol_version.clone()),
         manifest_path: manifest_path.display().to_string(),
-        manifest_hash: Some(hash_file_for_provenance(manifest_path)?),
+        manifest_hash: run
+            .manifest_hash
+            .clone()
+            .or_else(|| hash_file_for_provenance(manifest_path).ok()),
         manifest_sha256: Some(sha256_file_hex(manifest_path)?),
+        entrypoint_hash: Some(run.entrypoint_hash.clone()),
+        entrypoint: Some(serde_json::to_value(&run.entrypoint).into_diagnostic()?),
         input,
-        input_hash,
-        request_hash: Some(artifact_hash(&request_value)),
-        output_hash: Some(artifact_hash(&response_value)),
+        input_hash: run.input_hash.clone(),
+        request_hash: Some(run.request_hash.clone()),
+        output_hash: Some(run.output_hash.clone()),
         options: sanitize_plugin_options(&options),
+        rows_emitted: rows_emitted_from_plugin_response(stage, &execution.response),
+        completed_at: Some(run.completed_at.clone()),
+        started_at: Some(run.started_at.clone()),
+        duration_ms: Some(run.duration_ms),
+        timeout_policy: Some(serde_json::to_value(&run.timeout_policy).into_diagnostic()?),
+        execution_policy: Some(serde_json::to_value(&run.execution_policy).into_diagnostic()?),
+        capabilities: Some(serde_json::to_value(&run.capabilities).into_diagnostic()?),
+        access: Some(serde_json::to_value(&run.access).into_diagnostic()?),
+        stdio: Some(serde_json::to_value(&run.stdio).into_diagnostic()?),
     })
+}
+
+fn rows_emitted_from_plugin_response(stage: &str, response: &PluginResponse) -> Option<usize> {
+    match stage {
+        "trace_source" => response
+            .extra
+            .get("decision_traces")
+            .or_else(|| response.extra.get("records"))
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        "enricher" => response
+            .extra
+            .get("records")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        "observer" => response
+            .extra
+            .get("features")
+            .and_then(Value::as_object)
+            .map(|_| 1),
+        _ => None,
+    }
 }
 
 fn hash_file_for_provenance(path: &Path) -> Result<String> {

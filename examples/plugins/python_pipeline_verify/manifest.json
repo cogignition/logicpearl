@@ -1,5 +1,7 @@
 {
   "name": "python-pipeline-verify-demo",
+  "plugin_id": "python-pipeline-verify",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "verify",

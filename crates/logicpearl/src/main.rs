@@ -36,8 +36,9 @@ use logicpearl_observer_synthesis::{
 };
 use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
 use logicpearl_plugin::{
-    run_plugin_batch_with_policy, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest,
-    PluginRequest, PluginResponse, PluginStage,
+    run_plugin_batch_with_policy, run_plugin_with_policy, run_plugin_with_policy_and_metadata,
+    PluginExecutionPolicy, PluginExecutionResult, PluginManifest, PluginRequest, PluginResponse,
+    PluginStage,
 };
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{

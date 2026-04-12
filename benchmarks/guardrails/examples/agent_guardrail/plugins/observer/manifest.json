@@ -1,5 +1,7 @@
 {
   "name": "agent-guardrail-observer",
+  "plugin_id": "agent-guardrail-observer",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "observer",

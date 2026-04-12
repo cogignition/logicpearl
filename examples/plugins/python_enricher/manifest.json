@@ -1,5 +1,7 @@
 {
   "name": "python-enricher-demo",
+  "plugin_id": "python-enricher",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "enricher",

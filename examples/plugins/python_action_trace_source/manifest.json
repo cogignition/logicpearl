@@ -1,5 +1,7 @@
 {
   "name": "python-action-trace-source-demo",
+  "plugin_id": "python-action-trace-source",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "trace_source",

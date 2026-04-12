@@ -119,7 +119,19 @@ fn pipeline_validate_inspect_and_trace_expose_expected_stage_data() {
         Some(1)
     );
     assert_eq!(
+        stages[0]["raw_result"]["plugin_run"]["plugin_id"].as_str(),
+        Some("python-observer")
+    );
+    assert_eq!(
+        stages[0]["raw_result"]["plugin_run"]["access"]["filesystem"].as_str(),
+        Some("process_default")
+    );
+    assert_eq!(
         stages[2]["raw_result"]["summary"]["consistent"].as_bool(),
         Some(true)
+    );
+    assert_eq!(
+        stages[2]["raw_result"]["plugin_run"]["plugin_id"].as_str(),
+        Some("python-pipeline-verify")
     );
 }

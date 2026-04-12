@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.com/schema/logicpearl-plugin-run-provenance-v1.schema.json",
+  "title": "LogicPearl Plugin Run Provenance v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "plugin_run_id",
+    "plugin_id",
+    "plugin_name",
+    "stage",
+    "protocol_version",
+    "entrypoint_hash",
+    "entrypoint",
+    "request_hash",
+    "output_hash",
+    "timeout_policy",
+    "execution_policy",
+    "capabilities",
+    "access",
+    "stdio",
+    "started_at",
+    "completed_at",
+    "duration_ms"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "logicpearl.plugin_run_provenance.v1"
+    },
+    "plugin_run_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plugin_version": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "plugin_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage": {
+      "$ref": "#/$defs/plugin_stage"
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest_path": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "manifest_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "entrypoint_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "entrypoint": {
+      "$ref": "#/$defs/plugin_entrypoint"
+    },
+    "request_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "input_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "output_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "timeout_policy": {
+      "$ref": "#/$defs/timeout_policy"
+    },
+    "execution_policy": {
+      "$ref": "#/$defs/execution_policy"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "access": {
+      "$ref": "#/$defs/access"
+    },
+    "stdio": {
+      "$ref": "#/$defs/stdio"
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completed_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "plugin_stage": {
+      "enum": [
+        "observer",
+        "trace_source",
+        "enricher",
+        "verify",
+        "render"
+      ]
+    },
+    "plugin_entrypoint": {
+      "type": "object",
+      "required": ["declared", "resolved", "hashes"],
+      "properties": {
+        "declared": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolved": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hashes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "path", "hash"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hash": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "timeout_policy": {
+      "type": "object",
+      "required": [
+        "manifest_timeout_ms",
+        "default_timeout_ms",
+        "effective_timeout_ms",
+        "allow_no_timeout"
+      ],
+      "properties": {
+        "manifest_timeout_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "default_timeout_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "effective_timeout_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "allow_no_timeout": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "execution_policy": {
+      "type": "object",
+      "required": [
+        "allow_absolute_entrypoint",
+        "allow_path_lookup",
+        "allow_no_timeout"
+      ],
+      "properties": {
+        "allow_absolute_entrypoint": {
+          "type": "boolean"
+        },
+        "allow_path_lookup": {
+          "type": "boolean"
+        },
+        "allow_no_timeout": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["declared", "allowed", "enforced"],
+      "properties": {
+        "declared": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enforced": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "access": {
+      "type": "object",
+      "required": ["network", "filesystem", "enforcement"],
+      "properties": {
+        "network": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filesystem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enforcement": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "stdio": {
+      "type": "object",
+      "required": [
+        "stdout_hash",
+        "stdout_bytes",
+        "stderr_hash",
+        "stderr_bytes"
+      ],
+      "properties": {
+        "stdout_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "stdout_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stdout_summary": {
+          "type": ["string", "null"]
+        },
+        "stderr_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "stderr_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stderr_summary": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

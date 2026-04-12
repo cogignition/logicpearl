@@ -2,8 +2,9 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
-    run_plugin_batch_with_policy, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest,
-    PluginRequest, PluginResponse, PluginStage,
+    run_plugin_batch_with_policy_and_metadata, run_plugin_with_policy_and_metadata,
+    PluginExecutionPolicy, PluginExecutionResult, PluginManifest, PluginRequest, PluginResponse,
+    PluginStage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
@@ -699,7 +700,7 @@ fn run_prepared_stage(
                 build_stage_payload_value(stage, root_input, stage_exports)?,
                 build_stage_options_value(stage, root_input, stage_exports)?,
             );
-            let response = run_plugin_with_policy(
+            let execution = run_plugin_with_policy_and_metadata(
                 manifest,
                 &PluginRequest {
                     protocol_version: "1".to_string(),
@@ -708,7 +709,7 @@ fn run_prepared_stage(
                 },
                 plugin_policy,
             )?;
-            plugin_response_to_value(response)
+            plugin_execution_to_value(execution)
         }
     }
 }
@@ -720,6 +721,10 @@ fn run_prepared_stage_batch(
     runnable_indexes: &[usize],
     plugin_policy: &PluginExecutionPolicy,
 ) -> Result<Vec<Value>> {
+    if runnable_indexes.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let stage = &prepared_stage.stage;
     match &prepared_stage.executable {
         PreparedStageExecutable::Pearl(gate) => runnable_indexes
@@ -755,21 +760,38 @@ fn run_prepared_stage_batch(
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let responses = run_plugin_batch_with_policy(
+            let execution = run_plugin_batch_with_policy_and_metadata(
                 manifest,
                 plugin_stage.clone(),
                 &payloads,
                 plugin_policy,
             )?;
-            responses
+            if execution.runs.len() != execution.responses.len() {
+                return Err(LogicPearlError::message(format!(
+                    "plugin {} returned {} execution records for {} responses",
+                    manifest.name,
+                    execution.runs.len(),
+                    execution.responses.len()
+                )));
+            }
+            execution
+                .responses
                 .into_iter()
-                .map(plugin_response_to_value)
+                .zip(execution.runs)
+                .map(|(response, run)| plugin_response_with_run_to_value(response, &run))
                 .collect()
         }
     }
 }
 
-fn plugin_response_to_value(response: PluginResponse) -> Result<Value> {
+fn plugin_execution_to_value(execution: PluginExecutionResult) -> Result<Value> {
+    plugin_response_with_run_to_value(execution.response, &execution.run)
+}
+
+fn plugin_response_with_run_to_value(
+    response: PluginResponse,
+    run: &logicpearl_plugin::PluginRunMetadata,
+) -> Result<Value> {
     let mut map = Map::new();
     map.insert("ok".to_string(), Value::Bool(response.ok));
     if !response.warnings.is_empty() {
@@ -787,6 +809,10 @@ fn plugin_response_to_value(response: PluginResponse) -> Result<Value> {
     for (key, value) in response.extra {
         map.insert(key, value);
     }
+    map.insert(
+        "plugin_run".to_string(),
+        serde_json::to_value(run).map_err(LogicPearlError::from)?,
+    );
     Ok(Value::Object(map))
 }
 

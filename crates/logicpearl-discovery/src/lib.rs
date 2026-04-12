@@ -249,13 +249,29 @@ pub struct SourceManifestSource {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct PluginBuildProvenance {
+    #[serde(default = "default_plugin_run_provenance_schema_version")]
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_version: Option<String>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_name: Option<String>,
     pub stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     pub manifest_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<BuildInputProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -266,6 +282,28 @@ pub struct PluginBuildProvenance {
     pub output_hash: Option<String>,
     #[serde(default)]
     pub options: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows_emitted: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_policy: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_policy: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdio: Option<Value>,
+}
+
+fn default_plugin_run_provenance_schema_version() -> String {
+    "logicpearl.plugin_run_provenance.v1".to_string()
 }
 
 #[derive(Debug, Clone)]

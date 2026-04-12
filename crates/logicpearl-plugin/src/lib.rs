@@ -2,11 +2,13 @@
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const MAX_PLUGIN_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_STDERR_BYTES: usize = 8 * 1024 * 1024;
@@ -42,6 +44,10 @@ pub enum PluginStage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+    #[serde(default)]
+    pub plugin_version: Option<String>,
     pub protocol_version: String,
     pub stage: PluginStage,
     pub entrypoint: Vec<String>,
@@ -56,6 +62,8 @@ pub struct PluginManifest {
     pub output_schema: Option<Value>,
     #[serde(skip)]
     pub manifest_dir: Option<PathBuf>,
+    #[serde(skip)]
+    pub manifest_path: Option<PathBuf>,
 }
 
 /// Security policy controlling plugin execution privileges.
@@ -158,6 +166,109 @@ pub struct PluginBatchResponse {
     pub responses: Vec<PluginResponse>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginExecutionResult {
+    pub response: PluginResponse,
+    pub run: PluginRunMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginBatchExecutionResult {
+    pub responses: Vec<PluginResponse>,
+    #[serde(default)]
+    pub runs: Vec<PluginRunMetadata>,
+    pub run: PluginRunMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginRunMetadata {
+    pub schema_version: String,
+    pub plugin_run_id: String,
+    pub plugin_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_version: Option<String>,
+    pub plugin_name: String,
+    pub stage: PluginStage,
+    pub protocol_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_hash: Option<String>,
+    pub entrypoint_hash: String,
+    pub entrypoint: PluginEntrypointMetadata,
+    pub request_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hash: Option<String>,
+    pub output_hash: String,
+    pub timeout_policy: PluginTimeoutPolicyMetadata,
+    pub execution_policy: PluginExecutionPolicyMetadata,
+    pub capabilities: PluginCapabilityMetadata,
+    pub access: PluginAccessMetadata,
+    pub stdio: PluginStdioMetadata,
+    pub started_at: String,
+    pub completed_at: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginEntrypointMetadata {
+    pub declared: Vec<String>,
+    pub resolved: Vec<String>,
+    #[serde(default)]
+    pub hashes: Vec<PluginEntrypointSegmentHash>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginEntrypointSegmentHash {
+    pub index: usize,
+    pub path: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginTimeoutPolicyMetadata {
+    pub manifest_timeout_ms: Option<u64>,
+    pub default_timeout_ms: u64,
+    pub effective_timeout_ms: Option<u64>,
+    pub allow_no_timeout: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginExecutionPolicyMetadata {
+    pub allow_absolute_entrypoint: bool,
+    pub allow_path_lookup: bool,
+    pub allow_no_timeout: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginCapabilityMetadata {
+    #[serde(default)]
+    pub declared: Vec<String>,
+    #[serde(default)]
+    pub allowed: Vec<String>,
+    #[serde(default)]
+    pub enforced: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginAccessMetadata {
+    pub network: String,
+    pub filesystem: String,
+    pub enforcement: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginStdioMetadata {
+    pub stdout_hash: String,
+    pub stdout_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_summary: Option<String>,
+    pub stderr_hash: String,
+    pub stderr_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_summary: Option<String>,
+}
+
 /// Build the canonical JSON payload sent to a plugin process on stdin.
 pub fn build_canonical_payload(
     _stage: &PluginStage,
@@ -180,6 +291,7 @@ impl PluginManifest {
         let content = std::fs::read_to_string(path)?;
         let mut manifest: Self = serde_json::from_str(&content)?;
         manifest.manifest_dir = path.parent().map(Path::to_path_buf);
+        manifest.manifest_path = Some(path.to_path_buf());
         manifest.validate()?;
         Ok(manifest)
     }
@@ -188,6 +300,24 @@ impl PluginManifest {
         if self.name.trim().is_empty() {
             return Err(LogicPearlError::message(
                 "plugin manifest name must be non-empty",
+            ));
+        }
+        if self
+            .plugin_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(LogicPearlError::message(
+                "plugin manifest plugin_id must be non-empty when present",
+            ));
+        }
+        if self
+            .plugin_version
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(LogicPearlError::message(
+                "plugin manifest plugin_version must be non-empty when present",
             ));
         }
         if self.protocol_version != "1" {
@@ -226,6 +356,15 @@ pub fn run_plugin_with_policy(
     request: &PluginRequest,
     policy: &PluginExecutionPolicy,
 ) -> Result<PluginResponse> {
+    Ok(run_plugin_with_policy_and_metadata(manifest, request, policy)?.response)
+}
+
+/// Execute a plugin under the given execution policy and return execution metadata.
+pub fn run_plugin_with_policy_and_metadata(
+    manifest: &PluginManifest,
+    request: &PluginRequest,
+    policy: &PluginExecutionPolicy,
+) -> Result<PluginExecutionResult> {
     if manifest.stage != request.stage {
         return Err(LogicPearlError::message(format!(
             "plugin stage mismatch: manifest is {:?}, request is {:?}",
@@ -234,8 +373,12 @@ pub fn run_plugin_with_policy(
     }
     validate_plugin_request_contract(manifest, request)?;
 
-    let stdout = run_plugin_raw(manifest, request, policy)?;
-    parse_plugin_response(manifest, &stdout)
+    let raw = run_plugin_raw(manifest, request, policy)?;
+    let response = parse_plugin_response(manifest, &raw.stdout)?;
+    Ok(PluginExecutionResult {
+        response,
+        run: raw.metadata,
+    })
 }
 
 /// Execute a plugin for multiple payloads with default execution policy.
@@ -254,6 +397,19 @@ pub fn run_plugin_batch_with_policy(
     payloads: &[Value],
     policy: &PluginExecutionPolicy,
 ) -> Result<Vec<PluginResponse>> {
+    if payloads.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(run_plugin_batch_with_policy_and_metadata(manifest, stage, payloads, policy)?.responses)
+}
+
+/// Execute a plugin for multiple payloads under the given execution policy and return execution metadata.
+pub fn run_plugin_batch_with_policy_and_metadata(
+    manifest: &PluginManifest,
+    stage: PluginStage,
+    payloads: &[Value],
+    policy: &PluginExecutionPolicy,
+) -> Result<PluginBatchExecutionResult> {
     if manifest.stage != stage {
         return Err(LogicPearlError::message(format!(
             "plugin stage mismatch: manifest is {:?}, request is {:?}",
@@ -261,30 +417,43 @@ pub fn run_plugin_batch_with_policy(
         )));
     }
     if payloads.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PluginBatchExecutionResult {
+            responses: Vec::new(),
+            runs: Vec::new(),
+            run: empty_plugin_batch_metadata(manifest, &stage, policy)?,
+        });
     }
     if !manifest.supports_capability("batch_requests") {
-        return payloads
-            .iter()
-            .map(|payload| {
-                validate_plugin_payload_contract(manifest, &stage, payload)?;
-                run_plugin_with_policy(
-                    manifest,
-                    &PluginRequest {
-                        protocol_version: "1".to_string(),
-                        stage: stage.clone(),
-                        payload: payload.clone(),
-                    },
-                    policy,
-                )
-            })
-            .collect();
+        let mut responses = Vec::with_capacity(payloads.len());
+        let mut runs = Vec::with_capacity(payloads.len());
+        let mut last_run = None;
+        for payload in payloads {
+            validate_plugin_payload_contract(manifest, &stage, payload)?;
+            let execution = run_plugin_with_policy_and_metadata(
+                manifest,
+                &PluginRequest {
+                    protocol_version: "1".to_string(),
+                    stage: stage.clone(),
+                    payload: payload.clone(),
+                },
+                policy,
+            )?;
+            let run = execution.run;
+            last_run = Some(run.clone());
+            runs.push(run);
+            responses.push(execution.response);
+        }
+        return Ok(PluginBatchExecutionResult {
+            responses,
+            runs,
+            run: last_run.unwrap_or(empty_plugin_batch_metadata(manifest, &stage, policy)?),
+        });
     }
     for payload in payloads {
         validate_plugin_payload_contract(manifest, &stage, payload)?;
     }
 
-    let stdout = run_plugin_raw(
+    let raw = run_plugin_raw(
         manifest,
         &PluginBatchRequest {
             protocol_version: "1".to_string(),
@@ -293,7 +462,7 @@ pub fn run_plugin_batch_with_policy(
         },
         policy,
     )?;
-    let batch: PluginBatchResponse = serde_json::from_str(&stdout).map_err(|err| {
+    let batch: PluginBatchResponse = serde_json::from_str(&raw.stdout).map_err(|err| {
         LogicPearlError::message(format!(
             "plugin {} returned invalid batch JSON: {}",
             manifest.name, err
@@ -322,14 +491,49 @@ pub fn run_plugin_batch_with_policy(
     for response in &batch.responses {
         validate_ok_plugin_response(manifest, response)?;
     }
-    Ok(batch.responses)
+    let runs = vec![raw.metadata.clone(); batch.responses.len()];
+    Ok(PluginBatchExecutionResult {
+        responses: batch.responses,
+        runs,
+        run: raw.metadata,
+    })
+}
+
+fn empty_plugin_batch_metadata(
+    manifest: &PluginManifest,
+    stage: &PluginStage,
+    policy: &PluginExecutionPolicy,
+) -> Result<PluginRunMetadata> {
+    let request = PluginBatchRequest {
+        protocol_version: "1".to_string(),
+        stage: stage.clone(),
+        payloads: Vec::new(),
+    };
+    let request_value = serde_json::to_value(&request).map_err(LogicPearlError::from)?;
+    build_plugin_run_metadata(PluginRunMetadataInputs {
+        manifest,
+        policy,
+        resolved_entrypoint: &resolve_entrypoint(manifest, policy)?,
+        request_value: &request_value,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        effective_timeout_ms: effective_timeout_ms(manifest, policy)?,
+        started_at: now_utc_rfc3339(),
+        completed_at: now_utc_rfc3339(),
+        duration_ms: 0,
+    })
+}
+
+struct RawPluginRun {
+    stdout: String,
+    metadata: PluginRunMetadata,
 }
 
 fn run_plugin_raw<T: Serialize>(
     manifest: &PluginManifest,
     request: &T,
     policy: &PluginExecutionPolicy,
-) -> Result<String> {
+) -> Result<RawPluginRun> {
     let entrypoint = resolve_entrypoint(manifest, policy)?;
     let mut command = Command::new(&entrypoint.program);
     command.args(&entrypoint.args);
@@ -343,7 +547,10 @@ fn run_plugin_raw<T: Serialize>(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    let request_value = serde_json::to_value(request).map_err(LogicPearlError::from)?;
     let timeout_ms = effective_timeout_ms(manifest, policy)?;
+    let started_at = now_utc_rfc3339();
+    let started = Instant::now();
     let mut child = spawn_plugin_process(&mut command)?;
     let stdin = child
         .stdin
@@ -370,10 +577,11 @@ fn run_plugin_raw<T: Serialize>(
     );
 
     let (status, timed_out) = wait_for_plugin_exit(timeout_ms, &mut child)?;
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let completed_at = now_utc_rfc3339();
     let stdout = join_pipe_reader(manifest, "stdout", stdout_handle)?;
-    let stderr = String::from_utf8_lossy(&join_pipe_reader(manifest, "stderr", stderr_handle)?)
-        .trim()
-        .to_string();
+    let stderr = join_pipe_reader(manifest, "stderr", stderr_handle)?;
+    let stderr_display = String::from_utf8_lossy(&stderr).trim().to_string();
 
     if timed_out {
         let timeout_display = timeout_ms.unwrap_or_default();
@@ -381,10 +589,10 @@ fn run_plugin_raw<T: Serialize>(
             "plugin {} exceeded timeout_ms={} and was terminated{}",
             manifest.name,
             timeout_display,
-            if stderr.is_empty() {
+            if stderr_display.is_empty() {
                 String::new()
             } else {
-                format!(": {stderr}")
+                format!(": {stderr_display}")
             }
         )));
     }
@@ -394,20 +602,218 @@ fn run_plugin_raw<T: Serialize>(
             "plugin {} exited with status {}{}",
             manifest.name,
             status,
-            if stderr.is_empty() {
+            if stderr_display.is_empty() {
                 String::new()
             } else {
-                format!(": {stderr}")
+                format!(": {stderr_display}")
             }
         )));
     }
 
-    String::from_utf8(stdout).map_err(|err| {
+    let metadata = build_plugin_run_metadata(PluginRunMetadataInputs {
+        manifest,
+        policy,
+        resolved_entrypoint: &entrypoint,
+        request_value: &request_value,
+        stdout: stdout.clone(),
+        stderr,
+        effective_timeout_ms: timeout_ms,
+        started_at,
+        completed_at,
+        duration_ms,
+    })?;
+    let stdout = String::from_utf8(stdout).map_err(|err| {
         LogicPearlError::message(format!(
             "plugin {} returned invalid UTF-8: {}",
             manifest.name, err
         ))
-    })
+    })?;
+    Ok(RawPluginRun { stdout, metadata })
+}
+
+struct PluginRunMetadataInputs<'a> {
+    manifest: &'a PluginManifest,
+    policy: &'a PluginExecutionPolicy,
+    resolved_entrypoint: &'a ResolvedPluginEntrypoint,
+    request_value: &'a Value,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    effective_timeout_ms: Option<u64>,
+    started_at: String,
+    completed_at: String,
+    duration_ms: u64,
+}
+
+fn build_plugin_run_metadata(inputs: PluginRunMetadataInputs<'_>) -> Result<PluginRunMetadata> {
+    let manifest = inputs.manifest;
+    let policy = inputs.policy;
+    let entrypoint = build_entrypoint_metadata(manifest, inputs.resolved_entrypoint);
+    let entrypoint_hash = hash_serializable(&entrypoint)?;
+    let request_hash = hash_serializable(inputs.request_value)?;
+    let input_hash = inputs
+        .request_value
+        .get("payload")
+        .and_then(|payload| payload.get("input"))
+        .map(hash_serializable)
+        .transpose()?;
+    let output_hash = sha256_prefixed(&inputs.stdout);
+    let manifest_hash = manifest
+        .manifest_path
+        .as_ref()
+        .and_then(|path| sha256_prefixed_file(path).ok());
+    let plugin_id = manifest
+        .plugin_id
+        .clone()
+        .unwrap_or_else(|| manifest.name.clone());
+    let protocol_version = inputs
+        .request_value
+        .get("protocol_version")
+        .and_then(Value::as_str)
+        .unwrap_or(&manifest.protocol_version)
+        .to_string();
+    let declared_capabilities = manifest.capabilities.clone().unwrap_or_default();
+    let enforced_capabilities = enforced_capabilities_for_request(manifest, inputs.request_value);
+    let stdout_hash = output_hash.clone();
+    let stderr_hash = sha256_prefixed(&inputs.stderr);
+    let mut metadata = PluginRunMetadata {
+        schema_version: "logicpearl.plugin_run_provenance.v1".to_string(),
+        plugin_run_id: String::new(),
+        plugin_id,
+        plugin_version: manifest.plugin_version.clone(),
+        plugin_name: manifest.name.clone(),
+        stage: manifest.stage.clone(),
+        protocol_version,
+        manifest_path: manifest
+            .manifest_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        manifest_hash,
+        entrypoint_hash,
+        entrypoint,
+        request_hash,
+        input_hash,
+        output_hash,
+        timeout_policy: PluginTimeoutPolicyMetadata {
+            manifest_timeout_ms: manifest.timeout_ms,
+            default_timeout_ms: policy.default_timeout_ms,
+            effective_timeout_ms: inputs.effective_timeout_ms,
+            allow_no_timeout: policy.allow_no_timeout,
+        },
+        execution_policy: PluginExecutionPolicyMetadata {
+            allow_absolute_entrypoint: policy.allow_absolute_entrypoint,
+            allow_path_lookup: policy.allow_path_lookup,
+            allow_no_timeout: policy.allow_no_timeout,
+        },
+        capabilities: PluginCapabilityMetadata {
+            declared: declared_capabilities.clone(),
+            allowed: declared_capabilities,
+            enforced: enforced_capabilities,
+        },
+        access: PluginAccessMetadata {
+            network: "not_enforced".to_string(),
+            filesystem: "process_default".to_string(),
+            enforcement: "none".to_string(),
+        },
+        stdio: PluginStdioMetadata {
+            stdout_hash,
+            stdout_bytes: inputs.stdout.len(),
+            stdout_summary: (!inputs.stdout.is_empty())
+                .then(|| redacted_hash_summary(&inputs.stdout)),
+            stderr_hash,
+            stderr_bytes: inputs.stderr.len(),
+            stderr_summary: (!inputs.stderr.is_empty())
+                .then(|| redacted_hash_summary(&inputs.stderr)),
+        },
+        started_at: inputs.started_at,
+        completed_at: inputs.completed_at,
+        duration_ms: inputs.duration_ms,
+    };
+    metadata.plugin_run_id = build_plugin_run_id(&metadata)?;
+    Ok(metadata)
+}
+
+fn build_entrypoint_metadata(
+    manifest: &PluginManifest,
+    resolved_entrypoint: &ResolvedPluginEntrypoint,
+) -> PluginEntrypointMetadata {
+    let resolved = resolved_entrypoint.segments();
+    let hashes = resolved
+        .iter()
+        .enumerate()
+        .filter_map(|(index, segment)| {
+            let path = Path::new(segment);
+            if !path.is_file() {
+                return None;
+            }
+            sha256_prefixed_file(path)
+                .ok()
+                .map(|hash| PluginEntrypointSegmentHash {
+                    index,
+                    path: segment.clone(),
+                    hash,
+                })
+        })
+        .collect();
+
+    PluginEntrypointMetadata {
+        declared: manifest.entrypoint.clone(),
+        resolved,
+        hashes,
+    }
+}
+
+fn enforced_capabilities_for_request(
+    manifest: &PluginManifest,
+    request_value: &Value,
+) -> Vec<String> {
+    if request_value.get("payloads").is_some() && manifest.supports_capability("batch_requests") {
+        vec!["batch_requests".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn build_plugin_run_id(metadata: &PluginRunMetadata) -> Result<String> {
+    hash_serializable(&serde_json::json!({
+        "schema_version": metadata.schema_version,
+        "plugin_id": metadata.plugin_id,
+        "plugin_version": metadata.plugin_version,
+        "plugin_name": metadata.plugin_name,
+        "stage": metadata.stage,
+        "protocol_version": metadata.protocol_version,
+        "manifest_hash": metadata.manifest_hash,
+        "entrypoint_hash": metadata.entrypoint_hash,
+        "request_hash": metadata.request_hash,
+        "output_hash": metadata.output_hash,
+        "started_at": metadata.started_at,
+        "completed_at": metadata.completed_at,
+    }))
+}
+
+fn hash_serializable<T: Serialize>(value: &T) -> Result<String> {
+    serde_json::to_vec(value)
+        .map(|bytes| sha256_prefixed(&bytes))
+        .map_err(LogicPearlError::from)
+}
+
+fn sha256_prefixed_file(path: &Path) -> std::io::Result<String> {
+    std::fs::read(path).map(|bytes| sha256_prefixed(&bytes))
+}
+
+fn sha256_prefixed(bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    format!("sha256:{}", hex::encode(digest.finalize()))
+}
+
+fn redacted_hash_summary(bytes: &[u8]) -> String {
+    format!("<redacted:{}>", sha256_prefixed(bytes))
+}
+
+fn now_utc_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
 /// Return a JSON summary of the manifest's declared schemas and capabilities.
@@ -423,6 +829,14 @@ pub fn manifest_contract_summary(manifest: &PluginManifest) -> Value {
 struct ResolvedPluginEntrypoint {
     program: String,
     args: Vec<String>,
+}
+
+impl ResolvedPluginEntrypoint {
+    fn segments(&self) -> Vec<String> {
+        std::iter::once(self.program.clone())
+            .chain(self.args.iter().cloned())
+            .collect()
+    }
 }
 
 fn resolve_entrypoint(
@@ -1115,8 +1529,8 @@ fn describe_json_type(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        run_plugin, run_plugin_with_policy, PluginExecutionPolicy, PluginManifest, PluginRequest,
-        PluginStage,
+        run_plugin, run_plugin_with_policy, run_plugin_with_policy_and_metadata,
+        PluginExecutionPolicy, PluginManifest, PluginRequest, PluginStage,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -1125,6 +1539,8 @@ mod tests {
     fn validates_basic_manifest() {
         let manifest = PluginManifest {
             name: "demo".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
@@ -1135,6 +1551,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: None,
+            manifest_path: None,
         };
         assert!(manifest.validate().is_ok());
     }
@@ -1143,6 +1560,8 @@ mod tests {
     fn validates_declared_input_options_and_output_schemas() {
         let manifest = PluginManifest {
             name: "demo".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
@@ -1180,6 +1599,7 @@ mod tests {
                 }
             })),
             manifest_dir: None,
+            manifest_path: None,
         };
         assert!(manifest.validate().is_ok());
 
@@ -1226,6 +1646,8 @@ mod tests {
     fn rejects_unsupported_schema_subset_keywords() {
         let manifest = PluginManifest {
             name: "demo".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
@@ -1244,6 +1666,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: None,
+            manifest_path: None,
         };
 
         let err = manifest.validate().unwrap_err();
@@ -1256,6 +1679,8 @@ mod tests {
     fn accepts_schema_subset_annotation_keywords() {
         let manifest = PluginManifest {
             name: "demo".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["python3".to_string(), "plugin.py".to_string()],
@@ -1271,6 +1696,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: None,
+            manifest_path: None,
         };
 
         assert!(manifest.validate().is_ok());
@@ -1309,6 +1735,8 @@ mod tests {
             write_plugin_script("#!/bin/sh\nsleep 1\nprintf '{\"ok\":true}\\n'\n");
         let manifest = PluginManifest {
             name: "slow".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -1319,6 +1747,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let error = run_plugin(&manifest, &test_request()).expect_err("plugin should time out");
@@ -1333,6 +1762,8 @@ mod tests {
             write_plugin_script("#!/bin/sh\nsleep 1\nprintf '{\"ok\":true}\\n'\n");
         let manifest = PluginManifest {
             name: "slow-default".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -1343,6 +1774,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let policy = PluginExecutionPolicy::default().with_default_timeout_ms(50);
@@ -1358,6 +1790,8 @@ mod tests {
         let (dir, _script_path) = write_plugin_script("#!/bin/sh\nprintf '{\"ok\":true}\\n'\n");
         let manifest = PluginManifest {
             name: "no-timeout".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -1368,6 +1802,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let error = run_plugin(&manifest, &test_request()).expect_err("no timeout should reject");
@@ -1384,6 +1819,8 @@ mod tests {
         );
         let manifest = PluginManifest {
             name: "trusted-no-timeout".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -1394,6 +1831,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let policy = PluginExecutionPolicy::default().with_allow_no_timeout(true);
@@ -1411,6 +1849,8 @@ mod tests {
         );
         let manifest = PluginManifest {
             name: "shell-wrapper".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["sh".to_string(), "plugin.sh".to_string()],
@@ -1421,6 +1861,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let response = run_plugin(&manifest, &test_request())
@@ -1430,10 +1871,76 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn returns_redacted_plugin_run_metadata() {
+        let (dir, _script_path) = write_plugin_script(
+            "#!/bin/sh\nprintf 'debug secret\\n' >&2\nprintf '{\"ok\":true,\"features\":{\"value\":1}}\\n'\n",
+        );
+        let manifest = PluginManifest {
+            name: "metadata".to_string(),
+            plugin_id: Some("metadata-plugin".to_string()),
+            plugin_version: Some("0.1.0".to_string()),
+            protocol_version: "1".to_string(),
+            stage: PluginStage::Observer,
+            entrypoint: vec!["plugin.sh".to_string()],
+            language: Some("shell".to_string()),
+            capabilities: Some(vec!["feature_output".to_string()]),
+            timeout_ms: None,
+            input_schema: None,
+            options_schema: None,
+            output_schema: None,
+            manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
+        };
+
+        let execution = run_plugin_with_policy_and_metadata(
+            &manifest,
+            &test_request(),
+            &PluginExecutionPolicy::default(),
+        )
+        .expect("plugin should run with metadata");
+
+        assert!(execution.response.ok);
+        assert_eq!(execution.run.plugin_id, "metadata-plugin");
+        assert_eq!(execution.run.plugin_version.as_deref(), Some("0.1.0"));
+        assert_eq!(execution.run.access.network, "not_enforced");
+        assert_eq!(execution.run.access.filesystem, "process_default");
+        assert_eq!(
+            execution.run.timeout_policy.effective_timeout_ms,
+            Some(30_000)
+        );
+        assert_eq!(
+            execution.run.capabilities.allowed,
+            vec!["feature_output".to_string()]
+        );
+        assert!(execution.run.plugin_run_id.starts_with("sha256:"));
+        assert!(execution.run.entrypoint_hash.starts_with("sha256:"));
+        assert_eq!(execution.run.entrypoint.hashes.len(), 1);
+        assert!(execution
+            .run
+            .stdio
+            .stdout_summary
+            .as_deref()
+            .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+        assert!(execution
+            .run
+            .stdio
+            .stderr_summary
+            .as_deref()
+            .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+        assert_ne!(
+            execution.run.stdio.stderr_summary.as_deref(),
+            Some("debug secret")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rejects_bare_path_lookup_by_default() {
         let dir = tempdir().expect("tempdir");
         let manifest = PluginManifest {
             name: "path-command".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["logicpearl-plugin-not-in-manifest".to_string()],
@@ -1444,6 +1951,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let error = run_plugin(&manifest, &test_request()).expect_err("PATH lookup should reject");
@@ -1459,6 +1967,8 @@ mod tests {
         );
         let manifest = PluginManifest {
             name: "absolute".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec![script_path.display().to_string()],
@@ -1469,6 +1979,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let error =
@@ -1485,6 +1996,8 @@ mod tests {
         );
         let manifest = PluginManifest {
             name: "absolute".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec![script_path.display().to_string()],
@@ -1495,6 +2008,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let policy = PluginExecutionPolicy::default().with_allow_absolute_entrypoint(true);
@@ -1511,6 +2025,8 @@ mod tests {
         );
         let manifest = PluginManifest {
             name: "tree".to_string(),
+            plugin_id: None,
+            plugin_version: None,
             protocol_version: "1".to_string(),
             stage: PluginStage::Observer,
             entrypoint: vec!["plugin.sh".to_string()],
@@ -1521,6 +2037,7 @@ mod tests {
             options_schema: None,
             output_schema: None,
             manifest_dir: Some(dir.path().to_path_buf()),
+            manifest_path: None,
         };
 
         let started_at = std::time::Instant::now();

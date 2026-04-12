@@ -1,5 +1,7 @@
 {
   "name": "python-verify-demo",
+  "plugin_id": "python-verify",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "verify",

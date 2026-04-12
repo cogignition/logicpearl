@@ -21,6 +21,14 @@ fn run_cli_output(cli_bin: &str, args: &[String]) -> std::process::Output {
         .expect("logicpearl command should run")
 }
 
+fn assert_sha256_string(value: &Value) {
+    let value = value.as_str().expect("hash should be a string");
+    assert!(
+        value.starts_with("sha256:") && value.len() == "sha256:".len() + 64,
+        "expected sha256-prefixed hash, got {value:?}"
+    );
+}
+
 #[test]
 fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
     let repo_root = repo_root();
@@ -63,6 +71,11 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         validate_report["smoke"]["response"]["features"]["age"].as_i64(),
         Some(34)
     );
+    assert_eq!(
+        validate_report["smoke"]["plugin_run"]["stage"].as_str(),
+        Some("observer")
+    );
+    assert_sha256_string(&validate_report["smoke"]["plugin_run"]["plugin_run_id"]);
 
     let run_observer = Command::new(cli_bin)
         .arg("plugin")
@@ -89,6 +102,19 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
         observer_report["response"]["features"]["is_member"].as_i64(),
         Some(1)
     );
+    assert_eq!(
+        observer_report["plugin_run"]["schema_version"].as_str(),
+        Some("logicpearl.plugin_run_provenance.v1")
+    );
+    assert_eq!(
+        observer_report["plugin_run"]["plugin_id"].as_str(),
+        Some("python-observer")
+    );
+    assert_eq!(
+        observer_report["plugin_run"]["access"]["network"].as_str(),
+        Some("not_enforced")
+    );
+    assert_sha256_string(&observer_report["plugin_run"]["entrypoint_hash"]);
 
     let run_trace = Command::new(cli_bin)
         .arg("plugin")
@@ -116,6 +142,11 @@ fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
     assert!(trace_report["response"]["decision_traces"]
         .as_array()
         .is_some_and(|rows| !rows.is_empty()));
+    assert_eq!(
+        trace_report["plugin_run"]["plugin_id"].as_str(),
+        Some("python-trace-source")
+    );
+    assert_sha256_string(&trace_report["plugin_run"]["output_hash"]);
 }
 
 #[test]

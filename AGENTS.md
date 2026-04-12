@@ -100,13 +100,13 @@ downstream demos, because it is the audit trail for where an artifact came from.
 Record stable hashes and bounded metadata: `engine_version`, optional
 `engine_commit`, redacted CLI command args, build options plus
 `build_options_hash`, trace input hashes and row counts, feature dictionary hash,
-plugin manifest/input/request/output hashes, optional source manifest hash,
-limited environment facts, and generated artifact file hashes.
+plugin run provenance, optional source manifest hash, limited environment facts,
+and generated artifact file hashes.
 
 Do not store raw environment variables, full PATH values, hostnames, usernames,
-home directories, plugin stdout/stderr, raw source documents, or sensitive plugin
-option values. Hash plugin boundaries and redact sensitive option keys such as
-tokens, passwords, secrets, API keys, credentials, and auth fields.
+home directories, raw plugin stdout/stderr, raw source documents, or sensitive
+plugin option values. Hash plugin boundaries and redact sensitive option keys
+such as tokens, passwords, secrets, API keys, credentials, and auth fields.
 
 `build_report` and `artifact.json` should not be self-hashed inside
 `build_report.provenance.generated_files`; use the artifact manifest file hashes
@@ -237,3 +237,23 @@ Proof checklist before claiming runtime JSON schemas work:
 Plugin and pipeline manifests can execute local processes. Treat manifests from other repos, issues, or generated examples as untrusted unless the user explicitly says they trust them.
 
 Default process-plugin behavior is conservative: timeouts are applied, manifest-relative scripts are allowed, and risky absolute or PATH-based entrypoints require explicit opt-ins. Do not weaken those defaults in code or docs without making the trust boundary explicit.
+
+Plugin execution provenance should use
+`schema_version: "logicpearl.plugin_run_provenance.v1"` when a plugin run is
+recorded in build reports, plugin command JSON, or plugin-backed pipeline stage
+results. Capture stable audit fields: `plugin_run_id`, `plugin_id`,
+`plugin_version`, plugin name, stage, protocol version, manifest path/hash,
+resolved entrypoint plus `entrypoint_hash`, input/request/output hashes,
+trace/enricher `rows_emitted` when known, started/completed timestamps,
+duration, timeout policy, execution policy, declared/allowed/enforced
+capabilities, access posture, and stdout/stderr byte counts plus redacted hash
+summaries.
+
+Do not claim sandbox enforcement that the process runner does not provide.
+Until there is a real OS/container sandbox, record network as `not_enforced`,
+filesystem as `process_default`, and enforcement as `none`. This is provenance
+and execution-policy transparency, not proof that plugins lacked access.
+
+Production plugin manifests should declare stable `plugin_id` and
+`plugin_version` fields. Keep them optional for compatibility with older plugin
+manifests, and fall back to `name` only when `plugin_id` is absent.

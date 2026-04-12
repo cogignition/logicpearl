@@ -529,6 +529,10 @@ The same stage model is available to plugins:
 
 Process plugins are trusted local code. A plugin manifest declares a program to execute, and plugin-backed builds, observers, verifiers, benchmark runs, and pipelines run those programs on your machine. Do not run plugin or pipeline manifests from sources you do not trust. By default, process plugins run with a timeout and without arbitrary PATH or absolute-entrypoint resolution; only relax those defaults with `--allow-no-timeout`, `--allow-absolute-plugin-entrypoint`, or `--allow-plugin-path-lookup` for manifests you trust.
 
+Plugin runs emit provenance metadata under `logicpearl.plugin_run_provenance.v1` when they affect build reports, plugin command JSON, or plugin-backed pipeline stage results. The record includes the plugin id/version when declared, manifest hash, resolved entrypoint metadata and entrypoint hash, input/request/output hashes, row counts for trace-source and enricher builds, timeout policy, declared/allowed/enforced capabilities, process access posture, timestamps, and redacted stdout/stderr hashes. Network and filesystem entries currently describe the local process posture; they do not claim OS-level sandbox enforcement.
+
+Production plugin manifests should set stable `plugin_id` and `plugin_version` fields in addition to human-readable `name`; older manifests without those fields remain valid and use `name` as the provenance id.
+
 Plugin manifest `input_schema`, `options_schema`, and `output_schema` fields use a LogicPearl schema subset, not full JSON Schema. Supported validation keywords are `type`, `const`, `enum`, `required`, `properties`, `items`, and `additionalProperties`; `title`, `description`, `$schema`, and `$id` are accepted as annotations only. Unsupported JSON Schema keywords such as `minimum`, `maximum`, `pattern`, `oneOf`, `anyOf`, `allOf`, `$ref`, and `format` are rejected instead of silently ignored.
 
 ### Custom plugins and observer profiles

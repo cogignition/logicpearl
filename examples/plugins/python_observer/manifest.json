@@ -1,5 +1,7 @@
 {
   "name": "python-observer-demo",
+  "plugin_id": "python-observer",
+  "plugin_version": "0.1.0",
   "protocol_version": "1",
   "language": "python",
   "stage": "observer",

@@ -72,10 +72,10 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
 
     let smoke = if let Some(request) = &request {
         let policy = plugin_execution_policy(&args.plugin_execution);
-        let response = run_plugin_with_policy(&manifest, request, &policy)
+        let execution = run_plugin_with_policy_and_metadata(&manifest, request, &policy)
             .into_diagnostic()
             .wrap_err("plugin smoke execution failed")?;
-        Some(build_plugin_smoke_report(&manifest, request, &response)?)
+        Some(build_plugin_smoke_report(&manifest, request, &execution)?)
     } else {
         None
     };
@@ -84,6 +84,8 @@ pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
         "manifest": {
             "path": args.manifest.display().to_string(),
             "name": manifest.name.clone(),
+            "plugin_id": manifest.plugin_id.clone(),
+            "plugin_version": manifest.plugin_version.clone(),
             "stage": manifest.stage.clone(),
             "language": manifest.language.clone(),
             "capabilities": manifest.capabilities.clone(),
@@ -141,10 +143,10 @@ pub(crate) fn run_plugin_run(args: PluginRunArgs) -> Result<()> {
         &args.options,
     )?;
     let policy = plugin_execution_policy(&args.plugin_execution);
-    let response = run_plugin_with_policy(&manifest, &request, &policy)
+    let execution = run_plugin_with_policy_and_metadata(&manifest, &request, &policy)
         .into_diagnostic()
         .wrap_err("plugin execution failed")?;
-    let report = build_plugin_smoke_report(&manifest, &request, &response)?;
+    let report = build_plugin_smoke_report(&manifest, &request, &execution)?;
 
     if args.json {
         println!(
@@ -263,8 +265,9 @@ fn optional_plugin_request(
 fn build_plugin_smoke_report(
     manifest: &PluginManifest,
     request: &PluginRequest,
-    response: &PluginResponse,
+    execution: &PluginExecutionResult,
 ) -> Result<Value> {
+    let response = &execution.response;
     let expected_output = expected_output_key(&manifest.stage);
     let top_level_keys = response.extra.keys().cloned().collect::<Vec<_>>();
     let mut warnings = Vec::new();
@@ -280,10 +283,13 @@ fn build_plugin_smoke_report(
     Ok(serde_json::json!({
         "manifest": {
             "name": manifest.name,
+            "plugin_id": manifest.plugin_id,
+            "plugin_version": manifest.plugin_version,
             "stage": manifest.stage,
         },
         "canonical_contract": canonical_contract_for_stage(&manifest.stage),
         "declared_contract": logicpearl_plugin::manifest_contract_summary(manifest),
+        "plugin_run": execution.run,
         "request": request,
         "response": response,
         "response_shape": {
