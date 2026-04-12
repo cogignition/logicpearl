@@ -740,16 +740,16 @@ fn generate_trace_rows(spec: &TraceGenerationSpec, seed: u64) -> Result<Vec<Deci
 fn sample_policy_value(field: &TraceFieldSpec, rng: &mut ChaCha8Rng) -> Result<Value> {
     match field.feature_type {
         FeatureType::Bool => Ok(Value::Bool(
-            rng.gen_bool(field.true_probability.unwrap_or(0.5)),
+            rng.random_bool(field.true_probability.unwrap_or(0.5)),
         )),
         FeatureType::Int => {
             let (min, max) = numeric_range(field)?;
-            let value = rng.gen_range(min as i64..=max as i64);
+            let value = rng.random_range(min as i64..=max as i64);
             Ok(Value::Number(value.into()))
         }
         FeatureType::Float => {
             let (min, max) = numeric_range(field)?;
-            let value = rng.gen_range(min..=max);
+            let value = rng.random_range(min..=max);
             number_value(round_float(value, field.decimals.unwrap_or(2)))
         }
         FeatureType::Enum | FeatureType::String => {
@@ -1399,7 +1399,7 @@ fn choose_weighted_index(
     rng: &mut ChaCha8Rng,
 ) -> Result<usize> {
     let weights = normalized_weights(count, weights)?;
-    let needle = rng.gen_range(0.0..1.0);
+    let needle = rng.random_range(0.0..1.0);
     let mut cumulative = 0.0;
     for (index, weight) in weights.iter().enumerate() {
         cumulative += *weight;

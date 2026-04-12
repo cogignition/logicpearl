@@ -10,6 +10,7 @@ description = "Maintainer automation for the LogicPearl repository."
 
 [dependencies]
 clap.workspace = true
+hex.workspace = true
 logicpearl-benchmark.workspace = true
 logicpearl-core.workspace = true
 logicpearl-discovery.workspace = true

@@ -2839,7 +2839,7 @@ struct SampledCases {
 fn stable_case_sort_key(case_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(case_id.as_bytes());
-    format!("{:x}:{case_id}", hasher.finalize())
+    format!("{}:{case_id}", hex::encode(hasher.finalize()))
 }
 
 fn build_guardrails_combined_pearl(
@@ -2984,7 +2984,7 @@ fn sha256_file(path: &Path) -> Result<String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(hex::encode(digest.finalize()))
 }
 
 fn detect_bundle_target_goal(bundle_dir: &Path) -> Result<String> {

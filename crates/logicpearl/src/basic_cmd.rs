@@ -1935,7 +1935,7 @@ fn sha256_file(path: &PathBuf) -> Result<String> {
         .wrap_err("failed to read file for sha256")?;
     let mut digest = Sha256::new();
     digest.update(bytes);
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(hex::encode(digest.finalize()))
 }
 
 pub(crate) fn run_eval(args: RunArgs) -> Result<()> {

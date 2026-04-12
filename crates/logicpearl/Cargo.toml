@@ -12,6 +12,7 @@ anstream.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 csv.workspace = true
+hex.workspace = true
 indicatif.workspace = true
 logicpearl-benchmark.workspace = true
 logicpearl-conformance.workspace = true

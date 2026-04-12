@@ -1462,7 +1462,7 @@ fn parse_scalar(raw: &str) -> logicpearl_core::Result<Value> {
 fn stable_case_hash(case_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(case_id.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 fn ratio(numerator: usize, denominator: usize) -> f64 {
