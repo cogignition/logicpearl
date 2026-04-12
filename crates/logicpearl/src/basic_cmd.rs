@@ -1,4 +1,5 @@
 use super::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -483,6 +484,19 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             .unwrap_or_else(|| "artifact_set".to_string())
     });
 
+    let spinner = if !args.json {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        sp.set_message(format!(
+            "{} artifacts from {}",
+            "Discovering".bold().bright_green(),
+            args.dataset_csv.display()
+        ));
+        Some(sp)
+    } else {
+        None
+    };
     let result = discover_from_csv(
         &args.dataset_csv,
         &DiscoverOptions {
@@ -499,6 +513,9 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
     )
     .into_diagnostic()
     .wrap_err("could not discover artifacts from the dataset")?;
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
 
     if args.json {
         println!(
@@ -841,9 +858,25 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     };
 
+    let spinner = if !args.json {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        sp.set_message(format!(
+            "{} pearl from {} rows",
+            "Building".bold().bright_green(),
+            rows.len()
+        ));
+        Some(sp)
+    } else {
+        None
+    };
     let mut result = build_pearl_from_rows(&rows, source_name, &build_options)
         .into_diagnostic()
         .wrap_err("failed to build pearl from decision traces")?;
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
     result.provenance = build_provenance;
 
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);

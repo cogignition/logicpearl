@@ -1,4 +1,5 @@
 use super::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
 use logicpearl_ir::{
     validate_expression_against_schema, BooleanEvidencePolicy, ComparisonValue, EvaluationConfig,
@@ -168,7 +169,24 @@ pub(crate) fn run_traces_generate(args: TraceGenerateArgs) -> Result<()> {
 
     let format = resolve_trace_output_format(args.format, &args.output)?;
     let seed = spec.seed.unwrap_or(7);
+
+    let spinner = if !args.json {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        sp.set_message(format!(
+            "{} {} trace rows",
+            "Generating".bold().bright_green(),
+            spec.row_count
+        ));
+        Some(sp)
+    } else {
+        None
+    };
     let rows = generate_trace_rows(&spec, seed)?;
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
     write_generated_traces(&rows, &spec, &args.output, format)?;
     let audit = audit_generated_rows(
         &rows,
@@ -248,6 +266,20 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
         roles.insert(nuisance.clone(), TraceFieldRole::Nuisance);
     }
     let feature_types = spec.as_ref().map(field_type_map).unwrap_or_default();
+
+    let spinner = if !args.json {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        sp.set_message(format!(
+            "{} {} trace rows",
+            "Auditing".bold().bright_green(),
+            loaded.rows.len()
+        ));
+        Some(sp)
+    } else {
+        None
+    };
     let report = audit_generated_rows(
         &loaded.rows,
         &loaded.label_column,
@@ -255,6 +287,9 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
         &feature_types,
         args.drift_threshold,
     )?;
+    if let Some(sp) = spinner {
+        sp.finish_and_clear();
+    }
 
     if let Some(path) = &args.write_feature_governance {
         write_feature_governance_suggestions(path, &report.governance_suggestions)?;

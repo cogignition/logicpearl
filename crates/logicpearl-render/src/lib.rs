@@ -1,21 +1,41 @@
 use logicpearl_core::{ArtifactRenderer, Result};
 use logicpearl_ir::{LogicPearlGateIr, RuleVerificationStatus};
+use owo_colors::OwoColorize;
 
 pub struct TextInspector;
 
 impl ArtifactRenderer<LogicPearlGateIr> for TextInspector {
     fn render(&self, gate: &LogicPearlGateIr) -> Result<String> {
-        let mut lines = vec![
-            format!("Gate ID: {}", gate.gate_id),
-            format!("IR version: {}", gate.ir_version),
-            format!("Features: {}", gate.input_schema.features.len()),
-            format!("Rules: {}", gate.rules.len()),
-        ];
+        let mut lines = Vec::new();
+
+        // Gate header
+        lines.push(format!(
+            "{} {}",
+            "━━ Gate:".bold(),
+            gate.gate_id.bold().bright_green()
+        ));
+        lines.push(format!(
+            "  {} {}",
+            "IR version".bright_black(),
+            gate.ir_version
+        ));
+        lines.push(format!(
+            "  {} {}",
+            "Features".bright_black(),
+            gate.input_schema.features.len()
+        ));
+        lines.push(format!("  {} {}", "Rules".bright_black(), gate.rules.len()));
+
         if let Some(verification) = &gate.verification {
             if let Some(scope) = &verification.correctness_scope {
-                lines.push(format!("Correctness scope: {scope}"));
+                lines.push(format!(
+                    "  {} {}",
+                    "Correctness scope".bright_black(),
+                    scope
+                ));
             }
         }
+
         let semantic_features = gate
             .input_schema
             .features
@@ -23,28 +43,79 @@ impl ArtifactRenderer<LogicPearlGateIr> for TextInspector {
             .filter(|feature| feature.semantics.is_some())
             .count();
         if semantic_features > 0 {
-            lines.push(format!("Feature dictionary entries: {semantic_features}"));
+            lines.push(format!(
+                "  {} {}",
+                "Feature dictionary".bright_black(),
+                semantic_features
+            ));
         }
-        lines.push("Rule details:".to_string());
-        for rule in &gate.rules {
-            let status = match &rule.verification_status {
-                Some(RuleVerificationStatus::SolverVerified) => "solver_verified",
-                Some(RuleVerificationStatus::PipelineUnverified) => "pipeline_unverified",
-                Some(RuleVerificationStatus::HeuristicUnverified) => "heuristic_unverified",
-                Some(RuleVerificationStatus::RefinedUnverified) => "refined_unverified",
-                None => "unknown",
+
+        // Rules section
+        lines.push(String::new());
+        lines.push(format!("{}", "━━ Rules ━━".bold()));
+
+        let rule_count = gate.rules.len();
+        for (i, rule) in gate.rules.iter().enumerate() {
+            let is_last = i == rule_count - 1;
+            let branch = if is_last { "└─" } else { "├─" };
+            let continuation = if is_last { "   " } else { "│  " };
+
+            let (symbol, status_text) = match &rule.verification_status {
+                Some(RuleVerificationStatus::SolverVerified) => (
+                    format!("{}", "✓".green()),
+                    format!("{}", "solver_verified".green()),
+                ),
+                Some(RuleVerificationStatus::PipelineUnverified) => (
+                    format!("{}", "⚠".yellow()),
+                    format!("{}", "pipeline_unverified".yellow()),
+                ),
+                Some(RuleVerificationStatus::HeuristicUnverified) => (
+                    format!("{}", "⚠".yellow()),
+                    format!("{}", "heuristic_unverified".yellow()),
+                ),
+                Some(RuleVerificationStatus::RefinedUnverified) => (
+                    format!("{}", "⚠".yellow()),
+                    format!("{}", "refined_unverified".yellow()),
+                ),
+                None => (format!("{}", "✗".red()), format!("{}", "unknown".red())),
             };
-            lines.push(format!("  bit {}: {} [{}]", rule.bit, rule.id, status));
+
+            lines.push(format!(
+                "  {} {} {} {} {} {}",
+                branch.bright_black(),
+                format!("bit {}", rule.bit).bright_cyan(),
+                rule.id.bold(),
+                "→".bright_black(),
+                symbol,
+                status_text,
+            ));
+
             if let Some(label) = &rule.label {
-                lines.push(format!("    label: {label}"));
+                lines.push(format!(
+                    "  {} {} {}",
+                    continuation.bright_black(),
+                    "label:".bright_black(),
+                    label
+                ));
             }
             if let Some(message) = &rule.message {
-                lines.push(format!("    message: {message}"));
+                lines.push(format!(
+                    "  {} {} {}",
+                    continuation.bright_black(),
+                    "message:".bright_black(),
+                    message
+                ));
             }
             if let Some(hint) = &rule.counterfactual_hint {
-                lines.push(format!("    counterfactual: {hint}"));
+                lines.push(format!(
+                    "  {} {} {}",
+                    continuation.bright_black(),
+                    "counterfactual:".bright_black(),
+                    hint
+                ));
             }
         }
+
         Ok(lines.join("\n"))
     }
 }
@@ -61,6 +132,9 @@ mod tests {
 
     #[test]
     fn renders_backend_neutral_solver_verified_status() {
+        // Disable colors so assertions can match plain text.
+        owo_colors::set_override(false);
+
         let gate = LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "demo_gate".to_string(),
@@ -107,7 +181,18 @@ mod tests {
         let rendered = TextInspector
             .render(&gate)
             .expect("text inspector should render a simple gate");
-        assert!(rendered.contains("solver_verified"));
+        assert!(
+            rendered.contains("solver_verified"),
+            "should contain solver_verified: {rendered}"
+        );
+        assert!(
+            rendered.contains("✓"),
+            "should contain check mark: {rendered}"
+        );
+        assert!(
+            rendered.contains("demo_gate"),
+            "should contain gate id: {rendered}"
+        );
         assert!(!rendered.contains("z3_verified"));
     }
 }

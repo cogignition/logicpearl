@@ -49,7 +49,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 mod artifact_cmd;
@@ -259,13 +259,48 @@ fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Resu
         .wrap_err(format!("{context} JSON is not valid JSON"))
 }
 
+const fn cli_styles() -> clap::builder::Styles {
+    use clap::builder::styling::{AnsiColor, Effects, Style};
+    clap::builder::Styles::styled()
+        .header(
+            Style::new()
+                .fg_color(Some(clap::builder::styling::Color::Ansi(
+                    AnsiColor::BrightGreen,
+                )))
+                .effects(Effects::BOLD),
+        )
+        .usage(
+            Style::new()
+                .fg_color(Some(clap::builder::styling::Color::Ansi(
+                    AnsiColor::BrightGreen,
+                )))
+                .effects(Effects::BOLD),
+        )
+        .literal(
+            Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(
+                AnsiColor::BrightCyan,
+            ))),
+        )
+        .placeholder(
+            Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(AnsiColor::Cyan))),
+        )
+        .valid(Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(AnsiColor::Green))))
+        .invalid(Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(AnsiColor::Red))))
+        .error(
+            Style::new()
+                .fg_color(Some(clap::builder::styling::Color::Ansi(AnsiColor::Red)))
+                .effects(Effects::BOLD),
+        )
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "logicpearl",
     version,
     about = "Build, inspect, run, and benchmark deterministic LogicPearl artifacts.",
     long_about = CLI_LONG_ABOUT,
-    after_help = CLI_AFTER_HELP
+    after_help = CLI_AFTER_HELP,
+    styles = cli_styles(),
 )]
 struct Cli {
     #[command(subcommand)]
@@ -1316,6 +1351,10 @@ struct ObserverRepairArgs {
 }
 
 fn main() -> Result<()> {
+    // Respect NO_COLOR (https://no-color.org) and disable color when stdout is not a terminal.
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    owo_colors::set_override(color);
+
     if run_embedded_native_runner_if_present()? {
         return Ok(());
     }

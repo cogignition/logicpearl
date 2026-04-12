@@ -10,6 +10,7 @@ description = "Rust-first CLI for building, inspecting, and running LogicPearl a
 [dependencies]
 clap.workspace = true
 csv.workspace = true
+indicatif.workspace = true
 logicpearl-benchmark.workspace = true
 logicpearl-conformance.workspace = true
 logicpearl-core.workspace = true

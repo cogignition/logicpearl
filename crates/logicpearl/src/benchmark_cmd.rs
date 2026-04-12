@@ -3,6 +3,7 @@ use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution,
     resolve_observer_for_cases,
 };
+use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_benchmark::{
     adapt_csic_http_2010_dataset, adapt_jailbreakbench_dataset,
     adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
@@ -957,7 +958,25 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     }
 
     let collapse_routes = args.collapse_routes;
+
+    let pb = if !args.json {
+        let pb = ProgressBar::new(cases.len() as u64);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.green} {msg} [{bar:30.cyan/dim}] {pos}/{len} ({elapsed})",
+            )
+            .unwrap()
+            .progress_chars("━╸─"),
+        );
+        pb.set_message(format!("{}", "Evaluating".bold().bright_green()));
+        Some(pb)
+    } else {
+        None
+    };
     let results = benchmark_case_results_parallel(&prepared_pipeline, &cases, collapse_routes)?;
+    if let Some(pb) = pb {
+        pb.finish_with_message(format!("{}", "Evaluated".bold().bright_green()));
+    }
 
     let mut matched_cases = 0_usize;
     let mut attack_cases = 0_usize;

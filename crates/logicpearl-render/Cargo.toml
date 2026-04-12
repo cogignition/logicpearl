@@ -10,3 +10,4 @@ description = "Rendering helpers for LogicPearl artifacts and verification statu
 [dependencies]
 logicpearl-core.workspace = true
 logicpearl-ir.workspace = true
+owo-colors.workspace = true
