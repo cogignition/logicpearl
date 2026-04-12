@@ -62,6 +62,13 @@ Please make sure:
 
 If your change is metric-neutral but makes the repo cleaner, easier to use, or more honest, it is still a good contribution.
 
+### Prerequisites
+
+- **Rust** stable toolchain (latest recommended)
+- **z3** SMT solver on PATH (`apt install z3` on Ubuntu, `brew install z3` on macOS)
+- **Node.js** >= 18 (for browser runtime tests in pre-commit hook)
+- **Git** with hooks support
+
 ## Local Development
 
 Enable the repository hooks:
@@ -165,3 +172,7 @@ Quality report maintenance is explicit and stays out of the git hooks. Refresh t
 ```bash
 cargo xtask quality-report
 ```
+
+## Developer Certificate of Origin
+
+By submitting a pull request, you certify the [Developer Certificate of Origin (DCO)](https://developercertificate.org/). This means you wrote the code or have the right to submit it, and you agree it can be distributed under the project's MIT license.

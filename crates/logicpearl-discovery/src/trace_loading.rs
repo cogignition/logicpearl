@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::{DecisionTraceRow, LoadedDecisionTraces};
 use logicpearl_core::{LogicPearlError, Result};
 use serde_json::{Number, Value};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -6,10 +7,21 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GateType {
+    BitmaskGate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CombineStrategy {
+    BitwiseOr,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogicPearlGateIr {
     pub ir_version: String,
     pub gate_id: String,
-    pub gate_type: String,
+    pub gate_type: GateType,
     pub input_schema: InputSchema,
     pub rules: Vec<RuleDefinition>,
     pub evaluation: EvaluationConfig,
@@ -177,7 +189,7 @@ pub enum RuleVerificationStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvaluationConfig {
-    pub combine: String,
+    pub combine: CombineStrategy,
     pub allow_when_bitmask: u64,
 }
 
@@ -279,18 +291,6 @@ impl LogicPearlGateIr {
             return Err(LogicPearlError::message(format!(
                 "unsupported ir_version: {}",
                 self.ir_version
-            )));
-        }
-        if self.gate_type != "bitmask_gate" {
-            return Err(LogicPearlError::message(format!(
-                "unsupported gate_type: {}",
-                self.gate_type
-            )));
-        }
-        if self.evaluation.combine != "bitwise_or" {
-            return Err(LogicPearlError::message(format!(
-                "unsupported evaluation.combine: {}",
-                self.evaluation.combine
             )));
         }
         if self.evaluation.allow_when_bitmask != 0 {
@@ -1003,7 +1003,7 @@ mod tests {
         LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "test_gate".to_string(),
-            gate_type: "bitmask_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![
                     FeatureDefinition {
@@ -1044,7 +1044,7 @@ mod tests {
                 verification_status: None,
             }],
             evaluation: EvaluationConfig {
-                combine: "bitwise_or".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: None,
@@ -1406,5 +1406,116 @@ mod tests {
         .expect_err("unknown action should fail");
 
         assert!(err.to_string().contains("unknown action"));
+    }
+
+    /// Helper: build a minimal valid gate with one feature and one rule.
+    fn minimal_valid_gate() -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "test_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "age".to_string(),
+                    feature_type: FeatureType::Int,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                    semantics: None,
+                    governance: None,
+                    derived: None,
+                }],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_1".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "age".to_string(),
+                    op: ComparisonOperator::Lt,
+                    value: ComparisonValue::Literal(json!(18)),
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: None,
+            }],
+            evaluation: EvaluationConfig {
+                combine: CombineStrategy::BitwiseOr,
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn valid_minimal_gate_passes_validation() {
+        let gate = minimal_valid_gate();
+        gate.validate()
+            .expect("minimal valid gate should pass validation");
+    }
+
+    #[test]
+    fn rejects_empty_gate_id() {
+        let mut gate = minimal_valid_gate();
+        gate.gate_id = String::new();
+        let err = gate.validate().expect_err("empty gate_id should fail");
+        assert!(err.to_string().contains("gate id"));
+    }
+
+    #[test]
+    fn rejects_empty_rules() {
+        let mut gate = minimal_valid_gate();
+        gate.rules.clear();
+        let err = gate.validate().expect_err("empty rules should fail");
+        assert!(err.to_string().contains("at least one rule"));
+    }
+
+    #[test]
+    fn rejects_empty_features() {
+        let mut gate = minimal_valid_gate();
+        gate.input_schema.features.clear();
+        let err = gate.validate().expect_err("empty features should fail");
+        assert!(err.to_string().contains("at least one feature"));
+    }
+
+    #[test]
+    fn rejects_duplicate_rule_ids() {
+        let mut gate = minimal_valid_gate();
+        let mut second_rule = gate.rules[0].clone();
+        second_rule.bit = 1; // different bit, same id
+        gate.rules.push(second_rule);
+        let err = gate.validate().expect_err("duplicate rule ids should fail");
+        assert!(err.to_string().contains("duplicate rule ids"));
+    }
+
+    #[test]
+    fn rejects_duplicate_rule_bits() {
+        let mut gate = minimal_valid_gate();
+        let mut second_rule = gate.rules[0].clone();
+        second_rule.id = "rule_2".to_string(); // different id, same bit
+        gate.rules.push(second_rule);
+        let err = gate
+            .validate()
+            .expect_err("duplicate rule bits should fail");
+        assert!(err.to_string().contains("duplicate rule bits"));
+    }
+
+    #[test]
+    fn roundtrip_gate_serialization() {
+        let gate = minimal_valid_gate();
+        let json_str = serde_json::to_string(&gate).expect("gate should serialize");
+        let deserialized: LogicPearlGateIr =
+            serde_json::from_str(&json_str).expect("gate should deserialize");
+        assert_eq!(gate, deserialized);
+        assert_eq!(deserialized.gate_id, "test_gate");
+        assert_eq!(deserialized.gate_type, GateType::BitmaskGate);
+        assert_eq!(deserialized.evaluation.combine, CombineStrategy::BitwiseOr);
+        assert_eq!(deserialized.rules.len(), 1);
+        assert_eq!(deserialized.rules[0].id, "rule_1");
     }
 }

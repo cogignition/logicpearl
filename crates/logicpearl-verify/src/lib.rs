@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     validate_expression_against_schema, ComparisonOperator, ComparisonValue,

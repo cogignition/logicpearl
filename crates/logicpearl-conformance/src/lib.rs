@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{ComparisonOperator, Expression, LogicPearlGateIr};
@@ -11,6 +12,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::NamedTempFile;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileFingerprint {
@@ -48,9 +50,10 @@ pub struct DecisionTraceRow {
     pub allowed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct ReceiptSigningKeyFile {
     pub algorithm: String,
+    #[serde(skip_serializing)]
     pub secret_key_hex: String,
     pub public_key_hex: String,
 }
@@ -453,7 +456,19 @@ pub fn verify_decision_receipt(
 }
 
 pub fn write_receipt_signing_key(keypair: &ReceiptSigningKeyFile, path: &Path) -> Result<()> {
-    fs::write(path, serde_json::to_string_pretty(keypair)? + "\n")?;
+    // Build JSON manually because secret_key_hex is skip_serializing to prevent
+    // accidental leaks via Debug/Serialize. The key file on disk must contain it.
+    let mut map = serde_json::Map::new();
+    map.insert("algorithm".into(), Value::String(keypair.algorithm.clone()));
+    map.insert(
+        "secret_key_hex".into(),
+        Value::String(keypair.secret_key_hex.clone()),
+    );
+    map.insert(
+        "public_key_hex".into(),
+        Value::String(keypair.public_key_hex.clone()),
+    );
+    fs::write(path, serde_json::to_string_pretty(&map)? + "\n")?;
     Ok(())
 }
 

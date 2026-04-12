@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_discovery::BuildResult;
 use serde_json::{json, Value};
 use std::fs;

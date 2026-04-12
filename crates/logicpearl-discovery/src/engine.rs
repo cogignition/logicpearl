@@ -1,12 +1,13 @@
+// SPDX-License-Identifier: MIT
 use good_lp::{
     constraint, microlp, variable, variables, Expression as LpExpression, ResolutionError,
     Solution, SolverModel, Variable,
 };
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
-    BooleanEvidencePolicy, ComparisonExpression, ComparisonOperator, ComparisonValue,
-    EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, InputSchema,
-    LogicPearlGateIr, Provenance, RuleDefinition, RuleKind, RuleVerificationStatus,
+    BooleanEvidencePolicy, CombineStrategy, ComparisonExpression, ComparisonOperator,
+    ComparisonValue, EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, GateType,
+    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind, RuleVerificationStatus,
     VerificationConfig,
 };
 use logicpearl_runtime::evaluate_gate;
@@ -293,11 +294,11 @@ pub(super) fn gate_from_rules(
     Ok(LogicPearlGateIr {
         ir_version: "1.0".to_string(),
         gate_id: gate_id.to_string(),
-        gate_type: "bitmask_gate".to_string(),
+        gate_type: GateType::BitmaskGate,
         input_schema: InputSchema { features },
         rules,
         evaluation: EvaluationConfig {
-            combine: "bitwise_or".to_string(),
+            combine: CombineStrategy::BitwiseOr,
             allow_when_bitmask: 0,
         },
         verification: Some(VerificationConfig {
@@ -607,8 +608,8 @@ fn recover_rare_rules(
 
         let existing_signatures = recovered
             .iter()
-            .map(CandidateRule::signature)
-            .collect::<BTreeSet<_>>();
+            .map(|c| c.signature())
+            .collect::<Result<BTreeSet<_>>>()?;
         let rescue_shortlist = candidate_rules(
             selection_context.rows,
             &uncovered_denied,
@@ -618,7 +619,9 @@ fn recover_rare_rules(
             selection_context.residual_options,
         )
         .into_iter()
-        .filter(|candidate| !existing_signatures.contains(&candidate.signature()))
+        .filter(|candidate| {
+            !existing_signatures.contains(&candidate.signature().unwrap_or_default())
+        })
         .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
         .collect::<Vec<_>>();
         if rescue_shortlist.is_empty() {
@@ -669,7 +672,7 @@ fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<Ca
     let mut seen = BTreeSet::new();
     let mut deduped = Vec::new();
     for candidate in candidates {
-        if seen.insert(candidate.signature()) {
+        if seen.insert(candidate.signature().unwrap_or_default()) {
             deduped.push(candidate);
         }
     }
@@ -719,20 +722,22 @@ fn exact_selection_shortlist(
     limit: usize,
 ) -> Vec<CandidateRule> {
     let mut shortlisted: Vec<CandidateRule> = all_candidates.iter().take(limit).cloned().collect();
-    let mut signatures: BTreeSet<String> =
-        shortlisted.iter().map(CandidateRule::signature).collect();
+    let mut signatures: BTreeSet<String> = shortlisted
+        .iter()
+        .map(|c| c.signature().unwrap_or_default())
+        .collect();
     for candidate in all_candidates
         .iter()
         .filter(|candidate| candidate_is_compound(candidate))
         .take(EXACT_SELECTION_COMPOUND_FRONTIER_LIMIT)
     {
-        let signature = candidate.signature();
+        let signature = candidate.signature().unwrap_or_default();
         if signatures.insert(signature) {
             shortlisted.push(candidate.clone());
         }
     }
     for candidate in greedy_plan {
-        let signature = candidate.signature();
+        let signature = candidate.signature().unwrap_or_default();
         if signatures.insert(signature) {
             shortlisted.push(candidate.clone());
         }
@@ -1736,7 +1741,9 @@ fn candidate_rules(
     );
     candidates.retain(|candidate| candidate.denied_coverage > 0);
     candidates.sort_by(compare_candidate_priority);
-    candidates.dedup_by(|left, right| left.signature() == right.signature());
+    candidates.dedup_by(|left, right| {
+        left.signature().unwrap_or_default() == right.signature().unwrap_or_default()
+    });
     if let Some(options) = residual_options {
         candidates.extend(conjunction_candidate_rules(
             rows,
@@ -1748,7 +1755,9 @@ fn candidate_rules(
     }
 
     candidates.sort_by(compare_candidate_priority);
-    candidates.dedup_by(|left, right| left.signature() == right.signature());
+    candidates.dedup_by(|left, right| {
+        left.signature().unwrap_or_default() == right.signature().unwrap_or_default()
+    });
     candidates
 }
 
@@ -1995,7 +2004,11 @@ fn compare_conjunction_atom_priority(left: &CandidateRule, right: &CandidateRule
                 &candidate_complexity_penalty(right, DiscoveryDecisionMode::Standard),
             )
         })
-        .then_with(|| left.signature().cmp(&right.signature()))
+        .then_with(|| {
+            left.signature()
+                .unwrap_or_default()
+                .cmp(&right.signature().unwrap_or_default())
+        })
 }
 
 fn conjunction_example_features(
@@ -2099,7 +2112,11 @@ fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Or
         .then_with(|| {
             candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
         })
-        .then_with(|| left.signature().cmp(&right.signature()))
+        .then_with(|| {
+            left.signature()
+                .unwrap_or_default()
+                .cmp(&right.signature().unwrap_or_default())
+        })
 }
 
 fn candidate_complexity_penalty(

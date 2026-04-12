@@ -253,5 +253,7 @@ printf 'Verified archive checksum from %s\n' "$checksum_source"
 if path_contains_dir "$bin_dir"; then
   printf 'Run: logicpearl quickstart\n'
 else
-  printf 'Add %s to PATH, then run: logicpearl quickstart\n' "$bin_dir"
+  printf 'Add %s to PATH:\n' "$bin_dir"
+  printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.zshrc && source ~/.zshrc\n' "$bin_dir"
+  printf 'Then run: logicpearl quickstart\n'
 fi

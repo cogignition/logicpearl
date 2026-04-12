@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_discovery::{BuildResult, ExactSelectionBackend};
 use serde_json::Value;
 use std::fs;

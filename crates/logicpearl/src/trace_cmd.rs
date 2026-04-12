@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
 use logicpearl_ir::{
-    validate_expression_against_schema, BooleanEvidencePolicy, ComparisonValue, EvaluationConfig,
-    Expression, FeatureDefinition, FeatureGovernance, FeatureType, InputSchema, LogicPearlGateIr,
-    Provenance, RuleDefinition, RuleKind,
+    validate_expression_against_schema, BooleanEvidencePolicy, CombineStrategy, ComparisonValue,
+    EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, FeatureType, GateType,
+    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleKind,
 };
 use logicpearl_runtime::evaluate_gate;
 use rand::prelude::*;
@@ -590,11 +591,11 @@ fn generation_gate(spec: &TraceGenerationSpec) -> Result<LogicPearlGateIr> {
             .dataset_id
             .clone()
             .unwrap_or_else(|| "synthetic_trace_generation".to_string()),
-        gate_type: "bitmask_gate".to_string(),
+        gate_type: GateType::BitmaskGate,
         input_schema: schema,
         rules,
         evaluation: EvaluationConfig {
-            combine: "bitwise_or".to_string(),
+            combine: CombineStrategy::BitwiseOr,
             allow_when_bitmask: 0,
         },
         verification: None,

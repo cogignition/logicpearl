@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;

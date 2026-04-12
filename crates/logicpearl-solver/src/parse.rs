@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use crate::SatStatus;
 use logicpearl_core::{LogicPearlError, Result};
 use std::collections::BTreeMap;

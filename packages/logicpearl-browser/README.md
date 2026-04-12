@@ -1,5 +1,7 @@
 # `@logicpearl/browser`
 
+> **Note:** This package is not yet published to npm. To use it, copy the `packages/logicpearl-browser` directory into your project or reference it as a local dependency.
+
 Official browser/runtime loader for LogicPearl Wasm artifact bundles.
 
 This package is the supported JavaScript entrypoint for browser-facing LogicPearl usage.

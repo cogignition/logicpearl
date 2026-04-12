@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{

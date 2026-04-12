@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
@@ -281,8 +282,10 @@ struct CandidateRule {
 }
 
 impl CandidateRule {
-    fn signature(&self) -> String {
-        serde_json::to_string(&self.expression).expect("candidate rule signature serialization")
+    fn signature(&self) -> Result<String> {
+        serde_json::to_string(&self.expression).map_err(|e| {
+            LogicPearlError::message(format!("candidate rule signature serialization: {e}"))
+        })
     }
 }
 
@@ -734,7 +737,9 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
             })?;
             per_target_rows
                 .get_mut(target)
-                .expect("target initialized")
+                .ok_or_else(|| {
+                    LogicPearlError::message(format!("target {target:?} not initialized"))
+                })?
                 .push(DecisionTraceRow {
                     features: features.clone(),
                     allowed,
@@ -974,7 +979,7 @@ fn learn_gate_from_rows_internal(
     }
 
     let (augmented_rows, derived_features) = if numeric_interactions {
-        augment_rows_with_numeric_interactions(rows)
+        augment_rows_with_numeric_interactions(rows)?
     } else {
         (rows.to_vec(), Vec::new())
     };

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -24,16 +25,7 @@ const SUPPORTED_SCHEMA_VALIDATION_KEYWORDS: &[&str] = &[
 const SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS: &[&str] = &["$id", "$schema", "description", "title"];
 
 #[cfg(unix)]
-const SIGTERM: i32 = 15;
-#[cfg(unix)]
-const SIGKILL: i32 = 9;
-
-#[cfg(unix)]
-unsafe extern "C" {
-    fn getpgid(pid: i32) -> i32;
-    fn getpgrp() -> i32;
-    fn kill(pid: i32, sig: i32) -> i32;
-}
+use libc::{getpgid, getpgrp, kill, SIGKILL, SIGTERM};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -602,7 +594,7 @@ fn spawn_plugin_process(command: &mut Command) -> std::io::Result<Child> {
 
 #[cfg(unix)]
 fn is_executable_file_busy(error: &std::io::Error) -> bool {
-    error.raw_os_error() == Some(26)
+    error.raw_os_error() == Some(libc::ETXTBSY)
 }
 
 #[cfg(not(unix))]

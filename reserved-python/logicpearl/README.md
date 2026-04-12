@@ -37,6 +37,6 @@ The installed Python package does not bundle the repository examples under `exam
 This package exposes local execution through `logicpearl-engine`.
 
 It is:
-- not a service client yet
+- a local evaluation library, not a service client
 - not a reimplementation of runtime semantics in Python
 - not a wrapper around `logicpearl` CLI subprocess calls

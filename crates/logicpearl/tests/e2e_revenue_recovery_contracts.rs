@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;

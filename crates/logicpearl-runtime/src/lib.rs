@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
@@ -7,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 
+/// Result of evaluating an action policy artifact.
+///
+/// `artifact_id`, `policy_id`, and `action_policy_id` currently resolve
+/// to the same value. See `GateEvaluationResult` for rationale.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionEvaluationResult {
     pub artifact_id: String,
@@ -52,6 +57,12 @@ pub struct GateRuleMatch {
     pub features: Vec<RuleFeatureExplanation>,
 }
 
+/// Result of evaluating a gate artifact against an input.
+///
+/// `artifact_id`, `policy_id`, and `gate_id` currently resolve to the same
+/// value (`gate.gate_id`). They are separate fields to support future scenarios
+/// where a single artifact contains multiple policies or where policy identity
+/// differs from artifact identity (e.g., versioned artifact bundles).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GateEvaluationResult {
     pub artifact_id: String,
@@ -524,9 +535,9 @@ fn value_in(left: &Value, right: &Value) -> Result<bool> {
 mod tests {
     use super::*;
     use logicpearl_ir::{
-        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, EvaluationConfig,
-        FeatureDefinition, FeatureType, InputSchema, Provenance, RuleDefinition, RuleKind,
-        RuleVerificationStatus, VerificationConfig,
+        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
+        EvaluationConfig, FeatureDefinition, FeatureType, GateType, InputSchema, Provenance,
+        RuleDefinition, RuleKind, RuleVerificationStatus, VerificationConfig,
     };
     use serde_json::json;
 
@@ -534,7 +545,7 @@ mod tests {
         LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "eq_test".to_string(),
-            gate_type: "bitmask_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![FeatureDefinition {
                     id: "flag".to_string(),
@@ -565,7 +576,7 @@ mod tests {
                 verification_status: Some(RuleVerificationStatus::PipelineUnverified),
             }],
             evaluation: EvaluationConfig {
-                combine: "bitwise_or".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: Some(VerificationConfig {
@@ -769,7 +780,7 @@ mod tests {
         let gate = LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "ratio_gate".to_string(),
-            gate_type: "bitmask_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![
                     FeatureDefinition {
@@ -830,7 +841,7 @@ mod tests {
                 verification_status: Some(RuleVerificationStatus::PipelineUnverified),
             }],
             evaluation: EvaluationConfig {
-                combine: "bitwise_or".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: Some(VerificationConfig {
@@ -851,5 +862,91 @@ mod tests {
         ]);
         let bitmask = evaluate_gate(&gate, &features).expect("derived ratio should evaluate");
         assert_eq!(bitmask.as_u64(), Some(1));
+    }
+
+    /// Helper: build a minimal valid gate for runtime tests.
+    fn minimal_runtime_gate() -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "runtime_test".to_string(),
+            gate_type: GateType::BitmaskGate,
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "age".to_string(),
+                    feature_type: FeatureType::Int,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                    semantics: None,
+                    governance: None,
+                    derived: None,
+                }],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_1".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "age".to_string(),
+                    op: ComparisonOperator::Lt,
+                    value: ComparisonValue::Literal(json!(18)),
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: None,
+            }],
+            evaluation: EvaluationConfig {
+                combine: CombineStrategy::BitwiseOr,
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn evaluate_gate_allows_when_no_rules_match() {
+        let gate = minimal_runtime_gate();
+        // age=25 does NOT satisfy deny_when (age < 18), so no rules match
+        let features = HashMap::from([("age".to_string(), json!(25))]);
+        let result =
+            evaluate_gate_with_explanation(&gate, &features).expect("evaluation should succeed");
+        assert!(result.allow, "gate should allow when no rules match");
+        assert!(result.bitmask.is_zero());
+        assert!(result.matched_rules.is_empty());
+    }
+
+    #[test]
+    fn evaluate_gate_denies_when_rule_matches() {
+        let gate = minimal_runtime_gate();
+        // age=15 satisfies deny_when (age < 18), so rule matches
+        let features = HashMap::from([("age".to_string(), json!(15))]);
+        let result =
+            evaluate_gate_with_explanation(&gate, &features).expect("evaluation should succeed");
+        assert!(!result.allow, "gate should deny when a rule matches");
+        assert!(!result.bitmask.is_zero());
+        assert_eq!(result.matched_rules.len(), 1);
+        assert_eq!(result.matched_rules[0].id, "rule_1");
+    }
+
+    #[test]
+    fn parse_input_payload_single_object() {
+        let payload = json!({"age": 25});
+        let parsed = parse_input_payload(payload).expect("single object should parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["age"], json!(25));
+    }
+
+    #[test]
+    fn parse_input_payload_array() {
+        let payload = json!([{"age": 25}, {"age": 17}]);
+        let parsed = parse_input_payload(payload).expect("array should parse");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0]["age"], json!(25));
+        assert_eq!(parsed[1]["age"], json!(17));
     }
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use crate::{BenchmarkAdapterParser, SquadDataset};
 use logicpearl_core::{LogicPearlError, Result};
 use serde_json::Value;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #![recursion_limit = "256"]
 
 use clap::{Args, Parser, Subcommand};
@@ -438,9 +439,59 @@ fn run_public_path_hygiene(repo_root: &Path) -> Result<()> {
     ))
 }
 
+fn run_spdx_header_check(repo_root: &Path) -> Result<()> {
+    let dirs = ["crates", "xtask/src"];
+    let mut missing = Vec::new();
+    for dir in &dirs {
+        let dir_path = repo_root.join(dir);
+        if !dir_path.exists() {
+            continue;
+        }
+        for entry in walkdir(&dir_path) {
+            let path = entry.as_path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let content = fs::read_to_string(path).into_diagnostic()?;
+            if !content.starts_with("// SPDX-License-Identifier: MIT") {
+                if let Ok(rel) = path.strip_prefix(repo_root) {
+                    missing.push(rel.display().to_string());
+                } else {
+                    missing.push(path.display().to_string());
+                }
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        missing.sort();
+        Err(miette::miette!(
+            "the following .rs files are missing the SPDX-License-Identifier: MIT header on line 1:\n  {}",
+            missing.join("\n  ")
+        ))
+    }
+}
+
+fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                results.extend(walkdir(&path));
+            } else {
+                results.push(path);
+            }
+        }
+    }
+    results
+}
+
 fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
     run_repo_command(repo_root, "sh", &["-n", "install.sh"])?;
     run_public_path_hygiene(repo_root)?;
+    run_spdx_header_check(repo_root)?;
     run_workspace_clippy(repo_root)?;
     run_workspace_tests(repo_root)?;
     run_browser_runtime_tests(repo_root)?;
@@ -458,6 +509,7 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
     println!("{}", "Running LogicPearl pre-commit checks".bold());
     run_staged_rustfmt_check(repo_root)?;
     run_public_path_hygiene(repo_root)?;
+    run_spdx_header_check(repo_root)?;
     run_workspace_clippy(repo_root)?;
     run_pre_commit_contract_tests(repo_root)?;
     run_browser_runtime_tests(repo_root)?;

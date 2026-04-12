@@ -21,7 +21,15 @@ By default the installer:
 - points `~/.logicpearl/current` at the active version
 - creates `logicpearl` and `z3` symlinks in `~/.local/bin`
 
-If `~/.local/bin` is not already on your `PATH`, add it and open a new shell.
+If `~/.local/bin` is not already on your `PATH`, add it:
+
+```bash
+# zsh (macOS default):
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+
+# bash:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
 
 ## Supported Prebuilt Targets
 

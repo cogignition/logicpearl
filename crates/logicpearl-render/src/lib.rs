@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{ArtifactRenderer, Result};
 use logicpearl_ir::{LogicPearlGateIr, RuleVerificationStatus};
 use owo_colors::OwoColorize;
@@ -125,9 +126,9 @@ mod tests {
     use super::TextInspector;
     use logicpearl_core::ArtifactRenderer;
     use logicpearl_ir::{
-        ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
-        FeatureDefinition, FeatureType, InputSchema, LogicPearlGateIr, RuleDefinition, RuleKind,
-        RuleVerificationStatus,
+        CombineStrategy, ComparisonExpression, ComparisonOperator, ComparisonValue,
+        EvaluationConfig, Expression, FeatureDefinition, FeatureType, GateType, InputSchema,
+        LogicPearlGateIr, RuleDefinition, RuleKind, RuleVerificationStatus,
     };
 
     #[test]
@@ -138,7 +139,7 @@ mod tests {
         let gate = LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "demo_gate".to_string(),
-            gate_type: "bitmask_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![FeatureDefinition {
                     id: "f_age".to_string(),
@@ -171,7 +172,7 @@ mod tests {
                 verification_status: Some(RuleVerificationStatus::SolverVerified),
             }],
             evaluation: EvaluationConfig {
-                combine: "bitwise_or".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: None,

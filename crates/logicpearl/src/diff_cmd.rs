@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
 use logicpearl_ir::{
@@ -1324,9 +1325,9 @@ fn semantic_action_rule_signature(rule: &ActionRuleDefinition) -> String {
 mod tests {
     use super::*;
     use logicpearl_ir::{
-        ActionEvaluationConfig, ActionSelectionStrategy, ComparisonExpression, ComparisonOperator,
-        ComparisonValue, EvaluationConfig, Expression, FeatureDefinition, FeatureType, InputSchema,
-        LogicPearlGateIr, RuleKind,
+        ActionEvaluationConfig, ActionSelectionStrategy, CombineStrategy, ComparisonExpression,
+        ComparisonOperator, ComparisonValue, EvaluationConfig, Expression, FeatureDefinition,
+        FeatureType, GateType, InputSchema, LogicPearlGateIr, RuleKind,
     };
     use serde_json::{json, Value};
     use std::path::PathBuf;
@@ -1335,7 +1336,7 @@ mod tests {
         LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "demo".to_string(),
-            gate_type: "bitmask_gate".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![FeatureDefinition {
                     id: "age".to_string(),
@@ -1352,7 +1353,7 @@ mod tests {
             },
             rules,
             evaluation: EvaluationConfig {
-                combine: "bitwise_or".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: None,

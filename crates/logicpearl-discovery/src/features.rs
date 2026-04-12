@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_ir::{
     ComparisonExpression, DerivedFeatureDefinition, DerivedFeatureOperator, Expression,
     FeatureDefinition, FeatureType, RuleDefinition,
@@ -6,6 +7,8 @@ use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
+
+use logicpearl_core::{LogicPearlError, Result};
 
 use super::rule_text::{generate_rule_text, RuleTextContext};
 use super::DecisionTraceRow;
@@ -48,9 +51,9 @@ pub(super) fn numeric_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {
 
 pub(super) fn augment_rows_with_numeric_interactions(
     rows: &[DecisionTraceRow],
-) -> (Vec<DecisionTraceRow>, Vec<FeatureDefinition>) {
+) -> Result<(Vec<DecisionTraceRow>, Vec<FeatureDefinition>)> {
     if rows.is_empty() {
-        return (Vec::new(), Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let numeric_features = numeric_feature_names(rows)
@@ -58,7 +61,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
         .filter(|feature| !is_binary_numeric_feature(rows, feature))
         .collect::<Vec<_>>();
     if numeric_features.len() < 2 {
-        return (rows.to_vec(), Vec::new());
+        return Ok((rows.to_vec(), Vec::new()));
     }
 
     let denied_indices: Vec<usize> = rows
@@ -150,7 +153,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
     candidates.truncate(MAX_INTERACTION_FEATURES);
 
     if candidates.is_empty() {
-        return (rows.to_vec(), Vec::new());
+        return Ok((rows.to_vec(), Vec::new()));
     }
 
     let mut augmented = Vec::with_capacity(rows.len());
@@ -159,9 +162,11 @@ pub(super) fn augment_rows_with_numeric_interactions(
         for (_, derived, values) in &candidates {
             features.insert(
                 derived.id.clone(),
-                Value::Number(
-                    Number::from_f64(values[row_index]).expect("finite interaction value"),
-                ),
+                Value::Number(Number::from_f64(values[row_index]).ok_or_else(|| {
+                    LogicPearlError::message(format!(
+                        "derived feature produced non-finite value at row {row_index}"
+                    ))
+                })?),
             );
         }
         augmented.push(DecisionTraceRow {
@@ -174,7 +179,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
         .into_iter()
         .map(|(_, derived, _)| derived)
         .collect();
-    (augmented, derived_features)
+    Ok((augmented, derived_features))
 }
 
 pub(super) fn infer_binary_feature_names(rows: &[DecisionTraceRow]) -> Vec<String> {

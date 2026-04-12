@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, FeatureSemantics,
     FeatureStateSemantics,

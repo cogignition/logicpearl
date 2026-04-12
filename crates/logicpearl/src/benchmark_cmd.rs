@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution,

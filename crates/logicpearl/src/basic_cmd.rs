@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
 use indicatif::{ProgressBar, ProgressStyle};

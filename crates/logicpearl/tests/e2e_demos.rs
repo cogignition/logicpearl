@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_discovery::{load_decision_traces_auto, BuildResult};
 use serde_json::{Map, Value};
 use std::fs;

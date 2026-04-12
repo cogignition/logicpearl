@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_discovery::{BuildResult, OutputFiles};
 use logicpearl_ir::{
@@ -1542,10 +1543,10 @@ mod tests {
         write_wasm_metadata_for_pearl, CompilablePearl,
     };
     use logicpearl_ir::{
-        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy,
+        ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
         ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
-        FeatureDefinition, FeatureType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
-        RuleDefinition, RuleKind,
+        FeatureDefinition, FeatureType, GateType, InputSchema, LogicPearlActionIr,
+        LogicPearlGateIr, RuleDefinition, RuleKind,
     };
     use serde_json::Value;
 
@@ -1620,7 +1621,7 @@ mod tests {
         LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "test_gate".to_string(),
-            gate_type: "deny_list".to_string(),
+            gate_type: GateType::BitmaskGate,
             input_schema: InputSchema {
                 features: vec![FeatureDefinition {
                     id: "enabled".to_string(),
@@ -1653,7 +1654,7 @@ mod tests {
                 })
                 .collect(),
             evaluation: EvaluationConfig {
-                combine: "bitmask_any".to_string(),
+                combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,
             },
             verification: None,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use good_lp::{
     constraint, microlp, variable, variables, Expression, ResolutionError, Solution, SolverModel,
     Variable,

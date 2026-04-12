@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};

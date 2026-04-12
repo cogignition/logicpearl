@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use super::{
     verification_status, verification_status_rank, DecisionTraceRow, NumericBound, NumericInterval,
 };

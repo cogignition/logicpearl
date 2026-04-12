@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
 use super::*;
 use logicpearl_benchmark::{
     load_benchmark_cases, write_benchmark_cases_jsonl, BenchmarkCase, ObservedBenchmarkCase,
 };
 use logicpearl_discovery::ArtifactSet;
-use logicpearl_ir::{EvaluationConfig, LogicPearlGateIr, Provenance, VerificationConfig};
+use logicpearl_ir::{
+    CombineStrategy, EvaluationConfig, GateType, LogicPearlGateIr, Provenance, VerificationConfig,
+};
 use logicpearl_runtime::evaluate_gate;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -2903,13 +2906,13 @@ fn build_guardrails_combined_pearl(
     let gate = LogicPearlGateIr {
         ir_version: "1.0".to_string(),
         gate_id: "guardrails_combined".to_string(),
-        gate_type: "bitmask_gate".to_string(),
+        gate_type: GateType::BitmaskGate,
         input_schema: logicpearl_ir::InputSchema {
             features: ordered_features,
         },
         rules: combined_rules,
         evaluation: EvaluationConfig {
-            combine: "bitwise_or".to_string(),
+            combine: CombineStrategy::BitwiseOr,
             allow_when_bitmask: 0,
         },
         verification: Some(VerificationConfig {

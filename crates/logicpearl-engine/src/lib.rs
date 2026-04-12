@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};

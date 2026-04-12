@@ -40,8 +40,6 @@ LogicPearl does not require AI. AI is useful for generating examples, extracting
   <a href="./schema"><img alt="Schema" src="https://img.shields.io/badge/artifact-Pearl%20IR-173053.svg?style=flat-square"></a>
 </p>
 
-New here? Read [Terminology](./TERMINOLOGY.md) first.
-
 [Website](https://logicpearl.com) · [Terminology](./TERMINOLOGY.md) · [Install](./docs/install.md) · [Start Here](#start-here) · [Garden Demo](#try-the-garden-demo) · [Why This Is Interesting](#why-this-is-interesting) · [Synthetic Traces](#generate-clean-synthetic-traces) · [What You Can Trust](#what-you-can-trust) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md) · [Advanced Guardrail Guide](./docs/advanced-guardrail-guide.md) · [Next Demos](#next-demos) · [Repository Layout](#repository-layout)
 
 Quick runnable path with checked-in input/output traces:
@@ -54,6 +52,18 @@ logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
 ```
 
 That takes a tiny observed behavior slice and emits a reusable artifact bundle you can inspect, run, and improve.
+
+New here? Read [Terminology](./TERMINOLOGY.md) first.
+
+For a more compelling example with multiple features and non-obvious rules:
+
+```bash
+logicpearl trace examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.csv
+logicpearl build /tmp/synthetic_traces.csv --output-dir /tmp/synthetic-pearl
+logicpearl inspect /tmp/synthetic-pearl
+```
+
+This discovers three rules across five policy features — results you couldn't eyeball from the raw CSV.
 
 ## What LogicPearl Is
 
@@ -104,10 +114,14 @@ logicpearl quickstart
 logicpearl quickstart build
 ```
 
+Either command works — `quickstart` shows an interactive menu; `quickstart build` jumps directly to the build walkthrough.
+
 The prebuilt installer:
 - installs a versioned LogicPearl bundle under `~/.logicpearl`
 - installs the `logicpearl` command into `~/.local/bin`
 - keeps the default build path working without separate dependency setup
+
+> **How discovery works:** `logicpearl build` uses an SMT solver (z3, bundled with the installer) to discover exact decision rules from your training data. A pure-Rust MIP fallback is available via `LOGICPEARL_SOLVER_BACKEND=mip`. The runtime evaluator is pure Rust with no external dependencies.
 
 Full install details and manual bundle instructions live in [docs/install.md](./docs/install.md).
 
@@ -763,6 +777,13 @@ See:
 
 A compact artifact-first demo for learning the pearl format and runtime shape.
 
+```bash
+logicpearl inspect fixtures/ir/valid/auth-demo-v1.json
+logicpearl run fixtures/ir/valid/auth-demo-v1.json '{"role": "viewer", "resource": "doc"}'
+```
+
+See: [fixtures/ir/valid/auth-demo-v1.json](./fixtures/ir/valid/auth-demo-v1.json)
+
 ### WAF Demo
 
 A full raw-request WAF demo showing:
@@ -780,6 +801,12 @@ A smaller bounded parity example that starts from a fixed Rego policy, generates
 
 See:
 - [benchmarks/opa_rego/README.md](./benchmarks/opa_rego/README.md)
+
+## Project Status
+
+LogicPearl is a single-maintainer project at version 0.1.x. The core engine is fully open-source under MIT. The fixtures include conformance contracts derived from real domain work (healthcare prior authorization, revenue recovery) — these domains motivate the engine design but the engine itself is domain-agnostic.
+
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Repository Layout
 
