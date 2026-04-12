@@ -34,7 +34,9 @@ homepage = "https://logicpearl.com"
 repository = "https://github.com/LogicPearlHQ/logicpearl"
 
 [workspace.dependencies]
+anstream = "1"
 clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
 csv = "1.3"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 good_lp = { version = "1.15.1", default-features = false, features = ["microlp"] }

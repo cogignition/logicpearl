@@ -1,4 +1,5 @@
 use super::*;
+use anstream::println;
 use logicpearl_ir::{
     canonical_expression_key, ActionRuleDefinition, ComparisonValue, Expression, FeatureSemantics,
     InputSchema, LogicPearlActionIr, LogicPearlGateIr, RuleDefinition,
@@ -233,12 +234,12 @@ fn render_gate_diff_report(report: &ArtifactDiffReport, json: bool) -> Result<()
             serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
-        println!("{}", "LogicPearl Diff".bold().bright_blue());
+        println!("{}", "━━ LogicPearl Diff ━━".bold().bright_blue());
         println!("  {} {}", "Old".bright_black(), report.old_artifact);
         println!("  {} {}", "New".bright_black(), report.new_artifact);
         if report.old_gate_id != report.new_gate_id {
             println!(
-                "  {} {} -> {}",
+                "  {} {} → {}",
                 "Gate IDs".bright_black(),
                 report.old_gate_id,
                 report.new_gate_id
@@ -247,18 +248,18 @@ fn render_gate_diff_report(report: &ArtifactDiffReport, json: bool) -> Result<()
             println!("  {} {}", "Gate ID".bright_black(), report.old_gate_id);
         }
         println!(
-            "  {} +{} / -{}",
+            "  {} {} / {}",
             "Features".bright_black(),
-            report.feature_changes.added.len(),
-            report.feature_changes.removed.len()
+            format!("+{}", report.feature_changes.added.len()).green(),
+            format!("-{}", report.feature_changes.removed.len()).red()
         );
         println!(
-            "  {} changed={} reordered={} added={} removed={}",
+            "  {} changed={} reordered={} {} {}",
             "Rules".bright_black(),
             report.summary.changed_rules,
             report.summary.reordered_rules,
-            report.summary.added_rules,
-            report.summary.removed_rules
+            format!("+{}", report.summary.added_rules).green(),
+            format!("-{}", report.summary.removed_rules).red()
         );
         println!(
             "  {} source_schema={} learned_rule={} rule_explanation={}",
@@ -283,12 +284,12 @@ fn render_action_diff_report(report: &ActionPolicyDiffReport, json: bool) -> Res
             serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
-        println!("{}", "LogicPearl Action Diff".bold().bright_blue());
+        println!("{}", "━━ LogicPearl Action Diff ━━".bold().bright_blue());
         println!("  {} {}", "Old".bright_black(), report.old_artifact);
         println!("  {} {}", "New".bright_black(), report.new_artifact);
         if report.old_action_policy_id != report.new_action_policy_id {
             println!(
-                "  {} {} -> {}",
+                "  {} {} → {}",
                 "Action policy IDs".bright_black(),
                 report.old_action_policy_id,
                 report.new_action_policy_id
@@ -302,7 +303,7 @@ fn render_action_diff_report(report: &ActionPolicyDiffReport, json: bool) -> Res
         }
         if report.old_default_action != report.new_default_action {
             println!(
-                "  {} {} -> {}",
+                "  {} {} → {}",
                 "Default action".bright_black(),
                 report.old_default_action,
                 report.new_default_action
@@ -315,24 +316,24 @@ fn render_action_diff_report(report: &ActionPolicyDiffReport, json: bool) -> Res
             );
         }
         println!(
-            "  {} +{} / -{}",
+            "  {} {} / {}",
             "Actions".bright_black(),
-            report.action_changes.added.len(),
-            report.action_changes.removed.len()
+            format!("+{}", report.action_changes.added.len()).green(),
+            format!("-{}", report.action_changes.removed.len()).red()
         );
         println!(
-            "  {} +{} / -{}",
+            "  {} {} / {}",
             "Features".bright_black(),
-            report.feature_changes.added.len(),
-            report.feature_changes.removed.len()
+            format!("+{}", report.feature_changes.added.len()).green(),
+            format!("-{}", report.feature_changes.removed.len()).red()
         );
         println!(
-            "  {} changed={} reordered={} added={} removed={}",
+            "  {} changed={} reordered={} {} {}",
             "Rules".bright_black(),
             report.summary.changed_rules,
             report.summary.reordered_rules,
-            report.summary.added_rules,
-            report.summary.removed_rules
+            format!("+{}", report.summary.added_rules).green(),
+            format!("-{}", report.summary.removed_rules).red()
         );
         println!(
             "  {} source_schema={} action_set={} default_action={} rule_predicate={} rule_priority={} learned_rule={} rule_explanation={}",
@@ -359,25 +360,26 @@ fn render_changed_rules(header: &str, changes: &[RuleChange]) {
         return;
     }
     println!();
-    println!("{}", header.bold());
+    println!("{}", format!("━━ {header} ━━").bold().yellow());
     for change in changes {
         println!(
-            "  {} {} (bit {} -> {})",
-            change.change_kind.bold(),
+            "  {} {} {} (bit {} → {})",
+            "~".yellow(),
+            change.change_kind.bold().yellow(),
             change.rule_id,
             change.old_rule.bit,
             change.new_rule.bit
         );
         println!(
             "    {} {}",
-            "Old".bright_black(),
-            rule_display_meaning(&change.old_rule)
+            "-".red(),
+            rule_display_meaning(&change.old_rule).red()
         );
         render_rule_feature(&change.old_rule);
         println!(
             "    {} {}",
-            "New".bright_black(),
-            rule_display_meaning(&change.new_rule)
+            "+".green(),
+            rule_display_meaning(&change.new_rule).green()
         );
         render_rule_feature(&change.new_rule);
     }
@@ -388,10 +390,11 @@ fn render_reordered_rules(header: &str, changes: &[RulePairChange]) {
         return;
     }
     println!();
-    println!("{}", header.bold());
+    println!("{}", format!("━━ {header} ━━").bold().cyan());
     for change in changes {
         println!(
-            "  {} {}:{} -> {}:{}",
+            "  {} {} {}:{} → {}:{}",
+            "→".bright_cyan(),
             change.change_kind.bold(),
             change.old_rule.id,
             change.old_rule.bit,
@@ -411,10 +414,24 @@ fn render_rule_snapshots(header: &str, rules: &[RuleSnapshot], prefix: &str) {
     if rules.is_empty() {
         return;
     }
+    let is_added = prefix == "Added";
+    let header_styled = if is_added {
+        format!("{}", format!("━━ {header} ━━").bold().green())
+    } else {
+        format!("{}", format!("━━ {header} ━━").bold().red())
+    };
     println!();
-    println!("{}", header.bold());
+    println!("{header_styled}");
     for rule in rules {
-        println!("  {} {}:{}", prefix.bold(), rule.id, rule.bit);
+        let (symbol, styled_prefix) = if is_added {
+            (
+                format!("{}", "+".green()),
+                format!("{}", prefix.bold().green()),
+            )
+        } else {
+            (format!("{}", "-".red()), format!("{}", prefix.bold().red()))
+        };
+        println!("  {} {} {}:{}", symbol, styled_prefix, rule.id, rule.bit);
         println!(
             "    {} {}",
             "Semantics".bright_black(),

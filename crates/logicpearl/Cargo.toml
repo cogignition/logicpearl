@@ -8,7 +8,9 @@ repository.workspace = true
 description = "Rust-first CLI for building, inspecting, and running LogicPearl artifacts."
 
 [dependencies]
+anstream.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 csv.workspace = true
 indicatif.workspace = true
 logicpearl-benchmark.workspace = true

@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use logicpearl_benchmark::{
     adapt_alert_dataset, adapt_chatgpt_jailbreak_prompts_dataset, adapt_mcpmark_dataset,
     adapt_noeti_toxicqa_dataset, adapt_openagentsafety_s26_dataset, adapt_safearena_dataset,
@@ -208,7 +209,7 @@ Examples:
   logicpearl traces audit examples/getting_started/decision_traces.csv --label-column allowed --json";
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
-    miette::miette!("{}\n\nHint: {}", message.as_ref(), hint.as_ref())
+    miette::miette!(help = hint.as_ref().to_owned(), "{}", message.as_ref())
 }
 
 fn plugin_execution_policy(args: &PluginExecutionArgs) -> PluginExecutionPolicy {
@@ -296,15 +297,29 @@ const fn cli_styles() -> clap::builder::Styles {
 #[derive(Debug, Parser)]
 #[command(
     name = "logicpearl",
-    version,
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("LOGICPEARL_GIT_HASH"), ")"),
     about = "Build, inspect, run, and benchmark deterministic LogicPearl artifacts.",
     long_about = CLI_LONG_ABOUT,
     after_help = CLI_AFTER_HELP,
     styles = cli_styles(),
 )]
 struct Cli {
+    /// When to use terminal colors.
+    #[arg(long, global = true, value_enum, default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum ColorChoice {
+    /// Colorize output when stdout is a terminal and NO_COLOR is not set.
+    Auto,
+    /// Always colorize output.
+    Always,
+    /// Never colorize output.
+    Never,
 }
 
 #[derive(Debug, Subcommand)]
@@ -361,6 +376,12 @@ enum Commands {
     Observer {
         #[command(subcommand)]
         command: ObserverCommand,
+    },
+    /// Generate shell completion scripts.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -1351,15 +1372,29 @@ struct ObserverRepairArgs {
 }
 
 fn main() -> Result<()> {
-    // Respect NO_COLOR (https://no-color.org) and disable color when stdout is not a terminal.
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    owo_colors::set_override(color);
-
     if run_embedded_native_runner_if_present()? {
         return Ok(());
     }
 
     let cli = Cli::parse();
+
+    // Respect --color flag, NO_COLOR env var (https://no-color.org), and TTY detection.
+    // anstream strips ANSI codes from println! output; owo_colors set_override gates
+    // if_supports_color() calls.
+    let anstream_choice = match cli.color {
+        ColorChoice::Always => anstream::ColorChoice::Always,
+        ColorChoice::Never => anstream::ColorChoice::Never,
+        ColorChoice::Auto => anstream::ColorChoice::Auto,
+    };
+    anstream_choice.write_global();
+    let color = match cli.color {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => {
+            std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+        }
+    };
+    owo_colors::set_override(color);
     match cli.command {
         Commands::Benchmark {
             command: BenchmarkCommand::ListProfiles(args),
@@ -1457,6 +1492,15 @@ fn main() -> Result<()> {
         Commands::Observer {
             command: ObserverCommand::Repair(args),
         } => run_observer_repair(args),
+        Commands::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "logicpearl",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
     }
 }
 

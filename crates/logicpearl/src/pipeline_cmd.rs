@@ -1,4 +1,5 @@
 use super::*;
+use anstream::println;
 
 pub(crate) fn run_pipeline_validate(args: PipelineValidateArgs) -> Result<()> {
     let pipeline = PipelineDefinition::from_path(&args.pipeline_json)

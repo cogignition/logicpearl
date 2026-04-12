@@ -3,6 +3,7 @@ use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution,
     resolve_observer_for_cases,
 };
+use anstream::println;
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_benchmark::{
     adapt_csic_http_2010_dataset, adapt_jailbreakbench_dataset,

@@ -1,4 +1,5 @@
 use super::*;
+use anstream::println;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -363,95 +364,173 @@ fn configured_run_defaults() -> Result<Option<(PathBuf, LogicPearlRunConfig)>> {
 pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
     match args.topic {
         None => {
-            println!("{}", "LogicPearl Quickstart".bold().bright_blue());
+            println!();
+            println!("{}", "━━ LogicPearl Quickstart ━━".bold().bright_blue());
+            println!();
             println!(
                 "  {}",
                 "Choose the shortest path for what you want to prove first:".bright_black()
             );
+            println!();
             println!(
-                "  {} {}",
-                "Traces".bold(),
+                "  {} {} {}",
+                "▸".bright_cyan(),
+                "traces".bold().bright_cyan(),
                 "generate clean synthetic traces from declarative policy".bright_black()
             );
-            println!("    logicpearl quickstart traces");
+            println!("    {}", "logicpearl quickstart traces".bright_black());
             println!(
-                "  {} {}",
-                "Build".bold(),
+                "  {} {} {}",
+                "▸".bright_cyan(),
+                "build".bold().bright_cyan(),
                 "learn one pearl from labeled traces".bright_black()
             );
-            println!("    logicpearl quickstart build");
+            println!("    {}", "logicpearl quickstart build".bright_black());
             println!(
-                "  {} {}",
-                "Pipeline".bold(),
+                "  {} {} {}",
+                "▸".bright_cyan(),
+                "pipeline".bold().bright_cyan(),
                 "run a string-of-pearls artifact".bright_black()
             );
-            println!("    logicpearl quickstart pipeline");
+            println!("    {}", "logicpearl quickstart pipeline".bright_black());
             println!(
-                "  {} {}",
-                "Benchmark".bold(),
+                "  {} {} {}",
+                "▸".bright_cyan(),
+                "benchmark".bold().bright_cyan(),
                 "score a guardrail benchmark slice".bright_black()
             );
-            println!("    logicpearl quickstart benchmark");
+            println!("    {}", "logicpearl quickstart benchmark".bright_black());
+            println!();
         }
         Some(QuickstartTopic::Traces) => {
-            println!("{}", "Quickstart: Traces".bold().bright_green());
+            println!();
+            println!("{}", "━━ Quickstart: Traces ━━".bold().bright_green());
+            println!();
             println!(
-                "  {}",
+                "  {} {}",
+                "1.".bold().bright_cyan(),
                 "Generate synthetic traces with nuisance fields balanced by construction:"
                     .bright_black()
             );
             println!(
-                "  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl"
+                "     {}",
+                "logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl"
+                    .bright_cyan()
             );
-            println!("  {}", "Audit the generated traces:".bright_black());
+            println!();
             println!(
-                "  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json"
+                "  {} {}",
+                "2.".bold().bright_cyan(),
+                "Audit the generated traces:".bright_black()
             );
-            println!("  {}", "Then build a pearl from them:".bright_black());
             println!(
-                "  logicpearl build /tmp/synthetic_traces.jsonl --output-dir /tmp/synthetic_access_policy"
+                "     {}",
+                "logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json"
+                    .bright_cyan()
             );
+            println!();
+            println!(
+                "  {} {}",
+                "3.".bold().bright_cyan(),
+                "Build a pearl from them:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl build /tmp/synthetic_traces.jsonl --output-dir /tmp/synthetic_access_policy"
+                    .bright_cyan()
+            );
+            println!();
         }
         Some(QuickstartTopic::Build) => {
-            println!("{}", "Quickstart: Build".bold().bright_green());
-            println!("  {}", "Build your first pearl:".bright_black());
+            println!();
+            println!("{}", "━━ Quickstart: Build ━━".bold().bright_green());
+            println!();
             println!(
-                "  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output"
+                "  {} {}",
+                "1.".bold().bright_cyan(),
+                "Build your first pearl:".bright_black()
             );
-            println!("  {}", "Then inspect and run it:".bright_black());
-            println!("  logicpearl inspect examples/getting_started/output");
-            println!("  logicpearl run examples/getting_started/output examples/getting_started/new_input.json");
+            println!(
+                "     {}",
+                "logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output"
+                    .bright_cyan()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "2.".bold().bright_cyan(),
+                "Inspect what it learned:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl inspect examples/getting_started/output".bright_cyan()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "3.".bold().bright_cyan(),
+                "Run it on new input:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl run examples/getting_started/output examples/getting_started/new_input.json"
+                    .bright_cyan()
+            );
+            println!();
         }
         Some(QuickstartTopic::Pipeline) => {
-            println!("{}", "Quickstart: Pipeline".bold().bright_green());
+            println!();
+            println!("{}", "━━ Quickstart: Pipeline ━━".bold().bright_green());
+            println!();
             println!(
-                "  {}",
+                "  {} {}",
+                "1.".bold().bright_cyan(),
                 "Run a public string-of-pearls example:".bright_black()
             );
             println!(
-                "  logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
+                "     {}",
+                "logicpearl pipeline run examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
+                    .bright_cyan()
             );
+            println!();
             println!(
-                "  {}",
+                "  {} {}",
+                "2.".bold().bright_cyan(),
                 "Trace the full stage-by-stage execution:".bright_black()
             );
             println!(
-                "  logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
+                "     {}",
+                "logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json"
+                    .bright_cyan()
             );
+            println!();
         }
         Some(QuickstartTopic::Benchmark) => {
-            println!("{}", "Quickstart: Benchmark".bold().bright_green());
+            println!();
+            println!("{}", "━━ Quickstart: Benchmark ━━".bold().bright_green());
+            println!();
             println!(
-                "  {}",
+                "  {} {}",
+                "1.".bold().bright_cyan(),
                 "Run the checked-in guardrail benchmark slice:".bright_black()
             );
             println!(
-                "  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
+                "     {}",
+                "logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
+                    .bright_cyan()
             );
-            println!("  {}", "Inspect the benchmark pipeline:".bright_black());
+            println!();
             println!(
-                "  logicpearl pipeline inspect benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json"
+                "  {} {}",
+                "2.".bold().bright_cyan(),
+                "Inspect the benchmark pipeline:".bright_black()
             );
+            println!(
+                "     {}",
+                "logicpearl pipeline inspect benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json"
+                    .bright_cyan()
+            );
+            println!();
         }
     }
     Ok(())

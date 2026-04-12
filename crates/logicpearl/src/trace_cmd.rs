@@ -1,4 +1,5 @@
 use super::*;
+use anstream::println;
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
 use logicpearl_ir::{

@@ -1,4 +1,5 @@
 use super::*;
+use anstream::println;
 use logicpearl_conformance::{
     build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest,
     write_artifact_manifest, DecisionTraceRow as ConformanceDecisionTraceRow,
