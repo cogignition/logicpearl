@@ -326,6 +326,8 @@ struct ActionBuildReport {
     rule_budget: ActionRuleBudgetReport,
     rules: Vec<ActionRuleBuildReport>,
     training_parity: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provenance: Option<BuildProvenance>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -345,6 +347,14 @@ struct ActionRuleBuildReport {
     action: String,
     priority: u32,
     label: Option<String>,
+}
+
+struct LoadedActionTraceRecords {
+    loaded: LoadedFlatRecords,
+    source_name: String,
+    default_output_base: PathBuf,
+    default_artifact_name: String,
+    trace_plugin: Option<PluginBuildProvenance>,
 }
 
 fn default_gate_id_from_path(path: &Path) -> String {
@@ -1110,6 +1120,9 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     });
 
+    let mut input_traces = Vec::new();
+    let mut trace_plugin_provenance = None;
+    let mut enricher_plugin_provenance = None;
     let (mut rows, resolved_label_column) = match (
         &args.trace_plugin_manifest,
         &args.decision_traces,
@@ -1144,6 +1157,15 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
                 .into_diagnostic()
                 .wrap_err("trace plugin execution failed")?;
+            trace_plugin_provenance = Some(plugin_provenance_from_execution(
+                "trace_source",
+                manifest_path,
+                &manifest,
+                &request,
+                &response,
+                Some(source_input_provenance(&source)),
+                trace_plugin_options.clone(),
+            )?);
             let traces_value = response
                 .extra
                 .get("decision_traces")
@@ -1168,6 +1190,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             )
             .into_diagnostic()
             .wrap_err("failed to load decision traces")?;
+            input_traces.push(trace_input_provenance(decision_traces, loaded.rows.len())?);
             (loaded.rows, loaded.label_column)
         }
         (Some(_), Some(_)) => {
@@ -1193,8 +1216,6 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         args.feature_dictionary = Some(dictionary_path);
     }
 
-    let build_provenance = build_build_provenance(&args, &resolved_label_column)?;
-
     let build_options = BuildOptions {
         output_dir,
         gate_id,
@@ -1209,7 +1230,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
         max_rules: None,
     };
-    let build_options_digest = build_options_hash(&serde_json::json!({
+    let build_options_value = serde_json::json!({
         "gate_id": &build_options.gate_id,
         "label_column": &build_options.label_column,
         "positive_label": &build_options.positive_label,
@@ -1230,7 +1251,8 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .map(|path| path.display().to_string()),
         "decision_mode": build_options.decision_mode,
         "max_rules": build_options.max_rules,
-    }));
+    });
+    let build_options_digest = build_options_hash(&build_options_value);
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
         let manifest = PluginManifest::from_path(manifest_path)
@@ -1257,6 +1279,15 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         let response = run_plugin_with_policy(&manifest, &request, &plugin_policy)
             .into_diagnostic()
             .wrap_err("enricher plugin execution failed")?;
+        enricher_plugin_provenance = Some(plugin_provenance_from_execution(
+            "enricher",
+            manifest_path,
+            &manifest,
+            &request,
+            &response,
+            None,
+            BTreeMap::new(),
+        )?);
         let records_value = response.extra.get("records").cloned().ok_or_else(|| {
             guidance(
                 "enricher plugin response is missing `records`",
@@ -1283,6 +1314,16 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     };
 
+    let build_provenance = build_build_provenance(
+        &args,
+        input_traces,
+        trace_plugin_provenance,
+        enricher_plugin_provenance,
+        args.feature_dictionary.as_deref(),
+        build_options_value,
+        build_options_digest.clone(),
+    )?;
+
     let spinner = if !args.json {
         let sp = ProgressBar::new_spinner();
         sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
@@ -1302,7 +1343,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     if let Some(sp) = spinner {
         sp.finish_and_clear();
     }
-    result.provenance = build_provenance;
+    result.provenance = Some(build_provenance);
 
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
@@ -1352,6 +1393,27 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         result.output_files.wasm_module = None;
         result.output_files.wasm_metadata = None;
     }
+    attach_generated_file_hashes(
+        &mut result.provenance,
+        &artifact_dir,
+        [
+            Some(pearl_ir_path.clone()),
+            generated_feature_dictionary_for_output(&args, &artifact_dir).cloned(),
+            result
+                .output_files
+                .native_binary
+                .as_ref()
+                .map(PathBuf::from),
+            result.output_files.wasm_module.as_ref().map(PathBuf::from),
+            result
+                .output_files
+                .wasm_metadata
+                .as_ref()
+                .map(PathBuf::from),
+        ]
+        .into_iter()
+        .flatten(),
+    )?;
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
@@ -1537,8 +1599,18 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "Pass --action-column <column> or set build.action_column in logicpearl.yaml.",
         )
     })?;
-    let (loaded, source_name, default_output_base, default_artifact_name) =
-        load_action_trace_records(&args, &action_column)?;
+    let LoadedActionTraceRecords {
+        loaded,
+        source_name,
+        default_output_base,
+        default_artifact_name,
+        trace_plugin: trace_plugin_provenance,
+    } = load_action_trace_records(&args, &action_column)?;
+    let input_traces = if let Some(path) = &args.decision_traces {
+        vec![trace_input_provenance(path, loaded.records.len())?]
+    } else {
+        Vec::new()
+    };
     if !loaded.field_names.iter().any(|name| name == &action_column) {
         return Err(guidance(
             format!("action trace input is missing action column {action_column:?}"),
@@ -1771,7 +1843,33 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to write action policy IR")?;
 
-    let action_report = ActionBuildReport {
+    let build_options_value = serde_json::json!({
+        "artifact_name": &artifact_name,
+        "action_column": &action_column,
+        "default_action": &default_action,
+        "actions": &actions,
+        "action_priority": &args.action_priority,
+        "priority_order": &priority_order,
+        "action_max_rules": args.action_max_rules,
+        "rule_budget": &rule_budget,
+        "refine": args.refine,
+        "pinned_rules": args
+            .pinned_rules
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_dictionary": args
+            .feature_dictionary
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "feature_governance": args
+            .feature_governance
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        "decision_mode": to_discovery_decision_mode(args.discovery_mode),
+    });
+    let build_options_digest = build_options_hash(&build_options_value);
+
+    let mut action_report = ActionBuildReport {
         source: source_name,
         artifact_name: artifact_name.clone(),
         action_column: action_column.clone(),
@@ -1791,14 +1889,17 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
             })
             .collect(),
         training_parity,
+        provenance: Some(build_build_provenance(
+            &args,
+            input_traces,
+            trace_plugin_provenance,
+            None,
+            args.feature_dictionary.as_deref(),
+            build_options_value,
+            build_options_digest.clone(),
+        )?),
     };
     let action_report_path = output_dir.join("action_report.json");
-    fs::write(
-        &action_report_path,
-        serde_json::to_string_pretty(&action_report).into_diagnostic()? + "\n",
-    )
-    .into_diagnostic()
-    .wrap_err("failed to write action report")?;
 
     let mut native_binary_file = None;
     let mut wasm_module_file = None;
@@ -1836,30 +1937,30 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         }
     }
 
-    let build_options_digest = build_options_hash(&serde_json::json!({
-        "artifact_name": &artifact_name,
-        "action_column": &action_column,
-        "default_action": &default_action,
-        "actions": &actions,
-        "action_priority": &args.action_priority,
-        "priority_order": &priority_order,
-        "action_max_rules": args.action_max_rules,
-        "rule_budget": &rule_budget,
-        "refine": args.refine,
-        "pinned_rules": args
-            .pinned_rules
-            .as_ref()
-            .map(|path| path.display().to_string()),
-        "feature_dictionary": args
-            .feature_dictionary
-            .as_ref()
-            .map(|path| path.display().to_string()),
-        "feature_governance": args
-            .feature_governance
-            .as_ref()
-            .map(|path| path.display().to_string()),
-        "decision_mode": to_discovery_decision_mode(args.discovery_mode),
-    }));
+    attach_generated_file_hashes(
+        &mut action_report.provenance,
+        &output_dir,
+        [
+            Some(action_policy_path.clone()),
+            generated_feature_dictionary_for_output(&args, &output_dir).cloned(),
+            native_binary_file
+                .as_ref()
+                .map(|file| output_dir.join(file)),
+            wasm_module_file.as_ref().map(|file| output_dir.join(file)),
+            wasm_metadata_file
+                .as_ref()
+                .map(|file| output_dir.join(file)),
+        ]
+        .into_iter()
+        .flatten(),
+    )?;
+    fs::write(
+        &action_report_path,
+        serde_json::to_string_pretty(&action_report).into_diagnostic()? + "\n",
+    )
+    .into_diagnostic()
+    .wrap_err("failed to write action report")?;
+
     let mut extensions = BTreeMap::new();
     extensions.insert("artifact_version".to_string(), serde_json::json!("1.0"));
     extensions.insert(
@@ -2007,7 +2108,7 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
 fn load_action_trace_records(
     args: &BuildArgs,
     action_column: &str,
-) -> Result<(LoadedFlatRecords, String, PathBuf, String)> {
+) -> Result<LoadedActionTraceRecords> {
     if args.trace_plugin_manifest.is_none()
         && (!args.trace_plugin_options.is_empty() || args.trace_plugin_input.is_some())
     {
@@ -2054,33 +2155,48 @@ fn load_action_trace_records(
             let response = run_plugin_with_policy(&manifest, &request, &policy)
                 .into_diagnostic()
                 .wrap_err("trace plugin execution failed")?;
+            let provenance = plugin_provenance_from_execution(
+                "trace_source",
+                manifest_path,
+                &manifest,
+                &request,
+                &response,
+                Some(source_input_provenance(&source)),
+                options.clone(),
+            )?;
             let loaded = action_records_from_plugin_response(&response, action_column)?;
-            let source_name = format!("plugin:{}:{source}", manifest.name);
+            let source_name = format!(
+                "plugin:{}:{}",
+                manifest.name,
+                redacted_source_display(&source)
+            );
             let default_artifact_name = default_action_artifact_name_from_plugin_input(&source);
-            Ok((
+            Ok(LoadedActionTraceRecords {
                 loaded,
                 source_name,
-                PathBuf::from("."),
-                if default_artifact_name.is_empty() {
+                default_output_base: PathBuf::from("."),
+                default_artifact_name: if default_artifact_name.is_empty() {
                     "action_policy".to_string()
                 } else {
                     default_artifact_name
                 },
-            ))
+                trace_plugin: Some(provenance),
+            })
         }
         (None, Some(traces)) => {
             let loaded = load_flat_records(traces)
                 .into_diagnostic()
                 .wrap_err("failed to load action traces")?;
-            Ok((
+            Ok(LoadedActionTraceRecords {
                 loaded,
-                traces.display().to_string(),
-                traces
+                source_name: traces.display().to_string(),
+                default_output_base: traces
                     .parent()
                     .unwrap_or_else(|| Path::new("."))
                     .to_path_buf(),
-                default_gate_id_from_path(traces),
-            ))
+                default_artifact_name: default_gate_id_from_path(traces),
+                trace_plugin: None,
+            })
         }
         (Some(_), Some(_)) => Err(guidance(
             "action build received both a trace file and a trace plugin",
@@ -2103,7 +2219,19 @@ fn default_action_artifact_name_from_plugin_input(source: &str) -> String {
             }
         }
     }
-    sanitize_identifier(source)
+    let hash = sha256_prefixed(source.as_bytes());
+    format!(
+        "action_policy_{}",
+        &hash["sha256:".len().."sha256:".len() + 12]
+    )
+}
+
+fn redacted_source_display(source: &str) -> String {
+    if Path::new(source).exists() {
+        source.to_string()
+    } else {
+        format!("<inline:{}>", sha256_prefixed(source.as_bytes()))
+    }
 }
 
 fn action_records_from_plugin_response(
@@ -2428,13 +2556,19 @@ fn compute_action_training_parity(
 
 fn build_build_provenance(
     args: &BuildArgs,
-    resolved_label_column: &str,
-) -> Result<Option<BuildProvenance>> {
+    input_traces: Vec<TraceInputProvenance>,
+    trace_plugin: Option<PluginBuildProvenance>,
+    enricher_plugin: Option<PluginBuildProvenance>,
+    feature_dictionary_path: Option<&Path>,
+    build_options: Value,
+    build_options_hash_value: String,
+) -> Result<BuildProvenance> {
     let source_references = parse_key_value_entries(&args.source_references, "source-ref")?;
     let decision_trace_source = if let Some(path) = &args.decision_traces {
         Some(BuildInputProvenance {
             kind: "decision_traces_path".to_string(),
             value: path.display().to_string(),
+            hash: hash_file_for_provenance(path).ok(),
         })
     } else {
         args.trace_plugin_manifest
@@ -2442,66 +2576,48 @@ fn build_build_provenance(
             .map(|manifest| BuildInputProvenance {
                 kind: "trace_plugin".to_string(),
                 value: manifest.display().to_string(),
+                hash: hash_file_for_provenance(manifest).ok(),
             })
     };
 
-    let trace_plugin = if let Some(manifest_path) = &args.trace_plugin_manifest {
-        let manifest = PluginManifest::from_path(manifest_path)
-            .into_diagnostic()
-            .wrap_err("failed to reload trace plugin manifest for build provenance")?;
-        let input = args
-            .trace_plugin_input
-            .as_ref()
-            .map(|value| BuildInputProvenance {
-                kind: classify_source_value(value).to_string(),
-                value: value.clone(),
-            });
-        let mut options = build_trace_plugin_options(args)?;
-        options
-            .entry("label_column".to_string())
-            .or_insert_with(|| resolved_label_column.to_string());
-        Some(PluginBuildProvenance {
-            name: manifest.name,
-            stage: "trace_source".to_string(),
-            manifest_path: manifest_path.display().to_string(),
-            manifest_sha256: Some(sha256_file(manifest_path)?),
-            input,
-            options,
-        })
-    } else {
-        None
-    };
-
-    let enricher_plugin = if let Some(manifest_path) = &args.enricher_plugin_manifest {
-        let manifest = PluginManifest::from_path(manifest_path)
-            .into_diagnostic()
-            .wrap_err("failed to reload enricher plugin manifest for build provenance")?;
-        Some(PluginBuildProvenance {
-            name: manifest.name,
-            stage: "enricher".to_string(),
-            manifest_path: manifest_path.display().to_string(),
-            manifest_sha256: Some(sha256_file(manifest_path)?),
-            input: None,
-            options: BTreeMap::new(),
-        })
-    } else {
-        None
-    };
-
-    if decision_trace_source.is_none()
-        && trace_plugin.is_none()
-        && enricher_plugin.is_none()
-        && source_references.is_empty()
-    {
-        return Ok(None);
+    let plugins = [trace_plugin.clone(), enricher_plugin.clone()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let feature_dictionary = feature_dictionary_path
+        .filter(|path| path.exists())
+        .map(file_provenance)
+        .transpose()?;
+    let source_manifest = source_manifest_provenance()?;
+    let build_command = build_command_provenance();
+    let mut redactions = Vec::new();
+    if build_command.redacted {
+        redactions.push("build_command".to_string());
     }
 
-    Ok(Some(BuildProvenance {
+    Ok(BuildProvenance {
+        schema_version: "logicpearl.build_provenance.v1".to_string(),
+        engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
+        engine_commit: resolve_engine_commit(),
+        build_command: Some(build_command),
+        build_options: Some(build_options),
+        build_options_hash: Some(build_options_hash_value),
+        input_traces,
+        feature_dictionary,
+        plugins,
+        source_manifest,
+        environment: build_environment_summary(),
+        generated_files: BTreeMap::new(),
+        generated_file_notes: vec![
+            "build_report and artifact.json are omitted to avoid self-referential hashes; artifact manifests carry bundle file hashes for verification."
+                .to_string(),
+        ],
+        redactions,
         decision_trace_source,
         trace_plugin,
         enricher_plugin,
         source_references,
-    }))
+    })
 }
 
 fn build_trace_plugin_options(args: &BuildArgs) -> Result<BTreeMap<String, String>> {
@@ -2543,13 +2659,295 @@ fn classify_source_value(value: &str) -> &'static str {
     }
 }
 
-fn sha256_file(path: &PathBuf) -> Result<String> {
+fn source_input_provenance(value: &str) -> BuildInputProvenance {
+    let path = Path::new(value);
+    let inline_hash = sha256_prefixed(value.as_bytes());
+    BuildInputProvenance {
+        kind: classify_source_value(value).to_string(),
+        value: if path.exists() {
+            value.to_string()
+        } else {
+            format!("<inline:{inline_hash}>")
+        },
+        hash: if path.exists() {
+            hash_file_for_provenance(path).ok()
+        } else {
+            Some(inline_hash)
+        },
+    }
+}
+
+fn build_command_provenance() -> BuildCommandProvenance {
+    let mut args = std::env::args_os()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let program = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "logicpearl".to_string());
+    if !args.is_empty() {
+        args.remove(0);
+    }
+
+    let mut redacted = false;
+    let mut redacted_args = Vec::with_capacity(args.len());
+    let mut pending_value_flag: Option<String> = None;
+    for arg in args {
+        if let Some(flag) = pending_value_flag.take() {
+            let (value, was_redacted) = redact_cli_flag_value(&flag, &arg);
+            redacted |= was_redacted;
+            redacted_args.push(value);
+            continue;
+        }
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            let (value, was_redacted) = redact_cli_flag_value(flag, value);
+            redacted |= was_redacted;
+            redacted_args.push(format!("{flag}={value}"));
+            continue;
+        }
+
+        if matches!(
+            arg.as_str(),
+            "--trace-plugin-input" | "--trace-plugin-option" | "--source-ref"
+        ) {
+            pending_value_flag = Some(arg.clone());
+        }
+        redacted_args.push(arg);
+    }
+
+    BuildCommandProvenance {
+        program,
+        args: redacted_args,
+        redacted,
+    }
+}
+
+fn redact_cli_flag_value(flag: &str, value: &str) -> (String, bool) {
+    match flag {
+        "--trace-plugin-input" => {
+            if std::path::Path::new(value).exists() {
+                (value.to_string(), false)
+            } else {
+                (
+                    format!("<inline:{}>", sha256_prefixed(value.as_bytes())),
+                    true,
+                )
+            }
+        }
+        "--trace-plugin-option" | "--source-ref" => redact_key_value(value),
+        other if is_sensitive_key(other.trim_start_matches('-')) => (
+            format!("<redacted:{}>", sha256_prefixed(value.as_bytes())),
+            true,
+        ),
+        _ => (value.to_string(), false),
+    }
+}
+
+fn redact_key_value(entry: &str) -> (String, bool) {
+    let Some((key, value)) = entry.split_once('=') else {
+        return (entry.to_string(), false);
+    };
+    if is_sensitive_key(key) {
+        (
+            format!("{key}=<redacted:{}>", sha256_prefixed(value.as_bytes())),
+            true,
+        )
+    } else {
+        (entry.to_string(), false)
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "credential",
+        "api_key",
+        "apikey",
+        "auth",
+    ]
+    .iter()
+    .any(|needle| key.contains(needle))
+}
+
+fn sanitize_plugin_options(options: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    options
+        .iter()
+        .map(|(key, value)| {
+            if is_sensitive_key(key) {
+                (
+                    key.clone(),
+                    format!("<redacted:{}>", sha256_prefixed(value.as_bytes())),
+                )
+            } else {
+                (key.clone(), value.clone())
+            }
+        })
+        .collect()
+}
+
+fn build_environment_summary() -> BTreeMap<String, Value> {
+    let mut environment = BTreeMap::new();
+    environment.insert(
+        "os".to_string(),
+        Value::String(std::env::consts::OS.to_string()),
+    );
+    environment.insert(
+        "arch".to_string(),
+        Value::String(std::env::consts::ARCH.to_string()),
+    );
+    environment.insert(
+        "family".to_string(),
+        Value::String(std::env::consts::FAMILY.to_string()),
+    );
+    environment.insert(
+        "ci".to_string(),
+        Value::Bool(std::env::var_os("CI").is_some()),
+    );
+    if let Ok(backend) = std::env::var("LOGICPEARL_SOLVER_BACKEND") {
+        if !backend.trim().is_empty() {
+            environment.insert("solver_backend".to_string(), Value::String(backend));
+        }
+    }
+    if let Ok(timeout) = std::env::var("LOGICPEARL_SOLVER_TIMEOUT_MS") {
+        if let Ok(timeout) = timeout.parse::<u64>() {
+            environment.insert(
+                "solver_timeout_ms".to_string(),
+                Value::Number(timeout.into()),
+            );
+        }
+    }
+    environment
+}
+
+fn resolve_engine_commit() -> Option<String> {
+    if let Some(commit) = option_env!("LOGICPEARL_GIT_COMMIT") {
+        let commit = commit.trim();
+        if !commit.is_empty() {
+            return Some(commit.to_string());
+        }
+    }
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(output.stdout).ok()?;
+    let commit = commit.trim();
+    (!commit.is_empty()).then(|| commit.to_string())
+}
+
+fn file_provenance(path: &Path) -> Result<FileProvenance> {
+    Ok(FileProvenance {
+        path: path.display().to_string(),
+        hash: hash_file_for_provenance(path)?,
+    })
+}
+
+fn trace_input_provenance(path: &Path, row_count: usize) -> Result<TraceInputProvenance> {
+    Ok(TraceInputProvenance {
+        path: path.display().to_string(),
+        hash: hash_file_for_provenance(path)?,
+        row_count,
+    })
+}
+
+fn source_manifest_provenance() -> Result<Option<FileProvenance>> {
+    load_project_config()?
+        .map(|(path, _)| file_provenance(&path))
+        .transpose()
+}
+
+fn plugin_provenance_from_execution(
+    stage: &str,
+    manifest_path: &Path,
+    manifest: &PluginManifest,
+    request: &PluginRequest,
+    response: &PluginResponse,
+    input: Option<BuildInputProvenance>,
+    options: BTreeMap<String, String>,
+) -> Result<PluginBuildProvenance> {
+    let request_value = serde_json::to_value(request).into_diagnostic()?;
+    let response_value = serde_json::to_value(response).into_diagnostic()?;
+    let input_hash = request_value
+        .get("payload")
+        .and_then(|payload| payload.get("input"))
+        .map(artifact_hash);
+    Ok(PluginBuildProvenance {
+        name: manifest.name.clone(),
+        stage: stage.to_string(),
+        manifest_path: manifest_path.display().to_string(),
+        manifest_hash: Some(hash_file_for_provenance(manifest_path)?),
+        manifest_sha256: Some(sha256_file_hex(manifest_path)?),
+        input,
+        input_hash,
+        request_hash: Some(artifact_hash(&request_value)),
+        output_hash: Some(artifact_hash(&response_value)),
+        options: sanitize_plugin_options(&options),
+    })
+}
+
+fn hash_file_for_provenance(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).into_diagnostic().wrap_err_with(|| {
+        format!(
+            "failed to read file for provenance hash: {}",
+            path.display()
+        )
+    })?;
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            return Ok(artifact_hash(&value));
+        }
+    }
+    Ok(sha256_prefixed(&bytes))
+}
+
+fn sha256_file_hex(path: &Path) -> Result<String> {
     let bytes = fs::read(path)
         .into_diagnostic()
         .wrap_err("failed to read file for sha256")?;
     let mut digest = Sha256::new();
     digest.update(bytes);
     Ok(hex::encode(digest.finalize()))
+}
+
+fn attach_generated_file_hashes(
+    provenance: &mut Option<BuildProvenance>,
+    artifact_dir: &Path,
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> Result<()> {
+    let Some(provenance) = provenance else {
+        return Ok(());
+    };
+    for path in paths {
+        if path.exists() {
+            let key = path
+                .strip_prefix(artifact_dir)
+                .ok()
+                .map(|path| path.display().to_string())
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| path.display().to_string());
+            provenance
+                .generated_files
+                .insert(key, hash_file_for_provenance(&path)?);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn run_eval(args: RunArgs) -> Result<()> {

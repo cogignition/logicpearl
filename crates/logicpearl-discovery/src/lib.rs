@@ -146,6 +146,34 @@ pub struct ResidualRecoveryReport {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, Default)]
 pub struct BuildProvenance {
+    #[serde(default = "default_build_provenance_schema_version")]
+    pub schema_version: String,
+    #[serde(default)]
+    pub engine_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_command: Option<BuildCommandProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_options: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_options_hash: Option<String>,
+    #[serde(default)]
+    pub input_traces: Vec<TraceInputProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_dictionary: Option<FileProvenance>,
+    #[serde(default)]
+    pub plugins: Vec<PluginBuildProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_manifest: Option<FileProvenance>,
+    #[serde(default)]
+    pub environment: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub generated_files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub generated_file_notes: Vec<String>,
+    #[serde(default)]
+    pub redactions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_trace_source: Option<BuildInputProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,10 +184,38 @@ pub struct BuildProvenance {
     pub source_references: BTreeMap<String, String>,
 }
 
+fn default_build_provenance_schema_version() -> String {
+    "logicpearl.build_provenance.v1".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct BuildCommandProvenance {
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub redacted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct BuildInputProvenance {
     pub kind: String,
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct TraceInputProvenance {
+    pub path: String,
+    pub hash: String,
+    pub row_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct FileProvenance {
+    pub path: String,
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -168,9 +224,17 @@ pub struct PluginBuildProvenance {
     pub stage: String,
     pub manifest_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<BuildInputProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_hash: Option<String>,
     #[serde(default)]
     pub options: BTreeMap<String, String>,
 }

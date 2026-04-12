@@ -13,10 +13,10 @@ use logicpearl_benchmark::{
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
     build_pearl_from_rows, discover_from_csv, learn_gate_from_rows_without_numeric_interactions,
-    load_decision_traces_auto, load_flat_records, BuildInputProvenance, BuildOptions,
-    BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    ExactSelectionBackend, FeatureDictionaryConfig, LoadedFlatRecords, PluginBuildProvenance,
-    ResidualRecoveryState,
+    load_decision_traces_auto, load_flat_records, BuildCommandProvenance, BuildInputProvenance,
+    BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
+    ExactSelectionBackend, FeatureDictionaryConfig, FileProvenance, LoadedFlatRecords,
+    PluginBuildProvenance, ResidualRecoveryState, TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -40,8 +40,8 @@ use logicpearl_plugin::{
 };
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{
-    evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
-    GateEvaluationResult,
+    artifact_hash, evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
+    sha256_prefixed, GateEvaluationResult,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;

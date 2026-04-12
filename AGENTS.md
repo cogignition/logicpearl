@@ -91,6 +91,27 @@ file hashes, artifact hash, IR kind, and input schema hash. Keep old manifest
 aliases readable for compatibility, but prefer the v1 field names in new code,
 tests, and docs.
 
+## Build Provenance
+
+Build reports should carry `provenance.schema_version:
+"logicpearl.build_provenance.v1"`. Provenance belongs in core build output, not
+downstream demos, because it is the audit trail for where an artifact came from.
+
+Record stable hashes and bounded metadata: `engine_version`, optional
+`engine_commit`, redacted CLI command args, build options plus
+`build_options_hash`, trace input hashes and row counts, feature dictionary hash,
+plugin manifest/input/request/output hashes, optional source manifest hash,
+limited environment facts, and generated artifact file hashes.
+
+Do not store raw environment variables, full PATH values, hostnames, usernames,
+home directories, plugin stdout/stderr, raw source documents, or sensitive plugin
+option values. Hash plugin boundaries and redact sensitive option keys such as
+tokens, passwords, secrets, API keys, credentials, and auth fields.
+
+`build_report` and `artifact.json` should not be self-hashed inside
+`build_report.provenance.generated_files`; use the artifact manifest file hashes
+and `logicpearl artifact verify` for bundle integrity.
+
 ## Multi-Action Policies
 
 LogicPearl can learn a policy that chooses one action from reviewed examples, not just a yes/no gate. Use this when a trace dataset has an action column such as `next_action`.

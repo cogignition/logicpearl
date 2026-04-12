@@ -77,6 +77,7 @@ fn runtime_schema_files_are_valid_draft_2020_12() {
         "logicpearl-feature-explanation-v1.schema.json",
         "logicpearl-artifact-error-v1.schema.json",
         "logicpearl-artifact-manifest-v1.schema.json",
+        "logicpearl-build-provenance-v1.schema.json",
     ] {
         let schema = load_json(root.join("schema").join(schema_name));
         jsonschema::draft202012::meta::validate(&schema).unwrap_or_else(|err| {

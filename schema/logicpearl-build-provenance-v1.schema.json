@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.com/schema/logicpearl-build-provenance-v1.schema.json",
+  "title": "LogicPearl Build Provenance v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "engine_version",
+    "build_command",
+    "build_options_hash",
+    "input_traces",
+    "plugins",
+    "environment",
+    "generated_files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "logicpearl.build_provenance.v1"
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "engine_commit": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "build_command": {
+      "type": "object",
+      "required": ["program", "args", "redacted"],
+      "properties": {
+        "program": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "redacted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "build_options": {
+      "type": ["object", "null"]
+    },
+    "build_options_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "input_traces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "hash", "row_count"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "feature_dictionary": {
+      "$ref": "#/$defs/file_provenance"
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "stage", "manifest_path"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manifest_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manifest_hash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "input": {
+            "type": "object",
+            "required": ["kind", "value"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string"
+              },
+              "hash": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "additionalProperties": true
+          },
+          "input_hash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "request_hash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "output_hash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "source_manifest": {
+      "$ref": "#/$defs/file_provenance"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "object", "array", "null"]
+      }
+    },
+    "generated_files": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "generated_file_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "file_provenance": {
+      "type": "object",
+      "required": ["path", "hash"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": true
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
