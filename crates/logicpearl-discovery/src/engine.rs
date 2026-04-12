@@ -579,11 +579,44 @@ fn stable_row_bucket(row: &DecisionTraceRow) -> u64 {
     let sorted_features = row.features.iter().collect::<BTreeMap<_, _>>();
     for (key, value) in sorted_features {
         key.hash(&mut hasher);
-        serde_json::to_string(value)
-            .expect("stable row bucket serialization")
-            .hash(&mut hasher);
+        hash_json_value(&mut hasher, value);
     }
     hasher.finish()
+}
+
+fn hash_json_value(hasher: &mut impl std::hash::Hasher, value: &Value) {
+    use std::hash::Hash;
+    match value {
+        Value::Null => 0u8.hash(hasher),
+        Value::Bool(b) => {
+            1u8.hash(hasher);
+            b.hash(hasher);
+        }
+        Value::Number(n) => {
+            2u8.hash(hasher);
+            // Use the string representation for stable hashing of numbers.
+            n.to_string().hash(hasher);
+        }
+        Value::String(s) => {
+            3u8.hash(hasher);
+            s.hash(hasher);
+        }
+        Value::Array(arr) => {
+            4u8.hash(hasher);
+            arr.len().hash(hasher);
+            for item in arr {
+                hash_json_value(hasher, item);
+            }
+        }
+        Value::Object(obj) => {
+            5u8.hash(hasher);
+            obj.len().hash(hasher);
+            for (k, v) in obj {
+                k.hash(hasher);
+                hash_json_value(hasher, v);
+            }
+        }
+    }
 }
 
 fn recover_rare_rules(
@@ -608,8 +641,8 @@ fn recover_rare_rules(
 
         let existing_signatures = recovered
             .iter()
-            .map(|c| c.signature())
-            .collect::<Result<BTreeSet<_>>>()?;
+            .map(|c| c.signature().to_string())
+            .collect::<BTreeSet<_>>();
         let rescue_shortlist = candidate_rules(
             selection_context.rows,
             &uncovered_denied,
@@ -619,9 +652,7 @@ fn recover_rare_rules(
             selection_context.residual_options,
         )
         .into_iter()
-        .filter(|candidate| {
-            !existing_signatures.contains(&candidate.signature().unwrap_or_default())
-        })
+        .filter(|candidate| !existing_signatures.contains(candidate.signature()))
         .take(RARE_RULE_RECOVERY_FRONTIER_LIMIT)
         .collect::<Vec<_>>();
         if rescue_shortlist.is_empty() {
@@ -672,7 +703,7 @@ fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<Ca
     let mut seen = BTreeSet::new();
     let mut deduped = Vec::new();
     for candidate in candidates {
-        if seen.insert(candidate.signature().unwrap_or_default()) {
+        if seen.insert(candidate.signature().to_string()) {
             deduped.push(candidate);
         }
     }
@@ -724,20 +755,20 @@ fn exact_selection_shortlist(
     let mut shortlisted: Vec<CandidateRule> = all_candidates.iter().take(limit).cloned().collect();
     let mut signatures: BTreeSet<String> = shortlisted
         .iter()
-        .map(|c| c.signature().unwrap_or_default())
+        .map(|c| c.signature().to_string())
         .collect();
     for candidate in all_candidates
         .iter()
         .filter(|candidate| candidate_is_compound(candidate))
         .take(EXACT_SELECTION_COMPOUND_FRONTIER_LIMIT)
     {
-        let signature = candidate.signature().unwrap_or_default();
+        let signature = candidate.signature().to_string();
         if signatures.insert(signature) {
             shortlisted.push(candidate.clone());
         }
     }
     for candidate in greedy_plan {
-        let signature = candidate.signature().unwrap_or_default();
+        let signature = candidate.signature().to_string();
         if signatures.insert(signature) {
             shortlisted.push(candidate.clone());
         }
@@ -1741,9 +1772,7 @@ fn candidate_rules(
     );
     candidates.retain(|candidate| candidate.denied_coverage > 0);
     candidates.sort_by(compare_candidate_priority);
-    candidates.dedup_by(|left, right| {
-        left.signature().unwrap_or_default() == right.signature().unwrap_or_default()
-    });
+    candidates.dedup_by(|left, right| left.signature() == right.signature());
     if let Some(options) = residual_options {
         candidates.extend(conjunction_candidate_rules(
             rows,
@@ -1755,9 +1784,7 @@ fn candidate_rules(
     }
 
     candidates.sort_by(compare_candidate_priority);
-    candidates.dedup_by(|left, right| {
-        left.signature().unwrap_or_default() == right.signature().unwrap_or_default()
-    });
+    candidates.dedup_by(|left, right| left.signature() == right.signature());
     candidates
 }
 
@@ -2004,11 +2031,7 @@ fn compare_conjunction_atom_priority(left: &CandidateRule, right: &CandidateRule
                 &candidate_complexity_penalty(right, DiscoveryDecisionMode::Standard),
             )
         })
-        .then_with(|| {
-            left.signature()
-                .unwrap_or_default()
-                .cmp(&right.signature().unwrap_or_default())
-        })
+        .then_with(|| left.signature().cmp(right.signature()))
 }
 
 fn conjunction_example_features(
@@ -2027,10 +2050,16 @@ fn conjunction_example_features(
         .collect()
 }
 
+fn comparison_sort_key(c: &ComparisonExpression) -> (String, String, String) {
+    (
+        c.feature.clone(),
+        format!("{:?}", c.op),
+        serde_json::to_string(&c.value).unwrap_or_default(),
+    )
+}
+
 fn conjunction_expression(mut comparisons: Vec<ComparisonExpression>) -> Expression {
-    comparisons.sort_by_key(|comparison| {
-        serde_json::to_string(comparison).expect("comparison serialization")
-    });
+    comparisons.sort_by_key(comparison_sort_key);
     if comparisons.len() == 1 {
         return Expression::Comparison(comparisons.pop().expect("single comparison"));
     }
@@ -2050,11 +2079,7 @@ fn candidate_from_expression(
 ) -> CandidateRule {
     let denied_coverage = candidate_coverage(rows, denied_indices, &expression);
     let false_positives = candidate_coverage(rows, allowed_indices, &expression);
-    CandidateRule {
-        expression,
-        denied_coverage,
-        false_positives,
-    }
+    CandidateRule::new(expression, denied_coverage, false_positives)
 }
 
 fn candidate_as_comparison(candidate: &CandidateRule) -> Option<&ComparisonExpression> {
@@ -2112,11 +2137,7 @@ fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Or
         .then_with(|| {
             candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
         })
-        .then_with(|| {
-            left.signature()
-                .unwrap_or_default()
-                .cmp(&right.signature().unwrap_or_default())
-        })
+        .then_with(|| left.signature().cmp(right.signature()))
 }
 
 fn candidate_complexity_penalty(
@@ -3106,15 +3127,15 @@ mod tests {
     }
 
     fn numeric_candidate(feature: &str, op: ComparisonOperator, value: f64) -> CandidateRule {
-        CandidateRule {
-            expression: Expression::Comparison(ComparisonExpression {
+        CandidateRule::new(
+            Expression::Comparison(ComparisonExpression {
                 feature: feature.to_string(),
                 op,
                 value: ComparisonValue::Literal(Value::Number(Number::from_f64(value).unwrap())),
             }),
-            denied_coverage: 0,
-            false_positives: 0,
-        }
+            0,
+            0,
+        )
     }
 
     fn candidate_with_metrics(
@@ -3124,15 +3145,15 @@ mod tests {
         denied_coverage: usize,
         false_positives: usize,
     ) -> CandidateRule {
-        CandidateRule {
-            expression: Expression::Comparison(ComparisonExpression {
+        CandidateRule::new(
+            Expression::Comparison(ComparisonExpression {
                 feature: feature.to_string(),
                 op,
                 value,
             }),
             denied_coverage,
             false_positives,
-        }
+        )
     }
 
     fn binary_pair_row(left: f64, right: f64, allowed: bool) -> DecisionTraceRow {

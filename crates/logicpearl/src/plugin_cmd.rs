@@ -1,7 +1,62 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use std::collections::BTreeMap;
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  plugin validate executes the manifest entrypoint when a smoke input is provided.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json\n  logicpearl plugin validate examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+)]
+pub(crate) struct PluginValidateArgs {
+    /// Plugin manifest to validate.
+    #[arg(value_name = "MANIFEST")]
+    pub manifest: PathBuf,
+    /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
+    #[arg(long, conflicts_with_all = ["input_string", "raw_payload"])]
+    pub input: Option<PathBuf>,
+    /// Input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "raw_payload"])]
+    pub input_string: Option<String>,
+    /// Exact stage payload JSON to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_string"])]
+    pub raw_payload: Option<PathBuf>,
+    /// Repeated key=value options to include in the canonical payload.
+    #[arg(long = "option")]
+    pub options: Vec<String>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  plugin run executes the manifest entrypoint as local code.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json"
+)]
+pub(crate) struct PluginRunArgs {
+    /// Plugin manifest to execute.
+    #[arg(value_name = "MANIFEST")]
+    pub manifest: PathBuf,
+    /// Canonical stage input JSON. LogicPearl wraps this into the stage payload for you.
+    #[arg(long, conflicts_with_all = ["input_string", "raw_payload"])]
+    pub input: Option<PathBuf>,
+    /// Input string for stages like trace_source.
+    #[arg(long, conflicts_with_all = ["input", "raw_payload"])]
+    pub input_string: Option<String>,
+    /// Exact stage payload JSON to send without canonical wrapping.
+    #[arg(long, conflicts_with_all = ["input", "input_string"])]
+    pub raw_payload: Option<PathBuf>,
+    /// Repeated key=value options to include in the canonical payload.
+    #[arg(long = "option")]
+    pub options: Vec<String>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
 
 pub(crate) fn run_plugin_validate(args: PluginValidateArgs) -> Result<()> {
     let manifest = PluginManifest::from_path(&args.manifest)

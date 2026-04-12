@@ -6,17 +6,22 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
+/// The type of gate evaluation strategy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum GateType {
+    /// Evaluate rules into a bitmask where each bit represents one rule.
     BitmaskGate,
 }
 
+/// Strategy for combining per-rule bitmask results.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CombineStrategy {
+    /// OR all matched rule bits together.
     BitwiseOr,
 }
+/// Intermediate representation of a LogicPearl gate artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogicPearlGateIr {
     pub ir_version: String,
@@ -29,6 +34,7 @@ pub struct LogicPearlGateIr {
     pub provenance: Option<Provenance>,
 }
 
+/// Intermediate representation of a LogicPearl action policy artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogicPearlActionIr {
     pub ir_version: String,
@@ -44,11 +50,13 @@ pub struct LogicPearlActionIr {
     pub provenance: Option<Provenance>,
 }
 
+/// Schema describing the input features expected by an artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputSchema {
     pub features: Vec<FeatureDefinition>,
 }
 
+/// Definition of a single input feature, including type, bounds, and optional derived logic.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FeatureDefinition {
     pub id: String,
@@ -97,18 +105,21 @@ pub struct FeatureStateSemantics {
     pub counterfactual_hint: Option<String>,
 }
 
+/// Predicate that defines when a feature state applies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FeatureStatePredicate {
     pub op: ComparisonOperator,
     pub value: ComparisonValue,
 }
 
+/// Governance constraints on how a feature may be used in rules.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FeatureGovernance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny_boolean_evidence: Option<BooleanEvidencePolicy>,
 }
 
+/// Controls which boolean evidence values a feature may use in deny rules.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BooleanEvidencePolicy {
@@ -118,6 +129,7 @@ pub enum BooleanEvidencePolicy {
     Never,
 }
 
+/// A feature computed at runtime from two other features.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DerivedFeatureDefinition {
     pub op: DerivedFeatureOperator,
@@ -125,6 +137,7 @@ pub struct DerivedFeatureDefinition {
     pub right_feature: String,
 }
 
+/// Arithmetic operator used when computing a derived feature.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivedFeatureOperator {
@@ -132,6 +145,7 @@ pub enum DerivedFeatureOperator {
     Ratio,
 }
 
+/// The data type of a feature value.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FeatureType {
@@ -142,6 +156,7 @@ pub enum FeatureType {
     Enum,
 }
 
+/// A single deny rule within a gate artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleDefinition {
     pub id: String,
@@ -155,6 +170,7 @@ pub struct RuleDefinition {
     pub verification_status: Option<RuleVerificationStatus>,
 }
 
+/// A single rule within an action policy artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionRuleDefinition {
     pub id: String,
@@ -170,6 +186,7 @@ pub struct ActionRuleDefinition {
     pub verification_status: Option<RuleVerificationStatus>,
 }
 
+/// Classification of how a rule's condition is expressed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleKind {
@@ -178,6 +195,7 @@ pub enum RuleKind {
     WeightedSum,
 }
 
+/// Tracks how a rule was verified during the build pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleVerificationStatus {
@@ -187,23 +205,27 @@ pub enum RuleVerificationStatus {
     RefinedUnverified,
 }
 
+/// Configuration controlling how gate evaluation produces a final decision.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvaluationConfig {
     pub combine: CombineStrategy,
     pub allow_when_bitmask: u64,
 }
 
+/// Configuration controlling how action policy evaluation selects an action.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionEvaluationConfig {
     pub selection: ActionSelectionStrategy,
 }
 
+/// Strategy for choosing among matched action rules.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionSelectionStrategy {
     FirstMatch,
 }
 
+/// Optional verification metadata attached to a gate artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerificationConfig {
     pub domain_constraints: Option<Vec<ComparisonExpression>>,
@@ -211,6 +233,7 @@ pub struct VerificationConfig {
     pub verification_summary: Option<HashMap<String, u64>>,
 }
 
+/// Build-time provenance metadata describing how an artifact was produced.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Provenance {
     pub generator: Option<String>,
@@ -219,6 +242,7 @@ pub struct Provenance {
     pub created_at: Option<String>,
 }
 
+/// Boolean expression tree used in rule predicates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Expression {
@@ -235,6 +259,7 @@ pub enum Expression {
     },
 }
 
+/// A leaf comparison: feature op value.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ComparisonExpression {
     pub feature: String,
@@ -242,6 +267,7 @@ pub struct ComparisonExpression {
     pub value: ComparisonValue,
 }
 
+/// The right-hand side of a comparison: either a literal or a reference to another feature.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ComparisonValue {
@@ -249,6 +275,7 @@ pub enum ComparisonValue {
     Literal(Value),
 }
 
+/// Relational operator used in a comparison expression.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ComparisonOperator {
     #[serde(rename = "==")]

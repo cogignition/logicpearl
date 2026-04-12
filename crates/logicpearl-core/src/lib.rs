@@ -3,16 +3,22 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 
+/// Convenience alias for results returned by LogicPearl operations.
 pub type Result<T> = std::result::Result<T, LogicPearlError>;
 
+/// Errors produced by LogicPearl operations.
 #[derive(Debug, Error)]
 pub enum LogicPearlError {
+    /// A freeform error message.
     #[error("{0}")]
     Message(String),
+    /// An I/O error propagated from the standard library.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A JSON serialization or deserialization error.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// A CSV parsing error.
     #[error(transparent)]
     Csv(#[from] csv::Error),
 }
@@ -23,24 +29,30 @@ impl LogicPearlError {
     }
 }
 
+/// Renders an artifact value into a human-readable string.
 pub trait ArtifactRenderer<T> {
+    /// Produce a textual representation of `value`.
     fn render(&self, value: &T) -> Result<String>;
 }
 
+/// Variable-width bitmask that tracks which rules matched during evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuleMask {
     words: Vec<u64>,
 }
 
 impl RuleMask {
+    /// Create an all-zeros mask (no rules matched).
     pub fn zero() -> Self {
         Self::default()
     }
 
+    /// Returns `true` when no bits are set.
     pub fn is_zero(&self) -> bool {
         self.words.iter().all(|word| *word == 0)
     }
 
+    /// Set the bit at position `bit`.
     pub fn set_bit(&mut self, bit: u32) {
         let word_index = bit as usize / 64;
         let bit_index = bit % 64;
@@ -50,6 +62,7 @@ impl RuleMask {
         self.words[word_index] |= 1_u64 << bit_index;
     }
 
+    /// Returns `true` if the bit at position `bit` is set.
     pub fn test_bit(&self, bit: u32) -> bool {
         let word_index = bit as usize / 64;
         let bit_index = bit % 64;
@@ -59,6 +72,7 @@ impl RuleMask {
             .unwrap_or(false)
     }
 
+    /// If the mask fits in a single `u64`, return it; otherwise `None`.
     pub fn as_u64(&self) -> Option<u64> {
         match self.trimmed_words() {
             [] => Some(0),
@@ -67,6 +81,7 @@ impl RuleMask {
         }
     }
 
+    /// Serialize this mask to a JSON number (single word) or array (multi-word).
     pub fn to_json_value(&self) -> Value {
         if let Some(single) = self.as_u64() {
             Value::Number(single.into())
@@ -80,6 +95,7 @@ impl RuleMask {
         }
     }
 
+    /// Deserialize a mask from a JSON number or array of numbers.
     pub fn from_json_value(value: &Value) -> Result<Self> {
         match value {
             Value::Number(number) => number.as_u64().map(Self::from).ok_or_else(|| {
@@ -101,6 +117,7 @@ impl RuleMask {
         }
     }
 
+    /// Build a mask from a raw vector of 64-bit words.
     pub fn from_words(words: Vec<u64>) -> Self {
         let mut mask = Self { words };
         mask.trim_trailing_zero_words();

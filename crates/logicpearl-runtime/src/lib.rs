@@ -2,7 +2,7 @@
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
-    InputSchema, LogicPearlActionIr, LogicPearlGateIr,
+    FeatureDefinition, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -31,6 +31,7 @@ pub struct ActionEvaluationResult {
     pub ambiguity: Option<String>,
 }
 
+/// Details of a single action rule that matched during evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionRuleMatch {
     pub id: String,
@@ -45,6 +46,7 @@ pub struct ActionRuleMatch {
     pub features: Vec<RuleFeatureExplanation>,
 }
 
+/// Details of a single gate rule that matched during evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GateRuleMatch {
     pub id: String,
@@ -78,6 +80,7 @@ pub struct GateEvaluationResult {
     pub matched_rules: Vec<GateRuleMatch>,
 }
 
+/// Per-feature explanation for why a rule matched.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleFeatureExplanation {
     pub feature_id: String,
@@ -89,6 +92,7 @@ pub struct RuleFeatureExplanation {
     pub counterfactual_hint: Option<String>,
 }
 
+/// Evaluate a gate artifact against input features and return the matched-rule bitmask.
 pub fn evaluate_gate(
     gate: &LogicPearlGateIr,
     features: &HashMap<String, Value>,
@@ -103,6 +107,7 @@ pub fn evaluate_gate(
     Ok(bitmask)
 }
 
+/// Evaluate a gate and return a full explanation including matched rules.
 pub fn evaluate_gate_with_explanation(
     gate: &LogicPearlGateIr,
     features: &HashMap<String, Value>,
@@ -111,6 +116,7 @@ pub fn evaluate_gate_with_explanation(
     Ok(explain_gate_result(gate, bitmask))
 }
 
+/// Evaluate an action policy against input features and return the selected action.
 pub fn evaluate_action_policy(
     policy: &LogicPearlActionIr,
     features: &HashMap<String, Value>,
@@ -178,6 +184,7 @@ pub fn evaluate_action_policy(
     })
 }
 
+/// Build a full gate evaluation result from a pre-computed bitmask.
 pub fn explain_gate_result(gate: &LogicPearlGateIr, bitmask: RuleMask) -> GateEvaluationResult {
     GateEvaluationResult {
         artifact_id: gate.gate_id.clone(),
@@ -192,6 +199,7 @@ pub fn explain_gate_result(gate: &LogicPearlGateIr, bitmask: RuleMask) -> GateEv
     }
 }
 
+/// Extract the list of matched gate rules from a bitmask.
 pub fn explain_gate_matches(gate: &LogicPearlGateIr, bitmask: RuleMask) -> Vec<GateRuleMatch> {
     gate.rules
         .iter()
@@ -274,6 +282,7 @@ fn collect_rule_comparisons<'a>(
     }
 }
 
+/// Parse a JSON object or array of objects into normalized feature maps.
 pub fn parse_input_payload(payload: Value) -> Result<Vec<HashMap<String, Value>>> {
     match payload {
         Value::Object(object) => Ok(vec![normalize_input_object(object)?]),
@@ -387,12 +396,12 @@ fn evaluate_expression(expression: &Expression, features: &HashMap<String, Value
     }
 }
 
-fn with_derived_features(
-    gate: &LogicPearlGateIr,
-    features: &HashMap<String, Value>,
+fn resolve_derived_features(
+    features: &[FeatureDefinition],
+    input: &HashMap<String, Value>,
 ) -> Result<HashMap<String, Value>> {
-    let mut resolved = features.clone();
-    for feature in &gate.input_schema.features {
+    let mut resolved = input.clone();
+    for feature in features {
         let Some(derived) = &feature.derived else {
             continue;
         };
@@ -425,42 +434,18 @@ fn with_derived_features(
     Ok(resolved)
 }
 
+fn with_derived_features(
+    gate: &LogicPearlGateIr,
+    features: &HashMap<String, Value>,
+) -> Result<HashMap<String, Value>> {
+    resolve_derived_features(&gate.input_schema.features, features)
+}
+
 fn with_action_derived_features(
     policy: &LogicPearlActionIr,
     features: &HashMap<String, Value>,
 ) -> Result<HashMap<String, Value>> {
-    let mut resolved = features.clone();
-    for feature in &policy.input_schema.features {
-        let Some(derived) = &feature.derived else {
-            continue;
-        };
-        if resolved.contains_key(&feature.id) {
-            continue;
-        }
-        let left = numeric_feature_value(&resolved, &derived.left_feature)?;
-        let right = numeric_feature_value(&resolved, &derived.right_feature)?;
-        let value = match derived.op {
-            DerivedFeatureOperator::Difference => left - right,
-            DerivedFeatureOperator::Ratio => {
-                if left.is_nan() || right.is_nan() || right.abs() < f64::EPSILON {
-                    0.0
-                } else {
-                    left / right
-                }
-            }
-        };
-        let sanitized = if value.is_finite() { value } else { 0.0 };
-        resolved.insert(
-            feature.id.clone(),
-            Value::Number(Number::from_f64(sanitized).ok_or_else(|| {
-                LogicPearlError::message(format!(
-                    "derived feature {} could not be represented as a JSON number",
-                    feature.id
-                ))
-            })?),
-        );
-    }
-    Ok(resolved)
+    resolve_derived_features(&policy.input_schema.features, features)
 }
 
 fn numeric_feature_value(features: &HashMap<String, Value>, feature: &str) -> Result<f64> {

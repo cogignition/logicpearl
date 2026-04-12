@@ -279,13 +279,22 @@ struct CandidateRule {
     expression: Expression,
     denied_coverage: usize,
     false_positives: usize,
+    cached_signature: String,
 }
 
 impl CandidateRule {
-    fn signature(&self) -> Result<String> {
-        serde_json::to_string(&self.expression).map_err(|e| {
-            LogicPearlError::message(format!("candidate rule signature serialization: {e}"))
-        })
+    fn new(expression: Expression, denied_coverage: usize, false_positives: usize) -> Self {
+        let cached_signature = serde_json::to_string(&expression).unwrap_or_default();
+        Self {
+            expression,
+            denied_coverage,
+            false_positives,
+            cached_signature,
+        }
+    }
+
+    fn signature(&self) -> &str {
+        &self.cached_signature
     }
 }
 
@@ -1528,15 +1537,15 @@ mod tests {
             "residual_gate",
             vec![rule_from_candidate(
                 0,
-                &CandidateRule {
-                    expression: Expression::Comparison(ComparisonExpression {
+                &CandidateRule::new(
+                    Expression::Comparison(ComparisonExpression {
                         feature: "seed".to_string(),
                         op: ComparisonOperator::Gt,
                         value: ComparisonValue::Literal(Value::Number(Number::from(0))),
                     }),
-                    denied_coverage: 1,
-                    false_positives: 0,
-                },
+                    1,
+                    0,
+                ),
             )],
         )
         .unwrap();
@@ -2090,41 +2099,41 @@ mod tests {
         let rules = vec![
             rule_from_candidate(
                 0,
-                &CandidateRule {
-                    expression: Expression::Comparison(ComparisonExpression {
+                &CandidateRule::new(
+                    Expression::Comparison(ComparisonExpression {
                         feature: "annual_income".to_string(),
                         op: ComparisonOperator::Eq,
                         value: ComparisonValue::Literal(Value::Number(Number::from(85000))),
                     }),
-                    denied_coverage: 1,
-                    false_positives: 0,
-                },
+                    1,
+                    0,
+                ),
             ),
             rule_from_candidate(
                 1,
-                &CandidateRule {
-                    expression: Expression::Comparison(ComparisonExpression {
+                &CandidateRule::new(
+                    Expression::Comparison(ComparisonExpression {
                         feature: "credit_score".to_string(),
                         op: ComparisonOperator::Eq,
                         value: ComparisonValue::Literal(Value::Number(Number::from(680))),
                     }),
-                    denied_coverage: 2,
-                    false_positives: 0,
-                },
+                    2,
+                    0,
+                ),
             ),
             rule_from_candidate(
                 2,
-                &CandidateRule {
-                    expression: Expression::Comparison(ComparisonExpression {
+                &CandidateRule::new(
+                    Expression::Comparison(ComparisonExpression {
                         feature: "debt_ratio".to_string(),
                         op: ComparisonOperator::Gte,
                         value: ComparisonValue::Literal(Value::Number(
                             Number::from_f64(0.55).unwrap(),
                         )),
                     }),
-                    denied_coverage: 3,
-                    false_positives: 0,
-                },
+                    3,
+                    0,
+                ),
             ),
         ];
 

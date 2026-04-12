@@ -1,12 +1,230 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use logicpearl_observer::guardrails_signal_phrases;
 use logicpearl_observer_synthesis::{evaluate_guardrails_artifact_signal, ObserverSynthesisReport};
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub(crate) enum ObserverProfileArg {
+    SignalFlagsV1,
+    GuardrailsV1,
+    Auto,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub(crate) enum ObserverSignalArg {
+    InstructionOverride,
+    SystemPrompt,
+    SecretExfiltration,
+    ToolMisuse,
+    DataAccessOutsideScope,
+    IndirectDocumentAuthority,
+    BenignQuestion,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub(crate) enum ObserverBootstrapArg {
+    Auto,
+    ObservedFeature,
+    Route,
+    Seed,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub(crate) enum ObserverTargetGoalArg {
+    ParityFirst,
+    ProtectiveGate,
+    CustomerSafe,
+    Balanced,
+    ReviewQueue,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ObserverListArgs {
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl observer validate /tmp/guardrails_observer.json\n  logicpearl observer validate examples/plugins/python_observer/manifest.json --plugin-manifest"
+)]
+pub(crate) struct ObserverValidateArgs {
+    pub target: PathBuf,
+    /// Validate a plugin manifest instead of a static observer artifact.
+    #[arg(long)]
+    pub plugin_manifest: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  --plugin-manifest executes a local program declared by that manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl observer run --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --input examples/plugins/python_observer/raw_input.json --json\n  logicpearl observer run --observer-artifact /tmp/guardrails_observer.json --input raw.json --json\n  logicpearl observer run --plugin-manifest examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json"
+)]
+pub(crate) struct ObserverRunArgs {
+    /// Built-in observer profile to use. Domain cue sets should be passed with --observer-artifact.
+    #[arg(long)]
+    pub observer_profile: Option<ObserverProfileArg>,
+    /// Native observer artifact to execute.
+    #[arg(long)]
+    pub observer_artifact: Option<PathBuf>,
+    /// Plugin manifest for the observer plugin to execute when no native profile or artifact fits.
+    #[arg(long)]
+    pub plugin_manifest: Option<PathBuf>,
+    /// Raw input JSON to normalize.
+    #[arg(long)]
+    pub input: PathBuf,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json"
+)]
+pub(crate) struct ObserverDetectArgs {
+    #[arg(long)]
+    pub input: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl observer scaffold --profile signal-flags-v1 --output /tmp/signal_flags_observer.json\n  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json"
+)]
+pub(crate) struct ObserverScaffoldArgs {
+    #[arg(long, value_enum)]
+    pub profile: ObserverProfileArg,
+    #[arg(long)]
+    pub output: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json --json"
+)]
+pub(crate) struct ObserverSynthesizeArgs {
+    /// Existing native observer artifact to use as the semantic seed. LogicPearl then selects a compact phrase subset from candidates mined around that signal.
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
+    pub artifact: Option<PathBuf>,
+    /// Built-in profile to use when no artifact is provided.
+    #[arg(long, value_enum, help_heading = "Advanced Observer Synthesis")]
+    pub profile: Option<ObserverProfileArg>,
+    /// Benchmark-case JSONL with id, input, expected_route, and optional category.
+    #[arg(long)]
+    pub benchmark_cases: PathBuf,
+    /// Which guardrail signal to synthesize.
+    #[arg(long, value_enum)]
+    pub signal: ObserverSignalArg,
+    /// How LogicPearl should choose positive examples before it selects a compact phrase subset.
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
+    pub bootstrap: ObserverBootstrapArg,
+    /// What LogicPearl should optimize for when choosing the synthesized observer on held-out dev data.
+    #[arg(long, value_enum, default_value_t = ObserverTargetGoalArg::ParityFirst)]
+    pub target_goal: ObserverTargetGoalArg,
+    /// Optional route labels to treat as positive examples when using route-based bootstrapping.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    pub positive_routes: Vec<String>,
+    /// Where to write the synthesized observer artifact.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Cap the number of candidate phrases sent to the subset selector when LogicPearl falls back to single-pass synthesis on very small datasets.
+    #[arg(
+        long,
+        default_value_t = 64,
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    pub max_candidates: usize,
+    /// Optional held-out dev benchmark cases. When omitted, LogicPearl deterministically splits benchmark cases and auto-selects the candidate cap on the held-out slice.
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
+    pub dev_benchmark_cases: Option<PathBuf>,
+    /// Candidate frontier to search during automatic capacity selection.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_values_t = [32_usize, 64, 128, 256],
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    pub candidate_frontier: Vec<usize>,
+    /// Tolerance from the best dev score for the selected target goal when choosing the smallest near-best artifact.
+    #[arg(
+        long,
+        default_value_t = 0.001,
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    pub selection_tolerance: f64,
+    /// Carry the input artifact forward unchanged instead of failing when a sampled or sparse dev slice produces no synthesizeable observer candidates.
+    #[arg(long, help_heading = "Advanced Observer Synthesis")]
+    pub allow_empty: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json --json"
+)]
+pub(crate) struct ObserverRepairArgs {
+    /// Existing native observer artifact to repair.
+    #[arg(long)]
+    pub artifact: PathBuf,
+    /// Benchmark-case JSONL with id, input, expected_route, and optional category.
+    #[arg(long)]
+    pub benchmark_cases: PathBuf,
+    /// Which guardrail signal to repair.
+    #[arg(long, value_enum)]
+    pub signal: ObserverSignalArg,
+    /// How LogicPearl should choose positive examples before it repairs the phrase family.
+    #[arg(long, value_enum, default_value_t = ObserverBootstrapArg::Auto, help_heading = "Advanced Observer Synthesis")]
+    pub bootstrap: ObserverBootstrapArg,
+    /// Optional route labels to treat as positive examples when using route-based bootstrapping.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help_heading = "Advanced Observer Synthesis"
+    )]
+    pub positive_routes: Vec<String>,
+    /// Where to write the repaired observer artifact.
+    #[arg(long)]
+    pub output: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+pub(crate) fn to_observer_bootstrap_strategy(
+    arg: ObserverBootstrapArg,
+) -> ObserverBootstrapStrategy {
+    match arg {
+        ObserverBootstrapArg::Auto => ObserverBootstrapStrategy::Auto,
+        ObserverBootstrapArg::ObservedFeature => ObserverBootstrapStrategy::ObservedFeature,
+        ObserverBootstrapArg::Route => ObserverBootstrapStrategy::Route,
+        ObserverBootstrapArg::Seed => ObserverBootstrapStrategy::Seed,
+    }
+}
+
+pub(crate) fn to_observer_target_goal(arg: ObserverTargetGoalArg) -> ObserverTargetGoal {
+    match arg {
+        ObserverTargetGoalArg::ParityFirst => ObserverTargetGoal::ParityFirst,
+        ObserverTargetGoalArg::ProtectiveGate => ObserverTargetGoal::ProtectiveGate,
+        ObserverTargetGoalArg::CustomerSafe => ObserverTargetGoal::CustomerSafe,
+        ObserverTargetGoalArg::Balanced => ObserverTargetGoal::Balanced,
+        ObserverTargetGoalArg::ReviewQueue => ObserverTargetGoal::ReviewQueue,
+    }
+}
 
 const AUTO_SYNTHESIZE_TRAIN_FRACTION: f64 = 0.9;
 const MIN_AUTO_SYNTHESIS_CASES: usize = 40;

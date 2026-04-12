@@ -1,12 +1,25 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use logicpearl_ir::{
     canonical_expression_key, ActionRuleDefinition, ComparisonValue, Expression, FeatureSemantics,
     InputSchema, LogicPearlActionIr, LogicPearlGateIr, RuleDefinition,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Args)]
+#[command(after_help = DIFF_AFTER_HELP)]
+pub(crate) struct DiffArgs {
+    /// Older artifact bundle directory, artifact.json, or pearl.ir.json path.
+    pub old_artifact: PathBuf,
+    /// Newer artifact bundle directory, artifact.json, or pearl.ir.json path.
+    pub new_artifact: PathBuf,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct ArtifactDiffReport {

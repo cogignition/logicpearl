@@ -12,3 +12,10 @@ logicpearl-core.workspace = true
 logicpearl-ir.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "evaluate"
+harness = false

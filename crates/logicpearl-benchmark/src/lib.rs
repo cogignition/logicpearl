@@ -812,6 +812,21 @@ pub fn write_benchmark_cases_jsonl(cases: &[BenchmarkCase], output: &Path) -> Re
     Ok(())
 }
 
+/// Adapt a raw dataset string using any config-driven profile.
+pub fn adapt_profile_dataset(
+    profile: BenchmarkAdapterProfile,
+    raw: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    let config = builtin_adapter_config(profile).ok_or_else(|| {
+        LogicPearlError::message(format!(
+            "profile {:?} does not have a built-in adapter config",
+            profile
+        ))
+    })?;
+    adapt_dataset_with_config(raw, defaults, &config)
+}
+
 pub fn adapt_salad_dataset(
     raw_json: &str,
     subset: SaladSubsetKind,
@@ -821,126 +836,94 @@ pub fn adapt_salad_dataset(
         SaladSubsetKind::BaseSet => BenchmarkAdapterProfile::SaladBaseSet,
         SaladSubsetKind::AttackEnhancedSet => BenchmarkAdapterProfile::SaladAttackEnhancedSet,
     };
-    let config = builtin_adapter_config(profile)
-        .ok_or_else(|| LogicPearlError::message("missing built-in Salad adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
+    adapt_profile_dataset(profile, raw_json, defaults)
 }
-
-pub fn adapt_alert_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::Alert)
-        .ok_or_else(|| LogicPearlError::message("missing built-in ALERT adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_jailbreakbench_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config =
-        builtin_adapter_config(BenchmarkAdapterProfile::JailbreakBench).ok_or_else(|| {
-            LogicPearlError::message("missing built-in JailbreakBench adapter config")
-        })?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_promptshield_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::PromptShield)
-        .ok_or_else(|| LogicPearlError::message("missing built-in PromptShield adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_rogue_security_prompt_injections_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::RogueSecurityPromptInjections)
-        .ok_or_else(|| {
-            LogicPearlError::message(
-                "missing built-in rogue-security prompt-injections adapter config",
-            )
-        })?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_chatgpt_jailbreak_prompts_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::ChatgptJailbreakPrompts)
-        .ok_or_else(|| {
-            LogicPearlError::message("missing built-in ChatGPT-Jailbreak-Prompts adapter config")
-        })?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_openagentsafety_s26_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config =
-        builtin_adapter_config(BenchmarkAdapterProfile::OpenAgentSafetyS26).ok_or_else(|| {
-            LogicPearlError::message("missing built-in OpenAgentSafety S26 adapter config")
-        })?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
-pub fn adapt_mcpmark_dataset(
-    raw_json: &str,
-    defaults: &BenchmarkAdaptDefaults,
-) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::McpMark)
-        .ok_or_else(|| LogicPearlError::message("missing built-in MCPMark adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
-}
-
 pub fn adapt_safearena_dataset(
     raw_json: &str,
     safe_split: bool,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let profile = if safe_split {
-        BenchmarkAdapterProfile::SafearenaSafe
-    } else {
-        BenchmarkAdapterProfile::SafearenaHarm
-    };
-    let config = builtin_adapter_config(profile)
-        .ok_or_else(|| LogicPearlError::message("missing built-in SafeArena adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
+    adapt_profile_dataset(
+        if safe_split {
+            BenchmarkAdapterProfile::SafearenaSafe
+        } else {
+            BenchmarkAdapterProfile::SafearenaHarm
+        },
+        raw_json,
+        defaults,
+    )
 }
-
+pub fn adapt_alert_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(BenchmarkAdapterProfile::Alert, raw_json, defaults)
+}
+pub fn adapt_jailbreakbench_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(BenchmarkAdapterProfile::JailbreakBench, raw_json, defaults)
+}
+pub fn adapt_promptshield_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(BenchmarkAdapterProfile::PromptShield, raw_json, defaults)
+}
+pub fn adapt_rogue_security_prompt_injections_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(
+        BenchmarkAdapterProfile::RogueSecurityPromptInjections,
+        raw_json,
+        defaults,
+    )
+}
+pub fn adapt_chatgpt_jailbreak_prompts_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(
+        BenchmarkAdapterProfile::ChatgptJailbreakPrompts,
+        raw_json,
+        defaults,
+    )
+}
+pub fn adapt_openagentsafety_s26_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(
+        BenchmarkAdapterProfile::OpenAgentSafetyS26,
+        raw_json,
+        defaults,
+    )
+}
+pub fn adapt_mcpmark_dataset(
+    raw_json: &str,
+    defaults: &BenchmarkAdaptDefaults,
+) -> Result<Vec<BenchmarkCase>> {
+    adapt_profile_dataset(BenchmarkAdapterProfile::McpMark, raw_json, defaults)
+}
 pub fn adapt_squad_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::Squad)
-        .ok_or_else(|| LogicPearlError::message("missing built-in SQuAD adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
+    adapt_profile_dataset(BenchmarkAdapterProfile::Squad, raw_json, defaults)
 }
-
 pub fn adapt_vigil_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config = builtin_adapter_config(BenchmarkAdapterProfile::Vigil)
-        .ok_or_else(|| LogicPearlError::message("missing built-in Vigil adapter config"))?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
+    adapt_profile_dataset(BenchmarkAdapterProfile::Vigil, raw_json, defaults)
 }
-
 pub fn adapt_noeti_toxicqa_dataset(
     raw_json: &str,
     defaults: &BenchmarkAdaptDefaults,
 ) -> Result<Vec<BenchmarkCase>> {
-    let config =
-        builtin_adapter_config(BenchmarkAdapterProfile::NoetiToxicQa).ok_or_else(|| {
-            LogicPearlError::message("missing built-in NOETI ToxicQAFinal adapter config")
-        })?;
-    adapt_dataset_with_config(raw_json, defaults, &config)
+    adapt_profile_dataset(BenchmarkAdapterProfile::NoetiToxicQa, raw_json, defaults)
 }
 
 pub fn adapt_mt_agentrisk_dataset(

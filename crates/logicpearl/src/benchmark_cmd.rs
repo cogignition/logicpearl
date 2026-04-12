@@ -2,14 +2,14 @@
 use super::*;
 use crate::observer_cmd::{
     observe_benchmark_cases, observer_resolution, render_observer_resolution,
-    resolve_observer_for_cases,
+    resolve_observer_for_cases, ObserverProfileArg,
 };
 use anstream::println;
+use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_benchmark::{
-    adapt_csic_http_2010_dataset, adapt_jailbreakbench_dataset,
-    adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset, adapt_promptshield_dataset,
-    adapt_rogue_security_prompt_injections_dataset, BenchmarkCase,
+    adapt_csic_http_2010_dataset, adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset,
+    adapt_profile_dataset, BenchmarkCase,
 };
 use logicpearl_core::LogicPearlError;
 use logicpearl_discovery::ArtifactSet;
@@ -21,6 +21,262 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub(crate) enum BenchmarkAdapterProfileArg {
+    Auto,
+    #[value(name = "csic-http-2010")]
+    CsicHttp2010,
+    #[value(name = "modsecurity-owasp-2025")]
+    ModsecurityOwasp2025,
+    SaladBaseSet,
+    SaladAttackEnhancedSet,
+    SafearenaSafe,
+    SafearenaHarm,
+    Alert,
+    Jailbreakbench,
+    Promptshield,
+    #[value(name = "rogue-security-prompt-injections")]
+    RogueSecurityPromptInjections,
+    ChatgptJailbreakPrompts,
+    OpenagentsafetyS26,
+    Mcpmark,
+    Squad,
+    Vigil,
+    #[value(name = "noeti-toxicqa")]
+    NoetiToxicQa,
+    MtAgentrisk,
+}
+
+pub(crate) fn to_benchmark_adapter_profile(
+    profile: BenchmarkAdapterProfileArg,
+) -> BenchmarkAdapterProfile {
+    match profile {
+        BenchmarkAdapterProfileArg::Auto => BenchmarkAdapterProfile::Auto,
+        BenchmarkAdapterProfileArg::CsicHttp2010 => BenchmarkAdapterProfile::CsicHttp2010,
+        BenchmarkAdapterProfileArg::ModsecurityOwasp2025 => {
+            BenchmarkAdapterProfile::ModsecurityOwasp2025
+        }
+        BenchmarkAdapterProfileArg::SaladBaseSet => BenchmarkAdapterProfile::SaladBaseSet,
+        BenchmarkAdapterProfileArg::SaladAttackEnhancedSet => {
+            BenchmarkAdapterProfile::SaladAttackEnhancedSet
+        }
+        BenchmarkAdapterProfileArg::SafearenaSafe => BenchmarkAdapterProfile::SafearenaSafe,
+        BenchmarkAdapterProfileArg::SafearenaHarm => BenchmarkAdapterProfile::SafearenaHarm,
+        BenchmarkAdapterProfileArg::Alert => BenchmarkAdapterProfile::Alert,
+        BenchmarkAdapterProfileArg::Jailbreakbench => BenchmarkAdapterProfile::JailbreakBench,
+        BenchmarkAdapterProfileArg::Promptshield => BenchmarkAdapterProfile::PromptShield,
+        BenchmarkAdapterProfileArg::RogueSecurityPromptInjections => {
+            BenchmarkAdapterProfile::RogueSecurityPromptInjections
+        }
+        BenchmarkAdapterProfileArg::ChatgptJailbreakPrompts => {
+            BenchmarkAdapterProfile::ChatgptJailbreakPrompts
+        }
+        BenchmarkAdapterProfileArg::OpenagentsafetyS26 => {
+            BenchmarkAdapterProfile::OpenAgentSafetyS26
+        }
+        BenchmarkAdapterProfileArg::Mcpmark => BenchmarkAdapterProfile::McpMark,
+        BenchmarkAdapterProfileArg::Squad => BenchmarkAdapterProfile::Squad,
+        BenchmarkAdapterProfileArg::Vigil => BenchmarkAdapterProfile::Vigil,
+        BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,
+        BenchmarkAdapterProfileArg::MtAgentrisk => BenchmarkAdapterProfile::MtAgentRisk,
+    }
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BenchmarkListProfilesArgs {
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --json"
+)]
+pub(crate) struct BenchmarkDetectProfileArgs {
+    /// Raw benchmark dataset in its source format.
+    #[arg(value_name = "RAW_DATASET")]
+    pub raw_dataset: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl benchmark adapt benchmarks/guardrails/prep/example_salad_base_set.json --profile salad-base-set --output /tmp/salad_base_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl\n  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --profile squad --output /tmp/squad_benign.jsonl"
+)]
+pub(crate) struct BenchmarkAdaptArgs {
+    /// Raw benchmark dataset in its source format.
+    #[arg(value_name = "RAW_DATASET")]
+    pub raw_dataset: PathBuf,
+    /// Built-in adapter profile to use for this dataset.
+    #[arg(long, value_enum)]
+    pub profile: BenchmarkAdapterProfileArg,
+    /// Output JSONL path in LogicPearl benchmark-case format.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Default requested tool when the source row does not provide one.
+    #[arg(long, default_value = "none")]
+    pub requested_tool: String,
+    /// Default requested action when the source row does not provide one.
+    #[arg(long, default_value = "chat_response")]
+    pub requested_action: String,
+    /// Default scope when the source row does not provide one.
+    #[arg(long, default_value = "allowed")]
+    pub scope: String,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark split-cases /tmp/guardrail_dev_full.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev.jsonl --train-fraction 0.8 --json"
+)]
+pub(crate) struct BenchmarkSplitCasesArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
+    pub dataset_jsonl: PathBuf,
+    #[arg(long)]
+    pub train_output: PathBuf,
+    #[arg(long)]
+    pub dev_output: PathBuf,
+    #[arg(long, default_value_t = 0.8)]
+    pub train_fraction: f64,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark merge-cases /tmp/squad_benign.jsonl /tmp/alert_attack.jsonl /tmp/chatgpt_jailbreak_attack.jsonl --output /tmp/guardrail_dev.jsonl"
+)]
+pub(crate) struct BenchmarkMergeCasesArgs {
+    pub inputs: Vec<PathBuf>,
+    /// Output JSONL path containing the concatenated benchmark cases.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json\n  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep"
+)]
+pub(crate) struct BenchmarkLearnArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
+    pub dataset_jsonl: PathBuf,
+    /// Built-in observer profile to use. For domain cue sets, prefer --observer-artifact.
+    #[arg(long, value_enum)]
+    pub observer_profile: Option<ObserverProfileArg>,
+    /// Observer artifact to run natively.
+    #[arg(long)]
+    pub observer_artifact: Option<PathBuf>,
+    /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
+    #[arg(long)]
+    pub plugin_manifest: Option<PathBuf>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Projection config that maps observed rows into discovery-ready trace tables.
+    #[arg(long)]
+    pub config: PathBuf,
+    /// Directory to write observed rows, traces, and discovered artifacts into.
+    #[arg(long)]
+    pub output_dir: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --output /tmp/guardrail_dev_observed.jsonl\n  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact /tmp/guardrails_observer.json --output /tmp/guardrail_dev_observed.jsonl"
+)]
+pub(crate) struct BenchmarkObserveArgs {
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
+    pub dataset_jsonl: PathBuf,
+    /// Built-in observer profile to use. For domain cue sets, prefer --observer-artifact.
+    #[arg(long, value_enum)]
+    pub observer_profile: Option<ObserverProfileArg>,
+    /// Observer artifact to run natively.
+    #[arg(long)]
+    pub observer_artifact: Option<PathBuf>,
+    /// Observer plugin manifest used to normalize each benchmark case input when no native profile or artifact fits.
+    #[arg(long)]
+    pub plugin_manifest: Option<PathBuf>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Output JSONL path with benchmark metadata plus observer features.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark score-artifacts /tmp/guardrail_train/discovered/artifact_set.json /tmp/guardrail_dev/traces/multi_target.csv --json"
+)]
+pub(crate) struct BenchmarkScoreArtifactsArgs {
+    /// Artifact set manifest emitted by benchmark learning.
+    #[arg(value_name = "ARTIFACT_SET")]
+    pub artifact_set_json: PathBuf,
+    /// Held-out multi-target trace CSV to score against.
+    #[arg(value_name = "TRACES")]
+    pub trace_csv: PathBuf,
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl benchmark emit-traces /tmp/salad_attack_observed.jsonl --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/trace_exports"
+)]
+pub(crate) struct BenchmarkEmitTracesArgs {
+    /// Observed benchmark rows in LogicPearl JSONL format.
+    #[arg(value_name = "OBSERVED_DATASET")]
+    pub observed_jsonl: PathBuf,
+    /// Projection config that maps observed rows into discovery-ready trace tables.
+    #[arg(long)]
+    pub config: PathBuf,
+    /// Directory to write discovery-ready trace CSVs into.
+    #[arg(long)]
+    pub output_dir: PathBuf,
+    /// Emit machine-readable JSON summary instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  Plugin-backed benchmark pipelines execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExample:\n  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json"
+)]
+pub(crate) struct BenchmarkRunArgs {
+    /// Pipeline definition to run for each benchmark case.
+    #[arg(value_name = "PIPELINE")]
+    pub pipeline_json: PathBuf,
+    /// Benchmark-case dataset in LogicPearl JSONL format.
+    #[arg(value_name = "DATASET")]
+    pub dataset_jsonl: PathBuf,
+    /// Collapse all non-allow routes into `deny` before scoring.
+    #[arg(long)]
+    pub collapse_routes: bool,
+    /// Optional path to write the full benchmark result JSON.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct BenchmarkCaseResult {
@@ -509,112 +765,61 @@ pub(crate) fn run_benchmark_adapt(args: BenchmarkAdaptArgs) -> Result<()> {
                 args.json,
             )
         }
-        BenchmarkAdapterProfile::SaladBaseSet => run_benchmark_adapt_salad(
-            &args.raw_dataset,
-            SaladSubsetKind::BaseSet,
-            &args.output,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::SaladAttackEnhancedSet => run_benchmark_adapt_salad(
-            &args.raw_dataset,
-            SaladSubsetKind::AttackEnhancedSet,
-            &args.output,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::SafearenaSafe => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "SafeArena safe",
-            |raw, defaults| adapt_safearena_dataset(raw, true, defaults),
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::SafearenaHarm => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "SafeArena harm",
-            |raw, defaults| adapt_safearena_dataset(raw, false, defaults),
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::Alert => {
-            run_benchmark_adapt_alert(&args.raw_dataset, &args.output, &defaults, args.json)
-        }
-        BenchmarkAdapterProfile::JailbreakBench => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "JailbreakBench",
-            adapt_jailbreakbench_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::PromptShield => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "PromptShield",
-            adapt_promptshield_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::RogueSecurityPromptInjections => {
-            run_benchmark_adapt_prompt_json_rows(
-                &args.raw_dataset,
-                &args.output,
-                "rogue-security/prompt-injections-benchmark",
-                adapt_rogue_security_prompt_injections_dataset,
-                &defaults,
-                args.json,
-            )
-        }
-        BenchmarkAdapterProfile::ChatgptJailbreakPrompts => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "ChatGPT-Jailbreak-Prompts",
-            adapt_chatgpt_jailbreak_prompts_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::OpenAgentSafetyS26 => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "OpenAgentSafety S26",
-            adapt_openagentsafety_s26_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::McpMark => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "MCPMark",
-            adapt_mcpmark_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::Squad => {
-            run_benchmark_adapt_squad(&args.raw_dataset, &args.output, &defaults, args.json)
-        }
-        BenchmarkAdapterProfile::Vigil => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "Vigil",
-            adapt_vigil_dataset,
-            &defaults,
-            args.json,
-        ),
-        BenchmarkAdapterProfile::NoetiToxicQa => run_benchmark_adapt_prompt_json_rows(
-            &args.raw_dataset,
-            &args.output,
-            "NOETI ToxicQAFinal",
-            adapt_noeti_toxicqa_dataset,
-            &defaults,
-            args.json,
-        ),
         BenchmarkAdapterProfile::MtAgentRisk => {
             run_benchmark_adapt_mt_agentrisk(&args.raw_dataset, &args.output, &defaults, args.json)
         }
+        // All config-driven profiles use the unified adapter path.
+        _ => run_benchmark_adapt_with_profile(
+            profile,
+            &args.raw_dataset,
+            &args.output,
+            &defaults,
+            args.json,
+        ),
     }
+}
+
+fn run_benchmark_adapt_with_profile(
+    profile: BenchmarkAdapterProfile,
+    raw_dataset: &Path,
+    output: &Path,
+    defaults: &BenchmarkAdaptDefaults,
+    json: bool,
+) -> Result<()> {
+    let dataset_name = profile.description();
+    let raw_json = fs::read_to_string(raw_dataset)
+        .into_diagnostic()
+        .wrap_err(format!("could not read raw {} data", profile.id()))?;
+    let cases = adapt_profile_dataset(profile, &raw_json, defaults)
+        .into_diagnostic()
+        .wrap_err(format!("failed to adapt {} rows", profile.id()))?;
+    write_benchmark_cases_jsonl(&cases, output)
+        .into_diagnostic()
+        .wrap_err("failed to write adapted benchmark cases")?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "source_benchmark": profile.id(),
+                "rows": cases.len(),
+                "output": output.display().to_string(),
+                "expected_route": cases.first().map(|case| case.expected_route.clone()).unwrap_or_else(|| "mixed".to_string())
+            }))
+            .into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} {}",
+            "Adapted".bold().bright_green(),
+            dataset_name.bold()
+        );
+        println!("  {} {}", "Rows".bright_black(), cases.len());
+        if let Some(first) = cases.first() {
+            println!("  {} {}", "Route".bright_black(), first.expected_route);
+        }
+        println!("  {} {}", "Output".bright_black(), output.display());
+    }
+    Ok(())
 }
 
 fn run_benchmark_adapt_csic_http_2010(
@@ -736,180 +941,6 @@ fn run_benchmark_adapt_mt_agentrisk(
         println!("  {} {}", "Rows".bright_black(), cases.len());
         println!("  {} {}", "Deny rows".bright_black(), deny_rows);
         println!("  {} {}", "Allow rows".bright_black(), allow_rows);
-        println!("  {} {}", "Output".bright_black(), output.display());
-    }
-    Ok(())
-}
-
-fn run_benchmark_adapt_prompt_json_rows(
-    raw_dataset: &Path,
-    output: &Path,
-    dataset_name: &str,
-    adapter: fn(&str, &BenchmarkAdaptDefaults) -> logicpearl_core::Result<Vec<BenchmarkCase>>,
-    defaults: &BenchmarkAdaptDefaults,
-    json: bool,
-) -> Result<()> {
-    let raw_json = fs::read_to_string(raw_dataset)
-        .into_diagnostic()
-        .wrap_err(format!("could not read raw {dataset_name} data"))?;
-    let cases = adapter(&raw_json, defaults)
-        .into_diagnostic()
-        .wrap_err(format!("failed to adapt {dataset_name} rows"))?;
-    write_benchmark_cases_jsonl(&cases, output)
-        .into_diagnostic()
-        .wrap_err("failed to write adapted benchmark cases")?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "rows": cases.len(),
-                "output": output.display().to_string(),
-                "expected_route": cases.first().map(|case| case.expected_route.clone()).unwrap_or_else(|| "mixed".to_string())
-            }))
-            .into_diagnostic()?
-        );
-    } else {
-        println!(
-            "{} {}",
-            "Adapted".bold().bright_green(),
-            dataset_name.bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), cases.len());
-        if let Some(first) = cases.first() {
-            println!("  {} {}", "Route".bright_black(), first.expected_route);
-        }
-        println!("  {} {}", "Output".bright_black(), output.display());
-    }
-    Ok(())
-}
-
-pub(crate) fn run_benchmark_adapt_salad(
-    raw_dataset: &Path,
-    subset: SaladSubsetKind,
-    output: &Path,
-    defaults: &BenchmarkAdaptDefaults,
-    json: bool,
-) -> Result<()> {
-    let raw_json = fs::read_to_string(raw_dataset)
-        .into_diagnostic()
-        .wrap_err("could not read raw Salad-Data JSON")?;
-    let cases = adapt_salad_dataset(&raw_json, subset, defaults)
-        .into_diagnostic()
-        .wrap_err("failed to adapt Salad-Data benchmark dataset")?;
-    let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, output)
-        .into_diagnostic()
-        .wrap_err("failed to write adapted Salad JSONL")?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "source_benchmark": "salad-data",
-                "subset": salad_subset_name(subset),
-                "rows": rows,
-                "output": output.display().to_string()
-            }))
-            .into_diagnostic()?
-        );
-    } else {
-        println!(
-            "{} {}",
-            "Adapted".bold().bright_green(),
-            "Salad-Data dataset".bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), rows);
-        println!(
-            "  {} {}",
-            "Subset".bright_black(),
-            salad_subset_name(subset)
-        );
-        println!("  {} {}", "Output".bright_black(), output.display());
-    }
-    Ok(())
-}
-
-fn salad_subset_name(subset: SaladSubsetKind) -> &'static str {
-    match subset {
-        SaladSubsetKind::BaseSet => "base_set",
-        SaladSubsetKind::AttackEnhancedSet => "attack_enhanced_set",
-    }
-}
-
-pub(crate) fn run_benchmark_adapt_alert(
-    raw_dataset: &Path,
-    output: &Path,
-    defaults: &BenchmarkAdaptDefaults,
-    json: bool,
-) -> Result<()> {
-    let raw_json = fs::read_to_string(raw_dataset)
-        .into_diagnostic()
-        .wrap_err("could not read raw ALERT JSON")?;
-    let cases = adapt_alert_dataset(&raw_json, defaults)
-        .into_diagnostic()
-        .wrap_err("failed to adapt ALERT benchmark dataset")?;
-    let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, output)
-        .into_diagnostic()
-        .wrap_err("failed to write adapted ALERT JSONL")?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "source_benchmark": "alert",
-                "rows": rows,
-                "output": output.display().to_string()
-            }))
-            .into_diagnostic()?
-        );
-    } else {
-        println!(
-            "{} {}",
-            "Adapted".bold().bright_green(),
-            "ALERT dataset".bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), rows);
-        println!("  {} {}", "Output".bright_black(), output.display());
-    }
-    Ok(())
-}
-
-pub(crate) fn run_benchmark_adapt_squad(
-    raw_dataset: &Path,
-    output: &Path,
-    defaults: &BenchmarkAdaptDefaults,
-    json: bool,
-) -> Result<()> {
-    let raw_json = fs::read_to_string(raw_dataset)
-        .into_diagnostic()
-        .wrap_err("could not read raw SQuAD JSON")?;
-    let cases = adapt_squad_dataset(&raw_json, defaults)
-        .into_diagnostic()
-        .wrap_err("failed to adapt SQuAD benchmark dataset")?;
-    let rows = cases.len();
-    write_benchmark_cases_jsonl(&cases, output)
-        .into_diagnostic()
-        .wrap_err("failed to write adapted SQuAD JSONL")?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "source_benchmark": "squad",
-                "rows": rows,
-                "output": output.display().to_string()
-            }))
-            .into_diagnostic()?
-        );
-    } else {
-        println!(
-            "{} {}",
-            "Adapted".bold().bright_green(),
-            "SQuAD dataset".bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), rows);
         println!("  {} {}", "Output".bright_black(), output.display());
     }
     Ok(())

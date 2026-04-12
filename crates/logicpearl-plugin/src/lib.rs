@@ -27,6 +27,7 @@ const SUPPORTED_SCHEMA_ANNOTATION_KEYWORDS: &[&str] = &["$id", "$schema", "descr
 #[cfg(unix)]
 use libc::{getpgid, getpgrp, kill, SIGKILL, SIGTERM};
 
+/// The pipeline stage a plugin implements.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginStage {
@@ -37,6 +38,7 @@ pub enum PluginStage {
     Render,
 }
 
+/// JSON manifest describing a plugin's entrypoint, capabilities, and schemas.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -56,6 +58,7 @@ pub struct PluginManifest {
     pub manifest_dir: Option<PathBuf>,
 }
 
+/// Security policy controlling plugin execution privileges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginExecutionPolicy {
     pub default_timeout_ms: u64,
@@ -155,6 +158,7 @@ pub struct PluginBatchResponse {
     pub responses: Vec<PluginResponse>,
 }
 
+/// Build the canonical JSON payload sent to a plugin process on stdin.
 pub fn build_canonical_payload(
     _stage: &PluginStage,
     input: Value,
@@ -211,10 +215,12 @@ impl PluginManifest {
     }
 }
 
+/// Execute a plugin with default execution policy.
 pub fn run_plugin(manifest: &PluginManifest, request: &PluginRequest) -> Result<PluginResponse> {
     run_plugin_with_policy(manifest, request, &PluginExecutionPolicy::default())
 }
 
+/// Execute a plugin under the given execution policy.
 pub fn run_plugin_with_policy(
     manifest: &PluginManifest,
     request: &PluginRequest,
@@ -232,6 +238,7 @@ pub fn run_plugin_with_policy(
     parse_plugin_response(manifest, &stdout)
 }
 
+/// Execute a plugin for multiple payloads with default execution policy.
 pub fn run_plugin_batch(
     manifest: &PluginManifest,
     stage: PluginStage,
@@ -240,6 +247,7 @@ pub fn run_plugin_batch(
     run_plugin_batch_with_policy(manifest, stage, payloads, &PluginExecutionPolicy::default())
 }
 
+/// Execute a plugin for multiple payloads under the given execution policy.
 pub fn run_plugin_batch_with_policy(
     manifest: &PluginManifest,
     stage: PluginStage,
@@ -402,6 +410,7 @@ fn run_plugin_raw<T: Serialize>(
     })
 }
 
+/// Return a JSON summary of the manifest's declared schemas and capabilities.
 pub fn manifest_contract_summary(manifest: &PluginManifest) -> Value {
     serde_json::json!({
         "input_schema": manifest.input_schema,
@@ -664,9 +673,12 @@ fn join_pipe_reader(
 }
 
 fn wait_for_plugin_exit(timeout_ms: Option<u64>, child: &mut Child) -> Result<(ExitStatus, bool)> {
+    const MAX_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
     if let Some(timeout_ms) = timeout_ms {
         let timeout = Duration::from_millis(timeout_ms);
         let started_at = Instant::now();
+        let mut poll_interval = Duration::from_millis(10);
         loop {
             if let Some(status) = child.try_wait()? {
                 return Ok((status, false));
@@ -676,7 +688,8 @@ fn wait_for_plugin_exit(timeout_ms: Option<u64>, child: &mut Child) -> Result<(E
                 let status = child.wait()?;
                 return Ok((status, true));
             }
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(poll_interval);
+            poll_interval = (poll_interval * 2).min(MAX_POLL_INTERVAL);
         }
     }
 

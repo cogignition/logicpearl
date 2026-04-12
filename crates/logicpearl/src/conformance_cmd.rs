@@ -1,12 +1,82 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use logicpearl_conformance::{
     build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest,
     write_artifact_manifest, DecisionTraceRow as ConformanceDecisionTraceRow,
 };
 use logicpearl_verify::{load_formal_spec, verify_gate_against_formal_spec};
 use std::collections::BTreeMap;
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl conformance write-manifest --output output/artifact_manifest.json --artifact pearl=output/artifact.json --data traces=examples/getting_started/decision_traces.csv"
+)]
+pub(crate) struct ConformanceWriteManifestArgs {
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Repeated key=value source-control entries such as root_commit=abc123.
+    #[arg(long = "source-control")]
+    pub source_control: Vec<String>,
+    /// Repeated key=path source file entries.
+    #[arg(long = "source")]
+    pub source: Vec<String>,
+    /// Repeated key=path data file entries.
+    #[arg(long = "data")]
+    pub data: Vec<String>,
+    /// Repeated key=path artifact entries.
+    #[arg(long = "artifact")]
+    pub artifact: Vec<String>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl conformance validate-artifacts output/artifact_manifest.json --json"
+)]
+pub(crate) struct ConformanceValidateArtifactsArgs {
+    pub manifest_json: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json\n  logicpearl conformance runtime-parity examples/getting_started/output/pearl.ir.json examples/getting_started/decision_traces.csv --label-column allowed --json"
+)]
+pub(crate) struct ConformanceRuntimeParityArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub pearl_ir: PathBuf,
+    /// Labeled decision traces to compare against runtime behavior.
+    #[arg(value_name = "TRACES")]
+    pub decision_traces_csv: PathBuf,
+    #[arg(long)]
+    pub label_column: Option<String>,
+    #[arg(long, help_heading = "Advanced")]
+    pub default_label: Option<String>,
+    #[arg(long, help_heading = "Advanced")]
+    pub rule_label: Option<String>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json\n  logicpearl conformance spec-verify examples/getting_started/output/pearl.ir.json examples/getting_started/access_policy.spec.json --json"
+)]
+pub(crate) struct ConformanceSpecVerifyArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub pearl_ir: PathBuf,
+    /// Formal spec JSON using LogicPearl expressions under rules[].deny_when.
+    #[arg(value_name = "SPEC")]
+    pub spec_json: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
 
 pub(crate) fn run_conformance_write_manifest(args: ConformanceWriteManifestArgs) -> Result<()> {
     let source_control = parse_key_value_entries(&args.source_control, "source-control")?;

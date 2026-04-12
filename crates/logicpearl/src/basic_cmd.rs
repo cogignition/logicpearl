@@ -1,10 +1,241 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum QuickstartTopic {
+    Traces,
+    Build,
+    Pipeline,
+    Benchmark,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum DiscoveryDecisionModeArg {
+    Standard,
+    Review,
+}
+
+pub(crate) fn to_discovery_decision_mode(arg: DiscoveryDecisionModeArg) -> DiscoveryDecisionMode {
+    match arg {
+        DiscoveryDecisionModeArg::Standard => DiscoveryDecisionMode::Standard,
+        DiscoveryDecisionModeArg::Review => DiscoveryDecisionMode::Review,
+    }
+}
+
+#[derive(Debug, Args)]
+#[command(after_help = QUICKSTART_AFTER_HELP)]
+pub(crate) struct QuickstartArgs {
+    /// Optional quickstart path to focus on.
+    pub topic: Option<QuickstartTopic>,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+)]
+pub(crate) struct BuildArgs {
+    /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
+    #[arg(value_name = "TRACES")]
+    pub decision_traces: Option<PathBuf>,
+    /// Directory to write the named artifact bundle into.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Gate ID to embed in the emitted pearl.
+    #[arg(long)]
+    pub gate_id: Option<String>,
+    /// Decision label column. If omitted, LogicPearl infers it when there is one unambiguous binary candidate.
+    #[arg(long)]
+    pub label_column: Option<String>,
+    /// Column containing a multi-action label such as water, fertilize, repot, or do_nothing.
+    #[arg(long)]
+    pub action_column: Option<String>,
+    /// Default/pass value for binary gate builds. Rules fire for the other value unless --rule-label is set.
+    #[arg(long, help_heading = "Advanced")]
+    pub default_label: Option<String>,
+    /// Rule/fire value for binary gate builds.
+    #[arg(long, help_heading = "Advanced")]
+    pub rule_label: Option<String>,
+    /// Default action when no action route matches. If omitted, LogicPearl prefers do_nothing, wait, none, or noop when present.
+    #[arg(long, help_heading = "Advanced")]
+    pub default_action: Option<String>,
+    /// Do not generate starter feature metadata when --feature-dictionary is omitted.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub raw_feature_ids: bool,
+    /// Plugin manifest for a trace-source plugin that emits decision traces over JSON.
+    #[arg(long, help_heading = "Advanced")]
+    pub trace_plugin_manifest: Option<PathBuf>,
+    /// Source passed to the trace-source plugin.
+    #[arg(long, help_heading = "Advanced")]
+    pub trace_plugin_input: Option<String>,
+    /// Repeated key=value options passed through to the trace-source plugin payload.
+    #[arg(long = "trace-plugin-option", help_heading = "Advanced")]
+    pub trace_plugin_options: Vec<String>,
+    /// Plugin manifest for an enricher plugin that transforms decision traces over JSON.
+    #[arg(long, help_heading = "Advanced")]
+    pub enricher_plugin_manifest: Option<PathBuf>,
+    /// Repeated key=value source references to record in build_report.json, such as document_id=claim_1234.
+    #[arg(long = "source-ref", help_heading = "Advanced")]
+    pub source_references: Vec<String>,
+    /// Tighten over-broad rules using unique-coverage refinement over binary features.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub refine: bool,
+    /// JSON file of pinned rules to merge after discovery and refinement.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub pinned_rules: Option<PathBuf>,
+    /// JSON feature dictionary that gives raw feature IDs readable labels, states, and provenance.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub feature_dictionary: Option<PathBuf>,
+    /// JSON file declaring feature governance such as one-sided boolean evidence.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub feature_governance: Option<PathBuf>,
+    /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
+    #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
+    pub discovery_mode: DiscoveryDecisionModeArg,
+    /// Also compile native and Wasm deployables after writing the artifact bundle.
+    #[arg(long, help_heading = "Advanced")]
+    pub compile: bool,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
+)]
+pub(crate) struct DiscoverArgs {
+    /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
+    #[arg(value_name = "DATASET")]
+    pub dataset_csv: PathBuf,
+    /// Single binary target column to learn.
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Comma-delimited binary target columns to learn.
+    #[arg(long, value_delimiter = ',')]
+    pub targets: Vec<String>,
+    /// Directory to write artifacts, artifact_set.json, and discover_report.json into.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Stable artifact set identifier.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub artifact_set_id: Option<String>,
+    /// Enable solver-backed conjunction recovery and a second residual pass on each target.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub residual_pass: bool,
+    /// Tighten over-broad rules using unique-coverage refinement over binary features.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub refine: bool,
+    /// JSON file of pinned rules to merge after discovery and refinement.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub pinned_rules: Option<PathBuf>,
+    /// JSON feature dictionary that gives raw feature IDs readable labels, states, and provenance.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub feature_dictionary: Option<PathBuf>,
+    /// JSON file declaring feature governance such as one-sided boolean evidence.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub feature_governance: Option<PathBuf>,
+    /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
+    #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
+    pub discovery_mode: DiscoveryDecisionModeArg,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl run examples/getting_started/output examples/getting_started/new_input.json\n  logicpearl run examples/getting_started/output -\n  cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output\n  logicpearl run examples/getting_started/output/pearl.ir.json examples/getting_started/new_input.json\n  logicpearl run today.json --explain"
+)]
+pub(crate) struct RunArgs {
+    /// Artifact path, or input path when logicpearl.yaml provides run.artifact.
+    #[arg(value_name = "ARTIFACT_OR_INPUT")]
+    pub pearl_ir: Option<PathBuf>,
+    /// Input JSON file, `-` for stdin, or omit to read stdin or the configured example input.
+    #[arg(value_name = "INPUT")]
+    pub input_json: Option<PathBuf>,
+    /// Print matched rules and readable action output instead of only the raw bitmask.
+    #[arg(long)]
+    pub explain: bool,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Example:\n  logicpearl compose --pipeline-id starter_authz --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json"
+)]
+pub(crate) struct ComposeArgs {
+    /// Stable pipeline identifier for the emitted starter artifact.
+    #[arg(long)]
+    pub pipeline_id: String,
+    /// Output path for the generated pipeline.json.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Pearl artifacts to compose into a starter pipeline.
+    pub artifacts: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Requirements:\n  Same-host native compile is self-contained and copies the installed LogicPearl runner.\n  Wasm and non-host --target builds shell out to `cargo build --offline --release`.\n  Those Cargo-backed paths need Rust/Cargo, cached dependencies, and any requested\n  Rust target or linker/toolchain.\n\nExamples:\n  logicpearl compile examples/getting_started/output\n  logicpearl compile examples/getting_started/output --target wasm32-unknown-unknown\n  logicpearl compile examples/getting_started/output/pearl.ir.json --name authz-demo --target x86_64-unknown-linux-gnu"
+)]
+pub(crate) struct CompileArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub pearl_ir: PathBuf,
+    /// Rust target triple, for example x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, or wasm32-unknown-unknown.
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Pearl artifact name. Defaults to the gate id.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Output path. Defaults to <name>.pearl, <name>.pearl.exe, or <name>.pearl.wasm depending on target.
+    #[arg(long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl inspect examples/getting_started/output --json\n  logicpearl inspect examples/getting_started/output/pearl.ir.json --json"
+)]
+pub(crate) struct InspectArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub pearl_ir: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Plugin trust:\n  verify executes the local program declared by --plugin-manifest.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl verify examples/getting_started/output --plugin-manifest examples/plugins/python_verify/manifest.json --json\n  logicpearl verify examples/getting_started/output/pearl.ir.json --plugin-manifest examples/plugins/python_verify/manifest.json --json"
+)]
+pub(crate) struct VerifyArgs {
+    /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub pearl_ir: PathBuf,
+    /// Plugin manifest for the verifier backend.
+    #[arg(long)]
+    pub plugin_manifest: PathBuf,
+    /// Optional fixtures or cases payload passed through to the verifier.
+    #[arg(long)]
+    pub fixtures: Option<PathBuf>,
+    #[command(flatten)]
+    pub plugin_execution: PluginExecutionArgs,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 struct LogicPearlProjectConfig {

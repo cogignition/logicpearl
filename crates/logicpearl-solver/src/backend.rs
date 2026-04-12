@@ -9,6 +9,7 @@ pub const SOLVER_BACKEND_ENV: &str = "LOGICPEARL_SOLVER_BACKEND";
 pub const SOLVER_TIMEOUT_MS_ENV: &str = "LOGICPEARL_SOLVER_TIMEOUT_MS";
 pub const SOLVER_DIR_ENV: &str = "LOGICPEARL_SOLVER_DIR";
 
+/// Which SMT solver executable to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SolverBackend {
@@ -33,6 +34,7 @@ pub enum SolverMode {
     Require(SolverBackend),
 }
 
+/// Runtime settings for solver invocation: backend selection and timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SolverSettings {
     pub mode: SolverMode,

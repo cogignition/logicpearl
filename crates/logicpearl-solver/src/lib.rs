@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
+/// Satisfiability status returned by an SMT solver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SatStatus {
@@ -22,6 +23,7 @@ pub enum SatStatus {
     Unknown,
 }
 
+/// Diagnostic report from a single solver invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SolverRunReport {
     pub backend_used: SolverBackend,
@@ -32,12 +34,14 @@ pub struct SolverRunReport {
     pub stderr: String,
 }
 
+/// Result of a satisfiability check, including the solver run report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SatResult {
     pub status: SatStatus,
     pub report: SolverRunReport,
 }
 
+/// Result of a satisfiability check that also extracts variable bindings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueResult {
     pub status: SatStatus,
@@ -48,6 +52,7 @@ pub struct ValueResult {
     pub report: SolverRunReport,
 }
 
+/// Result of a boolean-selection solve, listing which boolean variables are true.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoolSelectionResult {
     pub status: SatStatus,
@@ -56,6 +61,7 @@ pub struct BoolSelectionResult {
     pub report: SolverRunReport,
 }
 
+/// Whether to minimize or maximize an objective expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectiveDirection {
@@ -63,6 +69,7 @@ pub enum ObjectiveDirection {
     Maximize,
 }
 
+/// A single objective in a lexicographic optimization sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LexObjective {
     pub direction: ObjectiveDirection,
@@ -85,6 +92,7 @@ impl LexObjective {
     }
 }
 
+/// Run an SMT script and return whether the formula is satisfiable.
 pub fn check_sat(script: &str, settings: &SolverSettings) -> Result<SatResult> {
     let output = run_solver_script(script, settings, false)?;
     Ok(SatResult {
@@ -93,6 +101,7 @@ pub fn check_sat(script: &str, settings: &SolverSettings) -> Result<SatResult> {
     })
 }
 
+/// Run an SMT script and extract variable bindings when satisfiable.
 pub fn check_sat_with_values(script: &str, settings: &SolverSettings) -> Result<ValueResult> {
     let output = run_solver_script(script, settings, true)?;
     let raw_values = stdout_tail(&output.stdout);
@@ -109,6 +118,7 @@ pub fn check_sat_with_values(script: &str, settings: &SolverSettings) -> Result<
     })
 }
 
+/// Solve and return which boolean variables with the given prefix are true.
 pub fn solve_keep_bools(
     script: &str,
     keep_prefix: &str,
@@ -125,6 +135,7 @@ pub fn solve_keep_bools(
     )
 }
 
+/// Solve with lexicographic objectives and return selected boolean variables.
 pub fn solve_keep_bools_lexicographic(
     preamble: &str,
     objectives: &[LexObjective],

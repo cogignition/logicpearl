@@ -1,0 +1,63 @@
+const FEATURE_COUNT: usize = {feature_count};
+const LOGICPEARL_STATUS_OK: u32 = 0;
+const LOGICPEARL_STATUS_NULL_PTR: u32 = 1;
+const LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;
+
+{helpers}
+
+fn evaluate(values: &[f64]) -> u64 {
+    let mut bitmask = 0u64;
+{derived_assignments}{rules}    bitmask
+}
+
+#[inline]
+fn validate_slots(ptr: *const f64, len: usize) -> u32 {
+    if ptr.is_null() {
+        return LOGICPEARL_STATUS_NULL_PTR;
+    }
+    if len < FEATURE_COUNT {
+        return LOGICPEARL_STATUS_INSUFFICIENT_LEN;
+    }
+    LOGICPEARL_STATUS_OK
+}
+
+#[no_mangle]
+pub extern "C" fn logicpearl_alloc(len: usize) -> *mut u8 {
+    let mut bytes = Vec::<u8>::with_capacity(len);
+    let ptr = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    ptr
+}
+
+#[no_mangle]
+pub extern "C" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr, 0, capacity);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn logicpearl_eval_status_slots_f64(ptr: *const f64, len: usize) -> u32 {
+    validate_slots(ptr, len)
+}
+
+#[no_mangle]
+pub extern "C" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {
+    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {
+        return 0;
+    }
+    let values = unsafe { std::slice::from_raw_parts(ptr, len) };
+    evaluate(values)
+}
+
+#[no_mangle]
+pub extern "C" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {
+    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {
+        return 2;
+    }
+    let values = unsafe { std::slice::from_raw_parts(ptr, len) };
+    if evaluate(values) == 0 { 1 } else { 0 }
+}

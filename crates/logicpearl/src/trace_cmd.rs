@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
+use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
 use logicpearl_ir::{
@@ -20,6 +21,67 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum TraceFormatArg {
+    Csv,
+    Jsonl,
+    Json,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl\n  logicpearl traces generate spec.yaml --output /tmp/traces.csv --format csv --rows 500 --seed 7 --json"
+)]
+pub(crate) struct TraceGenerateArgs {
+    /// Trace-generation spec in JSON, JSON5-style JSON, YAML, or YML form.
+    pub spec: PathBuf,
+    /// Where to write the generated trace dataset.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Output format. If omitted, LogicPearl infers it from the output extension.
+    #[arg(long, value_enum)]
+    pub format: Option<TraceFormatArg>,
+    /// Override the spec row count.
+    #[arg(long)]
+    pub rows: Option<usize>,
+    /// Override the spec RNG seed.
+    #[arg(long)]
+    pub seed: Option<u64>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json\n  logicpearl traces audit traces.csv --label-column allowed --nuisance-fields session_age_minutes,request_id --fail-on-skew --json\n  logicpearl traces audit traces.jsonl --write-feature-governance /tmp/feature_governance.json"
+)]
+pub(crate) struct TraceAuditArgs {
+    /// Decision trace dataset to inspect.
+    pub traces: PathBuf,
+    /// Optional generation spec to reuse label-column and field-role metadata.
+    #[arg(long)]
+    pub spec: Option<PathBuf>,
+    /// Explicit label column when not using a spec.
+    #[arg(long)]
+    pub label_column: Option<String>,
+    /// Comma-delimited list of nuisance/background fields that should not drift by label.
+    #[arg(long, value_delimiter = ',')]
+    pub nuisance_fields: Vec<String>,
+    /// Drift score threshold above which a field is considered suspicious.
+    #[arg(long, default_value_t = 0.15)]
+    pub drift_threshold: f64,
+    /// Exit non-zero when any nuisance field exceeds the drift threshold.
+    #[arg(long)]
+    pub fail_on_skew: bool,
+    /// Write a starter feature-governance JSON file with automatic suggestions.
+    #[arg(long)]
+    pub write_feature_governance: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
 
 const TRACE_SPEC_VERSION: &str = "1.0";
 const DEFAULT_TRACE_AUDIT_DRIFT_THRESHOLD: f64 = 0.15;
