@@ -322,7 +322,7 @@ At lines 101-105, change to clearly explain these are alternatives:
 Install the public CLI once, then explore:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
+# Install with the verified release bundle flow in docs/install.md, then:
 logicpearl quickstart          # interactive menu of all quickstart paths
 logicpearl quickstart build    # jump directly to the build walkthrough
 ```
@@ -626,7 +626,7 @@ Add to README after the initial quickstart block:
 For a more compelling example with multiple features and non-obvious rules:
 
 ```bash
-logicpearl trace examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.csv
+logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.csv
 logicpearl build /tmp/synthetic_traces.csv --output-dir /tmp/synthetic-pearl
 logicpearl inspect /tmp/synthetic-pearl
 ```

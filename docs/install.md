@@ -1,25 +1,70 @@
 # Install LogicPearl
 
-The easiest way to get started is the prebuilt installer. It installs:
+The recommended public CLI path is a prebuilt release bundle that you download, verify against its published SHA-256 checksum, then extract locally. The bundle includes:
 
 - `logicpearl`
 - a bundled `z3`
-- verifies the downloaded release archive against its published SHA-256 checksum
+- `bundle_manifest.json`
+- license and notice files
 
-That is the normal public CLI path. You do not need to install Z3 separately first.
+You do not need to install Z3 separately for the prebuilt path.
 
-## Fastest Install
+## Homebrew
+
+After the Homebrew tap is published for a release, install with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
+brew install LogicPearlHQ/tap/logicpearl
 logicpearl quickstart
 ```
 
-By default the installer:
+The tap formula is generated from the same GitHub Release bundle checksums used by the manual verified install path below. See [packaging/homebrew](../packaging/homebrew/) for the release automation.
 
-- stores versioned bundles under `~/.logicpearl/releases`
-- points `~/.logicpearl/current` at the active version
-- creates `logicpearl` and `z3` symlinks in `~/.local/bin`
+## Verified Bundle Install
+
+Choose the target that matches your machine:
+
+- `x86_64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+
+Then download the release archive and checksum sidecar:
+
+```bash
+TARGET="aarch64-apple-darwin"
+BASE="https://github.com/LogicPearlHQ/logicpearl/releases/latest/download"
+ARCHIVE="logicpearl-${TARGET}.tar.gz"
+INSTALL_DIR="$(mktemp -d)"
+
+curl -fsSL "$BASE/$ARCHIVE" -o "$INSTALL_DIR/$ARCHIVE"
+curl -fsSL "$BASE/$ARCHIVE.sha256" -o "$INSTALL_DIR/$ARCHIVE.sha256"
+EXPECTED="$(awk 'NF { print $1; exit }' "$INSTALL_DIR/$ARCHIVE.sha256")"
+ACTUAL="$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$INSTALL_DIR/$ARCHIVE"; else shasum -a 256 "$INSTALL_DIR/$ARCHIVE"; fi | awk '{ print $1 }')"
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "checksum mismatch for $ARCHIVE" >&2
+  exit 1
+fi
+
+tar -xzf "$INSTALL_DIR/$ARCHIVE" -C "$INSTALL_DIR"
+BUNDLE_DIR="$(find "$INSTALL_DIR" -maxdepth 1 -type d -name "logicpearl-v*-${TARGET}" | head -n 1)"
+if [ -z "$BUNDLE_DIR" ]; then
+  echo "downloaded archive did not contain a LogicPearl bundle directory" >&2
+  exit 1
+fi
+export PATH="$BUNDLE_DIR/bin:$PATH"
+
+logicpearl quickstart
+```
+
+That `export PATH=...` line is session-local. For a persistent install:
+
+```bash
+mkdir -p "$HOME/.logicpearl/releases" "$HOME/.local/bin"
+cp -R "$BUNDLE_DIR" "$HOME/.logicpearl/releases/"
+ln -sfn "$HOME/.logicpearl/releases/$(basename "$BUNDLE_DIR")" "$HOME/.logicpearl/current"
+ln -sfn "$HOME/.logicpearl/current/bin/logicpearl" "$HOME/.local/bin/logicpearl"
+ln -sfn "$HOME/.logicpearl/current/bin/z3" "$HOME/.local/bin/z3"
+```
 
 If `~/.local/bin` is not already on your `PATH`, add it:
 
@@ -31,23 +76,37 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 ```
 
-## Supported Prebuilt Targets
-
-The installer currently resolves these release bundles:
-
-- `x86_64-unknown-linux-gnu`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-
-Prebuilt Windows and Linux arm64 bundles are not published yet. If your machine is outside the set above, use the source-install path below.
-
 ## Install A Specific Version
 
+Use a versioned release URL instead of `latest`:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.4
+VERSION="0.1.5"
+TARGET="aarch64-apple-darwin"
+BASE="https://github.com/LogicPearlHQ/logicpearl/releases/download/v${VERSION}"
+ARCHIVE="logicpearl-${TARGET}.tar.gz"
 ```
 
-## Custom Install Locations
+Then run the same download, checksum, extraction, and PATH steps from the verified bundle flow.
+
+## Convenience Installer
+
+The installer performs the same archive download and checksum verification, then installs versioned bundles under `~/.logicpearl/releases` and symlinks `logicpearl` and `z3` into `~/.local/bin`.
+
+This path executes a shell script fetched from `raw.githubusercontent.com`. Read the script first or use the verified bundle flow above if you do not want to run remote shell code.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
+logicpearl quickstart
+```
+
+Install a specific version with the convenience installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.5
+```
+
+Use custom install locations:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- \
@@ -55,20 +114,15 @@ curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/instal
   --bin-dir "$HOME/.local/bin"
 ```
 
-## Manual Bundle Install
+## Supported Prebuilt Targets
 
-If you prefer not to pipe the installer into `sh`, download the release bundle directly from GitHub Releases and extract it yourself.
+Prebuilt release bundles are currently published for:
 
-Each release bundle also ships with a `.sha256` sidecar file. Verify the archive before extraction if you install it manually.
+- `x86_64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
 
-Each bundle contains:
-
-- `bin/logicpearl`
-- `bin/z3`
-- `bundle_manifest.json`
-- bundle notes and notices
-
-After extraction, put the contents of `bin/` on your `PATH`.
+Prebuilt Windows and Linux arm64 bundles are not published yet. If your machine is outside the set above, use the source-install path below.
 
 ## Source Install
 

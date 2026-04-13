@@ -45,7 +45,45 @@ LogicPearl does not require AI. AI is useful for generating examples, extracting
 Quick runnable path with checked-in input/output traces:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
+brew install LogicPearlHQ/tap/logicpearl
+
+git clone https://github.com/LogicPearlHQ/logicpearl.git
+cd logicpearl
+
+logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
+logicpearl inspect /tmp/logicpearl-output
+logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
+```
+
+No Homebrew tap yet? Use the verified release bundle directly:
+
+```bash
+# Choose one: x86_64-unknown-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin.
+TARGET="aarch64-apple-darwin"
+BASE="https://github.com/LogicPearlHQ/logicpearl/releases/latest/download"
+ARCHIVE="logicpearl-${TARGET}.tar.gz"
+INSTALL_DIR="$(mktemp -d)"
+
+curl -fsSL "$BASE/$ARCHIVE" -o "$INSTALL_DIR/$ARCHIVE"
+curl -fsSL "$BASE/$ARCHIVE.sha256" -o "$INSTALL_DIR/$ARCHIVE.sha256"
+EXPECTED="$(awk 'NF { print $1; exit }' "$INSTALL_DIR/$ARCHIVE.sha256")"
+ACTUAL="$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$INSTALL_DIR/$ARCHIVE"; else shasum -a 256 "$INSTALL_DIR/$ARCHIVE"; fi | awk '{ print $1 }')"
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "checksum mismatch for $ARCHIVE" >&2
+  exit 1
+fi
+
+tar -xzf "$INSTALL_DIR/$ARCHIVE" -C "$INSTALL_DIR"
+BUNDLE_DIR="$(find "$INSTALL_DIR" -maxdepth 1 -type d -name "logicpearl-v*-${TARGET}" | head -n 1)"
+if [ -z "$BUNDLE_DIR" ]; then
+  echo "downloaded archive did not contain a LogicPearl bundle directory" >&2
+  exit 1
+fi
+export PATH="$BUNDLE_DIR/bin:$PATH"
+
+git clone https://github.com/LogicPearlHQ/logicpearl.git
+cd logicpearl
+
 logicpearl build examples/getting_started/decision_traces.csv --output-dir /tmp/logicpearl-output
 logicpearl inspect /tmp/logicpearl-output
 logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
@@ -58,7 +96,7 @@ New here? Read [Terminology](./TERMINOLOGY.md) first.
 For a more compelling example with multiple features and non-obvious rules:
 
 ```bash
-logicpearl trace examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.csv
+logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.csv
 logicpearl build /tmp/synthetic_traces.csv --output-dir /tmp/synthetic-pearl
 logicpearl inspect /tmp/synthetic-pearl
 ```
@@ -103,27 +141,26 @@ The repository includes:
 If you are new, start with the public quickstart command.
 
 Prerequisites:
-- a supported macOS or Linux machine for the prebuilt installer
+- a supported macOS or Linux machine for the prebuilt bundle
 - a willingness to treat logic as a build artifact instead of application glue
 
-Install the public CLI once, then ask it for the shortest runnable path:
+Install the public CLI with Homebrew or the verified release bundle flow above, then ask it for the shortest runnable path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh
 logicpearl quickstart
 logicpearl quickstart build
 ```
 
 Either command works — `quickstart` shows an interactive menu; `quickstart build` jumps directly to the build walkthrough.
 
-The prebuilt installer:
-- installs a versioned LogicPearl bundle under `~/.logicpearl`
-- installs the `logicpearl` command into `~/.local/bin`
+The prebuilt bundle:
+- includes `logicpearl` and `z3`
+- can be used session-locally or installed under `~/.logicpearl`
 - keeps the default build path working without separate dependency setup
 
-> **How discovery works:** `logicpearl build` uses an SMT solver (z3, bundled with the installer) to discover exact decision rules from your training data. A pure-Rust MIP fallback is available via `LOGICPEARL_SOLVER_BACKEND=mip`. The runtime evaluator is pure Rust with no external dependencies.
+> **How discovery works:** `logicpearl build` uses an SMT solver (z3, bundled with the prebuilt release bundle) to discover exact decision rules from your training data. A pure-Rust MIP fallback is available via `LOGICPEARL_SOLVER_BACKEND=mip`. The runtime evaluator is pure Rust with no external dependencies.
 
-Full install details and manual bundle instructions live in [docs/install.md](./docs/install.md).
+Full install details, persistent symlink setup, and the convenience installer live in [docs/install.md](./docs/install.md).
 
 To run the checked-in getting-started example:
 
@@ -148,8 +185,8 @@ cargo run --manifest-path Cargo.toml -p logicpearl -- <command>
 ```
 
 Practical rule:
-- the prebuilt installer is the easiest path for normal CLI usage
-- `cargo install logicpearl` is the source-build path
+- the verified prebuilt release bundle is the recommended path for normal CLI usage
+- `cargo install --path crates/logicpearl` is the source-build path from a cloned repository
 - this README's file paths are repository-relative unless stated otherwise
 - if you only installed from crates.io, point `logicpearl` at your own trace dataset or clone the repository for the checked-in examples
 - `logicpearl quickstart` is the best first command when you are learning the surface

@@ -16,9 +16,10 @@ use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -294,7 +295,7 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
             let pearl_ir = load_manifest_pearl_ir(&manifest_path)?;
             return Ok(ResolvedArtifactInput {
                 artifact_dir: path.to_path_buf(),
-                pearl_ir: resolve_manifest_path(&manifest_path, &pearl_ir),
+                pearl_ir: resolve_manifest_path(&manifest_path, &pearl_ir)?,
             });
         }
 
@@ -322,7 +323,7 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
                 .parent()
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf(),
-            pearl_ir: resolve_manifest_path(path, &pearl_ir),
+            pearl_ir: resolve_manifest_path(path, &pearl_ir)?,
         });
     }
 
@@ -817,7 +818,7 @@ fn insert_file_hash(
     let Some(relative_path) = relative_path else {
         return Ok(());
     };
-    let path = resolve_manifest_member_path(base_dir, relative_path);
+    let path = resolve_manifest_member_path(base_dir, relative_path)?;
     if path.exists() {
         file_hashes.insert(role.to_string(), hash_file_canonical_if_json(&path)?);
     }
@@ -959,7 +960,7 @@ pub(crate) fn run_artifact_verify(args: ArtifactVerifyArgs) -> Result<()> {
 
 fn inspect_artifact(path: &Path) -> Result<ArtifactManifestInspection> {
     let context = load_artifact_manifest_context(path)?;
-    let resolved_files = resolved_manifest_files(&context.base_dir, &context.manifest.files);
+    let resolved_files = resolved_manifest_files(&context.base_dir, &context.manifest.files)?;
     Ok(ArtifactManifestInspection {
         manifest_path: context
             .manifest_path
@@ -997,7 +998,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
             }),
     );
 
-    let ir_path = resolve_manifest_member_path(&context.base_dir, &context.manifest.files.ir);
+    let ir_path = resolve_manifest_member_path(&context.base_dir, &context.manifest.files.ir)?;
     push_check(
         &mut checks,
         "files.ir_exists",
@@ -1044,7 +1045,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         .into_iter()
         .filter(|(role, _)| role != "ir")
     {
-        let path = resolve_manifest_member_path(&context.base_dir, &relative_path);
+        let path = resolve_manifest_member_path(&context.base_dir, &relative_path)?;
         push_check(
             &mut checks,
             format!("files.{role}_exists"),
@@ -1069,7 +1070,7 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         context.manifest.files.feature_dictionary.as_ref(),
         context.manifest.feature_dictionary_hash.as_ref(),
     ) {
-        let dictionary_path = resolve_manifest_member_path(&context.base_dir, path);
+        let dictionary_path = resolve_manifest_member_path(&context.base_dir, path)?;
         if dictionary_path.exists() {
             let actual = hash_file_canonical_if_json(&dictionary_path)?;
             push_check(
@@ -1232,7 +1233,7 @@ fn legacy_manifest_from_value(base_dir: &Path, value: &Value) -> Result<Artifact
         .and_then(Value::as_str)
         .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))?
         .to_string();
-    let ir_path = resolve_manifest_member_path(base_dir, &ir);
+    let ir_path = resolve_manifest_member_path(base_dir, &ir)?;
     let ir_value = read_json_file(&ir_path)?;
     let (artifact_kind, artifact_id, ir_version, input_schema_hash) =
         artifact_identity_from_value(&ir_value)?;
@@ -1466,16 +1467,13 @@ fn manifest_file_roles(files: &ArtifactManifestFiles) -> Vec<(String, String)> {
 fn resolved_manifest_files(
     base_dir: &Path,
     files: &ArtifactManifestFiles,
-) -> BTreeMap<String, String> {
+) -> Result<BTreeMap<String, String>> {
     manifest_file_roles(files)
         .into_iter()
         .map(|(role, path)| {
-            (
-                role,
-                resolve_manifest_member_path(base_dir, &path)
-                    .display()
-                    .to_string(),
-            )
+            let resolved = resolve_manifest_member_path(base_dir, &path)
+                .wrap_err_with(|| format!("invalid manifest file path for {role}"))?;
+            Ok((role, resolved.display().to_string()))
         })
         .collect()
 }
@@ -2491,32 +2489,102 @@ fn load_manifest_pearl_ir(path: &Path) -> Result<String> {
         .ok_or_else(|| miette::miette!("artifact manifest is missing files.ir"))
 }
 
-pub(crate) fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> PathBuf {
+pub(crate) fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> Result<PathBuf> {
     let candidate = PathBuf::from(raw_path);
-    if candidate.is_absolute() {
-        return candidate;
-    }
-
-    let joined = base_dir.join(&candidate);
+    let joined = resolve_manifest_member_relative_path(base_dir, &candidate, raw_path)?;
     if joined.exists() {
-        return joined;
+        return Ok(joined);
     }
 
     if let Some(relative) = manifest_member_without_base_prefix(base_dir, &candidate) {
-        let repaired = base_dir.join(relative);
+        let repaired = resolve_manifest_member_relative_path(base_dir, &relative, raw_path)?;
         if repaired.exists() {
-            return repaired;
+            return Ok(repaired);
         }
     }
 
-    if candidate.exists() {
-        return candidate;
-    }
-
-    joined
+    Ok(joined)
 }
 
-fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> PathBuf {
+fn resolve_manifest_member_relative_path(
+    base_dir: &Path,
+    candidate: &Path,
+    raw_path: &str,
+) -> Result<PathBuf> {
+    let relative = normalize_manifest_member_path(candidate, raw_path)?;
+    let joined = base_dir.join(relative);
+    ensure_existing_manifest_member_is_under_base(base_dir, &joined, raw_path)?;
+    Ok(joined)
+}
+
+fn normalize_manifest_member_path(candidate: &Path, raw_path: &str) -> Result<PathBuf> {
+    let mut parts = Vec::<OsString>::new();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return Err(miette::miette!(
+                        "artifact manifest member path escapes artifact directory: {raw_path}"
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(miette::miette!(
+                    "artifact manifest member path must be relative to the artifact directory: {raw_path}"
+                ));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(miette::miette!(
+            "artifact manifest member path is empty and must be relative to the artifact directory"
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for part in parts {
+        normalized.push(part);
+    }
+    Ok(normalized)
+}
+
+fn ensure_existing_manifest_member_is_under_base(
+    base_dir: &Path,
+    path: &Path,
+    raw_path: &str,
+) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let canonical_base = fs::canonicalize(base_dir)
+        .into_diagnostic()
+        .wrap_err_with(|| {
+            format!(
+                "failed to canonicalize artifact directory {}",
+                base_dir.display()
+            )
+        })?;
+    let canonical_path = fs::canonicalize(path).into_diagnostic().wrap_err_with(|| {
+        format!(
+            "failed to canonicalize artifact manifest member {}",
+            path.display()
+        )
+    })?;
+
+    if !canonical_path.starts_with(&canonical_base) {
+        return Err(miette::miette!(
+            "artifact manifest member path escapes artifact directory: {raw_path}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> Result<PathBuf> {
     resolve_manifest_member_path(
         manifest_path.parent().unwrap_or_else(|| Path::new(".")),
         raw_path,
@@ -2657,8 +2725,55 @@ mod tests {
         std::fs::write(artifact_dir.join("pearl.ir.json"), "{}").expect("pearl file");
 
         assert_eq!(
-            resolve_manifest_member_path(&artifact_dir, "gate/pearl.ir.json"),
+            resolve_manifest_member_path(&artifact_dir, "gate/pearl.ir.json")
+                .expect("manifest path should resolve"),
             artifact_dir.join("pearl.ir.json")
+        );
+    }
+
+    #[test]
+    fn manifest_member_paths_cannot_escape_artifact_dir() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let artifact_dir = temp_dir.path().join("artifact");
+        let outside = temp_dir.path().join("outside.json");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        std::fs::write(&outside, "{}").expect("outside file");
+
+        let absolute_error =
+            resolve_manifest_member_path(&artifact_dir, &outside.display().to_string())
+                .expect_err("absolute manifest paths should be rejected")
+                .to_string();
+        assert!(
+            absolute_error.contains("must be relative"),
+            "unexpected error: {absolute_error}"
+        );
+
+        let parent_error = resolve_manifest_member_path(&artifact_dir, "../outside.json")
+            .expect_err("parent escapes should be rejected")
+            .to_string();
+        assert!(
+            parent_error.contains("escapes artifact directory"),
+            "unexpected error: {parent_error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_member_symlinks_cannot_escape_artifact_dir() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let artifact_dir = temp_dir.path().join("artifact");
+        let outside = temp_dir.path().join("outside.json");
+        let link = artifact_dir.join("outside-link.json");
+        std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
+        std::fs::write(&outside, "{}").expect("outside file");
+        std::os::unix::fs::symlink(&outside, &link).expect("symlink should be created");
+
+        let error = resolve_manifest_member_path(&artifact_dir, "outside-link.json")
+            .expect_err("symlink escapes should be rejected")
+            .to_string();
+        assert!(
+            error.contains("escapes artifact directory"),
+            "unexpected error: {error}"
         );
     }
 

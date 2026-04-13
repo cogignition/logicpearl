@@ -16,6 +16,7 @@ All notable user-facing changes should be added here.
 - Versioned `logicpearl.build_provenance.v1` provenance in build reports, including trace hashes, feature dictionary hashes, plugin boundary hashes, redacted build commands, build option hashes, limited environment metadata, and generated artifact file hashes.
 - Versioned `logicpearl.source_manifest.v1` support via `logicpearl build --source-manifest`, with validated source metadata attached to build provenance without changing learned logic or runtime behavior.
 - Versioned `logicpearl.plugin_run_provenance.v1` metadata for plugin-backed builds, plugin command JSON, and plugin-backed pipeline stages, including manifest, entrypoint, input/request/output, timeout, capability, access posture, row-count, timestamp, and redacted stdio hashes.
+- Homebrew tap packaging automation via `cargo xtask generate-homebrew-formula`, with release workflow support for attaching `logicpearl.rb` to GitHub Releases and optionally updating `LogicPearlHQ/homebrew-tap`.
 
 ### Changed
 - `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
@@ -25,6 +26,7 @@ All notable user-facing changes should be added here.
 - Action-policy discovery now preserves ordinal/count generalization across lower-priority actions instead of forcing every action route to learn against rows already captured by higher-priority rules.
 
 ### Fixed
+- Artifact manifest loaders now reject absolute paths, parent-directory escapes, and symlink escapes so manifest members must resolve inside the artifact bundle root.
 - Artifact manifests written from relative `--output-dir` paths no longer double-prefix `files.ir`, and CLI/engine loaders tolerate already-written manifests with that redundant artifact-directory prefix.
 - `deny.toml` no longer uses cargo-deny keys removed by newer cargo-deny releases, and no longer carries stale license check entries that produced warnings.
 - `logicpearl inspect <action_artifact>/pearl.ir.json --json` now recognizes direct action policy IR files instead of trying to parse them as gate IR.

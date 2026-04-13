@@ -42,6 +42,7 @@ Examples:
   cargo xtask clean-generated --apply
   cargo xtask compare-selection-backends
   cargo xtask package-release-bundle --logicpearl-binary target/release/logicpearl --z3-binary /usr/bin/z3 --target-triple x86_64-unknown-linux-gnu --output-dir dist
+  cargo xtask generate-homebrew-formula --version 0.1.5 --dist-dir dist --output packaging/homebrew/Formula/logicpearl.rb
   cargo xtask refresh-benchmarks
   cargo xtask refresh-benchmarks --resume
   cargo xtask refresh-benchmarks --guardrail-sample-size 2000
@@ -64,6 +65,8 @@ enum Commands {
     CompareSelectionBackends(CompareSelectionBackendsArgs),
     /// Package a distributable LogicPearl CLI bundle with a bundled solver.
     PackageReleaseBundle(PackageReleaseBundleArgs),
+    /// Generate a tap-ready Homebrew formula from release bundle checksum files.
+    GenerateHomebrewFormula(GenerateHomebrewFormulaArgs),
     /// Refresh public benchmark bundles, evals, and the quality report.
     RefreshBenchmarks(RefreshBenchmarksArgs),
     #[command(hide = true)]
@@ -107,6 +110,22 @@ struct PackageReleaseBundleArgs {
     /// Override bundle version. Defaults to the workspace version.
     #[arg(long)]
     version: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct GenerateHomebrewFormulaArgs {
+    /// Directory containing logicpearl-<target>.tar.gz.sha256 files.
+    #[arg(long, default_value = "dist")]
+    dist_dir: PathBuf,
+    /// Where to write the generated Formula/logicpearl.rb file.
+    #[arg(long)]
+    output: PathBuf,
+    /// Release version. Defaults to the workspace version.
+    #[arg(long)]
+    version: Option<String>,
+    /// GitHub repository that owns release assets.
+    #[arg(long, default_value = "LogicPearlHQ/logicpearl")]
+    repo: String,
 }
 
 #[derive(Debug, Args)]
@@ -1701,8 +1720,8 @@ This bundle includes:\n\
         readme.push_str("- cvc5\n");
     }
     readme.push_str(
-        "\nInstall by copying the contents of `bin/` onto your PATH, or use the repo installer script:\n\
-  curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh\n",
+        "\nInstall by copying the contents of `bin/` onto your PATH. \
+For persistent install options, see docs/install.md in the LogicPearl repository.\n",
     );
     readme
 }
@@ -1914,6 +1933,136 @@ fn run_package_release_bundle(args: PackageReleaseBundleArgs) -> Result<()> {
     Ok(())
 }
 
+fn read_release_bundle_checksum(dist_dir: &Path, target_triple: &str) -> Result<String> {
+    let checksum_path = dist_dir.join(checksum_name(target_triple));
+    let payload = std::fs::read_to_string(&checksum_path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", checksum_path.display()))?;
+    let checksum = payload
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| miette::miette!("checksum file was empty: {}", checksum_path.display()))?
+        .to_ascii_lowercase();
+    let valid = checksum.len() == 64 && checksum.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid {
+        return Err(miette::miette!(
+            "checksum file did not start with a SHA-256 hex digest: {}",
+            checksum_path.display()
+        ));
+    }
+    Ok(checksum)
+}
+
+fn release_asset_url(repo: &str, version: &str, target_triple: &str) -> String {
+    format!(
+        "https://github.com/{repo}/releases/download/{}/{}",
+        version_tag(version),
+        archive_name(target_triple)
+    )
+}
+
+fn homebrew_formula(
+    version: &str,
+    repo: &str,
+    checksums: &BTreeMap<&str, String>,
+) -> Result<String> {
+    let linux = checksums
+        .get("x86_64-unknown-linux-gnu")
+        .ok_or_else(|| miette::miette!("missing checksum for x86_64-unknown-linux-gnu"))?;
+    let mac_intel = checksums
+        .get("x86_64-apple-darwin")
+        .ok_or_else(|| miette::miette!("missing checksum for x86_64-apple-darwin"))?;
+    let mac_arm = checksums
+        .get("aarch64-apple-darwin")
+        .ok_or_else(|| miette::miette!("missing checksum for aarch64-apple-darwin"))?;
+
+    let linux_url = release_asset_url(repo, version, "x86_64-unknown-linux-gnu");
+    let mac_intel_url = release_asset_url(repo, version, "x86_64-apple-darwin");
+    let mac_arm_url = release_asset_url(repo, version, "aarch64-apple-darwin");
+
+    Ok(format!(
+        r##"# typed: false
+# frozen_string_literal: true
+
+class Logicpearl < Formula
+  desc "Deterministic policy artifacts from observed decision traces"
+  homepage "https://logicpearl.com"
+  version "{version}"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "{mac_arm_url}"
+      sha256 "{mac_arm}"
+    else
+      url "{mac_intel_url}"
+      sha256 "{mac_intel}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.intel?
+      url "{linux_url}"
+      sha256 "{linux}"
+    end
+  end
+
+  depends_on "z3"
+
+  def install
+    bundle = if (buildpath/"bin/logicpearl").exist?
+      buildpath
+    else
+      Pathname.glob(buildpath/"logicpearl-v*-*").first
+    end
+    odie "LogicPearl bundle directory was not found" if bundle.nil?
+
+    bin.install bundle/"bin/logicpearl"
+    pkgshare.install bundle/"bundle_manifest.json" if (bundle/"bundle_manifest.json").exist?
+    doc.install bundle/"README.txt" if (bundle/"README.txt").exist?
+    doc.install bundle/"THIRD_PARTY_NOTICES.txt" if (bundle/"THIRD_PARTY_NOTICES.txt").exist?
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{{bin}}/logicpearl --version")
+    assert_match "quickstart", shell_output("#{{bin}}/logicpearl --help")
+  end
+end
+"##
+    ))
+}
+
+fn run_generate_homebrew_formula(args: GenerateHomebrewFormulaArgs) -> Result<()> {
+    let version = bundle_version(args.version);
+    let mut checksums = BTreeMap::new();
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        checksums.insert(
+            target,
+            read_release_bundle_checksum(&args.dist_dir, target)?,
+        );
+    }
+
+    let formula = homebrew_formula(&version, &args.repo, &checksums)?;
+    if let Some(parent) = args.output.parent() {
+        std::fs::create_dir_all(parent)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&args.output, formula)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", args.output.display()))?;
+    println!(
+        "{} {}",
+        "Generated".bold().bright_green(),
+        args.output.display()
+    );
+    Ok(())
+}
+
 fn detect_bundle_target_triple() -> Result<String> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Ok("aarch64-apple-darwin".to_string()),
@@ -2104,6 +2253,7 @@ fn main() -> Result<()> {
         Commands::CleanGenerated(args) => run_clean_generated(args),
         Commands::CompareSelectionBackends(args) => run_compare_selection_backends(args),
         Commands::PackageReleaseBundle(args) => run_package_release_bundle(args),
+        Commands::GenerateHomebrewFormula(args) => run_generate_homebrew_formula(args),
         Commands::RefreshBenchmarks(args) => run_refresh_benchmarks(args),
         Commands::GuardrailsFreeze(args) => run_refresh_guardrails_freeze(args),
         Commands::GuardrailsBuild(args) => run_refresh_guardrails_build(args),

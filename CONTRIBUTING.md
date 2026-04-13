@@ -167,6 +167,15 @@ cargo xtask package-release-bundle \
   --output-dir dist
 ```
 
+GitHub Release assets are generated automatically when a maintainer pushes a version tag:
+
+```bash
+git tag v0.1.5
+git push origin v0.1.5
+```
+
+The `Release Bundles` workflow builds the Linux and macOS archives, writes `.sha256` sidecars, attaches them to the GitHub Release, and generates a Homebrew `logicpearl.rb` formula from those checksums. If `HOMEBREW_TAP_TOKEN` is configured, the same workflow also pushes the formula to `LogicPearlHQ/homebrew-tap`.
+
 Quality report maintenance is explicit and stays out of the git hooks. Refresh the report when you actually intend to update it:
 
 ```bash

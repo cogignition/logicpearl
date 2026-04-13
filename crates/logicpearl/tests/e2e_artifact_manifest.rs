@@ -67,6 +67,25 @@ fn run_cli(args: &[String]) {
     );
 }
 
+fn run_cli_failure(args: &[String]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_logicpearl"))
+        .args(args)
+        .output()
+        .expect("logicpearl command should run");
+    assert!(
+        !output.status.success(),
+        "logicpearl {:?} should have failed:\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 #[test]
 fn artifact_manifests_validate_and_artifact_commands_work() {
     let root = repo_root();
@@ -181,6 +200,61 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
         "--json".to_string(),
     ]);
     assert_eq!(pipeline_verify["ok"], true);
+}
+
+#[test]
+fn artifact_manifest_member_paths_cannot_escape_bundle_root() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let gate_dir = temp.path().join("gate");
+    let outside_ir = temp.path().join("outside.ir.json");
+
+    run_cli(&[
+        "build".to_string(),
+        root.join("examples/getting_started/decision_traces.csv")
+            .display()
+            .to_string(),
+        "--output-dir".to_string(),
+        gate_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+    fs::copy(gate_dir.join("pearl.ir.json"), &outside_ir).expect("outside IR copy should work");
+
+    let manifest_path = gate_dir.join("artifact.json");
+    let mut manifest = load_json(&manifest_path);
+    manifest["files"]["ir"] = Value::String(outside_ir.display().to_string());
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should encode"),
+    )
+    .expect("manifest should write");
+    let absolute_error = run_cli_failure(&[
+        "artifact".to_string(),
+        "inspect".to_string(),
+        gate_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+    assert!(
+        absolute_error.contains("must be relative"),
+        "unexpected inspect failure:\n{absolute_error}"
+    );
+
+    manifest["files"]["ir"] = Value::String("../outside.ir.json".to_string());
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should encode"),
+    )
+    .expect("manifest should write");
+    let traversal_error = run_cli_failure(&[
+        "artifact".to_string(),
+        "verify".to_string(),
+        gate_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+    assert!(
+        traversal_error.contains("escapes artifact directory"),
+        "unexpected verify failure:\n{traversal_error}"
+    );
 }
 
 #[test]

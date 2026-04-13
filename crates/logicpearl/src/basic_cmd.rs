@@ -3313,7 +3313,7 @@ fn run_action_eval(
     explain: bool,
     json: bool,
 ) -> Result<()> {
-    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir);
+    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir)?;
     let action_policy = LogicPearlActionIr::from_path(action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
@@ -3544,7 +3544,7 @@ fn run_action_inspect(
     manifest: &ActionArtifactManifest,
     json: bool,
 ) -> Result<()> {
-    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir);
+    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir)?;
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
@@ -3553,7 +3553,9 @@ fn run_action_inspect(
     } else {
         Some(manifest.files.action_report.as_str())
     };
-    let report_path = report_file.map(|file| resolve_manifest_member_path(manifest_dir, file));
+    let report_path = report_file
+        .map(|file| resolve_manifest_member_path(manifest_dir, file))
+        .transpose()?;
     let report: Option<Value> = if report_path.as_ref().is_some_and(|path| path.exists()) {
         let report_path = report_path.as_ref().expect("report path should exist");
         Some(
