@@ -26,7 +26,7 @@ At runtime, a pearl does not call a model, spend tokens, or improvise. The same 
   <a href="./schema"><img alt="Schema" src="./docs/assets/badges/artifact-pearl-ir.svg"></a>
 </p>
 
-[Install](./docs/install.md) · [Terminology](./TERMINOLOGY.md) · [Core Loop](#core-loop) · [What You Can Trust](#what-you-can-trust) · [Optional Advanced Workflows](#optional-advanced-workflows) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
+[Install](./docs/install.md) · [Terminology](./TERMINOLOGY.md) · [Core Loop](#core-loop) · [What You Can Trust](#what-you-can-trust) · [Open Core](#open-core-policy) · [Roadmap](./ROADMAP.md) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
 
 ## Install
 
@@ -307,6 +307,28 @@ If it needs plugins, files, secrets, or server-only adapters, keep it server-sid
 LogicPearl is a single-maintainer project at version 0.1.x. The core engine, CLI, runtime, artifact format, and schemas are MIT licensed.
 
 The core is domain-agnostic. The examples exist to exercise the engine and show integration patterns; they are not special cases built into the core.
+
+## Open Core Policy
+
+The open-source core is the local artifact workflow:
+
+- `logicpearl` CLI: build, inspect, run, diff, compile, and verify
+- Rust crates for IR, runtime, engine loading, discovery, schemas, verification, plugins, pipelines, conformance, rendering, and benchmark adapters
+- published artifact and runtime JSON schemas under [schema](./schema/)
+- `@logicpearl/browser` for browser-safe evaluation of open artifact bundles
+- checked-in examples, fixtures, benchmark protocols, and docs needed to reproduce public claims
+
+Those pieces are MIT licensed and are intended to stay open. New functionality required to build, inspect, run, verify, diff, and reproduce local LogicPearl artifacts belongs in the open core.
+
+Commercial tooling may exist around the core, but not replace it. Examples include hosted trace ingestion, team dashboards, hosted artifact registries, monitoring, review workflows, managed benchmark runs, and enterprise administration.
+
+Telemetry and data posture:
+
+- the local CLI and runtime do not call home during normal use
+- no telemetry or analytics are collected by the local CLI/runtime
+- hosted services, if offered, must document what data they receive, retain, and process
+- customer traces, source manifests, plugin outputs, and artifact contents must not be used for training or benchmarking without explicit permission
+- self-hosted and local artifact workflows must remain usable without a hosted account
 
 Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
