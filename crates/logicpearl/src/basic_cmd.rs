@@ -2597,7 +2597,8 @@ fn build_build_provenance(
     args: &BuildArgs,
     inputs: BuildProvenanceInputs,
 ) -> Result<BuildProvenance> {
-    let source_references = parse_key_value_entries(&args.source_references, "source-ref")?;
+    let raw_source_references = parse_key_value_entries(&args.source_references, "source-ref")?;
+    let source_references = sanitize_source_references(&raw_source_references);
     let decision_trace_source = if let Some(path) = &args.decision_traces {
         Some(BuildInputProvenance {
             kind: "decision_traces_path".to_string(),
@@ -2629,13 +2630,20 @@ fn build_build_provenance(
     if build_command.redacted {
         redactions.push("build_command".to_string());
     }
+    let build_options = sanitize_build_options_for_provenance(&inputs.build_options);
+    if build_options != inputs.build_options {
+        redactions.push("build_options".to_string());
+    }
+    if source_references != raw_source_references {
+        redactions.push("source_references".to_string());
+    }
 
     Ok(BuildProvenance {
         schema_version: "logicpearl.build_provenance.v1".to_string(),
         engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
         engine_commit: resolve_engine_commit(),
         build_command: Some(build_command),
-        build_options: Some(inputs.build_options),
+        build_options: Some(build_options),
         build_options_hash: Some(inputs.build_options_hash),
         input_traces: inputs.input_traces,
         feature_dictionary,
@@ -2770,7 +2778,10 @@ fn redact_cli_flag_value(flag: &str, value: &str) -> (String, bool) {
                 )
             }
         }
-        "--trace-plugin-option" | "--source-ref" => redact_key_value(value),
+        "--trace-plugin-option" => {
+            sanitize_key_value_for_provenance(value, is_safe_plugin_option_key)
+        }
+        "--source-ref" => sanitize_key_value_for_provenance(value, is_safe_source_reference_key),
         other if is_sensitive_key(other.trim_start_matches('-')) => (
             format!("<redacted:{}>", sha256_prefixed(value.as_bytes())),
             true,
@@ -2779,17 +2790,14 @@ fn redact_cli_flag_value(flag: &str, value: &str) -> (String, bool) {
     }
 }
 
-fn redact_key_value(entry: &str) -> (String, bool) {
+fn sanitize_key_value_for_provenance(entry: &str, allow_value: fn(&str) -> bool) -> (String, bool) {
     let Some((key, value)) = entry.split_once('=') else {
         return (entry.to_string(), false);
     };
-    if is_sensitive_key(key) {
-        (
-            format!("{key}=<redacted:{}>", sha256_prefixed(value.as_bytes())),
-            true,
-        )
-    } else {
+    if allow_value(key) {
         (entry.to_string(), false)
+    } else {
+        (format!("{key}={}", redacted_hash(value)), true)
     }
 }
 
@@ -2813,16 +2821,86 @@ fn sanitize_plugin_options(options: &BTreeMap<String, String>) -> BTreeMap<Strin
     options
         .iter()
         .map(|(key, value)| {
-            if is_sensitive_key(key) {
-                (
-                    key.clone(),
-                    format!("<redacted:{}>", sha256_prefixed(value.as_bytes())),
-                )
-            } else {
+            if is_safe_plugin_option_key(key) {
                 (key.clone(), value.clone())
+            } else {
+                (key.clone(), redacted_hash(value))
             }
         })
         .collect()
+}
+
+fn sanitize_source_references(references: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    references
+        .iter()
+        .map(|(key, value)| {
+            if is_safe_source_reference_key(key) {
+                (key.clone(), value.clone())
+            } else {
+                (key.clone(), redacted_hash(value))
+            }
+        })
+        .collect()
+}
+
+fn sanitize_build_options_for_provenance(value: &Value) -> Value {
+    let Value::Object(object) = value else {
+        return redact_provenance_value(value);
+    };
+    let mut sanitized = serde_json::Map::new();
+    for (key, value) in object {
+        if is_safe_build_option_key(key) {
+            sanitized.insert(key.clone(), value.clone());
+        } else {
+            sanitized.insert(key.clone(), redact_provenance_value(value));
+        }
+    }
+    Value::Object(sanitized)
+}
+
+fn redact_provenance_value(value: &Value) -> Value {
+    let bytes = serde_json::to_vec(value).expect("serializing serde_json::Value cannot fail");
+    Value::String(format!("<redacted:{}>", sha256_prefixed(&bytes)))
+}
+
+fn redacted_hash(value: &str) -> String {
+    format!("<redacted:{}>", sha256_prefixed(value.as_bytes()))
+}
+
+fn is_safe_plugin_option_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "label_column" | "action_column" | "dialect" | "format"
+    )
+}
+
+fn is_safe_source_reference_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "source_kind" | "kind" | "data_classification"
+    )
+}
+
+fn is_safe_build_option_key(key: &str) -> bool {
+    matches!(
+        key,
+        "action_column"
+            | "action_max_rules"
+            | "action_priority"
+            | "actions"
+            | "artifact_name"
+            | "decision_mode"
+            | "default_action"
+            | "gate_id"
+            | "label_column"
+            | "max_rules"
+            | "negative_label"
+            | "positive_label"
+            | "priority_order"
+            | "refine"
+            | "residual_pass"
+            | "rule_budget"
+    )
 }
 
 fn build_environment_summary() -> BTreeMap<String, Value> {

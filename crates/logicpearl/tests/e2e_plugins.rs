@@ -167,6 +167,8 @@ fn build_report_records_plugin_provenance() {
         .arg(&trace_source)
         .arg("--trace-plugin-option")
         .arg("dialect=csv")
+        .arg("--trace-plugin-option")
+        .arg("tenant=acme-health")
         .arg("--enricher-plugin-manifest")
         .arg(&enricher_manifest)
         .arg("--source-ref")
@@ -218,13 +220,15 @@ fn build_report_records_plugin_provenance() {
             .map(String::as_str),
         Some("csv")
     );
-    assert_eq!(
-        provenance
-            .source_references
-            .get("document_id")
-            .map(String::as_str),
-        Some("decision_traces_sample")
-    );
+    assert!(provenance
+        .trace_plugin
+        .as_ref()
+        .and_then(|item| item.options.get("tenant"))
+        .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+    assert!(provenance
+        .source_references
+        .get("document_id")
+        .is_some_and(|value| value.starts_with("<redacted:sha256:")));
 
     let persisted: BuildResult = serde_json::from_str(
         &std::fs::read_to_string(&build_result.output_files.build_report)

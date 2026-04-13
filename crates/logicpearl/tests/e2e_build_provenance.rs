@@ -175,8 +175,10 @@ fn source_manifest_is_validated_and_attached_to_provenance() {
         Some("synthetic")
     );
     assert_eq!(
-        provenance["build_options"]["source_manifest"].as_str(),
-        Some(source_manifest.to_string_lossy().as_ref())
+        provenance["build_options"]["source_manifest"]
+            .as_str()
+            .map(|value| value.starts_with("<redacted:sha256:")),
+        Some(true)
     );
 }
 
@@ -284,6 +286,8 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
         "label_column=allowed".to_string(),
         "--trace-plugin-option".to_string(),
         "api_key=supersecret".to_string(),
+        "--trace-plugin-option".to_string(),
+        "tenant=acme-health".to_string(),
         "--source-ref".to_string(),
         "document_id=decision_traces_sample".to_string(),
         "--output-dir".to_string(),
@@ -298,6 +302,8 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
         .expect("redacted flag should be present"));
     let encoded = serde_json::to_string(provenance).expect("provenance should encode");
     assert!(!encoded.contains("supersecret"));
+    assert!(!encoded.contains("acme-health"));
+    assert!(!encoded.contains("decision_traces_sample"));
 
     let plugin = &provenance["plugins"][0];
     validate_plugin_run_provenance(plugin);
@@ -339,8 +345,10 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
     assert!(plugin["options"]["api_key"]
         .as_str()
         .is_some_and(|value| value.starts_with("<redacted:sha256:")));
-    assert_eq!(
-        provenance["source_references"]["document_id"].as_str(),
-        Some("decision_traces_sample")
-    );
+    assert!(plugin["options"]["tenant"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+    assert!(provenance["source_references"]["document_id"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<redacted:sha256:")));
 }

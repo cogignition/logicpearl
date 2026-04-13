@@ -98,15 +98,17 @@ Build reports should carry `provenance.schema_version:
 downstream demos, because it is the audit trail for where an artifact came from.
 
 Record stable hashes and bounded metadata: `engine_version`, optional
-`engine_commit`, redacted CLI command args, build options plus
+`engine_commit`, redacted CLI command args, redacted build options plus
 `build_options_hash`, trace input hashes and row counts, feature dictionary hash,
 plugin run provenance, optional source manifest hash, limited environment facts,
 and generated artifact file hashes.
 
 Do not store raw environment variables, full PATH values, hostnames, usernames,
-home directories, raw plugin stdout/stderr, raw source documents, or sensitive
-plugin option values. Hash plugin boundaries and redact sensitive option keys
-such as tokens, passwords, secrets, API keys, credentials, and auth fields.
+home directories, raw plugin stdout/stderr, raw source documents, or raw
+free-form provenance values. Hash plugin boundaries and redact plugin option,
+source-reference, and build-option values by default; only allowlist operational
+fields with low sensitivity such as `label_column`, `action_column`, and
+`dialect`.
 
 `build_report` and `artifact.json` should not be self-hashed inside
 `build_report.provenance.generated_files`; use the artifact manifest file hashes
