@@ -25,6 +25,7 @@ All notable user-facing changes should be added here.
 - Wasm metadata now carries `engine_version` and `artifact_hash` so browser integrations can return v1 runtime JSON results.
 - Action-policy discovery now preserves ordinal/count generalization across lower-priority actions instead of forcing every action route to learn against rows already captured by higher-priority rules.
 - Build provenance now redacts plugin option, source-reference, and build-option values by default, preserving only allowlisted low-sensitivity operational fields while keeping hashes for audit correlation.
+- README now stays focused on the launch flow, with artifact, provenance, plugin, pipeline, browser runtime, conformance, and development reference material split into dedicated docs.
 
 ### Fixed
 - Artifact manifest loaders now reject absolute paths, parent-directory escapes, and symlink escapes so manifest members must resolve inside the artifact bundle root.

@@ -26,7 +26,7 @@ At runtime, a pearl does not call a model, spend tokens, or improvise. The same 
   <a href="./schema"><img alt="Schema" src="./docs/assets/badges/artifact-pearl-ir.svg"></a>
 </p>
 
-[Install](./docs/install.md) · [Terminology](./TERMINOLOGY.md) · [Core Loop](#core-loop) · [What You Can Trust](#what-you-can-trust) · [Open Core](#open-core-policy) · [Roadmap](./ROADMAP.md) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
+[Install](./docs/install.md) · [Docs](./docs/README.md) · [Terminology](./TERMINOLOGY.md) · [Core Loop](#core-loop) · [What You Can Trust](#what-you-can-trust) · [Open Core](#open-core-policy) · [Roadmap](./ROADMAP.md) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
 
 ## Install
 
@@ -104,7 +104,7 @@ logicpearl inspect /tmp/logicpearl-output
 logicpearl run /tmp/logicpearl-output input.json
 ```
 
-The runtime JSON has versioned schemas under [schema](./schema/), including gate, action, explanation, and artifact-error result shapes.
+The runtime JSON has versioned schemas under [schema](./schema/), including gate, action, explanation, and artifact-error result shapes. See [docs/artifacts.md](./docs/artifacts.md) for the full bundle contract.
 
 ## Decision Traces
 
@@ -180,127 +180,28 @@ LogicPearl gives you:
 
 AI can help create traces or normalize messy input before the pearl. The pearl itself is deterministic software.
 
-## Optional Advanced Workflows
+## Further Docs
 
-Most new users can stop after `build`, `inspect`, `run`, `artifact verify`, and `diff`.
+Most new users can stop after `build`, `inspect`, `run`, `artifact verify`, and `diff`. The deeper docs are organized by boundary:
 
-The repository also contains advanced surfaces for integrations, benchmarks, and demos. They are optional; they are not required to use the core artifact workflow.
-
-### Garden Actions
-
-The garden demo shows a multi-action policy learned from reviewed plant-care notes:
-
-```bash
-cd examples/demos/garden_actions
-logicpearl build
-logicpearl inspect
-logicpearl run today.json --explain
-```
-
-See [examples/demos/garden_actions](./examples/demos/garden_actions/README.md).
-
-### Synthetic Traces
-
-If you do not have real traces yet, you can generate candidate traces from a reviewed trace-generation spec:
-
-```bash
-logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json \
-  --output /tmp/synthetic_traces.csv
-logicpearl build /tmp/synthetic_traces.csv --output-dir /tmp/synthetic-pearl
-logicpearl inspect /tmp/synthetic-pearl
-```
-
-Synthetic traces are setup data, not hidden runtime logic. Review them before relying on the artifact.
-
-### Source Provenance
-
-Use a source manifest when traces or dictionaries came from policy documents, customer exports, public URLs, PDFs, manual notes, or synthetic fixtures:
-
-```bash
-logicpearl build traces.csv \
-  --feature-dictionary feature_dictionary.json \
-  --source-manifest sources.json \
-  --output-dir /tmp/pearl
-```
-
-The engine validates and hashes the manifest, then attaches it to build provenance. It does not fetch URLs, parse PDFs, or interpret domain-specific source names.
-
-### Feature Governance
-
-Feature governance constrains how discovery may use specific features, especially one-sided detection signals:
-
-```bash
-logicpearl traces audit traces.jsonl \
-  --write-feature-governance /tmp/feature_governance.json
-
-logicpearl build traces.jsonl \
-  --feature-governance /tmp/feature_governance.json \
-  --output-dir /tmp/pearl
-```
-
-Use this when a signal is meaningful only when present, or when context fields should not become policy rules on their own.
-
-### Compile And Browser Runtime
-
-The CLI can run artifact bundles directly. Compilation is optional:
-
-```bash
-logicpearl compile /tmp/logicpearl-output
-logicpearl compile /tmp/logicpearl-output --target wasm32-unknown-unknown
-```
-
-For browser integrations, use the public loader package instead of calling raw Wasm exports:
-
-```js
-import { loadArtifact } from '@logicpearl/browser';
-
-const artifact = await loadArtifact('/artifacts/authz');
-const result = artifact.evaluate(input);
-```
-
-### Plugins And Pipelines
-
-Plugins and pipelines are for custom boundaries: observer plugins, trace-source plugins, enricher plugins, verifier plugins, and multi-stage artifact execution.
-
-They execute local processes declared by manifests. Treat manifests from other repos, issues, or generated examples as untrusted unless you explicitly trust them.
-
-Useful entrypoints:
-
-```bash
-logicpearl plugin validate examples/plugins/python_observer/manifest.json
-logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json
-logicpearl pipeline validate examples/pipelines/authz/pipeline.json
-logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
-```
-
-Plugin-backed builds and pipeline stages record versioned provenance metadata with manifest hashes, entrypoint hashes, request/input/output hashes, timeout policy, capability posture, and redacted stdio hashes.
-
-### Benchmarks And Parity Examples
-
-Benchmark and parity material is intentionally separate from the launch path:
-
-- [BENCHMARKS.md](./BENCHMARKS.md)
-- [DATASETS.md](./DATASETS.md)
-- [OPA / Rego parity example](./benchmarks/opa_rego/README.md)
-- [Advanced guardrail guide](./docs/advanced-guardrail-guide.md)
-- [WAF edge demo](./examples/waf_edge/README.md)
-
-These are useful when you want evidence, corpus hygiene, guardrail workflows, or comparison examples. They are not required for the basic build/run loop.
-
-## Which Surface To Use
-
-Use the smallest surface that matches where the artifact runs:
-
-- `logicpearl`
-  Human-driven CLI workflows: build, inspect, run, diff, verify.
-- `logicpearl-engine`
-  Rust application embedding, repeated in-process evaluation, server-side adapters.
-- `@logicpearl/browser`
-  Browser-safe evaluation of Wasm artifact bundles.
-- `logicpearl` Python package
-  Reserved bridge for Python integrations over the Rust engine.
-
-If it needs plugins, files, secrets, or server-only adapters, keep it server-side. If it is truly browser-safe, use the browser package.
+- [Docs index](./docs/README.md)
+  Start here when you need a specific integration or reference page.
+- [Artifacts](./docs/artifacts.md)
+  Bundle layout, manifests, schemas, digest, verify, and compile.
+- [Provenance](./docs/provenance.md)
+  Build provenance, source manifests, generated file hashes, and privacy posture.
+- [Plugins](./docs/plugins.md)
+  Observer, trace-source, enricher, and verifier plugins, including local-process trust boundaries.
+- [Pipelines](./docs/pipelines.md)
+  Multi-stage "string of pearls" execution.
+- [Browser runtime](./docs/browser-runtime.md)
+  Browser-safe Wasm evaluation through `@logicpearl/browser`.
+- [Conformance](./docs/conformance.md)
+  Runtime parity, formal spec checks, schema fixtures, and reproducibility receipts.
+- [Development](./docs/development.md)
+  Local checks, release readiness, packaging, and maintainer workflow.
+- [Benchmarks](./BENCHMARKS.md) and [Datasets](./DATASETS.md)
+  Public evidence, corpus hygiene, and reproducible scoring notes.
 
 ## Project Status
 
@@ -349,7 +250,7 @@ Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 - `schema`
   Published JSON schemas for public artifact formats.
 - `docs`
-  Install notes, advanced guides, and background material.
+  Topic docs for artifact contracts, provenance, plugins, pipelines, browser runtime, conformance, development, and advanced guides.
 
 ## Why Use LogicPearl
 
