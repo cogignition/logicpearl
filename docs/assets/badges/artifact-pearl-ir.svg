@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="118" height="20" role="img" aria-label="artifact: Pearl IR">
+  <title>artifact: Pearl IR</title>
+  <g shape-rendering="crispEdges">
+    <rect width="56" height="20" fill="#334155"/>
+    <rect x="56" width="62" height="20" fill="#173053"/>
+  </g>
+  <g fill="#ffffff" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11" text-anchor="middle">
+    <text x="28" y="14">artifact</text>
+    <text x="87" y="14">Pearl IR</text>
+  </g>
+</svg>

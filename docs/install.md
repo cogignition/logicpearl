@@ -126,13 +126,13 @@ Prebuilt Windows and Linux arm64 bundles are not published yet. If your machine 
 
 ## Source Install
 
-If you want to build from source instead of using the prebuilt bundle:
+If you want to build from a cloned source checkout instead of using the prebuilt bundle, run this from the repository root:
 
 ```bash
 cargo install --path crates/logicpearl
 ```
 
-That path builds the CLI only. For normal build/discovery workflows you still need a solver available. The simplest source-build setup is to install `z3` separately and make sure it is on your `PATH`.
+That path builds the CLI only. Use the workspace-local crate path because the checked-in examples and CLI crate live in this repository. For normal build/discovery workflows you still need a solver available. The simplest source-build setup is to install `z3` separately and make sure it is on your `PATH`.
 
 ## Optional cvc5
 
