@@ -29,6 +29,32 @@ fn assert_sha256(value: &Value) {
     );
 }
 
+fn assert_no_local_path_leaks(value: &Value, temp_root: &Path) {
+    let encoded = serde_json::to_string(value).expect("report should encode");
+    let mut forbidden = vec![
+        "/Users/".to_string(),
+        "/home/".to_string(),
+        "/var/folders/".to_string(),
+        temp_root.display().to_string(),
+    ];
+    if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
+        if user.len() >= 4 {
+            forbidden.push(user);
+        }
+    }
+
+    for fragment in forbidden {
+        if fragment.is_empty() {
+            continue;
+        }
+        assert!(
+            !encoded.contains(&fragment),
+            "public build report leaked local path fragment {fragment:?}:\n{}",
+            serde_json::to_string_pretty(value).expect("report should pretty encode")
+        );
+    }
+}
+
 fn validate_build_provenance(instance: &Value) {
     let schema = load_json(repo_root().join("schema/logicpearl-build-provenance-v1.schema.json"));
     jsonschema::draft202012::meta::validate(&schema)
@@ -104,6 +130,25 @@ fn file_backed_gate_build_records_v1_provenance() {
         "--json".to_string(),
     ]);
 
+    assert_no_local_path_leaks(&report, temp.path());
+    assert_eq!(
+        report["source_csv"].as_str(),
+        Some("./examples/getting_started/decision_traces.csv")
+    );
+    assert_eq!(report["output_files"]["artifact_dir"].as_str(), Some("."));
+    assert_eq!(
+        report["output_files"]["artifact_manifest"].as_str(),
+        Some("artifact.json")
+    );
+    assert_eq!(
+        report["output_files"]["pearl_ir"].as_str(),
+        Some("pearl.ir.json")
+    );
+    assert_eq!(
+        report["output_files"]["build_report"].as_str(),
+        Some("build_report.json")
+    );
+
     let provenance = &report["provenance"];
     validate_build_provenance(provenance);
     assert_eq!(
@@ -122,7 +167,45 @@ fn file_backed_gate_build_records_v1_provenance() {
     assert_sha256(&provenance["generated_files"]["feature_dictionary.generated.json"]);
 
     let persisted = load_json(artifact_dir.join("build_report.json"));
+    assert_no_local_path_leaks(&persisted, temp.path());
     assert_eq!(&persisted["provenance"], provenance);
+    assert_eq!(persisted, report);
+}
+
+#[test]
+fn absolute_trace_paths_are_redacted_in_public_build_reports() {
+    let root = repo_root();
+    let temp = tempdir().expect("temp dir should exist");
+    let trace_path = temp.path().join("decision_traces.csv");
+    let artifact_dir = temp.path().join("gate");
+    fs::copy(
+        root.join("examples/getting_started/decision_traces.csv"),
+        &trace_path,
+    )
+    .expect("temp trace fixture should copy");
+
+    let report = run_cli_json(&[
+        "build".to_string(),
+        trace_path.display().to_string(),
+        "--output-dir".to_string(),
+        artifact_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+
+    assert_no_local_path_leaks(&report, temp.path());
+    assert!(report["source_csv"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<path:sha256:")));
+    assert!(report["provenance"]["decision_trace_source"]["value"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<path:sha256:")));
+    assert!(report["provenance"]["input_traces"][0]["path"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<path:sha256:")));
+
+    let persisted = load_json(artifact_dir.join("build_report.json"));
+    assert_no_local_path_leaks(&persisted, temp.path());
+    assert_eq!(persisted, report);
 }
 
 #[test]
@@ -163,6 +246,7 @@ fn source_manifest_is_validated_and_attached_to_provenance() {
         "--json".to_string(),
     ]);
 
+    assert_no_local_path_leaks(&report, temp.path());
     let provenance = &report["provenance"];
     validate_build_provenance(provenance);
     assert_sha256(&provenance["source_manifest"]["hash"]);
@@ -250,6 +334,11 @@ fn action_build_records_v1_provenance() {
         "--json".to_string(),
     ]);
 
+    assert_no_local_path_leaks(&report, temp.path());
+    assert_eq!(
+        report["source"].as_str(),
+        Some("./examples/demos/garden_actions/traces.csv")
+    );
     let provenance = &report["provenance"];
     validate_build_provenance(provenance);
     assert_eq!(
@@ -264,7 +353,9 @@ fn action_build_records_v1_provenance() {
     );
 
     let persisted = load_json(artifact_dir.join("action_report.json"));
+    assert_no_local_path_leaks(&persisted, temp.path());
     assert_eq!(&persisted["provenance"], provenance);
+    assert_eq!(persisted, report);
 }
 
 #[test]
@@ -295,6 +386,7 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
         "--json".to_string(),
     ]);
 
+    assert_no_local_path_leaks(&report, temp.path());
     let provenance = &report["provenance"];
     validate_build_provenance(provenance);
     assert!(provenance["build_command"]["redacted"]
@@ -351,4 +443,8 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
     assert!(provenance["source_references"]["document_id"]
         .as_str()
         .is_some_and(|value| value.starts_with("<redacted:sha256:")));
+
+    let persisted = load_json(artifact_dir.join("build_report.json"));
+    assert_no_local_path_leaks(&persisted, temp.path());
+    assert_eq!(persisted, report);
 }

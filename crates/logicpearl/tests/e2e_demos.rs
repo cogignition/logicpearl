@@ -14,6 +14,15 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn report_output_path(artifact_dir: &Path, reported_path: &str) -> PathBuf {
+    let path = Path::new(reported_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    }
+}
+
 #[derive(Debug)]
 struct DemoCase {
     name: &'static str,
@@ -305,7 +314,8 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
             demo.name
         );
 
-        let native_binary = Path::new(
+        let native_binary = report_output_path(
+            &output_path,
             build_result
                 .output_files
                 .native_binary
@@ -321,14 +331,14 @@ fn demo_datasets_build_to_perfect_parity_and_run_compiled_binaries() {
         let allowed_payload = Value::Object(parse_input_row(&traces_path, demo.allowed));
         let denied_payload = Value::Object(parse_input_row(&traces_path, !demo.allowed));
 
-        let allowed_output = run_compiled_binary(native_binary, &allowed_payload, temp.path());
+        let allowed_output = run_compiled_binary(&native_binary, &allowed_payload, temp.path());
         assert_eq!(
             allowed_output, "0",
             "{} should allow known-allowed row",
             demo.name
         );
 
-        let denied_output = run_compiled_binary(native_binary, &denied_payload, temp.path());
+        let denied_output = run_compiled_binary(&native_binary, &denied_payload, temp.path());
         assert_ne!(
             denied_output, "0",
             "{} should deny known-denied row",

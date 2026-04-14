@@ -1,18 +1,19 @@
 {
-  "artifact_version": "1.0",
-  "artifact_name": "bcbsma_documentation_requirement_004_immune_modulating_drugs_prn",
-  "gate_id": "bcbsma_documentation_requirement_004_immune_modulating_drugs_prn",
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "artifact_id": "bcbsma_documentation_requirement_004_immune_modulating_drugs_prn",
+  "artifact_kind": "gate",
+  "engine_version": "0.1.5",
+  "ir_version": "1.0",
+  "created_at": "2026-04-12T00:00:00Z",
+  "artifact_hash": "sha256:b364cb0642b6177aed77f0717e068fb4b439a783c681e74b037aa0c19d6ad42e",
   "files": {
-    "pearl_ir": "pearl.ir.json",
-    "build_report": "build_report.json",
-    "native_binary": null,
-    "wasm_module": null,
-    "wasm_metadata": null
+    "ir": "pearl.ir.json",
+    "build_report": "build_report.json"
   },
-  "bundle": {
-    "bundle_kind": "direct_pearl_bundle",
-    "cli_entrypoint": "artifact.json",
-    "deployables": [],
-    "metadata_files": []
-  }
+  "input_schema_hash": "sha256:82b745f9e13406a8778b65ed720117f6d544ade73f82d54623504b97dfd31f5f",
+  "file_hashes": {
+    "ir": "sha256:b364cb0642b6177aed77f0717e068fb4b439a783c681e74b037aa0c19d6ad42e",
+    "build_report": "sha256:580fa2916eeb9ba3ac558b44e785cb63fbd7989f9b45b835330f367a32cd1d0b"
+  },
+  "bundle_hash": "sha256:ee9c7114cfdfb2813b1f66a637f387fe5d56db92fa1eccf32f122a9795fdcbec"
 }

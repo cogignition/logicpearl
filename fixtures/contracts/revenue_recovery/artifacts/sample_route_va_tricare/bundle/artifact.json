@@ -1,18 +1,19 @@
 {
-  "artifact_version": "1.0",
-  "artifact_name": "revenue_route_va_tricare",
-  "gate_id": "revenue_route_va_tricare",
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "artifact_id": "revenue_route_va_tricare",
+  "artifact_kind": "gate",
+  "engine_version": "0.1.5",
+  "ir_version": "1.0",
+  "created_at": "2026-04-12T00:00:00Z",
+  "artifact_hash": "sha256:06c5038ccece8399d58fcc420eea0087e5964db64e550fd54913b8fae6d13495",
   "files": {
-    "pearl_ir": "pearl.ir.json",
-    "build_report": "build_report.json",
-    "native_binary": null,
-    "wasm_module": null,
-    "wasm_metadata": null
+    "ir": "pearl.ir.json",
+    "build_report": "build_report.json"
   },
-  "bundle": {
-    "bundle_kind": "direct_pearl_bundle",
-    "cli_entrypoint": "artifact.json",
-    "deployables": [],
-    "metadata_files": []
-  }
+  "input_schema_hash": "sha256:17b49a1b30f51e3bed729edc967b6b6309f0ee171683da16febe03eeee1623c3",
+  "file_hashes": {
+    "ir": "sha256:06c5038ccece8399d58fcc420eea0087e5964db64e550fd54913b8fae6d13495",
+    "build_report": "sha256:d4a9406d22d7ec2bff80bf5302d6b18acaf5731108fb6bef3505fc6989617698"
+  },
+  "bundle_hash": "sha256:1179fca4886a126e1eebf8fccd4718e0af78c3431eea20d12f12ec473be60a86"
 }

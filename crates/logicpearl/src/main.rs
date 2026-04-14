@@ -66,8 +66,8 @@ mod plugin_cmd;
 mod trace_cmd;
 
 use artifact_cmd::{
-    build_deployable_bundle_descriptor, build_options_hash, compile_native_runner,
-    compile_wasm_module, is_rust_target_installed, load_artifact_bundle_descriptor,
+    artifact_bundle_descriptor_from_manifest, build_deployable_bundle_descriptor,
+    build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
     native_artifact_output_path, pearl_artifact_id, persist_build_report,
     refresh_artifact_manifest_deployables, resolve_artifact_input, resolve_manifest_member_path,
     run_artifact_digest, run_artifact_inspect, run_artifact_verify,

@@ -8,14 +8,100 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use sha2::Digest;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 /// Stable schema identifier for LogicPearl artifact bundle manifests.
 pub const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "logicpearl.artifact_manifest.v1";
+
+/// Render a path for public reports without exposing local host-specific roots.
+///
+/// Relative paths are preserved. Absolute paths under the current working
+/// directory are rendered as `./relative/path`; other absolute paths are
+/// replaced with a stable digest of the path string.
+pub fn provenance_safe_path(path: &Path) -> String {
+    if !path.is_absolute() {
+        return path.display().to_string();
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        for base in current_dir
+            .ancestors()
+            .filter(|base| base.parent().is_some())
+        {
+            let Ok(relative) = path.strip_prefix(base) else {
+                continue;
+            };
+            if relative.as_os_str().is_empty() {
+                return ".".to_string();
+            }
+            return format!("./{}", relative.display());
+        }
+    }
+
+    format!(
+        "<path:{}>",
+        sha256_prefixed(path.to_string_lossy().as_bytes())
+    )
+}
+
+/// Render a path-like string for public reports.
+pub fn provenance_safe_path_string(value: &str) -> String {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        provenance_safe_path(path)
+    } else {
+        value.to_string()
+    }
+}
+
+pub fn sha256_prefixed(bytes: &[u8]) -> String {
+    let digest = sha2::Sha256::digest(bytes);
+    let mut rendered = String::with_capacity("sha256:".len() + 64);
+    rendered.push_str("sha256:");
+    for byte in digest {
+        write!(&mut rendered, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    rendered
+}
+
+pub fn artifact_hash<T: Serialize>(artifact: &T) -> String {
+    let value = serde_json::to_value(artifact)
+        .expect("LogicPearl artifacts should serialize to canonical JSON bytes");
+    let canonical = canonicalize_json_value(value);
+    let bytes = serde_json::to_vec(&canonical)
+        .expect("canonical LogicPearl artifact JSON should serialize");
+    sha256_prefixed(&bytes)
+}
+
+fn canonicalize_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(canonicalize_json_value)
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(map) => {
+            let mut entries = map
+                .into_iter()
+                .map(|(key, value)| (key, canonicalize_json_value(value)))
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut ordered = serde_json::Map::new();
+            for (key, value) in entries {
+                ordered.insert(key, value);
+            }
+            Value::Object(ordered)
+        }
+        other => other,
+    }
+}
 
 /// Convenience alias for results returned by LogicPearl operations.
 pub type Result<T> = std::result::Result<T, LogicPearlError>;
@@ -201,7 +287,7 @@ pub struct ArtifactManifestFiles {
     pub wasm_metadata: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<String>,
-    /// Backward-compatible aliases or future file roles.
+    /// Additional manifest-defined file roles.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
 }
@@ -227,9 +313,260 @@ pub struct ArtifactManifestV1 {
     pub file_hashes: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle_hash: Option<String>,
-    /// Backward-compatible aliases or future manifest metadata.
+    /// Additional manifest metadata.
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+/// Fully loaded artifact manifest plus its bundle-relative base directory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedArtifactBundle {
+    pub manifest_path: Option<PathBuf>,
+    pub base_dir: PathBuf,
+    pub manifest: ArtifactManifestV1,
+    pub raw_manifest: Option<Value>,
+}
+
+impl LoadedArtifactBundle {
+    /// Resolve `files.ir` through the manifest member confinement rules.
+    pub fn ir_path(&self) -> Result<PathBuf> {
+        resolve_manifest_member_path(&self.base_dir, &self.manifest.files.ir)
+    }
+
+    /// Resolve all declared files to local paths keyed by manifest role.
+    pub fn resolved_files(&self) -> Result<BTreeMap<String, PathBuf>> {
+        manifest_file_roles(&self.manifest.files)
+            .into_iter()
+            .map(|(role, path)| {
+                let resolved = resolve_manifest_member_path(&self.base_dir, &path)?;
+                Ok((role, resolved))
+            })
+            .collect()
+    }
+}
+
+/// Load a LogicPearl artifact bundle, v1 artifact manifest, or direct artifact file.
+///
+/// This API is intentionally about artifact *resolution*, not evaluation. It
+/// handles the public v1 manifest contract plus direct `pearl.ir.json` and
+/// `pipeline.json` files. Callers can dispatch on `manifest.artifact_kind` and
+/// then parse `ir_path()` with the appropriate IR type.
+pub fn load_artifact_bundle(path: &Path) -> Result<LoadedArtifactBundle> {
+    if path.is_dir() {
+        let manifest_path = path.join("artifact.json");
+        if manifest_path.exists() {
+            return load_artifact_manifest_file(&manifest_path);
+        }
+        let pipeline_path = path.join("pipeline.json");
+        if pipeline_path.exists() {
+            return derive_artifact_bundle_from_file(&pipeline_path);
+        }
+        let ir_path = path.join("pearl.ir.json");
+        if ir_path.exists() {
+            return derive_artifact_bundle_from_file(&ir_path);
+        }
+        return Err(LogicPearlError::message(format!(
+            "artifact directory {} is missing artifact.json, pipeline.json, and pearl.ir.json",
+            path.display()
+        )));
+    }
+
+    if path.is_file() {
+        let value = read_json_file(path)?;
+        if path
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
+            || value.get("schema_version").is_some()
+        {
+            return load_artifact_manifest_value(path, value);
+        }
+    }
+
+    derive_artifact_bundle_from_file(path)
+}
+
+pub fn manifest_file_roles(files: &ArtifactManifestFiles) -> Vec<(String, String)> {
+    let mut roles = vec![("ir".to_string(), files.ir.clone())];
+    if let Some(path) = &files.build_report {
+        roles.push(("build_report".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.feature_dictionary {
+        roles.push(("feature_dictionary".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.native {
+        roles.push(("native".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.wasm {
+        roles.push(("wasm".to_string(), path.clone()));
+    }
+    if let Some(path) = &files.wasm_metadata {
+        roles.push(("wasm_metadata".to_string(), path.clone()));
+    }
+    roles
+}
+
+fn load_artifact_manifest_file(path: &Path) -> Result<LoadedArtifactBundle> {
+    let raw_manifest = read_json_file(path)?;
+    load_artifact_manifest_value(path, raw_manifest)
+}
+
+fn load_artifact_manifest_value(path: &Path, raw_manifest: Value) -> Result<LoadedArtifactBundle> {
+    let base_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let schema_version = raw_manifest
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "artifact manifest {} is missing schema_version",
+                path.display()
+            ))
+        })?;
+    if schema_version != ARTIFACT_MANIFEST_SCHEMA_VERSION {
+        return Err(LogicPearlError::message(format!(
+            "unsupported artifact manifest schema_version {schema_version:?}; expected {ARTIFACT_MANIFEST_SCHEMA_VERSION}"
+        )));
+    }
+    let manifest = serde_json::from_value(raw_manifest.clone())?;
+    Ok(LoadedArtifactBundle {
+        manifest_path: Some(path.to_path_buf()),
+        base_dir,
+        manifest,
+        raw_manifest: Some(raw_manifest),
+    })
+}
+
+fn derive_artifact_bundle_from_file(path: &Path) -> Result<LoadedArtifactBundle> {
+    let value = read_json_file(path)?;
+    let base_dir = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let relative = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let (artifact_kind, artifact_id, ir_version, input_schema_hash) =
+        artifact_identity_from_value(&value);
+    let file_hash = hash_file_canonical_if_json(path)?;
+    let mut file_hashes = BTreeMap::new();
+    file_hashes.insert("ir".to_string(), file_hash);
+    let files = ArtifactManifestFiles {
+        ir: relative,
+        build_report: None,
+        feature_dictionary: None,
+        wasm: None,
+        wasm_metadata: None,
+        native: None,
+        extensions: BTreeMap::new(),
+    };
+    let artifact_hash_value = artifact_hash(&value);
+    Ok(LoadedArtifactBundle {
+        manifest_path: None,
+        base_dir,
+        manifest: ArtifactManifestV1 {
+            schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION.to_string(),
+            artifact_id,
+            artifact_kind,
+            engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            ir_version,
+            created_at: "1970-01-01T00:00:00Z".to_string(),
+            artifact_hash: artifact_hash_value.clone(),
+            files: files.clone(),
+            input_schema_hash,
+            feature_dictionary_hash: None,
+            build_options_hash: None,
+            file_hashes,
+            bundle_hash: Some(artifact_hash(&serde_json::json!({
+                "artifact_hash": artifact_hash_value,
+                "files": files,
+            }))),
+            extensions: BTreeMap::new(),
+        },
+        raw_manifest: None,
+    })
+}
+
+fn read_json_file(path: &Path) -> Result<Value> {
+    let content = fs::read_to_string(path).map_err(|error| {
+        LogicPearlError::message(format!(
+            "failed to read JSON file {}: {error}",
+            path.display()
+        ))
+    })?;
+    serde_json::from_str(&content).map_err(|error| {
+        LogicPearlError::message(format!("JSON file is invalid: {}: {error}", path.display()))
+    })
+}
+
+fn artifact_identity_from_value(value: &Value) -> (ArtifactKind, String, String, Option<String>) {
+    if value.get("pipeline_version").is_some() {
+        return (
+            ArtifactKind::Pipeline,
+            value
+                .get("pipeline_id")
+                .and_then(Value::as_str)
+                .unwrap_or("logicpearl_pipeline")
+                .to_string(),
+            value
+                .get("pipeline_version")
+                .and_then(Value::as_str)
+                .unwrap_or("1.0")
+                .to_string(),
+            None,
+        );
+    }
+    if value.get("action_policy_id").is_some() {
+        return (
+            ArtifactKind::Action,
+            value
+                .get("action_policy_id")
+                .and_then(Value::as_str)
+                .unwrap_or("logicpearl_action")
+                .to_string(),
+            value
+                .get("ir_version")
+                .and_then(Value::as_str)
+                .unwrap_or("1.0")
+                .to_string(),
+            value.get("input_schema").map(artifact_hash),
+        );
+    }
+    (
+        ArtifactKind::Gate,
+        value
+            .get("gate_id")
+            .and_then(Value::as_str)
+            .unwrap_or("logicpearl_gate")
+            .to_string(),
+        value
+            .get("ir_version")
+            .and_then(Value::as_str)
+            .unwrap_or("1.0")
+            .to_string(),
+        value.get("input_schema").map(artifact_hash),
+    )
+}
+
+fn hash_file_canonical_if_json(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).map_err(|error| {
+        LogicPearlError::message(format!(
+            "failed to read file for hashing {}: {error}",
+            path.display()
+        ))
+    })?;
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            return Ok(artifact_hash(&value));
+        }
+    }
+    Ok(sha256_prefixed(&bytes))
 }
 
 /// Variable-width bitmask that tracks which rules matched during evaluation.
@@ -381,7 +718,7 @@ impl<'de> Deserialize<'de> for RuleMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_manifest_member_path, RuleMask};
+    use super::{load_artifact_bundle, resolve_manifest_member_path, RuleMask};
     use serde_json::json;
 
     #[test]
@@ -421,6 +758,45 @@ mod tests {
             .expect_err("parent escapes should be rejected")
             .to_string();
         assert!(parent.contains("escapes bundle directory"));
+    }
+
+    #[test]
+    fn legacy_artifact_manifests_are_rejected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("pearl.ir.json"), "{}").expect("ir file");
+        std::fs::write(
+            dir.path().join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "artifact_version": "1.0",
+                "artifact_name": "legacy_gate",
+                "gate_id": "legacy_gate",
+                "files": {
+                    "pearl_ir": "pearl.ir.json"
+                }
+            }))
+            .expect("legacy manifest json"),
+        )
+        .expect("manifest file");
+
+        let error = load_artifact_bundle(dir.path())
+            .expect_err("legacy manifest should be rejected")
+            .to_string();
+        assert!(error.contains("missing schema_version"));
+    }
+
+    #[test]
+    fn unsupported_artifact_manifest_versions_are_rejected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            dir.path().join("artifact.json"),
+            r#"{"schema_version":"legacy"}"#,
+        )
+        .expect("manifest file");
+
+        let error = load_artifact_bundle(&dir.path().join("artifact.json"))
+            .expect_err("unsupported manifest should be rejected")
+            .to_string();
+        assert!(error.contains("unsupported artifact manifest schema_version"));
     }
 
     #[cfg(unix)]

@@ -20,6 +20,21 @@ fn load_json(path: impl AsRef<Path>) -> Value {
     .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.as_ref().display()))
 }
 
+fn assert_no_legacy_manifest_fields(manifest: &Value) {
+    for field in ["artifact_version", "artifact_name", "gate_id"] {
+        assert!(
+            manifest.get(field).is_none(),
+            "v1 manifest should not emit legacy field {field}"
+        );
+    }
+    for field in ["pearl_ir", "native_binary", "wasm_module"] {
+        assert!(
+            manifest["files"].get(field).is_none(),
+            "v1 manifest files should not emit legacy field {field}"
+        );
+    }
+}
+
 fn validate_against_schema(schema_name: &str, instance: &Value) {
     let schema = load_json(repo_root().join("schema").join(schema_name));
     jsonschema::draft202012::meta::validate(&schema)
@@ -107,6 +122,7 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
         &gate_manifest,
     );
     assert_eq!(gate_manifest["artifact_kind"], "gate");
+    assert_no_legacy_manifest_fields(&gate_manifest);
     assert_eq!(gate_manifest["files"]["ir"], "pearl.ir.json");
     assert!(gate_manifest["input_schema_hash"]
         .as_str()
@@ -162,6 +178,7 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
         &action_manifest,
     );
     assert_eq!(action_manifest["artifact_kind"], "action");
+    assert_no_legacy_manifest_fields(&action_manifest);
     assert_eq!(
         action_manifest["files"]["build_report"],
         "action_report.json"
@@ -192,6 +209,7 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
         &pipeline_manifest,
     );
     assert_eq!(pipeline_manifest["artifact_kind"], "pipeline");
+    assert_no_legacy_manifest_fields(&pipeline_manifest);
     assert_eq!(pipeline_manifest["files"]["ir"], "pipeline.json");
     let pipeline_verify = run_cli_json(&[
         "artifact".to_string(),

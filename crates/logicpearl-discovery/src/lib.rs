@@ -7,7 +7,7 @@
 //! assembly live in `logicpearl-build`; this crate stays focused on learning
 //! deterministic logic from already-normalized examples.
 
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
     RuleVerificationStatus,
@@ -397,6 +397,86 @@ pub struct OutputFiles {
     pub wasm_module: Option<String>,
     #[serde(default)]
     pub wasm_metadata: Option<String>,
+}
+
+pub fn build_result_for_report(result: &BuildResult) -> BuildResult {
+    let mut report = result.clone();
+    let artifact_dir = Path::new(&result.output_files.artifact_dir);
+    report.source_csv = provenance_safe_path_string(&report.source_csv);
+    report.output_files = output_files_for_report(&result.output_files, artifact_dir);
+    report
+}
+
+fn output_files_for_report(output_files: &OutputFiles, artifact_dir: &Path) -> OutputFiles {
+    OutputFiles {
+        artifact_dir: ".".to_string(),
+        artifact_manifest: artifact_relative_report_path(
+            &output_files.artifact_manifest,
+            artifact_dir,
+            "artifact.json",
+        ),
+        pearl_ir: artifact_relative_report_path(
+            &output_files.pearl_ir,
+            artifact_dir,
+            "pearl.ir.json",
+        ),
+        build_report: artifact_relative_report_path(
+            &output_files.build_report,
+            artifact_dir,
+            "build_report.json",
+        ),
+        native_binary: output_files
+            .native_binary
+            .as_deref()
+            .map(|path| artifact_relative_report_path(path, artifact_dir, "pearl")),
+        wasm_module: output_files
+            .wasm_module
+            .as_deref()
+            .map(|path| artifact_relative_report_path(path, artifact_dir, "pearl.wasm")),
+        wasm_metadata: output_files
+            .wasm_metadata
+            .as_deref()
+            .map(|path| artifact_relative_report_path(path, artifact_dir, "pearl.wasm.meta.json")),
+    }
+}
+
+fn artifact_relative_report_path(raw_path: &str, artifact_dir: &Path, fallback: &str) -> String {
+    let path = Path::new(raw_path);
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    };
+
+    if let Ok(relative) = candidate.strip_prefix(artifact_dir) {
+        let rendered = relative.display().to_string();
+        if !rendered.is_empty() {
+            return rendered;
+        }
+    }
+
+    if !path.is_absolute() {
+        let rendered = path.display().to_string();
+        if !rendered.is_empty() && !rendered.starts_with("..") {
+            return rendered;
+        }
+    }
+
+    if path.is_absolute() {
+        return provenance_safe_path_string(raw_path);
+    }
+
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            let safe = provenance_safe_path_string(raw_path);
+            if safe.is_empty() {
+                fallback.to_string()
+            } else {
+                safe
+            }
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -1059,6 +1139,9 @@ fn build_pearl_from_rows_internal(
     {
         let mut cached: BuildResult =
             serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
+        cached.source_csv = source_name;
+        cached.output_files =
+            actual_output_files_from_report(&cached.output_files, &options.output_dir);
         cached.cache_hit = true;
         return Ok(cached);
     }
@@ -1121,11 +1204,54 @@ fn build_pearl_from_rows_internal(
 
     std::fs::write(
         &build_report_path,
-        serde_json::to_string_pretty(&build_report)? + "\n",
+        serde_json::to_string_pretty(&build_result_for_report(&build_report))? + "\n",
     )?;
     write_cache_manifest(&build_cache_path, &build_manifest)?;
 
     Ok(build_report)
+}
+
+fn actual_output_files_from_report(output_files: &OutputFiles, artifact_dir: &Path) -> OutputFiles {
+    OutputFiles {
+        artifact_dir: artifact_dir.display().to_string(),
+        artifact_manifest: actual_output_path(
+            &output_files.artifact_manifest,
+            artifact_dir,
+            "artifact.json",
+        ),
+        pearl_ir: actual_output_path(&output_files.pearl_ir, artifact_dir, "pearl.ir.json"),
+        build_report: actual_output_path(
+            &output_files.build_report,
+            artifact_dir,
+            "build_report.json",
+        ),
+        native_binary: output_files
+            .native_binary
+            .as_deref()
+            .map(|path| actual_output_path(path, artifact_dir, path)),
+        wasm_module: output_files
+            .wasm_module
+            .as_deref()
+            .map(|path| actual_output_path(path, artifact_dir, path)),
+        wasm_metadata: output_files
+            .wasm_metadata
+            .as_deref()
+            .map(|path| actual_output_path(path, artifact_dir, path)),
+    }
+}
+
+fn actual_output_path(raw_path: &str, artifact_dir: &Path, fallback: &str) -> String {
+    let path = Path::new(raw_path);
+    let actual = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    };
+    if actual.as_os_str().is_empty() {
+        artifact_dir.join(fallback).display().to_string()
+    } else {
+        actual.display().to_string()
+    }
 }
 
 fn learn_gate_from_rows_internal(

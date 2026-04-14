@@ -7,7 +7,7 @@
 //! provenance, validates source manifests, and records generated file hashes.
 //! The CLI remains responsible for argument parsing and terminal rendering.
 
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{provenance_safe_path, provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_discovery::{
     build_pearl_from_rows, learn_gate_from_rows_without_numeric_interactions,
     BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
@@ -18,7 +18,9 @@ use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
     VerificationConfig,
 };
-use logicpearl_plugin::{PluginExecutionResult, PluginManifest, PluginResponse};
+use logicpearl_plugin::{
+    PluginEntrypointMetadata, PluginExecutionResult, PluginManifest, PluginResponse,
+};
 use logicpearl_runtime::{
     artifact_hash, evaluate_action_policy, evaluate_gate, sha256_prefixed,
     LOGICPEARL_ENGINE_VERSION,
@@ -82,6 +84,7 @@ pub struct ActionRuleBuildReport {
 }
 
 pub struct BuildProvenanceInputs {
+    pub artifact_dir: Option<PathBuf>,
     pub source_references: BTreeMap<String, String>,
     pub decision_traces_path: Option<PathBuf>,
     pub trace_plugin_manifest_path: Option<PathBuf>,
@@ -337,12 +340,13 @@ pub fn action_rule_report(policy: &LogicPearlActionIr) -> Vec<ActionRuleBuildRep
 }
 
 pub fn build_provenance(inputs: BuildProvenanceInputs) -> Result<BuildProvenance> {
+    let artifact_dir = inputs.artifact_dir.as_deref();
     let raw_source_references = inputs.source_references;
     let source_references = sanitize_source_references(&raw_source_references);
     let decision_trace_source = if let Some(path) = &inputs.decision_traces_path {
         Some(BuildInputProvenance {
             kind: "decision_traces_path".to_string(),
-            value: path.display().to_string(),
+            value: provenance_safe_path(path),
             hash: hash_file_for_provenance(path).ok(),
         })
     } else {
@@ -351,7 +355,7 @@ pub fn build_provenance(inputs: BuildProvenanceInputs) -> Result<BuildProvenance
             .as_ref()
             .map(|manifest| BuildInputProvenance {
                 kind: "trace_plugin".to_string(),
-                value: manifest.display().to_string(),
+                value: provenance_safe_path(manifest),
                 hash: hash_file_for_provenance(manifest).ok(),
             })
     };
@@ -364,7 +368,7 @@ pub fn build_provenance(inputs: BuildProvenanceInputs) -> Result<BuildProvenance
         .feature_dictionary_path
         .as_deref()
         .filter(|path| path.exists())
-        .map(file_provenance)
+        .map(|path| file_provenance(path, artifact_dir))
         .transpose()?;
     let build_command = build_command_provenance();
     let mut redactions = Vec::new();
@@ -410,7 +414,7 @@ pub fn source_input_provenance(value: &str) -> BuildInputProvenance {
     BuildInputProvenance {
         kind: classify_source_value(value).to_string(),
         value: if path.exists() {
-            value.to_string()
+            provenance_safe_path(path)
         } else {
             format!("<inline:{inline_hash}>")
         },
@@ -424,7 +428,7 @@ pub fn source_input_provenance(value: &str) -> BuildInputProvenance {
 
 pub fn trace_input_provenance(path: &Path, row_count: usize) -> Result<TraceInputProvenance> {
     Ok(TraceInputProvenance {
-        path: path.display().to_string(),
+        path: provenance_safe_path(path),
         hash: hash_file_for_provenance(path)?,
         row_count,
     })
@@ -447,7 +451,7 @@ pub fn load_source_manifest_for_provenance(
     })?;
     validate_source_manifest(&manifest)?;
     Ok(Some(SourceManifestProvenance {
-        path: path.display().to_string(),
+        path: provenance_safe_path(path),
         hash: hash_file_for_provenance(path)?,
         sources: manifest.sources,
     }))
@@ -471,14 +475,16 @@ pub fn plugin_provenance_from_execution(
         plugin_name: Some(run.plugin_name.clone()),
         stage: stage.to_string(),
         protocol_version: Some(run.protocol_version.clone()),
-        manifest_path: manifest_path.display().to_string(),
+        manifest_path: provenance_safe_path(manifest_path),
         manifest_hash: run
             .manifest_hash
             .clone()
             .or_else(|| hash_file_for_provenance(manifest_path).ok()),
         manifest_sha256: Some(sha256_file_hex(manifest_path)?),
         entrypoint_hash: Some(run.entrypoint_hash.clone()),
-        entrypoint: Some(serde_json::to_value(&run.entrypoint)?),
+        entrypoint: Some(serde_json::to_value(sanitize_plugin_entrypoint_metadata(
+            &run.entrypoint,
+        ))?),
         input,
         input_hash: run.input_hash.clone(),
         request_hash: Some(run.request_hash.clone()),
@@ -494,6 +500,26 @@ pub fn plugin_provenance_from_execution(
         access: Some(serde_json::to_value(&run.access)?),
         stdio: Some(serde_json::to_value(&run.stdio)?),
     })
+}
+
+fn sanitize_plugin_entrypoint_metadata(
+    entrypoint: &PluginEntrypointMetadata,
+) -> PluginEntrypointMetadata {
+    let mut sanitized = entrypoint.clone();
+    sanitized.declared = sanitized
+        .declared
+        .iter()
+        .map(|segment| provenance_safe_path_string(segment))
+        .collect();
+    sanitized.resolved = sanitized
+        .resolved
+        .iter()
+        .map(|segment| provenance_safe_path_string(segment))
+        .collect();
+    for hash in &mut sanitized.hashes {
+        hash.path = provenance_safe_path_string(&hash.path);
+    }
+    sanitized
 }
 
 pub fn attach_generated_file_hashes(
@@ -764,15 +790,18 @@ fn build_command_provenance() -> BuildCommandProvenance {
     let mut args = std::env::args_os()
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
-    let program = args
-        .first()
-        .cloned()
+    let raw_program = args.first().cloned();
+    let program = raw_program
+        .as_deref()
+        .map(provenance_safe_path_string)
         .unwrap_or_else(|| "logicpearl".to_string());
     if !args.is_empty() {
         args.remove(0);
     }
 
-    let mut redacted = false;
+    let mut redacted = raw_program
+        .as_deref()
+        .is_some_and(|value| Path::new(value).is_absolute());
     let mut redacted_args = Vec::with_capacity(args.len());
     let mut pending_value_flag: Option<String> = None;
     for arg in args {
@@ -796,6 +825,8 @@ fn build_command_provenance() -> BuildCommandProvenance {
         ) {
             pending_value_flag = Some(arg.clone());
         }
+        let (arg, was_redacted) = sanitize_path_like_value(&arg);
+        redacted |= was_redacted;
         redacted_args.push(arg);
     }
 
@@ -810,7 +841,10 @@ fn redact_cli_flag_value(flag: &str, value: &str) -> (String, bool) {
     match flag {
         "--trace-plugin-input" => {
             if Path::new(value).exists() {
-                (value.to_string(), false)
+                (
+                    provenance_safe_path_string(value),
+                    Path::new(value).is_absolute(),
+                )
             } else {
                 (
                     format!("<inline:{}>", sha256_prefixed(value.as_bytes())),
@@ -826,7 +860,16 @@ fn redact_cli_flag_value(flag: &str, value: &str) -> (String, bool) {
             format!("<redacted:{}>", sha256_prefixed(value.as_bytes())),
             true,
         ),
-        _ => (value.to_string(), false),
+        _ => sanitize_path_like_value(value),
+    }
+}
+
+fn sanitize_path_like_value(value: &str) -> (String, bool) {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        (provenance_safe_path(path), true)
+    } else {
+        (value.to_string(), false)
     }
 }
 
@@ -997,11 +1040,28 @@ fn resolve_engine_commit() -> Option<String> {
     (!commit.is_empty()).then(|| commit.to_string())
 }
 
-fn file_provenance(path: &Path) -> Result<FileProvenance> {
+fn file_provenance(path: &Path, artifact_dir: Option<&Path>) -> Result<FileProvenance> {
     Ok(FileProvenance {
-        path: path.display().to_string(),
+        path: provenance_file_path(path, artifact_dir),
         hash: hash_file_for_provenance(path)?,
     })
+}
+
+fn provenance_file_path(path: &Path, artifact_dir: Option<&Path>) -> String {
+    if let Some(artifact_dir) = artifact_dir {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            artifact_dir.join(path)
+        };
+        if let Ok(relative) = candidate.strip_prefix(artifact_dir) {
+            let rendered = relative.display().to_string();
+            if !rendered.is_empty() {
+                return rendered;
+            }
+        }
+    }
+    provenance_safe_path(path)
 }
 
 fn validate_source_manifest(manifest: &SourceManifest) -> Result<()> {

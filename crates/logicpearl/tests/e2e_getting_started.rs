@@ -14,6 +14,15 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn report_output_path(artifact_dir: &Path, reported_path: &str) -> PathBuf {
+    let path = Path::new(reported_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    }
+}
+
 fn run_build_json_with_env(
     cli_bin: &str,
     dataset: &Path,
@@ -68,12 +77,15 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
     let build_result: BuildResult =
         serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
     assert_eq!(build_result.label_column, "allowed");
-    assert!(Path::new(&build_result.output_files.artifact_manifest).exists());
-    assert!(Path::new(&build_result.output_files.pearl_ir).exists());
-    assert!(Path::new(&build_result.output_files.build_report).exists());
+    let artifact_manifest =
+        report_output_path(&output_path, &build_result.output_files.artifact_manifest);
+    let pearl_ir = report_output_path(&output_path, &build_result.output_files.pearl_ir);
+    let build_report = report_output_path(&output_path, &build_result.output_files.build_report);
+    assert!(artifact_manifest.exists());
+    assert!(pearl_ir.exists());
+    assert!(build_report.exists());
     let manifest: Value = serde_json::from_str(
-        &std::fs::read_to_string(&build_result.output_files.artifact_manifest)
-            .expect("artifact manifest should be readable"),
+        &std::fs::read_to_string(&artifact_manifest).expect("artifact manifest should be readable"),
     )
     .expect("artifact manifest should be valid JSON");
     assert_eq!(
@@ -128,7 +140,7 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
     let native_binary = output_path.join("decision_traces.pearl");
     assert!(native_binary.exists());
     let compiled_manifest: Value = serde_json::from_str(
-        &std::fs::read_to_string(&build_result.output_files.artifact_manifest)
+        &std::fs::read_to_string(&artifact_manifest)
             .expect("compiled artifact manifest should be readable"),
     )
     .expect("compiled artifact manifest should be valid JSON");
@@ -230,13 +242,19 @@ fn build_mip_matches_smt_rule_artifact_on_large_exact_selection_fixture() {
     );
 
     let smt_ir: Value = serde_json::from_str(
-        &fs::read_to_string(&smt_build.output_files.pearl_ir)
-            .expect("smt pearl ir should be readable"),
+        &fs::read_to_string(report_output_path(
+            &smt_output,
+            &smt_build.output_files.pearl_ir,
+        ))
+        .expect("smt pearl ir should be readable"),
     )
     .expect("smt pearl ir should be valid JSON");
     let mip_ir: Value = serde_json::from_str(
-        &fs::read_to_string(&mip_build.output_files.pearl_ir)
-            .expect("mip pearl ir should be readable"),
+        &fs::read_to_string(report_output_path(
+            &mip_output,
+            &mip_build.output_files.pearl_ir,
+        ))
+        .expect("mip pearl ir should be readable"),
     )
     .expect("mip pearl ir should be valid JSON");
 

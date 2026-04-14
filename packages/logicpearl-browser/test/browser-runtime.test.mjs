@@ -16,6 +16,111 @@ const coercionFixture = JSON.parse(
     'utf8'
   )
 );
+const gateResultSchema = JSON.parse(
+  readFileSync(
+    new URL('../../../schema/logicpearl-gate-result-v1.schema.json', import.meta.url),
+    'utf8'
+  )
+);
+const actionResultSchema = JSON.parse(
+  readFileSync(
+    new URL('../../../schema/logicpearl-action-result-v1.schema.json', import.meta.url),
+    'utf8'
+  )
+);
+
+function validateAgainstSchema(schema, instance) {
+  const errors = validateSchemaNode(schema, instance, schema, '$');
+  assert.deepEqual(errors, [], JSON.stringify(instance, null, 2));
+}
+
+function validateSchemaNode(schema, value, root, path) {
+  if (schema.$ref) {
+    return validateSchemaNode(resolveSchemaRef(root, schema.$ref), value, root, path);
+  }
+
+  if (schema.oneOf) {
+    const branchErrors = schema.oneOf.map((branch) =>
+      validateSchemaNode(branch, value, root, path)
+    );
+    const matches = branchErrors.filter((errors) => errors.length === 0).length;
+    return matches === 1
+      ? []
+      : [`${path} should match exactly one oneOf branch; matched ${matches}`];
+  }
+
+  const errors = [];
+  if (Object.hasOwn(schema, 'const') && value !== schema.const) {
+    errors.push(`${path} should equal ${JSON.stringify(schema.const)}`);
+  }
+  if (schema.type && !schemaTypeMatches(schema.type, value)) {
+    errors.push(`${path} should be ${JSON.stringify(schema.type)}`);
+    return errors;
+  }
+  if (schema.pattern && typeof value === 'string' && !new RegExp(schema.pattern).test(value)) {
+    errors.push(`${path} should match ${schema.pattern}`);
+  }
+  if (schema.minLength !== undefined && typeof value === 'string' && value.length < schema.minLength) {
+    errors.push(`${path} should have length >= ${schema.minLength}`);
+  }
+  if (schema.minimum !== undefined && typeof value === 'number' && value < schema.minimum) {
+    errors.push(`${path} should be >= ${schema.minimum}`);
+  }
+  if (schema.required && isPlainObject(value)) {
+    for (const key of schema.required) {
+      if (!Object.hasOwn(value, key)) errors.push(`${path}.${key} is required`);
+    }
+  }
+  if (schema.properties && isPlainObject(value)) {
+    for (const [key, childSchema] of Object.entries(schema.properties)) {
+      if (Object.hasOwn(value, key)) {
+        errors.push(...validateSchemaNode(childSchema, value[key], root, `${path}.${key}`));
+      }
+    }
+  }
+  if (schema.items && Array.isArray(value)) {
+    value.forEach((item, index) => {
+      errors.push(...validateSchemaNode(schema.items, item, root, `${path}[${index}]`));
+    });
+  }
+  return errors;
+}
+
+function resolveSchemaRef(root, ref) {
+  assert.ok(ref.startsWith('#/'), `unsupported schema ref ${ref}`);
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce((node, part) => node[part.replaceAll('~1', '/').replaceAll('~0', '~')], root);
+}
+
+function schemaTypeMatches(type, value) {
+  const allowed = Array.isArray(type) ? type : [type];
+  return allowed.some((kind) => {
+    switch (kind) {
+      case 'array':
+        return Array.isArray(value);
+      case 'boolean':
+        return typeof value === 'boolean';
+      case 'integer':
+        return Number.isInteger(value);
+      case 'null':
+        return value === null;
+      case 'number':
+        return typeof value === 'number' && Number.isFinite(value);
+      case 'object':
+        return isPlainObject(value);
+      case 'string':
+        return typeof value === 'string';
+      default:
+        throw new Error(`unsupported schema type ${kind}`);
+    }
+  });
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 const sampleManifest = {
   schema_version: 'logicpearl.artifact_manifest.v1',
@@ -57,7 +162,23 @@ const sampleMetadata = {
     high: 3,
   },
   rules: [
-    { id: 'rule_a', bit: 0, label: 'Rule A', counterfactual_hint: 'Change A' },
+    {
+      id: 'rule_a',
+      bit: 0,
+      label: 'Rule A',
+      counterfactual_hint: 'Change A',
+      features: [
+        {
+          feature_id: 'risk_score',
+          feature_label: 'Risk score',
+          source_id: 'risk_policy',
+          source_anchor: 'score',
+          state_label: 'Elevated risk',
+          state_message: 'Risk score is elevated.',
+          counterfactual_hint: 'Lower the risk score.',
+        },
+      ],
+    },
     { id: 'rule_b', bit: 2, label: 'Rule B', counterfactual_hint: 'Change B' },
   ],
 };
@@ -92,6 +213,17 @@ const sampleActionMetadata = {
       priority: 0,
       label: 'Soil is dry',
       counterfactual_hint: 'Increase moisture',
+      features: [
+        {
+          feature_id: 'soil_moisture_pct',
+          feature_label: 'Soil moisture',
+          source_id: 'garden_manual',
+          source_anchor: 'watering',
+          state_label: 'Dry soil',
+          state_message: 'Soil moisture is below the watering threshold.',
+          counterfactual_hint: 'Increase moisture',
+        },
+      ],
     },
     {
       id: 'rule_001',
@@ -237,6 +369,7 @@ test('evaluateJson returns gate runtime JSON v1 shape', async () => {
     risk_band: 'medium',
   });
 
+  validateAgainstSchema(gateResultSchema, result);
   assert.equal(result.schema_version, 'logicpearl.gate_result.v1');
   assert.equal(result.engine_version, '0.1.5');
   assert.equal(
@@ -250,6 +383,17 @@ test('evaluateJson returns gate runtime JSON v1 shape', async () => {
     ['rule_a', 'rule_b']
   );
   assert.equal(result.matched_rules[0].message, null);
+  assert.deepEqual(result.matched_rules[0].features, [
+    {
+      feature_id: 'risk_score',
+      feature_label: 'Risk score',
+      source_id: 'risk_policy',
+      source_anchor: 'score',
+      state_label: 'Elevated risk',
+      state_message: 'Risk score is elevated.',
+      counterfactual_hint: 'Lower the risk score.',
+    },
+  ]);
 });
 
 test('loadArtifactFromBundle evaluates action policies from wasm metadata', async () => {
@@ -333,6 +477,7 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
     leaf_paleness_score: 0.1,
   });
 
+  validateAgainstSchema(actionResultSchema, result);
   assert.equal(result.schema_version, 'logicpearl.action_result.v1');
   assert.equal(result.action_policy_id, 'garden_actions');
   assert.equal(result.decision_kind, 'action');
@@ -343,6 +488,17 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
     result.selected_rules.map((rule) => rule.id),
     ['rule_000']
   );
+  assert.deepEqual(result.selected_rules[0].features, [
+    {
+      feature_id: 'soil_moisture_pct',
+      feature_label: 'Soil moisture',
+      source_id: 'garden_manual',
+      source_anchor: 'watering',
+      state_label: 'Dry soil',
+      state_message: 'Soil moisture is below the watering threshold.',
+      counterfactual_hint: 'Increase moisture',
+    },
+  ]);
 });
 
 test('evaluate treats all u64 bitmask values as valid payloads', async () => {

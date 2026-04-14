@@ -3,7 +3,10 @@ use super::*;
 use anstream::println;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use logicpearl_core::ArtifactKind;
+use logicpearl_core::{
+    load_artifact_bundle, provenance_safe_path_string, ArtifactKind, LoadedArtifactBundle,
+};
+use logicpearl_discovery::build_result_for_report;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -280,45 +283,6 @@ struct LogicPearlRunConfig {
     example_input: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct ActionArtifactManifest {
-    #[serde(default)]
-    schema_version: Option<String>,
-    artifact_version: String,
-    artifact_kind: String,
-    #[serde(default)]
-    artifact_id: Option<String>,
-    #[serde(default)]
-    engine_version: Option<String>,
-    #[serde(default)]
-    ir_version: Option<String>,
-    #[serde(default)]
-    artifact_hash: Option<String>,
-    artifact_name: String,
-    action_column: String,
-    default_action: String,
-    actions: Vec<String>,
-    files: ActionArtifactFiles,
-    #[serde(default)]
-    bundle: ArtifactBundleDescriptor,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct ActionArtifactFiles {
-    #[serde(alias = "ir")]
-    pearl_ir: String,
-    #[serde(default)]
-    action_report: String,
-    #[serde(default)]
-    build_report: Option<String>,
-    #[serde(default, alias = "native")]
-    native_binary: Option<String>,
-    #[serde(default, alias = "wasm")]
-    wasm_module: Option<String>,
-    #[serde(default)]
-    wasm_metadata: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct ActionBuildReport {
     source: String,
@@ -332,6 +296,12 @@ struct ActionBuildReport {
     training_parity: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     provenance: Option<BuildProvenance>,
+}
+
+fn action_build_report_for_report(report: &ActionBuildReport) -> ActionBuildReport {
+    let mut sanitized = report.clone();
+    sanitized.source = provenance_safe_path_string(&sanitized.source);
+    sanitized
 }
 
 struct LoadedActionTraceRecords {
@@ -1032,12 +1002,6 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
         .write_pretty(&args.output)
         .into_diagnostic()
         .wrap_err("failed to write composed pipeline artifact")?;
-    let mut extensions = BTreeMap::new();
-    extensions.insert("artifact_version".to_string(), serde_json::json!("1.0"));
-    extensions.insert(
-        "artifact_name".to_string(),
-        serde_json::json!(plan.pipeline.pipeline_id.clone()),
-    );
     write_artifact_manifest_v1(
         base_dir,
         ArtifactManifestWriteOptions {
@@ -1064,7 +1028,7 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
                 deployables: Vec::new(),
                 metadata_files: Vec::new(),
             },
-            extensions,
+            extensions: BTreeMap::new(),
             file_extensions: BTreeMap::new(),
         },
     )
@@ -1428,6 +1392,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     };
 
     let provenance_inputs = BuildProvenanceInputs {
+        artifact_dir: Some(build_options.output_dir.clone()),
         source_references: parse_key_value_entries(&args.source_references, "source-ref")?,
         decision_traces_path: args.decision_traces.clone(),
         trace_plugin_manifest_path: args.trace_plugin_manifest.clone(),
@@ -1535,7 +1500,6 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
-        &artifact_name,
         &result.gate_id,
         &result.output_files,
         generated_feature_dictionary_for_output(&args, &artifact_dir).map(|path| path.as_path()),
@@ -1543,9 +1507,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     )?;
 
     if args.json {
+        let report = build_result_for_report(&result);
         println!(
             "{}",
-            serde_json::to_string_pretty(&result).into_diagnostic()?
+            serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
         println!(
@@ -1845,6 +1810,7 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         training_parity,
         provenance: Some(
             build_provenance(BuildProvenanceInputs {
+                artifact_dir: Some(output_dir.clone()),
                 source_references: parse_key_value_entries(&args.source_references, "source-ref")?,
                 decision_traces_path: args.decision_traces.clone(),
                 trace_plugin_manifest_path: args.trace_plugin_manifest.clone(),
@@ -1915,19 +1881,15 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
         .flatten(),
     )
     .into_diagnostic()?;
+    let public_action_report = action_build_report_for_report(&action_report);
     fs::write(
         &action_report_path,
-        serde_json::to_string_pretty(&action_report).into_diagnostic()? + "\n",
+        serde_json::to_string_pretty(&public_action_report).into_diagnostic()? + "\n",
     )
     .into_diagnostic()
     .wrap_err("failed to write action report")?;
 
     let mut extensions = BTreeMap::new();
-    extensions.insert("artifact_version".to_string(), serde_json::json!("1.0"));
-    extensions.insert(
-        "artifact_name".to_string(),
-        serde_json::json!(artifact_name.clone()),
-    );
     extensions.insert(
         "action_column".to_string(),
         serde_json::json!(action_column),
@@ -1979,7 +1941,7 @@ fn run_action_build(mut args: BuildArgs) -> Result<()> {
     if args.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&action_report).into_diagnostic()?
+            serde_json::to_string_pretty(&public_action_report).into_diagnostic()?
         );
     } else {
         println!(
@@ -2192,7 +2154,7 @@ fn default_action_artifact_name_from_plugin_input(source: &str) -> String {
 
 fn redacted_source_display(source: &str) -> String {
     if Path::new(source).exists() {
-        source.to_string()
+        provenance_safe_path_string(source)
     } else {
         format!("<inline:{}>", sha256_prefixed(source.as_bytes()))
     }
@@ -2340,25 +2302,20 @@ fn parse_key_value_entries(
 
 pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
     let (artifact, input_json) = resolve_run_arguments(&args)?;
-    if let Some((manifest_dir, manifest)) = load_action_artifact_manifest(&artifact)? {
-        return run_action_eval(
-            &manifest_dir,
-            &manifest,
-            input_json.as_ref(),
-            args.explain,
-            args.json,
-        );
+    let bundle = load_artifact_bundle(&artifact)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to resolve artifact {}", artifact.display()))?;
+    let pearl_ir = bundle.ir_path().into_diagnostic()?;
+    if bundle.manifest.artifact_kind == ArtifactKind::Action {
+        return run_action_eval(&pearl_ir, input_json.as_ref(), args.explain, args.json);
     }
-    let resolved = resolve_artifact_input(&artifact)?;
-    if let Some(action_policy) = load_direct_action_policy(&resolved.pearl_ir)? {
-        return run_action_policy_eval(
-            &action_policy,
-            input_json.as_ref(),
-            args.explain,
-            args.json,
-        );
+    if bundle.manifest.artifact_kind == ArtifactKind::Pipeline {
+        return Err(guidance(
+            "run received a pipeline artifact",
+            "Use `logicpearl pipeline run` for pipeline artifacts.",
+        ));
     }
-    let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
+    let gate = LogicPearlGateIr::from_path(&pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
     let payload = read_json_input_argument(input_json.as_ref(), "input")?;
@@ -2456,67 +2413,23 @@ fn resolve_run_arguments(args: &RunArgs) -> Result<(PathBuf, Option<PathBuf>)> {
 
 fn looks_like_artifact_path(path: &Path) -> bool {
     if path.is_dir() {
-        return path.join("artifact.json").exists() || path.join("pearl.ir.json").exists();
+        return path.join("artifact.json").exists()
+            || path.join("pearl.ir.json").exists()
+            || path.join("pipeline.json").exists();
     }
     path.file_name().is_some_and(|name| {
         name == std::ffi::OsStr::new("artifact.json")
             || name == std::ffi::OsStr::new("pearl.ir.json")
-            || name == std::ffi::OsStr::new("artifact_set.json")
+            || name == std::ffi::OsStr::new("pipeline.json")
     })
 }
 
-fn load_action_artifact_manifest(
-    artifact: &Path,
-) -> Result<Option<(PathBuf, ActionArtifactManifest)>> {
-    let manifest_path = if artifact.is_dir() {
-        artifact.join("artifact.json")
-    } else if artifact
-        .file_name()
-        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
-    {
-        artifact.to_path_buf()
-    } else {
-        return Ok(None);
-    };
-    if !manifest_path.exists() {
-        return Ok(None);
-    }
-    let payload = fs::read_to_string(&manifest_path)
-        .into_diagnostic()
-        .wrap_err("failed to read artifact manifest")?;
-    let value: Value = serde_json::from_str(&payload)
-        .into_diagnostic()
-        .wrap_err("failed to parse artifact manifest")?;
-    match value.get("artifact_kind").and_then(Value::as_str) {
-        Some("action") | Some("action_policy") => {}
-        Some("action_router") => {
-            return Err(guidance(
-                "action artifact uses the older route layout",
-                "Run `logicpearl build` again to emit a single action policy artifact.",
-            ));
-        }
-        _ => return Ok(None),
-    }
-    let manifest = serde_json::from_value(value)
-        .into_diagnostic()
-        .wrap_err("failed to parse action artifact manifest")?;
-    Ok(Some((
-        manifest_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf(),
-        manifest,
-    )))
-}
-
 fn run_action_eval(
-    manifest_dir: &Path,
-    manifest: &ActionArtifactManifest,
+    action_policy_path: &Path,
     input_json: Option<&PathBuf>,
     explain: bool,
     json: bool,
 ) -> Result<()> {
-    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir)?;
     let action_policy = LogicPearlActionIr::from_path(action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
@@ -2592,22 +2505,6 @@ fn run_action_policy_eval(
     Ok(())
 }
 
-fn load_direct_action_policy(pearl_ir: &Path) -> Result<Option<LogicPearlActionIr>> {
-    let payload = fs::read_to_string(pearl_ir)
-        .into_diagnostic()
-        .wrap_err("could not read pearl IR")?;
-    let value: Value = serde_json::from_str(&payload)
-        .into_diagnostic()
-        .wrap_err("pearl IR is not valid JSON")?;
-    if value.get("action_policy_id").is_none() {
-        return Ok(None);
-    }
-    LogicPearlActionIr::from_json_str(&payload)
-        .into_diagnostic()
-        .map(Some)
-        .wrap_err("could not load action policy IR")
-}
-
 fn explain_gate_output(
     gate: &LogicPearlGateIr,
     bitmask: logicpearl_core::RuleMask,
@@ -2640,30 +2537,29 @@ fn print_explained_gate_output(value: &Value) -> Result<()> {
 
 pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
     let artifact = resolve_inspect_artifact(args.pearl_ir.as_ref())?;
-    if let Some((manifest_dir, manifest)) = load_action_artifact_manifest(&artifact)? {
-        return run_action_inspect(&manifest_dir, &manifest, args.json);
+    let bundle = load_artifact_bundle(&artifact)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to resolve artifact {}", artifact.display()))?;
+    let pearl_ir = bundle.ir_path().into_diagnostic()?;
+    match bundle.manifest.artifact_kind {
+        ArtifactKind::Action => return run_action_inspect(&bundle, args.json),
+        ArtifactKind::Pipeline => {
+            return Err(guidance(
+                "inspect received a pipeline artifact",
+                "Use `logicpearl pipeline inspect` for pipeline artifacts.",
+            ));
+        }
+        ArtifactKind::Gate => {}
     }
-    let resolved = resolve_artifact_input(&artifact)?;
-    if let Some(action_policy) = load_direct_action_policy(&resolved.pearl_ir)? {
-        return run_action_policy_inspect(
-            &resolved.artifact_dir,
-            "action",
-            &action_policy.action_policy_id,
-            &resolved.pearl_ir,
-            &action_policy,
-            None,
-            args.json,
-        );
-    }
-    let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)
+    let gate = LogicPearlGateIr::from_path(&pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
-    let bundle = load_artifact_bundle_descriptor(&resolved.artifact_dir)
+    let descriptor = artifact_bundle_descriptor_from_manifest(&bundle.manifest)
         .wrap_err("could not load artifact bundle metadata")?;
     if args.json {
         let summary = serde_json::json!({
-            "artifact_dir": resolved.artifact_dir,
-            "pearl_ir": resolved.pearl_ir,
+            "artifact_dir": bundle.base_dir,
+            "pearl_ir": pearl_ir,
             "gate_id": gate.gate_id,
             "ir_version": gate.ir_version,
             "features": gate.input_schema.features.len(),
@@ -2672,7 +2568,7 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             "rule_details": inspect_rule_details(&gate),
             "correctness_scope": gate.verification.as_ref().and_then(|verification| verification.correctness_scope.clone()),
             "verification_summary": gate.verification.as_ref().and_then(|verification| verification.verification_summary.clone()),
-            "bundle": bundle,
+            "bundle": descriptor,
         });
         println!(
             "{}",
@@ -2681,36 +2577,34 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
     } else {
         let inspector = TextInspector;
         println!("{}", "LogicPearl Artifact".bold().bright_blue());
-        if let Some(bundle) = bundle {
-            println!(
-                "  {} {}",
-                "Bundle".bright_black(),
-                resolved.artifact_dir.display()
-            );
-            println!(
-                "  {} {}",
-                "CLI entrypoint".bright_black(),
-                resolved.artifact_dir.join(&bundle.cli_entrypoint).display()
-            );
-            if let Some(primary_runtime) = &bundle.primary_runtime {
-                println!("  {} {}", "Primary runtime".bright_black(), primary_runtime);
-            }
-            for deployable in &bundle.deployables {
-                println!(
-                    "  {} {}",
-                    "Deployable".bright_black(),
-                    resolved.artifact_dir.join(&deployable.path).display()
-                );
-            }
-            for metadata_file in &bundle.metadata_files {
-                println!(
-                    "  {} {}",
-                    "Wasm metadata".bright_black(),
-                    resolved.artifact_dir.join(&metadata_file.path).display()
-                );
-            }
-            println!();
+        println!(
+            "  {} {}",
+            "Bundle".bright_black(),
+            bundle.base_dir.display()
+        );
+        println!(
+            "  {} {}",
+            "CLI entrypoint".bright_black(),
+            bundle.base_dir.join(&descriptor.cli_entrypoint).display()
+        );
+        if let Some(primary_runtime) = &descriptor.primary_runtime {
+            println!("  {} {}", "Primary runtime".bright_black(), primary_runtime);
         }
+        for deployable in &descriptor.deployables {
+            println!(
+                "  {} {}",
+                "Deployable".bright_black(),
+                bundle.base_dir.join(&deployable.path).display()
+            );
+        }
+        for metadata_file in &descriptor.metadata_files {
+            println!(
+                "  {} {}",
+                "Wasm metadata".bright_black(),
+                bundle.base_dir.join(&metadata_file.path).display()
+            );
+        }
+        println!();
         println!("{}", inspector.render(&gate).into_diagnostic()?);
     }
     Ok(())
@@ -2742,22 +2636,17 @@ fn resolve_inspect_artifact(explicit: Option<&PathBuf>) -> Result<PathBuf> {
     ))
 }
 
-fn run_action_inspect(
-    manifest_dir: &Path,
-    manifest: &ActionArtifactManifest,
-    json: bool,
-) -> Result<()> {
-    let action_policy_path = resolve_manifest_member_path(manifest_dir, &manifest.files.pearl_ir)?;
+fn run_action_inspect(bundle: &LoadedArtifactBundle, json: bool) -> Result<()> {
+    let action_policy_path = bundle.ir_path().into_diagnostic()?;
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
-    let report_file = if manifest.files.action_report.is_empty() {
-        manifest.files.build_report.as_deref()
-    } else {
-        Some(manifest.files.action_report.as_str())
-    };
-    let report_path = report_file
-        .map(|file| resolve_manifest_member_path(manifest_dir, file))
+    let report_path = bundle
+        .manifest
+        .files
+        .build_report
+        .as_deref()
+        .map(|file| resolve_manifest_member_path(&bundle.base_dir, file))
         .transpose()?;
     let report: Option<Value> = if report_path.as_ref().is_some_and(|path| path.exists()) {
         let report_path = report_path.as_ref().expect("report path should exist");
@@ -2774,9 +2663,9 @@ fn run_action_inspect(
         None
     };
     run_action_policy_inspect(
-        manifest_dir,
-        &manifest.artifact_kind,
-        &manifest.artifact_name,
+        &bundle.base_dir,
+        "action",
+        &bundle.manifest.artifact_id,
         &action_policy_path,
         &action_policy,
         report,

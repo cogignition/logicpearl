@@ -1,18 +1,19 @@
 {
-  "artifact_version": "1.0",
-  "artifact_name": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
-  "gate_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "artifact_id": "bcbsma_step_therapy_049_drug_management_retail_pharmacy_prior_authorization_policy",
+  "artifact_kind": "gate",
+  "engine_version": "0.1.5",
+  "ir_version": "1.0",
+  "created_at": "2026-04-12T00:00:00Z",
+  "artifact_hash": "sha256:4d56e5acec77f8db6ad539459f626a92145a30997b92456a6fe2feae3adcb59f",
   "files": {
-    "pearl_ir": "pearl.ir.json",
-    "build_report": "build_report.json",
-    "native_binary": null,
-    "wasm_module": null,
-    "wasm_metadata": null
+    "ir": "pearl.ir.json",
+    "build_report": "build_report.json"
   },
-  "bundle": {
-    "bundle_kind": "direct_pearl_bundle",
-    "cli_entrypoint": "artifact.json",
-    "deployables": [],
-    "metadata_files": []
-  }
+  "input_schema_hash": "sha256:676a82ea854ca254ac06b4508ef1722ea1e367786ed8bb74194b3839b67a6def",
+  "file_hashes": {
+    "ir": "sha256:4d56e5acec77f8db6ad539459f626a92145a30997b92456a6fe2feae3adcb59f",
+    "build_report": "sha256:e84ff597fb923b0342bae9aa94d86214b0dcfd054cb2893f569a66dffc3d8e57"
+  },
+  "bundle_hash": "sha256:c1ffd7a04238d540fb02519977ef84bd00d0e03c9444cc774f97be9b20dcff80"
 }

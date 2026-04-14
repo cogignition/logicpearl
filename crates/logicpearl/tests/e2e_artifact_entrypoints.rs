@@ -33,6 +33,15 @@ fn run_cli_json(cli_bin: &str, args: &[String]) -> Value {
     serde_json::from_slice(&output.stdout).expect("command output should be valid JSON")
 }
 
+fn report_output_path(artifact_dir: &Path, reported_path: &str) -> PathBuf {
+    let path = Path::new(reported_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    }
+}
+
 #[test]
 fn artifact_entrypoints_resolve_consistently_across_cli_commands() {
     let repo_root = repo_root();
@@ -61,8 +70,9 @@ fn artifact_entrypoints_resolve_consistently_across_cli_commands() {
 
     let build_result: BuildResult =
         serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
-    let artifact_manifest = PathBuf::from(&build_result.output_files.artifact_manifest);
-    let pearl_ir = PathBuf::from(&build_result.output_files.pearl_ir);
+    let artifact_manifest =
+        report_output_path(&artifact_dir, &build_result.output_files.artifact_manifest);
+    let pearl_ir = report_output_path(&artifact_dir, &build_result.output_files.pearl_ir);
 
     let entrypoints = [
         artifact_dir.display().to_string(),

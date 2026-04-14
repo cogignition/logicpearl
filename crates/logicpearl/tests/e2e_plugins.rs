@@ -29,6 +29,15 @@ fn assert_sha256_string(value: &Value) {
     );
 }
 
+fn report_output_path(artifact_dir: &Path, reported_path: &str) -> PathBuf {
+    let path = Path::new(reported_path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        artifact_dir.join(path)
+    }
+}
+
 #[test]
 fn generic_plugin_commands_validate_and_run_observer_and_trace_source() {
     let repo_root = repo_root();
@@ -231,8 +240,11 @@ fn build_report_records_plugin_provenance() {
         .is_some_and(|value| value.starts_with("<redacted:sha256:")));
 
     let persisted: BuildResult = serde_json::from_str(
-        &std::fs::read_to_string(&build_result.output_files.build_report)
-            .expect("build report should be readable"),
+        &std::fs::read_to_string(report_output_path(
+            &artifact_dir,
+            &build_result.output_files.build_report,
+        ))
+        .expect("build report should be readable"),
     )
     .expect("build report should be valid JSON");
     assert!(persisted.provenance.is_some());

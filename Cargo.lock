@@ -1106,6 +1106,7 @@ dependencies = [
  "csv",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror",
 ]
@@ -1212,12 +1213,10 @@ name = "logicpearl-runtime"
 version = "0.1.5"
 dependencies = [
  "criterion",
- "hex",
  "logicpearl-core",
  "logicpearl-ir",
  "serde",
  "serde_json",
- "sha2 0.11.0",
 ]
 
 [[package]]

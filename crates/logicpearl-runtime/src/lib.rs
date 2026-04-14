@@ -7,6 +7,7 @@
 //! assembly, runtime JSON schema identifiers, and artifact hashing. It does
 //! not perform discovery, plugin execution, or artifact bundle loading.
 
+pub use logicpearl_core::{artifact_hash, sha256_prefixed};
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     derived_feature_evaluation_order, ComparisonExpression, ComparisonOperator, ComparisonValue,
@@ -15,7 +16,6 @@ use logicpearl_ir::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 pub const LOGICPEARL_ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -158,41 +158,6 @@ impl ArtifactError {
     }
 }
 
-pub fn artifact_hash<T: Serialize>(artifact: &T) -> String {
-    let value = serde_json::to_value(artifact)
-        .expect("LogicPearl runtime artifacts should serialize to canonical JSON bytes");
-    let canonical = canonicalize_json_value(value);
-    let bytes = serde_json::to_vec(&canonical)
-        .expect("canonical LogicPearl runtime artifact JSON should serialize");
-    sha256_prefixed(&bytes)
-}
-
-pub fn sha256_prefixed(bytes: &[u8]) -> String {
-    let mut digest = Sha256::new();
-    digest.update(bytes);
-    format!("sha256:{}", hex::encode(digest.finalize()))
-}
-
-fn canonicalize_json_value(value: Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(
-            items
-                .into_iter()
-                .map(canonicalize_json_value)
-                .collect::<Vec<_>>(),
-        ),
-        Value::Object(map) => {
-            let mut entries = map
-                .into_iter()
-                .map(|(key, value)| (key, canonicalize_json_value(value)))
-                .collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(entries.into_iter().collect())
-        }
-        other => other,
-    }
-}
-
 /// Evaluate a gate artifact against input features and return the matched-rule bitmask.
 pub fn evaluate_gate(
     gate: &LogicPearlGateIr,
@@ -323,7 +288,8 @@ pub fn explain_gate_matches(gate: &LogicPearlGateIr, bitmask: RuleMask) -> Vec<G
         .collect()
 }
 
-fn explain_rule_features(
+/// Build per-feature explanations for a rule expression from input-schema semantics.
+pub fn explain_rule_features(
     input_schema: &InputSchema,
     expression: &Expression,
 ) -> Vec<RuleFeatureExplanation> {

@@ -1,18 +1,19 @@
 {
-  "artifact_version": "1.0",
-  "artifact_name": "revenue_ready_clinical_denial",
-  "gate_id": "revenue_ready_clinical_denial",
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "artifact_id": "revenue_ready_clinical_denial",
+  "artifact_kind": "gate",
+  "engine_version": "0.1.5",
+  "ir_version": "1.0",
+  "created_at": "2026-04-12T00:00:00Z",
+  "artifact_hash": "sha256:32ab870e3eff2c9aff3992e35452ae1abcd75603937c2d44fec62c6e98ef9cc9",
   "files": {
-    "pearl_ir": "pearl.ir.json",
-    "build_report": "build_report.json",
-    "native_binary": null,
-    "wasm_module": null,
-    "wasm_metadata": null
+    "ir": "pearl.ir.json",
+    "build_report": "build_report.json"
   },
-  "bundle": {
-    "bundle_kind": "direct_pearl_bundle",
-    "cli_entrypoint": "artifact.json",
-    "deployables": [],
-    "metadata_files": []
-  }
+  "input_schema_hash": "sha256:177b7a5dbc86bcc6b861827791ae90cbcf70d2074a66105a07f01629a2eb2352",
+  "file_hashes": {
+    "ir": "sha256:32ab870e3eff2c9aff3992e35452ae1abcd75603937c2d44fec62c6e98ef9cc9",
+    "build_report": "sha256:461c8834dd36ea5d7c06e010e3f4d8170b569fd1f63e0980f33cfcf35fd2bfa6"
+  },
+  "bundle_hash": "sha256:de814e576ddb0bef6172bf0b8b0f2c70e13e8a502e5695bced52ee8dfa31c3ec"
 }

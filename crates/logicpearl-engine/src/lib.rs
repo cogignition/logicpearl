@@ -22,7 +22,9 @@
 //! # }
 //! ```
 
-use logicpearl_core::{resolve_manifest_path, LogicPearlError, Result};
+use logicpearl_core::{
+    load_artifact_bundle, ArtifactKind, LoadedArtifactBundle, LogicPearlError, Result,
+};
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
 use logicpearl_plugin::PluginExecutionPolicy;
@@ -32,7 +34,6 @@ use logicpearl_runtime::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,85 +110,15 @@ struct PreparedActionArtifact {
     policy: LogicPearlActionIr,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NamedArtifactManifest {
-    files: NamedArtifactFiles,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NamedArtifactFiles {
-    #[serde(alias = "ir")]
-    pearl_ir: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActionArtifactManifest {
-    artifact_kind: String,
-    files: ActionArtifactFiles,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActionArtifactFiles {
-    #[serde(alias = "ir")]
-    pearl_ir: String,
-}
-
 impl LogicPearlEngine {
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        if looks_like_pipeline_path(path) {
-            return Self::from_pipeline_path(path);
-        }
-        if let Some(pipeline_path) = resolve_pipeline_manifest_input(path)? {
-            return Self::from_pipeline_path(pipeline_path);
-        }
-        if looks_like_artifact_path(path) {
-            return Self::from_artifact_path(path);
-        }
-
-        if path.is_file() {
-            let content = fs::read_to_string(path)?;
-            let value: Value = serde_json::from_str(&content)?;
-            if value.get("pipeline_version").is_some() {
-                return Self::from_pipeline_path(path);
-            }
-            if value.get("ir_version").is_some() || value.get("files").is_some() {
-                return Self::from_artifact_path(path);
-            }
-        }
-
-        if path.is_dir() {
-            if path.join("pipeline.json").exists() {
-                return Self::from_pipeline_path(path.join("pipeline.json"));
-            }
-            if path.join("artifact.json").exists() || path.join("pearl.ir.json").exists() {
-                return Self::from_artifact_path(path);
-            }
-        }
-
-        Err(LogicPearlError::message(format!(
-            "could not determine whether {} is a LogicPearl artifact or pipeline",
-            path.display()
-        )))
+        Self::from_path_with_plugin_policy(path, PluginExecutionPolicy::default())
     }
 
     pub fn from_artifact_path(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        if let Some(action_policy_ir) = resolve_action_artifact_input(path)? {
-            let policy = LogicPearlActionIr::from_path(&action_policy_ir)?;
-            return Ok(Self {
-                kind: EngineKind::ActionArtifact,
-                source_path: path.to_path_buf(),
-                prepared: PreparedExecution::ActionArtifact(PreparedActionArtifact { policy }),
-            });
-        }
-        let resolved = resolve_artifact_input(path)?;
-        let gate = LogicPearlGateIr::from_path(&resolved.pearl_ir)?;
-        Ok(Self {
-            kind: EngineKind::Artifact,
-            source_path: path.to_path_buf(),
-            prepared: PreparedExecution::Artifact(PreparedArtifact { gate }),
-        })
+        let bundle = load_artifact_bundle(path)?;
+        Self::from_loaded_bundle(path, bundle, PluginExecutionPolicy::default())
     }
 
     pub fn from_pipeline_path(path: impl AsRef<Path>) -> Result<Self> {
@@ -199,43 +130,8 @@ impl LogicPearlEngine {
         plugin_policy: PluginExecutionPolicy,
     ) -> Result<Self> {
         let path = path.as_ref();
-        if looks_like_pipeline_path(path) {
-            return Self::from_pipeline_path_with_plugin_policy(path, plugin_policy);
-        }
-        if let Some(pipeline_path) = resolve_pipeline_manifest_input(path)? {
-            return Self::from_pipeline_path_with_plugin_policy(pipeline_path, plugin_policy);
-        }
-        if looks_like_artifact_path(path) {
-            return Self::from_artifact_path(path);
-        }
-
-        if path.is_file() {
-            let content = fs::read_to_string(path)?;
-            let value: Value = serde_json::from_str(&content)?;
-            if value.get("pipeline_version").is_some() {
-                return Self::from_pipeline_path_with_plugin_policy(path, plugin_policy);
-            }
-            if value.get("ir_version").is_some() || value.get("files").is_some() {
-                return Self::from_artifact_path(path);
-            }
-        }
-
-        if path.is_dir() {
-            if path.join("pipeline.json").exists() {
-                return Self::from_pipeline_path_with_plugin_policy(
-                    path.join("pipeline.json"),
-                    plugin_policy,
-                );
-            }
-            if path.join("artifact.json").exists() || path.join("pearl.ir.json").exists() {
-                return Self::from_artifact_path(path);
-            }
-        }
-
-        Err(LogicPearlError::message(format!(
-            "could not determine whether {} is a LogicPearl artifact or pipeline",
-            path.display()
-        )))
+        let bundle = load_artifact_bundle(path)?;
+        Self::from_loaded_bundle(path, bundle, plugin_policy)
     }
 
     pub fn from_pipeline_path_with_plugin_policy(
@@ -243,11 +139,15 @@ impl LogicPearlEngine {
         plugin_policy: PluginExecutionPolicy,
     ) -> Result<Self> {
         let path = path.as_ref();
-        let resolved_path = if path.is_dir() {
-            path.join("pipeline.json")
-        } else {
-            path.to_path_buf()
-        };
+        let bundle = load_artifact_bundle(path)?;
+        if bundle.manifest.artifact_kind != ArtifactKind::Pipeline {
+            return Err(LogicPearlError::message(format!(
+                "{} resolved to a {:?} artifact, not a pipeline",
+                path.display(),
+                bundle.manifest.artifact_kind
+            )));
+        }
+        let resolved_path = bundle.ir_path()?;
         let pipeline = PipelineDefinition::from_path(&resolved_path)?;
         let base_dir = resolved_path.parent().unwrap_or_else(|| Path::new("."));
         let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
@@ -260,6 +160,42 @@ impl LogicPearlEngine {
 
     pub fn kind(&self) -> EngineKind {
         self.kind
+    }
+
+    fn from_loaded_bundle(
+        source_path: &Path,
+        bundle: LoadedArtifactBundle,
+        plugin_policy: PluginExecutionPolicy,
+    ) -> Result<Self> {
+        let ir_path = bundle.ir_path()?;
+        match bundle.manifest.artifact_kind {
+            ArtifactKind::Gate => {
+                let gate = LogicPearlGateIr::from_path(&ir_path)?;
+                Ok(Self {
+                    kind: EngineKind::Artifact,
+                    source_path: source_path.to_path_buf(),
+                    prepared: PreparedExecution::Artifact(PreparedArtifact { gate }),
+                })
+            }
+            ArtifactKind::Action => {
+                let policy = LogicPearlActionIr::from_path(&ir_path)?;
+                Ok(Self {
+                    kind: EngineKind::ActionArtifact,
+                    source_path: source_path.to_path_buf(),
+                    prepared: PreparedExecution::ActionArtifact(PreparedActionArtifact { policy }),
+                })
+            }
+            ArtifactKind::Pipeline => {
+                let pipeline = PipelineDefinition::from_path(&ir_path)?;
+                let base_dir = ir_path.parent().unwrap_or_else(|| Path::new("."));
+                let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
+                Ok(Self {
+                    kind: EngineKind::Pipeline,
+                    source_path: ir_path,
+                    prepared: PreparedExecution::Pipeline(prepared),
+                })
+            }
+        }
     }
 
     pub fn source_path(&self) -> &Path {
@@ -354,153 +290,15 @@ fn evaluate_action_artifact_single(
     evaluate_action_policy(policy, &parsed[0])
 }
 
-#[derive(Debug, Clone)]
-struct ResolvedArtifactInput {
-    pearl_ir: PathBuf,
-}
-
-fn resolve_action_artifact_input(path: &Path) -> Result<Option<PathBuf>> {
-    if path.is_dir() {
-        let manifest_path = path.join("artifact.json");
-        if manifest_path.exists() {
-            return resolve_action_manifest_input(&manifest_path);
-        }
-        let pearl_ir = path.join("pearl.ir.json");
-        if pearl_ir.exists() && is_action_policy_ir(&pearl_ir)? {
-            return Ok(Some(pearl_ir));
-        }
-        return Ok(None);
-    }
-
-    if path
-        .file_name()
-        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
-    {
-        return resolve_action_manifest_input(path);
-    }
-
-    if path.is_file() && is_action_policy_ir(path)? {
-        return Ok(Some(path.to_path_buf()));
-    }
-
-    Ok(None)
-}
-
-fn resolve_pipeline_manifest_input(path: &Path) -> Result<Option<PathBuf>> {
-    let manifest_path = if path.is_dir() {
-        let candidate = path.join("artifact.json");
-        if candidate.exists() {
-            candidate
-        } else {
-            return Ok(None);
-        }
-    } else if path
-        .file_name()
-        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
-    {
-        path.to_path_buf()
-    } else {
-        return Ok(None);
-    };
-    let content = fs::read_to_string(&manifest_path)?;
-    let value: Value = serde_json::from_str(&content)?;
-    if value.get("artifact_kind").and_then(Value::as_str) != Some("pipeline") {
-        return Ok(None);
-    }
-    let ir = value
-        .get("files")
-        .and_then(|files| files.get("ir").or_else(|| files.get("pearl_ir")))
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            LogicPearlError::message("pipeline artifact manifest is missing files.ir")
-        })?;
-    Ok(Some(resolve_manifest_path(&manifest_path, ir)?))
-}
-
-fn resolve_action_manifest_input(manifest_path: &Path) -> Result<Option<PathBuf>> {
-    let content = fs::read_to_string(manifest_path)?;
-    let value: Value = serde_json::from_str(&content)?;
-    if !matches!(
-        value.get("artifact_kind").and_then(Value::as_str),
-        Some("action") | Some("action_policy")
-    ) {
-        return Ok(None);
-    }
-    let manifest: ActionArtifactManifest = serde_json::from_value(value)?;
-    Ok(Some(resolve_manifest_path(
-        manifest_path,
-        &manifest.files.pearl_ir,
-    )?))
-}
-
-fn is_action_policy_ir(path: &Path) -> Result<bool> {
-    let content = fs::read_to_string(path)?;
-    let value: Value = serde_json::from_str(&content)?;
-    Ok(value.get("action_policy_id").is_some())
-}
-
-fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInput> {
-    if path.is_dir() {
-        let manifest_path = path.join("artifact.json");
-        if manifest_path.exists() {
-            let manifest = load_named_artifact_manifest(&manifest_path)?;
-            return Ok(ResolvedArtifactInput {
-                pearl_ir: resolve_manifest_path(&manifest_path, &manifest.files.pearl_ir)?,
-            });
-        }
-        let pearl_ir = path.join("pearl.ir.json");
-        if pearl_ir.exists() {
-            return Ok(ResolvedArtifactInput { pearl_ir });
-        }
-        return Err(LogicPearlError::message(format!(
-            "artifact directory {} is missing artifact.json and pearl.ir.json",
-            path.display()
-        )));
-    }
-
-    if path
-        .file_name()
-        .is_some_and(|name| name == std::ffi::OsStr::new("artifact.json"))
-    {
-        let manifest = load_named_artifact_manifest(path)?;
-        return Ok(ResolvedArtifactInput {
-            pearl_ir: resolve_manifest_path(path, &manifest.files.pearl_ir)?,
-        });
-    }
-
-    Ok(ResolvedArtifactInput {
-        pearl_ir: path.to_path_buf(),
-    })
-}
-
-fn load_named_artifact_manifest(path: &Path) -> Result<NamedArtifactManifest> {
-    let content = fs::read_to_string(path)?;
-    let manifest = serde_json::from_str(&content)?;
-    Ok(manifest)
-}
-
-fn looks_like_pipeline_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| name.ends_with(".pipeline.json") || name == "pipeline.json")
-}
-
-fn looks_like_artifact_path(path: &Path) -> bool {
-    if path.is_dir() {
-        return path.join("artifact.json").exists() || path.join("pearl.ir.json").exists();
-    }
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| {
-            name == "artifact.json" || name == "pearl.ir.json" || name.ends_with(".ir.json")
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
     use tempfile::tempdir;
+
+    const ZERO_HASH: &str =
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
     fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -542,11 +340,15 @@ mod tests {
         fs::write(
             dir.path().join("artifact.json"),
             serde_json::to_string_pretty(&json!({
-                "artifact_version": "1.0",
-                "artifact_name": "auth-demo",
-                "gate_id": "auth_demo_v1",
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "auth_demo_v1",
+                "artifact_kind": "gate",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": ZERO_HASH,
                 "files": {
-                    "pearl_ir": "pearl.ir.json"
+                    "ir": "pearl.ir.json"
                 }
             }))
             .expect("manifest encodes"),
@@ -569,11 +371,15 @@ mod tests {
         fs::write(
             artifact_dir.join("artifact.json"),
             serde_json::to_string_pretty(&json!({
-                "artifact_version": "1.0",
-                "artifact_name": "auth-demo",
-                "gate_id": "auth_demo_v1",
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "auth_demo_v1",
+                "artifact_kind": "gate",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": ZERO_HASH,
                 "files": {
-                    "pearl_ir": "gate/pearl.ir.json"
+                    "ir": "gate/pearl.ir.json"
                 }
             }))
             .expect("manifest encodes"),
@@ -600,11 +406,15 @@ mod tests {
         fs::write(
             artifact_dir.join("artifact.json"),
             serde_json::to_string_pretty(&json!({
-                "artifact_version": "1.0",
-                "artifact_name": "auth-demo",
-                "gate_id": "auth_demo_v1",
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "auth_demo_v1",
+                "artifact_kind": "gate",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": ZERO_HASH,
                 "files": {
-                    "pearl_ir": outside.display().to_string()
+                    "ir": outside.display().to_string()
                 }
             }))
             .expect("manifest encodes"),
@@ -635,11 +445,15 @@ mod tests {
         fs::write(
             artifact_dir.join("artifact.json"),
             serde_json::to_string_pretty(&json!({
-                "artifact_version": "1.0",
-                "artifact_name": "auth-demo",
-                "gate_id": "auth_demo_v1",
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "auth_demo_v1",
+                "artifact_kind": "gate",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": ZERO_HASH,
                 "files": {
-                    "pearl_ir": "pearl.ir.json"
+                    "ir": "pearl.ir.json"
                 }
             }))
             .expect("manifest encodes"),
@@ -693,15 +507,16 @@ mod tests {
         fs::write(
             dir.path().join("artifact.json"),
             serde_json::to_string_pretty(&json!({
-                "artifact_version": "1.0",
-                "artifact_kind": "action_policy",
-                "artifact_name": "garden_actions",
-                "action_column": "next_action",
-                "default_action": "do_nothing",
-                "actions": ["do_nothing", "water"],
+                "schema_version": "logicpearl.artifact_manifest.v1",
+                "artifact_id": "garden_actions",
+                "artifact_kind": "action",
+                "engine_version": "0.1.5",
+                "ir_version": "1.0",
+                "created_at": "2026-04-12T00:00:00Z",
+                "artifact_hash": ZERO_HASH,
                 "files": {
-                    "pearl_ir": "pearl.ir.json",
-                    "action_report": "action_report.json"
+                    "ir": "pearl.ir.json",
+                    "build_report": "action_report.json"
                 }
             }))
             .expect("manifest encodes"),
