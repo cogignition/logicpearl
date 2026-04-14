@@ -1990,6 +1990,8 @@ class Logicpearl < Formula
   version "{version}"
   license "MIT"
 
+  depends_on "z3"
+
   on_macos do
     if Hardware::CPU.arm?
       url "{mac_arm_url}"
@@ -2006,8 +2008,6 @@ class Logicpearl < Formula
       sha256 "{linux}"
     end
   end
-
-  depends_on "z3"
 
   def install
     bundle = if (buildpath/"bin/logicpearl").exist?
