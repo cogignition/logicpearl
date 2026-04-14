@@ -42,5 +42,5 @@ python3 -m twine upload target/wheels/logicpearl-*
 
 Only add packages here if the name is:
 - realistic
-- product-aligned
+- project-aligned
 - clearly tied to a public Rust surface or a truly useful Python bridge

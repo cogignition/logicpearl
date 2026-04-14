@@ -13,27 +13,33 @@ Give it examples of normalized inputs and the decisions that came out. It builds
 The runtime does not call a model, spend tokens, or improvise. The same normalized input produces the same output every time.
 
 ```bash
-logicpearl quickstart build
+logicpearl build examples/demos/garden_actions/traces.csv --action-column next_action --default-action do_nothing --gate-id garden_actions --output-dir /tmp/garden-actions
+logicpearl inspect /tmp/garden-actions
+logicpearl run /tmp/garden-actions examples/demos/garden_actions/today.json --explain
 ```
 
-That prints the shortest checked-in path through the product: build an artifact from traces, inspect the learned rule, run a new input, and verify the bundle. It does not invent domain data for you; it points at the example files in this repo so you can see and edit the traces yourself.
+That builds a small action policy from reviewed garden-care examples, prints the learned rules, and runs today's input through the artifact. It does not invent domain data for you; it points at the example files in this repo so you can see and edit the traces yourself.
 
-After running that recipe, the artifact shape is:
+After running those commands, the artifact shape is:
 
 ```text
-Built decision_traces
-  Rows 12
-  Rules 1
+Built action artifact garden_actions
+  Rows 16
+  Actions water, do_nothing, fertilize, repot
+  Default action do_nothing
   Training parity 100.0%
 
-Rules
-  bit 0  Age at or below 17.0
+Action rules:
+  1. water
+     Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
+  2. fertilize
+     Days since fertilized at or above 32.0
+  3. repot
+     Days since fertilized at or above 15.0 and Days since watered at or above Growth Cm Last 14 Days
 
-Run a matching input, such as `{ "age": 16, "is_member": 1 }`
-  bitmask: 1
-  matched: Age at or below 17.0
-
-Verified decision_traces
+action: water
+reason:
+  - Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
 ```
 
 <p align="center">
@@ -47,12 +53,6 @@ Verified decision_traces
 
 ## Install
 
-Fast path after installing a release bundle:
-
-```bash
-logicpearl quickstart
-```
-
 For release downloads, checksum verification, Homebrew, and source install details, see [docs/install.md](./docs/install.md). Prebuilt release bundles include `logicpearl` and `z3`; source installs need a solver such as `z3` on `PATH`.
 
 To install from a cloned source checkout instead:
@@ -65,22 +65,8 @@ That source path builds the CLI only. For discovery workflows, keep `z3` on your
 
 ## Core Loop
 
-The core product loop is intentionally small:
-
 ```text
 build -> inspect -> run -> verify -> diff
-```
-
-Print the shortest paths:
-
-```bash
-logicpearl quickstart
-```
-
-Jump straight to the build recipe:
-
-```bash
-logicpearl quickstart build
 ```
 
 Clone the repository when you want the checked-in examples:
@@ -90,37 +76,40 @@ git clone https://github.com/LogicPearlHQ/logicpearl.git
 cd logicpearl
 ```
 
-Build a pearl from a checked-in trace file:
+Build a pearl from a checked-in action trace file:
 
 ```bash
-logicpearl build examples/getting_started/decision_traces.csv \
-  --output-dir /tmp/logicpearl-output
+logicpearl build examples/demos/garden_actions/traces.csv \
+  --action-column next_action \
+  --default-action do_nothing \
+  --gate-id garden_actions \
+  --output-dir /tmp/garden-actions
 ```
 
 Inspect the learned logic:
 
 ```bash
-logicpearl inspect /tmp/logicpearl-output
+logicpearl inspect /tmp/garden-actions
 ```
 
 Run the artifact on a new input:
 
 ```bash
-logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json
-logicpearl run /tmp/logicpearl-output examples/getting_started/new_input.json --json
+logicpearl run /tmp/garden-actions examples/demos/garden_actions/today.json --explain
+logicpearl run /tmp/garden-actions examples/demos/garden_actions/today.json --json
 ```
 
 Verify the artifact bundle:
 
 ```bash
-logicpearl artifact inspect /tmp/logicpearl-output --json
-logicpearl artifact digest /tmp/logicpearl-output
-logicpearl artifact verify /tmp/logicpearl-output
+logicpearl artifact inspect /tmp/garden-actions --json
+logicpearl artifact digest /tmp/garden-actions
+logicpearl artifact verify /tmp/garden-actions
 ```
 
-That is the core product. A labeled behavior slice goes in; an inspectable deterministic artifact comes out.
+That is the main path. A labeled behavior slice goes in; an inspectable deterministic artifact comes out.
 
-For a less toy-shaped walkthrough, try:
+More examples:
 
 - [Garden actions demo](./examples/demos/garden_actions/README.md)
   Learn a multi-action artifact that chooses `water`, `fertilize`, `repot`, or `do_nothing`.
@@ -223,14 +212,14 @@ Good fits:
 
 RAG can be useful upstream for finding documents, extracting fields, or normalizing messy input. LogicPearl is a better fit for the final bounded decision when the requirement is "apply this reviewed rule behavior exactly, explain which rule fired, and diff any change before release."
 
-| Tool | Best for | LogicPearl difference |
-|---|---|---|
-| Deep conditionals | Product logic hidden across code paths | LogicPearl turns the behavior into a small artifact you can inspect, test, hash, and diff. |
-| RAG over policy docs | Retrieval and open-ended answer synthesis | LogicPearl makes the final decision deterministically once inputs are normalized. |
-| OPA / Rego | Hand-written policy | LogicPearl learns from reviewed traces, then emits inspectable artifacts. |
-| Decision tables | Manually maintained rules | LogicPearl builds, hashes, verifies, and diffs deployable bundles. |
-| ML classifiers | Statistical prediction | LogicPearl keeps runtime behavior deterministic and reviewable. |
-| Prompts | Flexible language reasoning | LogicPearl does not call a model or improvise at runtime. |
+| Tool                 | Best for                                  | LogicPearl difference                                                                      |
+| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Deep conditionals    | Application logic hidden across code paths | LogicPearl turns the behavior into a small artifact you can inspect, test, hash, and diff. |
+| RAG over policy docs | Retrieval and open-ended answer synthesis | LogicPearl makes the final decision deterministically once inputs are normalized.          |
+| OPA / Rego           | Hand-written policy                       | LogicPearl learns from reviewed traces, then emits inspectable artifacts.                  |
+| Decision tables      | Manually maintained rules                 | LogicPearl builds, hashes, verifies, and diffs deployable bundles.                         |
+| ML classifiers       | Statistical prediction                    | LogicPearl keeps runtime behavior deterministic and reviewable.                            |
+| Prompts              | Flexible language reasoning               | LogicPearl does not call a model or improvise at runtime.                                  |
 
 ## What You Can Trust
 

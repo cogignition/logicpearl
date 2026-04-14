@@ -77,7 +77,7 @@ The tables below break that model into concrete terms.
 |---|---|
 | **Pearl** | A compiled deployable policy artifact. A pearl is the runtime-ready form of discovered and/or layered policy logic. Internally this may still be represented as Gate IR plus compiled runtime targets. |
 | **String Of Pearls** | An ordered composition of multiple pearls evaluated together. Use this when policy is layered or staged across multiple deterministic artifacts. |
-| **Pipeline** | The executable artifact that wires a string of pearls together. In public product surfaces, the composition artifact should be a `pipeline.json` that maps stage inputs, outputs, and conditions explicitly. |
+| **Pipeline** | The executable artifact that wires a string of pearls together. In public CLI and API surfaces, the composition artifact should be a `pipeline.json` that maps stage inputs, outputs, and conditions explicitly. |
 | **Bitmask** | An integer where each bit position represents one invariant rule. Bit=0 means the rule passed, bit=1 means it failed. `bitmask == 0` means all rules passed (ALLOWED). Any set bit means DENIED. |
 | **Invariant / Rule** | A predicate or conjunction of conditions, such as `feature1 > threshold1 AND feature2 <= threshold2`. Rules can be discovered from traces or layered from maintained/pinned rule files. Each rule occupies one bit in the bitmask. |
 | **Condition** | A single threshold check: `feature_name operator threshold`. Operators: `>`, `>=`, `<`, `<=`, `==`, `!=`, `in`, or `not_in`, depending on the IR/runtime layer. |
@@ -111,7 +111,7 @@ The tables below break that model into concrete terms.
 |---|---|
 | **Sequential Covering** | The V2 pipeline's default: fit a tree, extract the best denial rule, remove covered cases, repeat. Finds independent rules iteratively. |
 | **Multi-Depth Cascading** | Extract rules from trees at different depths (3, 5, 7). Each depth captures patterns at different granularity. Combine all rules into one gate. |
-| **Feature Interactions** | Auto-generated cross-feature products (age × education, hours × marital_status). Gives the tree oblique decision boundaries it cannot find from raw features alone. |
+| **Feature Interactions** | Auto-generated cross-feature interaction terms (age × education, hours × marital_status). Gives the tree oblique decision boundaries it cannot find from raw features alone. |
 | **Weighted Formula** | A logistic regression score (`w1*f1 + w2*f2 + ... > threshold`) used as a single gate feature. Captures linear combinations that threshold rules cannot express. |
 
 ## LLM Integration (optional)

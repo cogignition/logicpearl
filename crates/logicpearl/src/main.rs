@@ -201,6 +201,7 @@ const QUICKSTART_AFTER_HELP: &str = "\
 Examples:
   logicpearl quickstart
   logicpearl quickstart traces
+  logicpearl quickstart garden
   logicpearl quickstart build
   logicpearl quickstart pipeline
   logicpearl quickstart benchmark";

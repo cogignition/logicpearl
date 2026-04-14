@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum QuickstartTopic {
     Traces,
+    Garden,
     Build,
     Pipeline,
     Benchmark,
@@ -658,6 +659,13 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
             println!(
                 "  {} {} {}",
                 "▸".bright_cyan(),
+                "garden".bold().bright_cyan(),
+                "learn a small action policy from garden-care examples".bright_black()
+            );
+            println!("    {}", "logicpearl quickstart garden".bright_black());
+            println!(
+                "  {} {} {}",
+                "▸".bright_cyan(),
                 "build".bold().bright_cyan(),
                 "learn one pearl from labeled traces".bright_black()
             );
@@ -713,6 +721,46 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
             println!(
                 "     {}",
                 "logicpearl build /tmp/synthetic_traces.jsonl --output-dir /tmp/synthetic_access_policy"
+                    .bright_cyan()
+            );
+            println!();
+        }
+        Some(QuickstartTopic::Garden) => {
+            println!();
+            println!(
+                "{}",
+                "━━ Quickstart: Garden Actions ━━".bold().bright_green()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "1.".bold().bright_cyan(),
+                "Build a multi-action pearl from reviewed garden-care traces:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl build examples/demos/garden_actions/traces.csv --action-column next_action --default-action do_nothing --gate-id garden_actions --output-dir /tmp/garden-actions"
+                    .bright_cyan()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "2.".bold().bright_cyan(),
+                "Inspect the learned action rules:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl inspect /tmp/garden-actions".bright_cyan()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "3.".bold().bright_cyan(),
+                "Run today's garden input with an explanation:".bright_black()
+            );
+            println!(
+                "     {}",
+                "logicpearl run /tmp/garden-actions examples/demos/garden_actions/today.json --explain"
                     .bright_cyan()
             );
             println!();

@@ -22,7 +22,7 @@ Owning `logicpearl` does **not** automatically protect future names like:
 - `logicpearl-schema`
 - `logicpearl-policy`
 
-If a name is plausibly part of the long-term public product surface, the cleanest way to protect it is to publish a minimal placeholder crate before someone else claims it.
+If a name is plausibly part of the long-term public API surface, the cleanest way to protect it is to publish a minimal placeholder crate before someone else claims it.
 
 ## Publish Intent
 
@@ -50,7 +50,7 @@ cargo publish --manifest-path reserved-crates/logicpearl-schema/Cargo.toml
 
 Only add a placeholder here if the name is:
 - realistic
-- product-aligned
+- project-aligned
 - likely to matter later
 
 Do not fill this directory with speculative junk crate names.

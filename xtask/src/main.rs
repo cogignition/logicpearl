@@ -28,7 +28,7 @@ const XTASK_LONG_ABOUT: &str = "\
 LogicPearl project automation lives here.
 
 Use xtask for local verification, benchmark refresh flows, bundle rebuilds, and local quality reports.
-This surface is intentionally separate from the `logicpearl` product CLI.";
+This surface is intentionally separate from the user-facing `logicpearl` CLI.";
 const COMPARE_SOLVER_TIMEOUT_MS: &str = "5000";
 const COMPARE_COMMAND_TIMEOUT_SECS: u64 = 30;
 

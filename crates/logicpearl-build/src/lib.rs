@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Shared build orchestration and provenance assembly.
 //!
-//! This crate keeps product-level build behavior available to library
+//! This crate keeps shared build behavior available to library
 //! consumers instead of hiding it inside the CLI. It coordinates gate builds,
 //! prepares and learns action policies, assembles build/source/plugin
 //! provenance, validates source manifests, and records generated file hashes.

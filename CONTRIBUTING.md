@@ -1,7 +1,5 @@
 # Contributing
 
-LogicPearl is a small product repository.
-
 The goal is not just to land code. The goal is to make the public engine better:
 
 - easier to run
@@ -95,7 +93,7 @@ cargo xtask verify pre-push
 cargo xtask verify ci
 ```
 
-Ignored local output can get large because compile, package, benchmark, and smoke-test flows create build products and JSON reports that are intentionally not tracked. Successful Cargo-backed compile runs clean up their transient generated crate by default; set `LOGICPEARL_KEEP_GENERATED_BUILDS=1` only when you need to debug the generated Rust project. Before sharing a worktree snapshot, inspect generated output with:
+Ignored local output can get large because compile, package, benchmark, and smoke-test flows create build outputs and JSON reports that are intentionally not tracked. Successful Cargo-backed compile runs clean up their transient generated crate by default; set `LOGICPEARL_KEEP_GENERATED_BUILDS=1` only when you need to debug the generated Rust project. Before sharing a worktree snapshot, inspect generated output with:
 
 ```bash
 cargo xtask clean-generated

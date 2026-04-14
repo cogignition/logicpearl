@@ -150,7 +150,7 @@ python3 scripts/waf/build_waf_demo_slice.py \
   --input /tmp/waf_benchmark/dev.jsonl
 ```
 
-That second command is still an example-maintenance helper. The public product surface for corpus adaptation is the Rust CLI.
+That second command is still an example-maintenance helper. The public corpus-adaptation surface is the Rust CLI.
 
 ## Open The Walkthrough Page
 

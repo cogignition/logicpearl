@@ -3,7 +3,7 @@
 //!
 //! This crate turns normalized decision traces into learned gate IR. It owns
 //! trace parsing, label inference, feature generation, rule discovery, exact
-//! selection reports, and build reports. Product orchestration and provenance
+//! selection reports, and build reports. Build orchestration and provenance
 //! assembly live in `logicpearl-build`; this crate stays focused on learning
 //! deterministic logic from already-normalized examples.
 

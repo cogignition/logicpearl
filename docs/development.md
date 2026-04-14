@@ -1,6 +1,6 @@
 # Development
 
-This page collects local contributor commands so the README can stay focused on the product loop.
+This page collects local contributor commands so the README can stay focused on the main loop.
 
 ## Local Setup
 
