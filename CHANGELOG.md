@@ -4,6 +4,10 @@ All notable user-facing changes should be added here.
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.5 - 2026-04-14
+
 ### Added
 - README launch flow now points `logicpearl quickstart build` at checked-in example commands instead of presenting a domain-specific generated demo as the quickstart.
 - README launch visuals and positioning now show the artifact payoff, including learned rules and verification output before deeper reference material.
@@ -19,26 +23,6 @@ All notable user-facing changes should be added here.
 - Versioned `logicpearl.source_manifest.v1` support via `logicpearl build --source-manifest`, with validated source metadata attached to build provenance without changing learned logic or runtime behavior.
 - Versioned `logicpearl.plugin_run_provenance.v1` metadata for plugin-backed builds, plugin command JSON, and plugin-backed pipeline stages, including manifest, entrypoint, input/request/output, timeout, capability, access posture, row-count, timestamp, and redacted stdio hashes.
 - Homebrew tap packaging automation via `cargo xtask generate-homebrew-formula`, with release workflow support for attaching `logicpearl.rb` to GitHub Releases and optionally updating `LogicPearlHQ/homebrew-tap`.
-
-### Changed
-- Quality reports are now generated as local output under `target/logicpearl/quality/` instead of tracked as a stale root `QUALITY.json` snapshot.
-- `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
-- `artifact.json` now carries stable v1 bundle metadata including artifact kind, engine version, IR version, artifact hash, file hashes, and build option/input schema digests.
-- Pipeline pearl stages now preserve canonical gate runtime details in `stages[].raw_result` while keeping exported fields such as `bitmask` and `allow` available.
-- Wasm metadata now carries `engine_version` and `artifact_hash` so browser integrations can return v1 runtime JSON results.
-- Action-policy discovery now preserves ordinal/count generalization across lower-priority actions instead of forcing every action route to learn against rows already captured by higher-priority rules.
-- Build provenance now redacts plugin option, source-reference, and build-option values by default, preserving only allowlisted low-sensitivity operational fields while keeping hashes for audit correlation.
-- README now stays focused on the launch flow, with artifact, provenance, plugin, pipeline, browser runtime, conformance, and development reference material split into dedicated docs.
-
-### Fixed
-- Artifact manifest loaders now reject absolute paths, parent-directory escapes, and symlink escapes so manifest members must resolve inside the artifact bundle root.
-- Artifact manifests written from relative `--output-dir` paths no longer double-prefix `files.ir`, and CLI/engine loaders tolerate already-written manifests with that redundant artifact-directory prefix.
-- `deny.toml` no longer uses cargo-deny keys removed by newer cargo-deny releases, and no longer carries stale license check entries that produced warnings.
-- `logicpearl inspect <action_artifact>/pearl.ir.json --json` now recognizes direct action policy IR files instead of trying to parse them as gate IR.
-
-## 0.1.5 - 2026-04-12
-
-### Added
 - First-class feature dictionaries for `logicpearl build` and `logicpearl discover` via `--feature-dictionary`, embedding readable feature semantics into emitted artifacts without changing runtime evaluation.
 - Dictionary-aware rule text, inspect output, and artifact diffs, including separate diff flags for source/schema changes, learned rule changes, and explanation-only changes.
 - Feature dictionary documentation for developers building demos and integrations.
@@ -53,12 +37,26 @@ All notable user-facing changes should be added here.
 - `logicpearl diff` now understands action-policy bundles and reports action set, default action, rule predicate, rule priority, source/schema, and explanation-only changes separately.
 
 ### Changed
+- Quality reports are now generated as local output under `target/logicpearl/quality/` instead of tracked as a stale root `QUALITY.json` snapshot.
+- `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
+- `artifact.json` now carries stable v1 bundle metadata including artifact kind, engine version, IR version, artifact hash, file hashes, and build option/input schema digests.
+- Pipeline pearl stages now preserve canonical gate runtime details in `stages[].raw_result` while keeping exported fields such as `bitmask` and `allow` available.
+- Wasm metadata now carries `engine_version` and `artifact_hash` so browser integrations can return v1 runtime JSON results.
+- Action-policy discovery now preserves ordinal/count generalization across lower-priority actions instead of forcing every action route to learn against rows already captured by higher-priority rules.
+- Build provenance now redacts plugin option, source-reference, and build-option values by default, preserving only allowlisted low-sensitivity operational fields while keeping hashes for audit correlation.
+- README now stays focused on the launch flow, with artifact, provenance, plugin, pipeline, browser runtime, conformance, and development reference material split into dedicated docs.
 - Bumped the Rust workspace and package metadata to `0.1.5` for the next release.
 - Refreshed the Rust lockfile to avoid the yanked `fastrand 2.4.0` transitive dependency.
 - Action builds now produce one normal artifact bundle with `pearl.ir.json`, instead of separate per-action route artifacts.
 - `logicpearl inspect` now shows action policies as readable `Action rules:`.
 - `logicpearl run --json --explain` now uses a fuller result shape for gates and action policies, including artifact/policy ids, `decision_kind`, bitmask, matched rules, and rule explanations.
 - The garden actions demo now uses the shorter config-driven CLI flow, generated feature labels, percent and gallon values in traces, and one inspectable action policy.
+
+### Fixed
+- Artifact manifest loaders now reject absolute paths, parent-directory escapes, and symlink escapes so manifest members must resolve inside the artifact bundle root.
+- Artifact manifests written from relative `--output-dir` paths no longer double-prefix `files.ir`, and CLI/engine loaders tolerate already-written manifests with that redundant artifact-directory prefix.
+- `deny.toml` no longer uses cargo-deny keys removed by newer cargo-deny releases, and no longer carries stale license check entries that produced warnings.
+- `logicpearl inspect <action_artifact>/pearl.ir.json --json` now recognizes direct action policy IR files instead of trying to parse them as gate IR.
 
 ## 0.1.2 - 2026-04-08
 
