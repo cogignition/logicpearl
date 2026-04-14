@@ -126,6 +126,8 @@ For a less toy-shaped walkthrough, try:
   Learn a multi-action artifact that chooses `water`, `fertilize`, `repot`, or `do_nothing`.
 - [WAF edge demo](./examples/waf_edge/README.md)
   Run a pipeline that observes HTTP requests, evaluates grouped pearls, and routes to allow, deny, or review.
+- [PII Shield](https://github.com/LogicPearlHQ/pii-shield)
+  See a separate repo that wires LogicPearl into a Claude Code hook.
 
 ## What Gets Built
 
@@ -208,10 +210,23 @@ The dictionary affects generated labels, messages, counterfactual hints, `inspec
 
 ## Where It Fits
 
-LogicPearl is not a replacement for every policy system. It is useful when you already have reviewed behavior examples and want a deterministic artifact that can be inspected, versioned, and run locally.
+LogicPearl is for bounded decision logic that should behave like code, but be easier to review than a pile of nested `if` statements. It is useful when you already have reviewed behavior examples and want a deterministic artifact that can be inspected, versioned, and run locally.
+
+Good fits:
+
+- deep conditional logic spread across services, scripts, prompt branches, spreadsheets, or decision tables
+- decisions where "why not?" matters as much as "what happened"
+- eligibility, routing, approval, escalation, guardrail, compliance, and action-selection workflows
+- counterfactual review: the smallest useful input change that would have changed the decision
+- cases that need 100% repeatable evaluation on covered inputs, not statistically likely answers
+- policy or document workflows where RAG is too probabilistic for the final decision step
+
+RAG can be useful upstream for finding documents, extracting fields, or normalizing messy input. LogicPearl is a better fit for the final bounded decision when the requirement is "apply this reviewed rule behavior exactly, explain which rule fired, and diff any change before release."
 
 | Tool | Best for | LogicPearl difference |
 |---|---|---|
+| Deep conditionals | Product logic hidden across code paths | LogicPearl turns the behavior into a small artifact you can inspect, test, hash, and diff. |
+| RAG over policy docs | Retrieval and open-ended answer synthesis | LogicPearl makes the final decision deterministically once inputs are normalized. |
 | OPA / Rego | Hand-written policy | LogicPearl learns from reviewed traces, then emits inspectable artifacts. |
 | Decision tables | Manually maintained rules | LogicPearl builds, hashes, verifies, and diffs deployable bundles. |
 | ML classifiers | Statistical prediction | LogicPearl keeps runtime behavior deterministic and reviewable. |
