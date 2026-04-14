@@ -382,6 +382,7 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
   if (rawValue === undefined || rawValue === null) {
     return Number.NaN;
   }
+  const normalizedValue = normalizeRuntimeScalar(rawValue);
 
   const encodingKind =
     typeof feature.encoding === 'string'
@@ -390,13 +391,17 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
 
   switch (encodingKind) {
     case 'boolean':
-      return rawValue === true || rawValue === 1 || rawValue === 'true' ? 1 : 0;
+      return normalizedValue === true || normalizedValue === 1 ? 1 : 0;
     case 'numeric': {
-      const numeric = parseNumericValue(rawValue);
-      return Number.isFinite(numeric) ? numeric : Number.NaN;
+      return typeof normalizedValue === 'number' && Number.isFinite(normalizedValue)
+        ? normalizedValue
+        : Number.NaN;
     }
     case 'string_code': {
-      const key = String(rawValue);
+      if (typeof normalizedValue !== 'string') {
+        return Number.NaN;
+      }
+      const key = normalizedValue;
       const encoded = stringCodes[key];
       if (encoded === undefined) {
         return Number.NaN;
@@ -408,15 +413,60 @@ function encodeFeatureValue(rawValue, feature, stringCodes) {
   }
 }
 
-function parseNumericValue(rawValue) {
-  if (typeof rawValue === 'number') {
+function normalizeRuntimeScalar(rawValue) {
+  if (typeof rawValue !== 'string') {
     return rawValue;
   }
-  const raw = String(rawValue).trim();
-  const isPercent = raw.endsWith('%');
-  let normalized = isPercent ? raw.slice(0, -1).trim() : raw;
-  normalized = normalized.replace(/,/g, '').replace(/^[$€£¥]/, '').trim();
+
+  const value = rawValue.trim();
+  switch (value.toLowerCase()) {
+    case 'true':
+    case 'yes':
+    case 'y':
+    case 'on':
+      return true;
+    case 'false':
+    case 'no':
+    case 'n':
+    case 'off':
+      return false;
+    default:
+      break;
+  }
+
+  const numeric = parseRuntimeNumber(value);
+  return numeric ?? value;
+}
+
+function parseRuntimeNumber(rawValue) {
+  let candidate = rawValue.trim();
+  let isPercent = false;
+  if (candidate.endsWith('%')) {
+    candidate = candidate.slice(0, -1).trim();
+    isPercent = true;
+  }
+  if (/^[$€£¥]/u.test(candidate)) {
+    candidate = candidate.slice(1).trim();
+  }
+
+  const negativeWrapped = candidate.startsWith('(') && candidate.endsWith(')');
+  if (negativeWrapped) {
+    candidate = candidate.slice(1, -1).trim();
+  }
+
+  let normalized = candidate.replace(/,/g, '');
+  if (negativeWrapped) {
+    normalized = `-${normalized}`;
+  }
+
+  if (!/^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/u.test(normalized)) {
+    return null;
+  }
+
   const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
   return isPercent ? numeric / 100 : numeric;
 }
 

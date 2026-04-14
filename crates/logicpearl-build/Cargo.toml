@@ -1,0 +1,19 @@
+[package]
+name = "logicpearl-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Shared LogicPearl build orchestration and provenance assembly."
+
+[dependencies]
+hex.workspace = true
+logicpearl-core.workspace = true
+logicpearl-discovery.workspace = true
+logicpearl-ir.workspace = true
+logicpearl-plugin.workspace = true
+logicpearl-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

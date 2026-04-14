@@ -54,7 +54,7 @@ A pipeline defines an entrypoint, ordered stages, and final output exports:
     {
       "id": "authz",
       "kind": "pearl",
-      "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+      "artifact": "artifacts/auth-demo-v1.json",
       "input": {
         "action": "$.request.action",
         "resource_archived": "$.request.resource_archived",
@@ -75,6 +75,11 @@ A pipeline defines an entrypoint, ordered stages, and final output exports:
 ```
 
 See [examples/pipelines/authz/pipeline.json](../examples/pipelines/authz/pipeline.json).
+
+Stage artifact and plugin manifest paths are bundle members: they must be
+relative to the pipeline JSON directory and cannot escape it with `..` or
+symlinks. The `compose` command packages input pearls under `artifacts/` so the
+generated bundle verifies with the same policy used by runtime loading.
 
 ## Stage References
 

@@ -1032,6 +1032,7 @@ dependencies = [
  "indicatif",
  "jsonschema",
  "logicpearl-benchmark",
+ "logicpearl-build",
  "logicpearl-conformance",
  "logicpearl-core",
  "logicpearl-discovery",
@@ -1067,6 +1068,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "logicpearl-build"
+version = "0.1.5"
+dependencies = [
+ "hex",
+ "logicpearl-core",
+ "logicpearl-discovery",
+ "logicpearl-ir",
+ "logicpearl-plugin",
+ "logicpearl-runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "logicpearl-conformance"
 version = "0.1.5"
 dependencies = [
@@ -1090,6 +1106,7 @@ dependencies = [
  "csv",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

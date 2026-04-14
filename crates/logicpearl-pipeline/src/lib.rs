@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{resolve_manifest_member_path, LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
     run_plugin_batch_with_policy_and_metadata, run_plugin_with_policy_and_metadata,
@@ -11,7 +11,7 @@ use serde_json::Map;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PipelineDefinition {
@@ -181,11 +181,19 @@ impl PipelineDefinition {
                 artifact: stage
                     .artifact
                     .as_ref()
-                    .map(|value| resolve_relative_path(base_dir, value).display().to_string()),
+                    .map(|value| {
+                        resolve_relative_path(base_dir, value)
+                            .map(|path| path.display().to_string())
+                    })
+                    .transpose()?,
                 plugin_manifest: stage
                     .plugin_manifest
                     .as_ref()
-                    .map(|value| resolve_relative_path(base_dir, value).display().to_string()),
+                    .map(|value| {
+                        resolve_relative_path(base_dir, value)
+                            .map(|path| path.display().to_string())
+                    })
+                    .transpose()?,
                 exports: export_names.into_iter().collect(),
             });
         }
@@ -251,7 +259,7 @@ impl PipelineDefinition {
                     let artifact_path = resolve_relative_path(
                         base_dir,
                         stage.artifact.as_ref().expect("validated pearl artifact"),
-                    );
+                    )?;
                     PreparedStageExecutable::Pearl(LogicPearlGateIr::from_path(&artifact_path)?)
                 }
                 PipelineStageKind::ObserverPlugin
@@ -264,7 +272,7 @@ impl PipelineDefinition {
                             .plugin_manifest
                             .as_ref()
                             .expect("validated plugin manifest"),
-                    );
+                    )?;
                     let manifest = PluginManifest::from_path(&manifest_path)?;
                     let plugin_stage = plugin_stage_for_kind(&stage.kind).ok_or_else(|| {
                         LogicPearlError::message(format!(
@@ -476,7 +484,7 @@ pub fn compose_pipeline(
     for (index, artifact_path) in artifact_paths.iter().enumerate() {
         let gate = LogicPearlGateIr::from_path(artifact_path)?;
         let stage_id = sanitize_stage_id(&gate.gate_id, index);
-        let artifact = relative_or_absolute_path(base_dir, artifact_path);
+        let artifact = manifest_member_path_for_base(base_dir, artifact_path)?;
 
         let mut input = HashMap::new();
         for feature in &gate.input_schema.features {
@@ -558,7 +566,7 @@ impl PipelineStage {
                         self.id
                     )));
                 }
-                let artifact_path = resolve_relative_path(base_dir, artifact);
+                let artifact_path = resolve_relative_path(base_dir, artifact)?;
                 if !artifact_path.exists() {
                     return Err(LogicPearlError::message(format!(
                         "stage {} artifact does not exist: {}",
@@ -584,7 +592,7 @@ impl PipelineStage {
                         self.id
                     )));
                 }
-                let manifest_path = resolve_relative_path(base_dir, manifest);
+                let manifest_path = resolve_relative_path(base_dir, manifest)?;
                 if !manifest_path.exists() {
                     return Err(LogicPearlError::message(format!(
                         "stage {} plugin manifest does not exist: {}",
@@ -642,28 +650,8 @@ impl PipelineStage {
     }
 }
 
-fn resolve_relative_path(base_dir: &Path, value: &str) -> PathBuf {
-    let path = Path::new(value);
-    let joined = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base_dir.join(path)
-    };
-    normalize_path(&joined)
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
+fn resolve_relative_path(base_dir: &Path, value: &str) -> Result<PathBuf> {
+    resolve_manifest_member_path(base_dir, value)
 }
 
 fn plugin_stage_for_kind(kind: &PipelineStageKind) -> Option<PluginStage> {
@@ -1068,19 +1056,51 @@ fn sanitize_stage_id(value: &str, index: usize) -> String {
     }
 }
 
-fn relative_or_absolute_path(base_dir: &Path, path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(base_dir) {
-        relative.display().to_string()
+fn manifest_member_path_for_base(base_dir: &Path, path: &Path) -> Result<String> {
+    let relative = if let Ok(relative) = path.strip_prefix(base_dir) {
+        relative.to_path_buf()
     } else {
-        path.display().to_string()
-    }
+        let canonical_base = fs::canonicalize(base_dir).map_err(|error| {
+            LogicPearlError::message(format!(
+                "failed to canonicalize pipeline bundle directory {}: {error}",
+                base_dir.display()
+            ))
+        })?;
+        let canonical_path = fs::canonicalize(path).map_err(|error| {
+            LogicPearlError::message(format!(
+                "failed to canonicalize pipeline artifact {}: {error}",
+                path.display()
+            ))
+        })?;
+        canonical_path
+            .strip_prefix(&canonical_base)
+            .map(Path::to_path_buf)
+            .map_err(|_| {
+                LogicPearlError::message(format!(
+                    "compose artifact must be inside the pipeline bundle directory: {}",
+                    path.display()
+                ))
+            })?
+    };
+
+    let rendered = relative.display().to_string();
+    resolve_manifest_member_path(base_dir, &rendered)?;
+    Ok(rendered)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{compose_pipeline, PipelineDefinition, PipelineStageKind};
     use serde_json::json;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|path| path.parent())
+            .expect("crate should live under workspace/crates/logicpearl-pipeline")
+            .to_path_buf()
+    }
 
     #[test]
     fn validates_basic_pipeline() {
@@ -1093,7 +1113,7 @@ mod tests {
                 {
                   "id": "authz",
                   "kind": "pearl",
-                  "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+                  "artifact": "fixtures/ir/valid/auth-demo-v1.json",
                   "input": {
                     "member_age": "$.member.age"
                   },
@@ -1108,11 +1128,75 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
+        let base_dir = repo_root();
         let validated = pipeline.validate(base_dir).expect("pipeline validates");
         assert_eq!(validated.pipeline_id, "demo");
         assert_eq!(validated.stage_count, 1);
         assert_eq!(validated.stages[0].kind, PipelineStageKind::Pearl);
+    }
+
+    #[test]
+    fn rejects_pipeline_stage_paths_that_escape_base_dir() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "authz",
+                  "kind": "pearl",
+                  "artifact": "../fixtures/ir/valid/auth-demo-v1.json",
+                  "input": {
+                    "member_age": "$.member.age"
+                  },
+                  "export": {
+                    "bitmask": "$.bitmask"
+                  }
+                }
+              ],
+              "output": {
+                "bitmask": "@authz.bitmask"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let err = pipeline
+            .validate(repo_root())
+            .expect_err("escaping stage paths should fail");
+        assert!(err.to_string().contains("escapes bundle directory"));
+    }
+
+    #[test]
+    fn rejects_absolute_pipeline_stage_paths() {
+        let pipeline = PipelineDefinition::from_json_str(
+            r#"{
+              "pipeline_version": "1.0",
+              "pipeline_id": "demo",
+              "entrypoint": "input",
+              "stages": [
+                {
+                  "id": "authz",
+                  "kind": "pearl",
+                  "artifact": "/tmp/auth-demo-v1.json",
+                  "input": {
+                    "member_age": "$.member.age"
+                  },
+                  "export": {
+                    "bitmask": "$.bitmask"
+                  }
+                }
+              ],
+              "output": {
+                "bitmask": "@authz.bitmask"
+              }
+            }"#,
+        )
+        .expect("pipeline parses");
+        let err = pipeline
+            .validate(repo_root())
+            .expect_err("absolute stage paths should fail");
+        assert!(err.to_string().contains("must be relative"));
     }
 
     #[test]
@@ -1126,7 +1210,7 @@ mod tests {
                 {
                   "id": "authz",
                   "kind": "pearl",
-                  "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+                  "artifact": "fixtures/ir/valid/auth-demo-v1.json",
                   "input": {
                     "member_age": "@later.bitmask"
                   },
@@ -1141,7 +1225,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
+        let base_dir = repo_root();
         let err = pipeline
             .validate(base_dir)
             .expect_err("validation should fail");
@@ -1159,7 +1243,7 @@ mod tests {
                 {
                   "id": "authz",
                   "kind": "pearl",
-                  "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+                  "artifact": "fixtures/ir/valid/auth-demo-v1.json",
                   "input": {
                     "action": "$.request.action",
                     "resource_archived": "$.request.resource_archived",
@@ -1179,7 +1263,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/authz");
+        let base_dir = repo_root();
         let input = json!({
             "request": {
                 "action": "delete",
@@ -1206,7 +1290,7 @@ mod tests {
                 {
                   "id": "observer",
                   "kind": "observer_plugin",
-                  "plugin_manifest": "../../plugins/python_observer/manifest.json",
+                  "plugin_manifest": "examples/plugins/python_observer/manifest.json",
                   "input": {
                     "age": "$.age",
                     "member": "$.member",
@@ -1220,7 +1304,7 @@ mod tests {
                 {
                   "id": "gate",
                   "kind": "pearl",
-                  "artifact": "../../../fixtures/ir/valid/membership-demo-v1.json",
+                  "artifact": "fixtures/ir/valid/membership-demo-v1.json",
                   "input": {
                     "age": "@observer.age",
                     "is_member": "@observer.is_member"
@@ -1238,8 +1322,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/observer_membership");
+        let base_dir = repo_root();
         let input = json!({
             "age": 34,
             "member": true,
@@ -1261,7 +1344,7 @@ mod tests {
                 {
                   "id": "observer",
                   "kind": "observer_plugin",
-                  "plugin_manifest": "../../plugins/python_observer/manifest.json",
+                  "plugin_manifest": "examples/plugins/python_observer/manifest.json",
                   "input": {
                     "age": "$.age",
                     "member": "$.member",
@@ -1275,7 +1358,7 @@ mod tests {
                 {
                   "id": "gate",
                   "kind": "pearl",
-                  "artifact": "../../../fixtures/ir/valid/membership-demo-v1.json",
+                  "artifact": "fixtures/ir/valid/membership-demo-v1.json",
                   "input": {
                     "age": "@observer.age",
                     "is_member": "@observer.is_member"
@@ -1288,7 +1371,7 @@ mod tests {
                 {
                   "id": "audit",
                   "kind": "verify_plugin",
-                  "plugin_manifest": "../../plugins/python_pipeline_verify/manifest.json",
+                  "plugin_manifest": "examples/plugins/python_pipeline_verify/manifest.json",
                   "input": {
                     "bitmask": "@gate.bitmask",
                     "allow": "@gate.allow"
@@ -1308,8 +1391,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/observer_membership_verify");
+        let base_dir = repo_root();
         let input = json!({
             "age": 34,
             "member": true,
@@ -1336,7 +1418,7 @@ mod tests {
                 {
                   "id": "trace_source",
                   "kind": "trace_source_plugin",
-                  "plugin_manifest": "../../plugins/python_trace_source/manifest.json",
+                  "plugin_manifest": "examples/plugins/python_trace_source/manifest.json",
                   "payload": "$.source",
                   "options": {
                     "label_column": "$.label_column"
@@ -1352,8 +1434,7 @@ mod tests {
             }"#,
         )
         .expect("pipeline parses");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/pipelines/observer_membership");
+        let base_dir = repo_root();
         let input = json!({
             "source": Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/getting_started/decision_traces.csv")
@@ -1374,15 +1455,16 @@ mod tests {
 
     #[test]
     fn composes_starter_pipeline_from_artifacts() {
-        let artifact_paths =
-            vec![Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/ir/valid/auth-demo-v1.json")];
-        let base_dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/pipelines/generated");
+        let base_dir = repo_root();
+        let artifact_paths = vec![base_dir.join("fixtures/ir/valid/auth-demo-v1.json")];
         let plan = compose_pipeline("starter", &artifact_paths, &base_dir).expect("compose works");
         assert_eq!(plan.pipeline.pipeline_id, "starter");
         assert_eq!(plan.pipeline.stages.len(), 1);
         assert_eq!(plan.pipeline.stages[0].id, "auth_demo_v1");
+        assert_eq!(
+            plan.pipeline.stages[0].artifact.as_deref(),
+            Some("fixtures/ir/valid/auth-demo-v1.json")
+        );
         assert!(plan.pipeline.stages[0].input.contains_key("action"));
         assert_eq!(
             plan.pipeline.output.get("allow"),

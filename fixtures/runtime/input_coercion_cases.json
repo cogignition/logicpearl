@@ -1,0 +1,99 @@
+{
+  "schema_version": "logicpearl.runtime_input_coercion_cases.v1",
+  "string_codes": {
+    "fern": 4
+  },
+  "features": [
+    {
+      "id": "active_yes",
+      "index": 0,
+      "encoding": "boolean"
+    },
+    {
+      "id": "active_on",
+      "index": 1,
+      "encoding": "boolean"
+    },
+    {
+      "id": "inactive_off",
+      "index": 2,
+      "encoding": "boolean"
+    },
+    {
+      "id": "denied_no",
+      "index": 3,
+      "encoding": "boolean"
+    },
+    {
+      "id": "completion_pct",
+      "index": 4,
+      "encoding": "numeric"
+    },
+    {
+      "id": "cost",
+      "index": 5,
+      "encoding": "numeric"
+    },
+    {
+      "id": "refund",
+      "index": 6,
+      "encoding": "numeric"
+    },
+    {
+      "id": "eur_amount",
+      "index": 7,
+      "encoding": "numeric"
+    },
+    {
+      "id": "loss_pct",
+      "index": 8,
+      "encoding": "numeric"
+    },
+    {
+      "id": "label",
+      "index": 9,
+      "encoding": "string_code"
+    }
+  ],
+  "cases": [
+    {
+      "id": "human_scalar_strings",
+      "input": {
+        "active_yes": " yes ",
+        "active_on": "ON",
+        "inactive_off": " off ",
+        "denied_no": "N",
+        "completion_pct": "42%",
+        "cost": "$1,200",
+        "refund": "(1,234)",
+        "eur_amount": "€1,234.50",
+        "loss_pct": "(14)%",
+        "label": " fern "
+      },
+      "expected_normalized": {
+        "active_yes": true,
+        "active_on": true,
+        "inactive_off": false,
+        "denied_no": false,
+        "completion_pct": 0.42,
+        "cost": 1200,
+        "refund": -1234,
+        "eur_amount": 1234.5,
+        "loss_pct": -0.14,
+        "label": "fern"
+      },
+      "expected_slots": [
+        1,
+        1,
+        0,
+        0,
+        0.42,
+        1200,
+        -1234,
+        1234.5,
+        -0.14,
+        4
+      ]
+    }
+  ]
+}

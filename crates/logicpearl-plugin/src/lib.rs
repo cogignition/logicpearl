@@ -552,15 +552,6 @@ fn run_plugin_raw<T: Serialize>(
     let started_at = now_utc_rfc3339();
     let started = Instant::now();
     let mut child = spawn_plugin_process(&mut command)?;
-    let stdin = child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| LogicPearlError::message("failed to open plugin stdin"))?;
-    let payload = serde_json::to_vec(request)?;
-    stdin.write_all(&payload)?;
-    stdin.write_all(b"\n")?;
-    drop(child.stdin.take());
-
     let stdout_handle = spawn_pipe_reader(
         child
             .stdout
@@ -575,6 +566,15 @@ fn run_plugin_raw<T: Serialize>(
             .ok_or_else(|| LogicPearlError::message("failed to open plugin stderr"))?,
         MAX_PLUGIN_STDERR_BYTES,
     );
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| LogicPearlError::message("failed to open plugin stdin"))?;
+    let payload = serde_json::to_vec(request)?;
+    stdin.write_all(&payload)?;
+    stdin.write_all(b"\n")?;
+    drop(stdin);
 
     let (status, timed_out) = wait_for_plugin_exit(timeout_ms, &mut child)?;
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);

@@ -10,19 +10,20 @@ use logicpearl_benchmark::{
     BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase,
     SynthesisCase, SynthesisCaseRow,
 };
+use logicpearl_build::{
+    action_rule_report, attach_generated_file_hashes, build_gate_artifact_from_rows,
+    build_provenance, learn_action_policy, load_source_manifest_for_provenance,
+    plugin_provenance_from_execution, prepare_action_traces, source_input_provenance,
+    trace_input_provenance, ActionLearningOptions, ActionRuleBudgetReport, ActionRuleBuildReport,
+    BuildProvenanceInputs,
+};
 use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    build_pearl_from_rows, discover_from_csv, learn_gate_from_rows_without_numeric_interactions,
-    load_decision_traces_auto, load_flat_records, BuildCommandProvenance, BuildInputProvenance,
-    BuildOptions, BuildProvenance, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
-    ExactSelectionBackend, FeatureDictionaryConfig, FileProvenance, LoadedFlatRecords,
-    PluginBuildProvenance, ResidualRecoveryState, SourceManifest, SourceManifestProvenance,
-    TraceInputProvenance,
+    discover_from_csv, load_decision_traces_auto, load_flat_records, BuildOptions, BuildProvenance,
+    DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode, ExactSelectionBackend,
+    FeatureDictionaryConfig, LoadedFlatRecords, PluginBuildProvenance, ResidualRecoveryState,
 };
-use logicpearl_ir::{
-    ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
-    LogicPearlGateIr,
-};
+use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_observer::{
     default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
     observe_with_profile, profile_id as native_profile_id, profile_registry,
@@ -42,7 +43,7 @@ use logicpearl_plugin::{
 };
 use logicpearl_render::TextInspector;
 use logicpearl_runtime::{
-    artifact_hash, evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
+    evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
     sha256_prefixed, GateEvaluationResult,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};

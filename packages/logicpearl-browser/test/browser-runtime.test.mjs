@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   decodeFiredRules,
@@ -8,6 +9,13 @@ import {
   loadArtifact,
   normalizeArtifactReference,
 } from '../src/index.js';
+
+const coercionFixture = JSON.parse(
+  readFileSync(
+    new URL('../../../fixtures/runtime/input_coercion_cases.json', import.meta.url),
+    'utf8'
+  )
+);
 
 const sampleManifest = {
   schema_version: 'logicpearl.artifact_manifest.v1',
@@ -115,6 +123,22 @@ test('encodeFeatureSlots maps booleans, numerics, and string codes', () => {
   assert.equal(slots[0], 1);
   assert.equal(slots[1], 0.42);
   assert.equal(slots[2], 3);
+});
+
+test('encodeFeatureSlots matches shared runtime coercion fixtures', () => {
+  const metadata = {
+    feature_count: coercionFixture.features.length,
+    features: coercionFixture.features,
+    string_codes: coercionFixture.string_codes,
+  };
+
+  for (const fixtureCase of coercionFixture.cases) {
+    assert.deepEqual(
+      Array.from(encodeFeatureSlots(fixtureCase.input, metadata)),
+      fixtureCase.expected_slots,
+      fixtureCase.id
+    );
+  }
 });
 
 test('encodeFeatureSlots supports object-form metadata encodings from wasm metadata', () => {

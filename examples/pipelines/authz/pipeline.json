@@ -6,7 +6,7 @@
     {
       "id": "authz",
       "kind": "pearl",
-      "artifact": "../../../fixtures/ir/valid/auth-demo-v1.json",
+      "artifact": "artifacts/auth-demo-v1.json",
       "input": {
         "action": "$.request.action",
         "resource_archived": "$.request.resource_archived",

@@ -2,6 +2,9 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 /// Stable schema identifier for LogicPearl artifact bundle manifests.
@@ -31,6 +34,133 @@ impl LogicPearlError {
     pub fn message(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
+}
+
+/// Resolve a manifest member path relative to a bundle directory.
+///
+/// Manifest member paths must be relative, must not traverse outside the bundle
+/// directory, and existing members must not resolve through symlinks outside the
+/// bundle. A redundant leading bundle-directory component is accepted for
+/// backward compatibility with older manifests.
+pub fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> Result<PathBuf> {
+    let candidate = PathBuf::from(raw_path);
+    let joined = resolve_manifest_member_relative_path(base_dir, &candidate, raw_path)?;
+    if joined.exists() {
+        return Ok(joined);
+    }
+
+    if let Some(relative) = manifest_member_without_base_prefix(base_dir, &candidate) {
+        let repaired = resolve_manifest_member_relative_path(base_dir, &relative, raw_path)?;
+        if repaired.exists() {
+            return Ok(repaired);
+        }
+    }
+
+    Ok(joined)
+}
+
+/// Resolve a manifest member path relative to the manifest file's directory.
+pub fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> Result<PathBuf> {
+    resolve_manifest_member_path(
+        manifest_path.parent().unwrap_or_else(|| Path::new(".")),
+        raw_path,
+    )
+}
+
+/// Strip a redundant leading bundle-directory component from a manifest path.
+pub fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
+    if let Ok(relative) = path.strip_prefix(base_dir) {
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+
+    let base_name = base_dir.file_name()?;
+    let mut components = path.components();
+    let first = components.next()?;
+    if first.as_os_str() == base_name {
+        let relative = components.as_path();
+        if !relative.as_os_str().is_empty() {
+            return Some(relative.to_path_buf());
+        }
+    }
+    None
+}
+
+fn resolve_manifest_member_relative_path(
+    base_dir: &Path,
+    candidate: &Path,
+    raw_path: &str,
+) -> Result<PathBuf> {
+    let relative = normalize_manifest_member_path(candidate, raw_path)?;
+    let joined = base_dir.join(relative);
+    ensure_existing_manifest_member_is_under_base(base_dir, &joined, raw_path)?;
+    Ok(joined)
+}
+
+fn normalize_manifest_member_path(candidate: &Path, raw_path: &str) -> Result<PathBuf> {
+    let mut parts = Vec::<OsString>::new();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.pop().is_none() {
+                    return Err(LogicPearlError::message(format!(
+                        "manifest member path escapes bundle directory: {raw_path}"
+                    )));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(LogicPearlError::message(format!(
+                    "manifest member path must be relative to the bundle directory: {raw_path}"
+                )));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(LogicPearlError::message(
+            "manifest member path is empty and must be relative to the bundle directory",
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for part in parts {
+        normalized.push(part);
+    }
+    Ok(normalized)
+}
+
+fn ensure_existing_manifest_member_is_under_base(
+    base_dir: &Path,
+    path: &Path,
+    raw_path: &str,
+) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let canonical_base = fs::canonicalize(base_dir).map_err(|error| {
+        LogicPearlError::message(format!(
+            "failed to canonicalize bundle directory {}: {error}",
+            base_dir.display()
+        ))
+    })?;
+    let canonical_path = fs::canonicalize(path).map_err(|error| {
+        LogicPearlError::message(format!(
+            "failed to canonicalize manifest member {}: {error}",
+            path.display()
+        ))
+    })?;
+
+    if !canonical_path.starts_with(&canonical_base) {
+        return Err(LogicPearlError::message(format!(
+            "manifest member path escapes bundle directory: {raw_path}"
+        )));
+    }
+
+    Ok(())
 }
 
 /// Renders an artifact value into a human-readable string.
@@ -244,7 +374,7 @@ impl<'de> Deserialize<'de> for RuleMask {
 
 #[cfg(test)]
 mod tests {
-    use super::RuleMask;
+    use super::{resolve_manifest_member_path, RuleMask};
     use serde_json::json;
 
     #[test]
@@ -258,5 +388,48 @@ mod tests {
 
         let small: RuleMask = serde_json::from_value(json!(7)).unwrap();
         assert_eq!(small.as_u64(), Some(7));
+    }
+
+    #[test]
+    fn manifest_member_paths_are_bundle_relative() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let bundle = dir.path().join("bundle");
+        std::fs::create_dir_all(&bundle).expect("bundle dir");
+        std::fs::write(bundle.join("pearl.ir.json"), "{}").expect("member file");
+
+        assert_eq!(
+            resolve_manifest_member_path(&bundle, "bundle/pearl.ir.json")
+                .expect("redundant bundle prefix should resolve"),
+            bundle.join("pearl.ir.json")
+        );
+
+        let outside = dir.path().join("outside.json");
+        std::fs::write(&outside, "{}").expect("outside file");
+        let absolute = resolve_manifest_member_path(&bundle, &outside.display().to_string())
+            .expect_err("absolute paths should be rejected")
+            .to_string();
+        assert!(absolute.contains("must be relative"));
+
+        let parent = resolve_manifest_member_path(&bundle, "../outside.json")
+            .expect_err("parent escapes should be rejected")
+            .to_string();
+        assert!(parent.contains("escapes bundle directory"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_member_symlinks_cannot_escape_bundle() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let bundle = dir.path().join("bundle");
+        let outside = dir.path().join("outside.json");
+        let link = bundle.join("outside-link.json");
+        std::fs::create_dir_all(&bundle).expect("bundle dir");
+        std::fs::write(&outside, "{}").expect("outside file");
+        std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+
+        let error = resolve_manifest_member_path(&bundle, "outside-link.json")
+            .expect_err("symlink escapes should be rejected")
+            .to_string();
+        assert!(error.contains("escapes bundle directory"));
     }
 }

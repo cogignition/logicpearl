@@ -1717,9 +1717,16 @@ pub(super) fn discover_residual_rules(
         return Ok(Vec::new());
     }
 
+    let derived_feature_ids = gate
+        .input_schema
+        .features
+        .iter()
+        .filter_map(|feature| feature.derived.as_ref().map(|_| feature.id.as_str()))
+        .collect::<BTreeSet<_>>();
     let mut examples = Vec::new();
     for row in rows {
-        let predicted_deny = !evaluate_gate(gate, &row.features)?.is_zero();
+        let runtime_features = source_runtime_features(&derived_feature_ids, &row.features);
+        let predicted_deny = !evaluate_gate(gate, &runtime_features)?.is_zero();
         if !row.allowed && !predicted_deny {
             examples.push(BooleanSearchExample {
                 features: boolean_feature_map(&row.features, &binary_features),
@@ -1759,6 +1766,20 @@ pub(super) fn discover_residual_rules(
             )
         })
         .collect())
+}
+
+fn source_runtime_features(
+    derived_feature_ids: &BTreeSet<&str>,
+    features: &HashMap<String, Value>,
+) -> HashMap<String, Value> {
+    if derived_feature_ids.is_empty() {
+        return features.clone();
+    }
+    features
+        .iter()
+        .filter(|(feature, _)| !derived_feature_ids.contains(feature.as_str()))
+        .map(|(feature, value)| (feature.clone(), value.clone()))
+        .collect()
 }
 
 pub(super) fn refine_rules_unique_coverage(

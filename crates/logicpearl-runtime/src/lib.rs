@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression,
-    FeatureDefinition, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
+    derived_feature_evaluation_order, ComparisonExpression, ComparisonOperator, ComparisonValue,
+    DerivedFeatureOperator, Expression, FeatureDefinition, InputSchema, LogicPearlActionIr,
+    LogicPearlGateIr,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -498,14 +499,26 @@ fn resolve_derived_features(
     features: &[FeatureDefinition],
     input: &HashMap<String, Value>,
 ) -> Result<HashMap<String, Value>> {
-    let mut resolved = input.clone();
-    for feature in features {
-        let Some(derived) = &feature.derived else {
-            continue;
-        };
-        if resolved.contains_key(&feature.id) {
-            continue;
+    let derived_features = derived_feature_evaluation_order(features)?;
+    for feature in &derived_features {
+        let derived = feature
+            .derived
+            .as_ref()
+            .expect("derived feature evaluation order should contain only derived features");
+        if input.contains_key(&feature.id) {
+            return Err(LogicPearlError::message(format!(
+                "runtime input must not include derived feature {}; supply source features {} and {}",
+                feature.id, derived.left_feature, derived.right_feature
+            )));
         }
+    }
+
+    let mut resolved = input.clone();
+    for feature in derived_features {
+        let derived = feature
+            .derived
+            .as_ref()
+            .expect("derived feature evaluation order should contain only derived features");
         let left = numeric_feature_value(&resolved, &derived.left_feature)?;
         let right = numeric_feature_value(&resolved, &derived.right_feature)?;
         let value = match derived.op {
@@ -804,6 +817,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_input_payload_matches_shared_coercion_fixtures() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime/input_coercion_cases.json"
+        ))
+        .expect("coercion fixture should parse");
+        let cases = fixture["cases"]
+            .as_array()
+            .expect("coercion fixture should define cases");
+
+        for fixture_case in cases {
+            let parsed = parse_input_payload(fixture_case["input"].clone())
+                .expect("coercion fixture input should parse");
+            let expected = fixture_case["expected_normalized"]
+                .as_object()
+                .expect("coercion fixture should define expected normalized object")
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<HashMap<_, _>>();
+            assert_eq!(
+                parsed[0],
+                expected,
+                "coercion case {} diverged",
+                fixture_case["id"].as_str().unwrap_or("<unknown>")
+            );
+        }
+    }
+
+    #[test]
     fn numeric_membership_matches_int_and_float_forms() {
         let mut features = HashMap::new();
         features.insert("flag".to_string(), json!(2));
@@ -858,9 +899,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn derived_ratio_feature_evaluates_from_raw_inputs() {
-        let gate = LogicPearlGateIr {
+    fn derived_ratio_gate() -> LogicPearlGateIr {
+        LogicPearlGateIr {
             ir_version: "1.0".to_string(),
             gate_id: "ratio_gate".to_string(),
             gate_type: GateType::BitmaskGate,
@@ -938,13 +978,144 @@ mod tests {
                 source_commit: None,
                 created_at: None,
             }),
-        };
+        }
+    }
+
+    #[test]
+    fn derived_ratio_feature_evaluates_from_raw_inputs() {
+        let gate = derived_ratio_gate();
         let features = HashMap::from([
             ("debt".to_string(), json!(55.0)),
             ("income".to_string(), json!(100.0)),
         ]);
         let bitmask = evaluate_gate(&gate, &features).expect("derived ratio should evaluate");
         assert_eq!(bitmask.as_u64(), Some(1));
+    }
+
+    #[test]
+    fn chained_derived_features_evaluate_in_dependency_order() {
+        let gate = LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "derived_chain".to_string(),
+            gate_type: GateType::BitmaskGate,
+            input_schema: InputSchema {
+                features: vec![
+                    FeatureDefinition {
+                        id: "risk_margin".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: Some(logicpearl_ir::DerivedFeatureDefinition {
+                            op: logicpearl_ir::DerivedFeatureOperator::Difference,
+                            left_feature: "debt_to_income".to_string(),
+                            right_feature: "limit".to_string(),
+                        }),
+                    },
+                    FeatureDefinition {
+                        id: "debt_to_income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: Some(logicpearl_ir::DerivedFeatureDefinition {
+                            op: logicpearl_ir::DerivedFeatureOperator::Ratio,
+                            left_feature: "debt".to_string(),
+                            right_feature: "income".to_string(),
+                        }),
+                    },
+                    FeatureDefinition {
+                        id: "limit".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "debt".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                ],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_000".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "risk_margin".to_string(),
+                    op: ComparisonOperator::Gte,
+                    value: ComparisonValue::Literal(json!(0.0)),
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            }],
+            evaluation: EvaluationConfig {
+                combine: CombineStrategy::BitwiseOr,
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        };
+        let features = HashMap::from([
+            ("debt".to_string(), json!(55.0)),
+            ("income".to_string(), json!(100.0)),
+            ("limit".to_string(), json!(0.5)),
+        ]);
+
+        let bitmask = evaluate_gate(&gate, &features).expect("derived chain should evaluate");
+        assert_eq!(bitmask.as_u64(), Some(1));
+    }
+
+    #[test]
+    fn runtime_rejects_inputs_that_override_derived_features() {
+        let gate = derived_ratio_gate();
+        let features = HashMap::from([
+            ("debt".to_string(), json!(55.0)),
+            ("income".to_string(), json!(100.0)),
+            ("debt_to_income".to_string(), json!(0.0)),
+        ]);
+
+        let err = evaluate_gate(&gate, &features)
+            .expect_err("runtime input should not be able to override derived features");
+        let message = err.to_string();
+        assert!(message.contains("must not include derived feature debt_to_income"));
+        assert!(message.contains("supply source features debt and income"));
     }
 
     /// Helper: build a minimal valid gate for runtime tests.

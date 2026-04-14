@@ -80,11 +80,15 @@ fn pipeline_validate_inspect_and_trace_expose_expected_stage_data() {
     assert_eq!(inspect["stage_count"], validate["stage_count"]);
     assert!(inspect["stages"][1]["artifact"]
         .as_str()
-        .is_some_and(|path| path.ends_with("fixtures/ir/valid/membership-demo-v1.json")));
+        .is_some_and(|path| path.ends_with(
+            "examples/pipelines/observer_membership_verify/artifacts/membership-demo-v1.json"
+        )));
     assert!(inspect["stages"][2]["plugin_manifest"]
         .as_str()
         .is_some_and(
-            |path| path.ends_with("examples/plugins/python_pipeline_verify/manifest.json")
+            |path| path.ends_with(
+                "examples/pipelines/observer_membership_verify/plugins/python_pipeline_verify/manifest.json"
+            )
         ));
 
     let trace = run_cli_json(

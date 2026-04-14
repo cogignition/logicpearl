@@ -252,7 +252,7 @@ fn artifact_manifest_member_paths_cannot_escape_bundle_root() {
         "--json".to_string(),
     ]);
     assert!(
-        traversal_error.contains("escapes artifact directory"),
+        traversal_error.contains("escapes bundle directory"),
         "unexpected verify failure:\n{traversal_error}"
     );
 }

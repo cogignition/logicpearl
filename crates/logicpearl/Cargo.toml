@@ -15,6 +15,7 @@ csv.workspace = true
 hex.workspace = true
 indicatif.workspace = true
 logicpearl-benchmark.workspace = true
+logicpearl-build.workspace = true
 logicpearl-conformance = { workspace = true, optional = true }
 logicpearl-core.workspace = true
 logicpearl-discovery.workspace = true

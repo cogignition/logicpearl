@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{resolve_manifest_path, LogicPearlError, Result};
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
 use logicpearl_plugin::PluginExecutionPolicy;
@@ -391,7 +391,7 @@ fn resolve_pipeline_manifest_input(path: &Path) -> Result<Option<PathBuf>> {
         .ok_or_else(|| {
             LogicPearlError::message("pipeline artifact manifest is missing files.ir")
         })?;
-    Ok(Some(resolve_manifest_path(&manifest_path, ir)))
+    Ok(Some(resolve_manifest_path(&manifest_path, ir)?))
 }
 
 fn resolve_action_manifest_input(manifest_path: &Path) -> Result<Option<PathBuf>> {
@@ -407,7 +407,7 @@ fn resolve_action_manifest_input(manifest_path: &Path) -> Result<Option<PathBuf>
     Ok(Some(resolve_manifest_path(
         manifest_path,
         &manifest.files.pearl_ir,
-    )))
+    )?))
 }
 
 fn is_action_policy_ir(path: &Path) -> Result<bool> {
@@ -422,7 +422,7 @@ fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInput> {
         if manifest_path.exists() {
             let manifest = load_named_artifact_manifest(&manifest_path)?;
             return Ok(ResolvedArtifactInput {
-                pearl_ir: resolve_manifest_path(&manifest_path, &manifest.files.pearl_ir),
+                pearl_ir: resolve_manifest_path(&manifest_path, &manifest.files.pearl_ir)?,
             });
         }
         let pearl_ir = path.join("pearl.ir.json");
@@ -441,7 +441,7 @@ fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInput> {
     {
         let manifest = load_named_artifact_manifest(path)?;
         return Ok(ResolvedArtifactInput {
-            pearl_ir: resolve_manifest_path(path, &manifest.files.pearl_ir),
+            pearl_ir: resolve_manifest_path(path, &manifest.files.pearl_ir)?,
         });
     }
 
@@ -454,51 +454,6 @@ fn load_named_artifact_manifest(path: &Path) -> Result<NamedArtifactManifest> {
     let content = fs::read_to_string(path)?;
     let manifest = serde_json::from_str(&content)?;
     Ok(manifest)
-}
-
-fn resolve_manifest_path(manifest_path: &Path, value: &str) -> PathBuf {
-    let candidate = Path::new(value);
-    if candidate.is_absolute() {
-        return candidate.to_path_buf();
-    }
-
-    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-    let joined = base_dir.join(candidate);
-    if joined.exists() {
-        return joined;
-    }
-
-    if let Some(relative) = manifest_member_without_base_prefix(base_dir, candidate) {
-        let repaired = base_dir.join(relative);
-        if repaired.exists() {
-            return repaired;
-        }
-    }
-
-    if candidate.exists() {
-        return candidate.to_path_buf();
-    }
-
-    joined
-}
-
-fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
-    if let Ok(relative) = path.strip_prefix(base_dir) {
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-
-    let base_name = base_dir.file_name()?;
-    let mut components = path.components();
-    let first = components.next()?;
-    if first.as_os_str() == base_name {
-        let relative = components.as_path();
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-    None
 }
 
 fn looks_like_pipeline_path(path: &Path) -> bool {
@@ -608,6 +563,73 @@ mod tests {
     }
 
     #[test]
+    fn rejects_manifest_members_that_escape_artifact_dir() {
+        let repo_root = repo_root();
+        let dir = tempdir().expect("tempdir should exist");
+        let artifact_dir = dir.path().join("gate");
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should exist");
+        let outside = dir.path().join("outside.ir.json");
+        fs::copy(
+            repo_root.join("fixtures/ir/valid/auth-demo-v1.json"),
+            &outside,
+        )
+        .expect("fixture should copy");
+        fs::write(
+            artifact_dir.join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "artifact_version": "1.0",
+                "artifact_name": "auth-demo",
+                "gate_id": "auth_demo_v1",
+                "files": {
+                    "pearl_ir": outside.display().to_string()
+                }
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let err = LogicPearlEngine::from_path(&artifact_dir)
+            .expect_err("absolute manifest member should fail")
+            .to_string();
+        assert!(err.contains("must be relative"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_manifest_member_symlinks_that_escape_artifact_dir() {
+        let repo_root = repo_root();
+        let dir = tempdir().expect("tempdir should exist");
+        let artifact_dir = dir.path().join("gate");
+        fs::create_dir_all(&artifact_dir).expect("artifact dir should exist");
+        let outside = dir.path().join("outside.ir.json");
+        fs::copy(
+            repo_root.join("fixtures/ir/valid/auth-demo-v1.json"),
+            &outside,
+        )
+        .expect("fixture should copy");
+        std::os::unix::fs::symlink(&outside, artifact_dir.join("pearl.ir.json"))
+            .expect("symlink should be created");
+        fs::write(
+            artifact_dir.join("artifact.json"),
+            serde_json::to_string_pretty(&json!({
+                "artifact_version": "1.0",
+                "artifact_name": "auth-demo",
+                "gate_id": "auth_demo_v1",
+                "files": {
+                    "pearl_ir": "pearl.ir.json"
+                }
+            }))
+            .expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let err = LogicPearlEngine::from_path(&artifact_dir)
+            .expect_err("escaping symlink should fail")
+            .to_string();
+        assert!(err.contains("escapes bundle directory"));
+    }
+
+    #[test]
     fn loads_and_runs_action_artifact_from_manifest() {
         let dir = tempdir().expect("tempdir should exist");
         fs::write(
@@ -705,21 +727,47 @@ mod tests {
     #[test]
     fn loads_and_runs_pipeline_from_artifact_manifest_v1() {
         let repo_root = repo_root();
-        let pipeline =
-            repo_root.join("examples/pipelines/observer_membership_verify/pipeline.json");
+        let source_dir = repo_root.join("examples/pipelines/observer_membership_verify");
         let dir = tempdir().expect("tempdir should exist");
+        fs::create_dir_all(dir.path().join("artifacts")).expect("artifact dir should exist");
+        fs::create_dir_all(dir.path().join("plugins/python_observer"))
+            .expect("observer plugin dir should exist");
+        fs::create_dir_all(dir.path().join("plugins/python_pipeline_verify"))
+            .expect("verify plugin dir should exist");
+        fs::copy(
+            source_dir.join("pipeline.json"),
+            dir.path().join("pipeline.json"),
+        )
+        .expect("pipeline should copy");
+        fs::copy(
+            source_dir.join("artifacts/membership-demo-v1.json"),
+            dir.path().join("artifacts/membership-demo-v1.json"),
+        )
+        .expect("artifact should copy");
+        for file in ["manifest.json", "plugin.py"] {
+            fs::copy(
+                source_dir.join("plugins/python_observer").join(file),
+                dir.path().join("plugins/python_observer").join(file),
+            )
+            .expect("observer plugin should copy");
+            fs::copy(
+                source_dir.join("plugins/python_pipeline_verify").join(file),
+                dir.path().join("plugins/python_pipeline_verify").join(file),
+            )
+            .expect("verify plugin should copy");
+        }
         fs::write(
             dir.path().join("artifact.json"),
             serde_json::to_string_pretty(&json!({
                 "schema_version": "logicpearl.artifact_manifest.v1",
-                "artifact_id": "observer_membership_verify",
+                "artifact_id": "observer_membership_verify_pipeline",
                 "artifact_kind": "pipeline",
                 "engine_version": "0.1.5",
                 "ir_version": "1.0",
                 "created_at": "2026-04-12T00:00:00Z",
                 "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                 "files": {
-                    "ir": pipeline.display().to_string()
+                    "ir": "pipeline.json"
                 }
             }))
             .expect("manifest encodes"),

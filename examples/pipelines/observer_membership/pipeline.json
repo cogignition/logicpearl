@@ -6,7 +6,7 @@
     {
       "id": "observer",
       "kind": "observer_plugin",
-      "plugin_manifest": "../../plugins/python_observer/manifest.json",
+      "plugin_manifest": "plugins/python_observer/manifest.json",
       "input": {
         "age": "$.age",
         "member": "$.member",
@@ -20,7 +20,7 @@
     {
       "id": "gate",
       "kind": "pearl",
-      "artifact": "../../../fixtures/ir/valid/membership-demo-v1.json",
+      "artifact": "artifacts/membership-demo-v1.json",
       "input": {
         "age": "@observer.age",
         "is_member": "@observer.is_member"

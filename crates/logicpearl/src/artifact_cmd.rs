@@ -2,12 +2,14 @@
 use clap::Args;
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_core::{
-    ArtifactKind, ArtifactManifestFiles, ArtifactManifestV1, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    manifest_member_without_base_prefix, ArtifactKind, ArtifactManifestFiles, ArtifactManifestV1,
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 use logicpearl_discovery::{BuildResult, OutputFiles};
 use logicpearl_ir::{
-    ComparisonExpression, ComparisonOperator, DerivedFeatureDefinition, DerivedFeatureOperator,
-    Expression, FeatureDefinition, FeatureType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
+    derived_feature_evaluation_order, ComparisonExpression, ComparisonOperator,
+    DerivedFeatureDefinition, DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType,
+    InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
 use logicpearl_pipeline::PipelineDefinition;
 use logicpearl_runtime::{artifact_hash, sha256_prefixed, LOGICPEARL_ENGINE_VERSION};
@@ -16,10 +18,9 @@ use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -788,25 +789,6 @@ fn relative_manifest_file(base_dir: &Path, path: &Path, fallback: &str) -> Strin
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| fallback.to_string())
-}
-
-fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
-    if let Ok(relative) = path.strip_prefix(base_dir) {
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-
-    let base_name = base_dir.file_name()?;
-    let mut components = path.components();
-    let first = components.next()?;
-    if first.as_os_str() == base_name {
-        let relative = components.as_path();
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-    None
 }
 
 fn insert_file_hash(
@@ -1907,7 +1889,9 @@ pub(crate) fn compile_wasm_module(
         .into_diagnostic()
         .wrap_err("failed to write generated wasm Cargo.toml")?;
 
-    let lib_rs = generate_wasm_runner_source_for_pearl(&pearl);
+    let lib_rs = generate_wasm_runner_source_for_pearl(&pearl)
+        .into_diagnostic()
+        .wrap_err("failed to generate wasm runner source")?;
     fs::write(src_dir.join("lib.rs"), lib_rs)
         .into_diagnostic()
         .wrap_err("failed to write generated wasm runner source")?;
@@ -1969,7 +1953,11 @@ fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Result<()> {
 
 fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result<()> {
     let wasm_rules = pearl.wasm_rules();
-    let string_codes = build_string_codes(pearl.input_schema(), &wasm_rules);
+    let input_schema = pearl.input_schema();
+    let derived_features = derived_feature_evaluation_order(&input_schema.features)
+        .into_diagnostic()
+        .wrap_err("failed to order derived features for wasm metadata")?;
+    let string_codes = build_string_codes(input_schema, &wasm_rules);
     let input_features = pearl
         .input_schema()
         .features
@@ -2008,20 +1996,18 @@ fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result
                 },
             })
             .collect(),
-        derived_features: pearl
-            .input_schema()
-            .features
+        derived_features: derived_features
             .iter()
-            .filter_map(|feature| {
-                feature
-                    .derived
-                    .as_ref()
-                    .map(|derived| WasmDerivedFeatureDescriptor {
-                        id: feature.id.clone(),
-                        op: derived.op.clone(),
-                        left_feature: derived.left_feature.clone(),
-                        right_feature: derived.right_feature.clone(),
-                    })
+            .map(|feature| {
+                let derived = feature.derived.as_ref().expect(
+                    "derived feature evaluation order should contain only derived features",
+                );
+                WasmDerivedFeatureDescriptor {
+                    id: feature.id.clone(),
+                    op: derived.op.clone(),
+                    left_feature: derived.left_feature.clone(),
+                    right_feature: derived.right_feature.clone(),
+                }
             })
             .collect(),
         string_codes,
@@ -2051,12 +2037,15 @@ fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result
 #[cfg(test)]
 fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
     generate_wasm_runner_source_for_pearl(&CompilablePearl::Gate(gate.clone()))
+        .expect("wasm runner source should generate")
 }
 
-fn generate_wasm_runner_source_for_pearl(pearl: &CompilablePearl) -> String {
+fn generate_wasm_runner_source_for_pearl(
+    pearl: &CompilablePearl,
+) -> logicpearl_core::Result<String> {
     let wasm_rules = pearl.wasm_rules();
-    let input_features = pearl
-        .input_schema()
+    let input_schema = pearl.input_schema();
+    let input_features = input_schema
         .features
         .iter()
         .filter(|feature| feature.derived.is_none())
@@ -2066,14 +2055,12 @@ fn generate_wasm_runner_source_for_pearl(pearl: &CompilablePearl) -> String {
         .enumerate()
         .map(|(index, feature)| (feature.id.as_str(), index))
         .collect();
-    let feature_defs: HashMap<&str, &FeatureDefinition> = pearl
-        .input_schema()
+    let feature_defs: HashMap<&str, &FeatureDefinition> = input_schema
         .features
         .iter()
         .map(|feature| (feature.id.as_str(), feature))
         .collect();
-    let derived_identifiers: HashMap<&str, String> = pearl
-        .input_schema()
+    let derived_identifiers: HashMap<&str, String> = input_schema
         .features
         .iter()
         .filter(|feature| feature.derived.is_some())
@@ -2084,19 +2071,21 @@ fn generate_wasm_runner_source_for_pearl(pearl: &CompilablePearl) -> String {
             )
         })
         .collect();
-    let string_codes = build_string_codes(pearl.input_schema(), &wasm_rules);
+    let string_codes = build_string_codes(input_schema, &wasm_rules);
     let mut used_ops = collect_used_comparison_operators(&wasm_rules);
-    collect_used_derived_operators(pearl.input_schema(), &mut used_ops);
-    let derived_assignments = pearl
-        .input_schema()
-        .features
+    collect_used_derived_operators(input_schema, &mut used_ops);
+    let derived_features = derived_feature_evaluation_order(&input_schema.features)?;
+    let derived_assignments = derived_features
         .iter()
-        .filter_map(|feature| {
-            let derived = feature.derived.as_ref()?;
+        .map(|feature| {
+            let derived = feature
+                .derived
+                .as_ref()
+                .expect("derived feature evaluation order should contain only derived features");
             let variable = derived_identifiers[feature.id.as_str()].clone();
             let expression =
                 emit_wasm_derived_expression(derived, &feature_indexes, &derived_identifiers);
-            Some(format!("    let {variable} = {expression};\n"))
+            format!("    let {variable} = {expression};\n")
         })
         .collect::<String>();
 
@@ -2148,13 +2137,13 @@ fn generate_wasm_runner_source_for_pearl(pearl: &CompilablePearl) -> String {
         );
     }
 
-    format!(
+    Ok(format!(
         "const FEATURE_COUNT: usize = {};\nconst LOGICPEARL_STATUS_OK: u32 = 0;\nconst LOGICPEARL_STATUS_NULL_PTR: u32 = 1;\nconst LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[inline]\nfn validate_slots(ptr: *const f64, len: usize) -> u32 {{\n    if ptr.is_null() {{\n        return LOGICPEARL_STATUS_NULL_PTR;\n    }}\n    if len < FEATURE_COUNT {{\n        return LOGICPEARL_STATUS_INSUFFICIENT_LEN;\n    }}\n    LOGICPEARL_STATUS_OK\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_status_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    validate_slots(ptr, len)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 0;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 2;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    if evaluate(values) == 0 {{ 1 }} else {{ 0 }}\n}}\n",
         input_features.len(),
         helpers = helpers,
         derived_assignments = derived_assignments,
         rules = rule_source,
-    )
+    ))
 }
 
 fn wasm_if_condition(expression: &str) -> &str {
@@ -2490,105 +2479,11 @@ fn load_manifest_pearl_ir(path: &Path) -> Result<String> {
 }
 
 pub(crate) fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> Result<PathBuf> {
-    let candidate = PathBuf::from(raw_path);
-    let joined = resolve_manifest_member_relative_path(base_dir, &candidate, raw_path)?;
-    if joined.exists() {
-        return Ok(joined);
-    }
-
-    if let Some(relative) = manifest_member_without_base_prefix(base_dir, &candidate) {
-        let repaired = resolve_manifest_member_relative_path(base_dir, &relative, raw_path)?;
-        if repaired.exists() {
-            return Ok(repaired);
-        }
-    }
-
-    Ok(joined)
-}
-
-fn resolve_manifest_member_relative_path(
-    base_dir: &Path,
-    candidate: &Path,
-    raw_path: &str,
-) -> Result<PathBuf> {
-    let relative = normalize_manifest_member_path(candidate, raw_path)?;
-    let joined = base_dir.join(relative);
-    ensure_existing_manifest_member_is_under_base(base_dir, &joined, raw_path)?;
-    Ok(joined)
-}
-
-fn normalize_manifest_member_path(candidate: &Path, raw_path: &str) -> Result<PathBuf> {
-    let mut parts = Vec::<OsString>::new();
-    for component in candidate.components() {
-        match component {
-            Component::Normal(part) => parts.push(part.to_os_string()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if parts.pop().is_none() {
-                    return Err(miette::miette!(
-                        "artifact manifest member path escapes artifact directory: {raw_path}"
-                    ));
-                }
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(miette::miette!(
-                    "artifact manifest member path must be relative to the artifact directory: {raw_path}"
-                ));
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        return Err(miette::miette!(
-            "artifact manifest member path is empty and must be relative to the artifact directory"
-        ));
-    }
-
-    let mut normalized = PathBuf::new();
-    for part in parts {
-        normalized.push(part);
-    }
-    Ok(normalized)
-}
-
-fn ensure_existing_manifest_member_is_under_base(
-    base_dir: &Path,
-    path: &Path,
-    raw_path: &str,
-) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let canonical_base = fs::canonicalize(base_dir)
-        .into_diagnostic()
-        .wrap_err_with(|| {
-            format!(
-                "failed to canonicalize artifact directory {}",
-                base_dir.display()
-            )
-        })?;
-    let canonical_path = fs::canonicalize(path).into_diagnostic().wrap_err_with(|| {
-        format!(
-            "failed to canonicalize artifact manifest member {}",
-            path.display()
-        )
-    })?;
-
-    if !canonical_path.starts_with(&canonical_base) {
-        return Err(miette::miette!(
-            "artifact manifest member path escapes artifact directory: {raw_path}"
-        ));
-    }
-
-    Ok(())
+    logicpearl_core::resolve_manifest_member_path(base_dir, raw_path).into_diagnostic()
 }
 
 fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> Result<PathBuf> {
-    resolve_manifest_member_path(
-        manifest_path.parent().unwrap_or_else(|| Path::new(".")),
-        raw_path,
-    )
+    logicpearl_core::resolve_manifest_path(manifest_path, raw_path).into_diagnostic()
 }
 
 fn artifact_file_stem(name: &str) -> String {
@@ -2684,11 +2579,11 @@ mod tests {
     };
     use logicpearl_ir::{
         ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
-        ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
-        FeatureDefinition, FeatureType, GateType, InputSchema, LogicPearlActionIr,
-        LogicPearlGateIr, RuleDefinition, RuleKind,
+        ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureDefinition,
+        DerivedFeatureOperator, EvaluationConfig, Expression, FeatureDefinition, FeatureType,
+        GateType, InputSchema, LogicPearlActionIr, LogicPearlGateIr, RuleDefinition, RuleKind,
     };
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::path::Path;
 
     #[test]
@@ -2752,7 +2647,7 @@ mod tests {
             .expect_err("parent escapes should be rejected")
             .to_string();
         assert!(
-            parent_error.contains("escapes artifact directory"),
+            parent_error.contains("escapes bundle directory"),
             "unexpected error: {parent_error}"
         );
     }
@@ -2772,7 +2667,7 @@ mod tests {
             .expect_err("symlink escapes should be rejected")
             .to_string();
         assert!(
-            error.contains("escapes artifact directory"),
+            error.contains("escapes bundle directory"),
             "unexpected error: {error}"
         );
     }
@@ -2786,6 +2681,46 @@ mod tests {
         assert!(source.contains("bitmask |= 1u64 << 63;"));
         assert!(source.contains("return 0;"));
         assert!(!source.contains("u64::MAX"));
+    }
+
+    #[test]
+    fn generated_wasm_orders_derived_assignments_by_dependency() {
+        let gate = gate_with_out_of_order_derived_chain();
+        let source = generate_wasm_runner_source(&gate);
+
+        let dependency = source
+            .find("let derived_debt_to_income")
+            .expect("dependency assignment should be generated");
+        let dependent = source
+            .find("let derived_risk_margin")
+            .expect("dependent assignment should be generated");
+        assert!(dependency < dependent);
+        assert!(source.contains("let derived_risk_margin = (derived_debt_to_income -"));
+    }
+
+    #[test]
+    fn wasm_metadata_orders_derived_features_by_dependency() {
+        let gate = gate_with_out_of_order_derived_chain();
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let path = temp_dir.path().join("pearl.wasm.meta.json");
+
+        write_wasm_metadata(&path, &gate).expect("write wasm metadata");
+
+        let metadata: Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("read generated wasm metadata"),
+        )
+        .expect("parse generated wasm metadata");
+        let derived_ids = metadata["derived_features"]
+            .as_array()
+            .expect("derived feature metadata should be an array")
+            .iter()
+            .map(|feature| {
+                feature["id"]
+                    .as_str()
+                    .expect("derived id should be a string")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(derived_ids, vec!["debt_to_income", "risk_margin"]);
     }
 
     #[test]
@@ -2871,6 +2806,107 @@ mod tests {
                     verification_status: None,
                 })
                 .collect(),
+            evaluation: EvaluationConfig {
+                combine: CombineStrategy::BitwiseOr,
+                allow_when_bitmask: 0,
+            },
+            verification: None,
+            provenance: None,
+        }
+    }
+
+    fn gate_with_out_of_order_derived_chain() -> LogicPearlGateIr {
+        LogicPearlGateIr {
+            ir_version: "1.0".to_string(),
+            gate_id: "derived_chain".to_string(),
+            gate_type: GateType::BitmaskGate,
+            input_schema: InputSchema {
+                features: vec![
+                    FeatureDefinition {
+                        id: "risk_margin".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: Some(DerivedFeatureDefinition {
+                            op: DerivedFeatureOperator::Difference,
+                            left_feature: "debt_to_income".to_string(),
+                            right_feature: "limit".to_string(),
+                        }),
+                    },
+                    FeatureDefinition {
+                        id: "debt_to_income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: Some(DerivedFeatureDefinition {
+                            op: DerivedFeatureOperator::Ratio,
+                            left_feature: "debt".to_string(),
+                            right_feature: "income".to_string(),
+                        }),
+                    },
+                    FeatureDefinition {
+                        id: "limit".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "debt".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                    FeatureDefinition {
+                        id: "income".to_string(),
+                        feature_type: FeatureType::Float,
+                        description: None,
+                        values: None,
+                        min: None,
+                        max: None,
+                        editable: None,
+                        semantics: None,
+                        governance: None,
+                        derived: None,
+                    },
+                ],
+            },
+            rules: vec![RuleDefinition {
+                id: "rule_000".to_string(),
+                kind: RuleKind::Predicate,
+                bit: 0,
+                deny_when: Expression::Comparison(ComparisonExpression {
+                    feature: "risk_margin".to_string(),
+                    op: ComparisonOperator::Gte,
+                    value: ComparisonValue::Literal(json!(0.0)),
+                }),
+                label: None,
+                message: None,
+                severity: None,
+                counterfactual_hint: None,
+                verification_status: None,
+            }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
                 allow_when_bitmask: 0,

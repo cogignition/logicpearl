@@ -156,6 +156,17 @@ pub enum FeatureType {
     Enum,
 }
 
+/// Returns derived features in dependency-first evaluation order.
+///
+/// Artifact feature order remains unchanged; this order is only for validation
+/// and runtime computation.
+pub fn derived_feature_evaluation_order(
+    features: &[FeatureDefinition],
+) -> Result<Vec<&FeatureDefinition>> {
+    let known_features = collect_known_features(features)?;
+    derived_feature_evaluation_order_with_known(features, &known_features)
+}
+
 /// A single deny rule within a gate artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleDefinition {
@@ -504,9 +515,25 @@ fn validate_input_schema(
         ));
     }
 
+    let known_features = collect_known_features(&input_schema.features)?;
+    for feature in &input_schema.features {
+        feature.validate()?;
+    }
+    derived_feature_evaluation_order_with_known(&input_schema.features, &known_features)?;
+    for feature in &input_schema.features {
+        if let Some(semantics) = &feature.semantics {
+            validate_feature_semantics(feature, semantics, &known_features)?;
+        }
+    }
+    Ok(known_features)
+}
+
+fn collect_known_features(
+    features: &[FeatureDefinition],
+) -> Result<HashMap<String, &FeatureDefinition>> {
     let mut feature_ids = BTreeSet::new();
     let mut known_features = HashMap::new();
-    for feature in &input_schema.features {
+    for feature in features {
         if feature.id.is_empty() {
             return Err(LogicPearlError::message("feature id must be non-empty"));
         }
@@ -516,16 +543,7 @@ fn validate_input_schema(
                 feature.id
             )));
         }
-        feature.validate()?;
-        if let Some(derived) = &feature.derived {
-            validate_derived_feature(feature, derived, &known_features)?;
-        }
         known_features.insert(feature.id.clone(), feature);
-    }
-    for feature in &input_schema.features {
-        if let Some(semantics) = &feature.semantics {
-            validate_feature_semantics(feature, semantics, &known_features)?;
-        }
     }
     Ok(known_features)
 }
@@ -632,32 +650,89 @@ fn validate_optional_non_empty(value: &Option<String>, field: &str) -> Result<()
     Ok(())
 }
 
-fn validate_derived_feature(
-    feature: &FeatureDefinition,
-    derived: &DerivedFeatureDefinition,
-    known_features: &HashMap<String, &FeatureDefinition>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DerivedVisitState {
+    Visiting,
+    Done,
+}
+
+fn derived_feature_evaluation_order_with_known<'a>(
+    features: &'a [FeatureDefinition],
+    known_features: &HashMap<String, &'a FeatureDefinition>,
+) -> Result<Vec<&'a FeatureDefinition>> {
+    let mut order = Vec::new();
+    let mut states = HashMap::new();
+    let mut stack = Vec::new();
+    for feature in features {
+        if feature.derived.is_some() {
+            visit_derived_feature(feature, known_features, &mut states, &mut stack, &mut order)?;
+        }
+    }
+    Ok(order)
+}
+
+fn visit_derived_feature<'a>(
+    feature: &'a FeatureDefinition,
+    known_features: &HashMap<String, &'a FeatureDefinition>,
+    states: &mut HashMap<&'a str, DerivedVisitState>,
+    stack: &mut Vec<&'a str>,
+    order: &mut Vec<&'a FeatureDefinition>,
 ) -> Result<()> {
-    let left = known_features.get(&derived.left_feature).ok_or_else(|| {
-        LogicPearlError::message(format!(
-            "unknown features referenced by derived feature {}: {}",
-            feature.id, derived.left_feature
-        ))
-    })?;
-    let right = known_features.get(&derived.right_feature).ok_or_else(|| {
-        LogicPearlError::message(format!(
-            "unknown features referenced by derived feature {}: {}",
-            feature.id, derived.right_feature
-        ))
-    })?;
-    for source in [left, right] {
+    match states.get(feature.id.as_str()).copied() {
+        Some(DerivedVisitState::Done) => return Ok(()),
+        Some(DerivedVisitState::Visiting) => {
+            return Err(LogicPearlError::message(format!(
+                "derived feature dependency cycle: {}",
+                derived_feature_cycle(stack, feature.id.as_str())
+            )));
+        }
+        None => {}
+    }
+
+    let Some(derived) = &feature.derived else {
+        return Ok(());
+    };
+    if !matches!(feature.feature_type, FeatureType::Float) {
+        return Err(LogicPearlError::message(
+            "derived features must use float type",
+        ));
+    }
+
+    states.insert(feature.id.as_str(), DerivedVisitState::Visiting);
+    stack.push(feature.id.as_str());
+
+    for source_id in [&derived.left_feature, &derived.right_feature] {
+        let source = known_features.get(source_id.as_str()).ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "unknown features referenced by derived feature {}: {}",
+                feature.id, source_id
+            ))
+        })?;
         if !matches!(source.feature_type, FeatureType::Int | FeatureType::Float) {
             return Err(LogicPearlError::message(format!(
                 "derived feature {} requires numeric inputs: {}",
                 feature.id, source.id
             )));
         }
+        if source.derived.is_some() {
+            visit_derived_feature(source, known_features, states, stack, order)?;
+        }
     }
+
+    stack.pop();
+    states.insert(feature.id.as_str(), DerivedVisitState::Done);
+    order.push(feature);
     Ok(())
+}
+
+fn derived_feature_cycle(stack: &[&str], repeated: &str) -> String {
+    if let Some(start) = stack.iter().position(|feature| *feature == repeated) {
+        let mut cycle = stack[start..].to_vec();
+        cycle.push(repeated);
+        cycle.join(" -> ")
+    } else {
+        repeated.to_string()
+    }
 }
 
 fn validate_expression(
@@ -1143,6 +1218,47 @@ mod tests {
     }
 
     #[test]
+    fn validates_out_of_order_chained_derived_features() {
+        let gate = LogicPearlGateIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "gate_id": "derived_chain",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "risk_margin", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "difference", "left_feature": "debt_to_income", "right_feature": "limit"}},
+                        {"id": "debt_to_income", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "ratio", "left_feature": "debt", "right_feature": "income"}},
+                        {"id": "limit", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "debt", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null},
+                        {"id": "income", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {"id": "rule_000", "kind": "predicate", "bit": 0,
+                     "deny_when": {"feature": "risk_margin", "op": ">=", "value": 0.0}}
+                ],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect("out-of-order derived feature chains should validate");
+
+        let order = derived_feature_evaluation_order(&gate.input_schema.features)
+            .expect("derived feature order should resolve");
+        assert_eq!(
+            order
+                .iter()
+                .map(|feature| feature.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["debt_to_income", "risk_margin"]
+        );
+    }
+
+    #[test]
     fn rejects_derived_feature_with_non_numeric_source() {
         let err = LogicPearlGateIr::from_json_str(
             &json!({
@@ -1169,6 +1285,38 @@ mod tests {
         )
         .expect_err("non-numeric derived feature source should fail");
         assert!(err.to_string().contains("requires numeric inputs"));
+    }
+
+    #[test]
+    fn rejects_derived_feature_dependency_cycles() {
+        let err = LogicPearlGateIr::from_json_str(
+            &json!({
+                "ir_version": "1.0",
+                "gate_id": "derived_cycle",
+                "gate_type": "bitmask_gate",
+                "input_schema": {
+                    "features": [
+                        {"id": "a", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "difference", "left_feature": "b", "right_feature": "raw"}},
+                        {"id": "b", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null,
+                         "derived": {"op": "difference", "left_feature": "a", "right_feature": "raw"}},
+                        {"id": "raw", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
+                    ]
+                },
+                "rules": [
+                    {"id": "rule_000", "kind": "predicate", "bit": 0,
+                     "deny_when": {"feature": "a", "op": ">=", "value": 0.0}}
+                ],
+                "evaluation": {"combine": "bitwise_or", "allow_when_bitmask": 0},
+                "verification": null,
+                "provenance": null
+            })
+            .to_string(),
+        )
+        .expect_err("derived feature cycles should fail");
+        let message = err.to_string();
+        assert!(message.contains("derived feature dependency cycle"));
+        assert!(message.contains("a -> b -> a"));
     }
 
     #[test]
