@@ -73,6 +73,24 @@ fn validate_build_provenance(instance: &Value) {
     );
 }
 
+fn validate_source_manifest(instance: &Value) {
+    let schema = load_json(repo_root().join("schema/logicpearl-source-manifest-v1.schema.json"));
+    jsonschema::draft202012::meta::validate(&schema)
+        .unwrap_or_else(|err| panic!("source manifest schema is invalid: {err}"));
+    let validator = jsonschema::draft202012::new(&schema)
+        .unwrap_or_else(|err| panic!("failed to compile source manifest schema: {err}"));
+    let errors = validator
+        .iter_errors(instance)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        errors.is_empty(),
+        "source manifest validation failed:\n{}\ninstance:\n{}",
+        errors.join("\n"),
+        serde_json::to_string_pretty(instance).expect("instance should encode")
+    );
+}
+
 fn validate_plugin_run_provenance(instance: &Value) {
     let schema =
         load_json(repo_root().join("schema/logicpearl-plugin-run-provenance-v1.schema.json"));
@@ -214,23 +232,25 @@ fn source_manifest_is_validated_and_attached_to_provenance() {
     let temp = tempdir().expect("temp dir should exist");
     let artifact_dir = temp.path().join("gate");
     let source_manifest = temp.path().join("sources.json");
+    let source_manifest_payload = json!({
+        "schema_version": "logicpearl.source_manifest.v1",
+        "sources": [
+            {
+                "source_id": "getting_started_fixture",
+                "kind": "integration_policy_export",
+                "title": "Getting started decision trace fixture",
+                "uri": "repo:examples/getting_started/decision_traces.csv",
+                "retrieved_at": "2026-04-12T00:00:00Z",
+                "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "data_classification": "integration_private"
+            }
+        ]
+    });
+    validate_source_manifest(&source_manifest_payload);
     fs::write(
         &source_manifest,
-        serde_json::to_string_pretty(&json!({
-            "schema_version": "logicpearl.source_manifest.v1",
-            "sources": [
-                {
-                    "source_id": "getting_started_fixture",
-                    "kind": "synthetic_fixture",
-                    "title": "Getting started decision trace fixture",
-                    "uri": "repo:examples/getting_started/decision_traces.csv",
-                    "retrieved_at": "2026-04-12T00:00:00Z",
-                    "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                    "data_classification": "synthetic"
-                }
-            ]
-        }))
-        .expect("source manifest should encode"),
+        serde_json::to_string_pretty(&source_manifest_payload)
+            .expect("source manifest should encode"),
     )
     .expect("source manifest should write");
 
@@ -255,8 +275,12 @@ fn source_manifest_is_validated_and_attached_to_provenance() {
         Some("getting_started_fixture")
     );
     assert_eq!(
+        provenance["source_manifest"]["sources"][0]["kind"].as_str(),
+        Some("integration_policy_export")
+    );
+    assert_eq!(
         provenance["source_manifest"]["sources"][0]["data_classification"].as_str(),
-        Some("synthetic")
+        Some("integration_private")
     );
     assert_eq!(
         provenance["build_options"]["source_manifest"]

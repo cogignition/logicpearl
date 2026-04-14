@@ -432,13 +432,8 @@
           "minLength": 1
         },
         "kind": {
-          "enum": [
-            "public_url",
-            "pdf",
-            "customer_export",
-            "manual_policy",
-            "synthetic_fixture"
-          ]
+          "type": "string",
+          "minLength": 1
         },
         "title": {
           "type": "string",
@@ -456,12 +451,8 @@
           "$ref": "#/$defs/sha256"
         },
         "data_classification": {
-          "enum": [
-            "public",
-            "synthetic",
-            "customer_confidential",
-            "phi"
-          ]
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": true

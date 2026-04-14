@@ -1096,16 +1096,16 @@ fn validate_source_manifest(manifest: &SourceManifest) -> Result<()> {
                 source.source_id
             )));
         }
-        if !is_allowed_source_kind(&source.kind) {
+        if source.kind.trim().is_empty() {
             return Err(LogicPearlError::message(format!(
-                "source {:?} has unsupported kind {:?}",
-                source.source_id, source.kind
+                "source {:?} has an empty kind",
+                source.source_id
             )));
         }
-        if !is_allowed_data_classification(&source.data_classification) {
+        if source.data_classification.trim().is_empty() {
             return Err(LogicPearlError::message(format!(
-                "source {:?} has unsupported data_classification {:?}",
-                source.source_id, source.data_classification
+                "source {:?} has an empty data_classification",
+                source.source_id
             )));
         }
         if let Some(hash) = &source.content_hash {
@@ -1118,20 +1118,6 @@ fn validate_source_manifest(manifest: &SourceManifest) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn is_allowed_source_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "public_url" | "pdf" | "customer_export" | "manual_policy" | "synthetic_fixture"
-    )
-}
-
-fn is_allowed_data_classification(classification: &str) -> bool {
-    matches!(
-        classification,
-        "public" | "synthetic" | "customer_confidential" | "phi"
-    )
 }
 
 fn validate_sha256_prefixed(value: &str) -> std::result::Result<(), &'static str> {
