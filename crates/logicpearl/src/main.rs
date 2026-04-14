@@ -21,7 +21,7 @@ use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
     discover_from_csv, load_decision_traces_auto, load_flat_records, BuildOptions, BuildProvenance,
     DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode, ExactSelectionBackend,
-    FeatureDictionaryConfig, LoadedFlatRecords, PluginBuildProvenance, ResidualRecoveryState,
+    LoadedFlatRecords, PluginBuildProvenance, ResidualRecoveryState,
 };
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_observer::{

@@ -1852,7 +1852,7 @@ mod tests {
         match &residual_rules[0].deny_when {
             Expression::All { all } => {
                 assert_eq!(all.len(), 2);
-                let rendered = serde_json::to_string(all).unwrap();
+                let rendered = serde_json::to_string(&all).unwrap();
                 assert!(rendered.contains("\"feature\":\"a\""));
                 assert!(rendered.contains("\"feature\":\"b\""));
             }
