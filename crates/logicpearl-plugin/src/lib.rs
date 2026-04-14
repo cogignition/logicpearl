@@ -580,8 +580,7 @@ fn run_plugin_raw<T: Serialize>(
         .take()
         .ok_or_else(|| LogicPearlError::message("failed to open plugin stdin"))?;
     let payload = serde_json::to_vec(request)?;
-    stdin.write_all(&payload)?;
-    stdin.write_all(b"\n")?;
+    write_plugin_stdin(&mut stdin, &payload)?;
     drop(stdin);
 
     let (status, timed_out) = wait_for_plugin_exit(timeout_ms, &mut child)?;
@@ -1038,6 +1037,19 @@ fn spawn_pipe_reader<R: Read + Send + 'static>(
     max_bytes: usize,
 ) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
     spawn_limited_pipe_reader(reader, max_bytes)
+}
+
+fn write_plugin_stdin(stdin: &mut impl Write, payload: &[u8]) -> std::io::Result<()> {
+    write_plugin_stdin_chunk(stdin, payload)?;
+    write_plugin_stdin_chunk(stdin, b"\n")
+}
+
+fn write_plugin_stdin_chunk(stdin: &mut impl Write, bytes: &[u8]) -> std::io::Result<()> {
+    match stdin.write_all(bytes) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn spawn_limited_pipe_reader<R: Read + Send + 'static>(
@@ -2064,5 +2076,27 @@ mod tests {
         let error = super::read_limited(&mut reader, 4).expect_err("reader should reject overflow");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(reader.position(), 5, "reader should drain capped streams");
+    }
+
+    #[test]
+    fn stdin_writer_treats_broken_pipe_as_early_plugin_exit() {
+        struct BrokenPipeWriter;
+
+        impl std::io::Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "plugin closed stdin",
+                ))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = BrokenPipeWriter;
+        super::write_plugin_stdin(&mut writer, br#"{"protocol_version":"1"}"#)
+            .expect("broken pipe should be handled by process status and output validation");
     }
 }
