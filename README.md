@@ -1,23 +1,40 @@
 <p align="center">
-  <img src="./docs/assets/hero-shell.svg" alt="LogicPearl hero shell" height="260" />
+  <img src="./docs/assets/garden-actions-hero.svg" alt="LogicPearl example flow showing notes, traces, local build commands, and a selected action" width="880" />
 </p>
 
 # LogicPearl
 
-**Build deterministic decision artifacts from examples. Inspect them. Run them. Verify what changed.**
+**Turn reviewed decision examples into small, inspectable policy artifacts you can run, diff, and verify without calling an LLM.**
 
 LogicPearl is for bounded decision logic that should be explicit instead of buried in services, scripts, prompts, spreadsheets, or conditional code.
 
-Give it examples of normalized inputs and the decisions that came out. It builds a `pearl`: a small artifact bundle with deterministic rules, readable reasons, stable JSON output, and integrity metadata.
+Give it examples of normalized inputs and the decisions that came out. It builds a `pearl`: a deterministic artifact bundle with readable rules, stable JSON output, file hashes, and reviewable provenance.
 
-The launch path is intentionally small:
+The runtime does not call a model, spend tokens, or improvise. The same normalized input produces the same output every time.
 
-1. build a pearl from decision traces
-2. inspect the learned logic
-3. run the artifact on new input
-4. verify the artifact bundle and compare later versions
+```bash
+logicpearl quickstart build
+```
 
-At runtime, a pearl does not call a model, spend tokens, or improvise. The same normalized input produces the same output every time.
+That prints the shortest checked-in path through the product: build an artifact from traces, inspect the learned rule, run a new input, and verify the bundle. It does not invent domain data for you; it points at the example files in this repo so you can see and edit the traces yourself.
+
+After running that recipe, the artifact shape is:
+
+```text
+Built decision_traces
+  Rows 12
+  Rules 1
+  Training parity 100.0%
+
+Rules
+  bit 0  Age at or below 17.0
+
+Run a matching input, such as `{ "age": 16, "is_member": 1 }`
+  bitmask: 1
+  matched: Age at or below 17.0
+
+Verified decision_traces
+```
 
 <p align="center">
   <a href="./LICENSE"><img alt="MIT License" src="./docs/assets/badges/license-mit.svg"></a>
@@ -26,18 +43,17 @@ At runtime, a pearl does not call a model, spend tokens, or improvise. The same 
   <a href="./schema"><img alt="Schema" src="./docs/assets/badges/artifact-pearl-ir.svg"></a>
 </p>
 
-[Install](./docs/install.md) · [Docs](./docs/README.md) · [Terminology](./TERMINOLOGY.md) · [Core Loop](#core-loop) · [What You Can Trust](#what-you-can-trust) · [Open Core](#open-core-policy) · [Roadmap](./ROADMAP.md) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
+[Install](./docs/install.md) · [Docs](./docs/README.md) · [Core Loop](#core-loop) · [Where It Fits](#where-it-fits) · [What You Can Trust](#what-you-can-trust) · [Open Core](#open-core-policy) · [Roadmap](./ROADMAP.md) · [Benchmarks](./BENCHMARKS.md) · [Datasets](./DATASETS.md)
 
 ## Install
 
-Use Homebrew when the tap has a release formula:
+Fast path after installing a release bundle:
 
 ```bash
-brew install LogicPearlHQ/tap/logicpearl
 logicpearl quickstart
 ```
 
-For verified direct downloads, persistent install setup, and the convenience installer, see [docs/install.md](./docs/install.md). The recommended manual path downloads the release archive and its SHA-256 sidecar before extraction.
+For release downloads, checksum verification, Homebrew, and source install details, see [docs/install.md](./docs/install.md). Prebuilt release bundles include `logicpearl` and `z3`; source installs need a solver such as `z3` on `PATH`.
 
 To install from a cloned source checkout instead:
 
@@ -49,14 +65,32 @@ That source path builds the CLI only. For discovery workflows, keep `z3` on your
 
 ## Core Loop
 
-Clone the repository if you want to run the checked-in example data:
+The core product loop is intentionally small:
+
+```text
+build -> inspect -> run -> verify -> diff
+```
+
+Print the shortest paths:
+
+```bash
+logicpearl quickstart
+```
+
+Jump straight to the build recipe:
+
+```bash
+logicpearl quickstart build
+```
+
+Clone the repository when you want the checked-in examples:
 
 ```bash
 git clone https://github.com/LogicPearlHQ/logicpearl.git
 cd logicpearl
 ```
 
-Build a pearl from observed decision traces:
+Build a pearl from a checked-in trace file:
 
 ```bash
 logicpearl build examples/getting_started/decision_traces.csv \
@@ -85,6 +119,13 @@ logicpearl artifact verify /tmp/logicpearl-output
 ```
 
 That is the core product. A labeled behavior slice goes in; an inspectable deterministic artifact comes out.
+
+For a less toy-shaped walkthrough, try:
+
+- [Garden actions demo](./examples/demos/garden_actions/README.md)
+  Learn a multi-action artifact that chooses `water`, `fertilize`, `repot`, or `do_nothing`.
+- [WAF edge demo](./examples/waf_edge/README.md)
+  Run a pipeline that observes HTTP requests, evaluates grouped pearls, and routes to allow, deny, or review.
 
 ## What Gets Built
 
@@ -164,6 +205,17 @@ logicpearl build traces.csv \
 ```
 
 The dictionary affects generated labels, messages, counterfactual hints, `inspect`, and `diff`. It does not change runtime evaluation.
+
+## Where It Fits
+
+LogicPearl is not a replacement for every policy system. It is useful when you already have reviewed behavior examples and want a deterministic artifact that can be inspected, versioned, and run locally.
+
+| Tool | Best for | LogicPearl difference |
+|---|---|---|
+| OPA / Rego | Hand-written policy | LogicPearl learns from reviewed traces, then emits inspectable artifacts. |
+| Decision tables | Manually maintained rules | LogicPearl builds, hashes, verifies, and diffs deployable bundles. |
+| ML classifiers | Statistical prediction | LogicPearl keeps runtime behavior deterministic and reviewable. |
+| Prompts | Flexible language reasoning | LogicPearl does not call a model or improvise at runtime. |
 
 ## What You Can Trust
 

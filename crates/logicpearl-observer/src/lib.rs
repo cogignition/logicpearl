@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Built-in observer profiles for turning raw inputs into normalized features.
+//!
+//! Observers are integration helpers that extract deterministic feature values
+//! before a pearl runs. This crate contains the native observer profiles used
+//! by examples and benchmark workflows. Domain meaning stays in observer
+//! artifacts, feature dictionaries, and source manifests, not in runtime rules.
+
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

@@ -22,6 +22,7 @@ target/
 fixtures/ir/eval/.generated-inputs/
 
 # Demo / benchmark generated artifacts
+QUALITY.json
 demos/**/data/
 benchmarks/**/output/
 examples/getting_started/output/

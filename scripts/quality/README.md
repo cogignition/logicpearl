@@ -1,6 +1,6 @@
 # Quality Report Scripts
 
-These scripts keep a neutral checked-in quality report for LogicPearl examples and benchmark smoke suites.
+These scripts generate local quality reports for LogicPearl examples and benchmark smoke suites. The report is not checked into the repository.
 
 Fast path:
 
@@ -25,7 +25,7 @@ scripts/quality/update_quality.py
 - `update_quality.py`
   - measures checked-in examples and the fast guardrail regression sample
   - records guardrail metrics under the active `target_goal` lane from the frozen bundle manifest
-  - writes the root [`QUALITY.json`](../../QUALITY.json)
+  - writes `target/logicpearl/quality/QUALITY.json` by default
 
 ## Current Measured Suites
 
@@ -44,8 +44,8 @@ scripts/quality/update_quality.py
 - The guardrail sample uses the frozen bundle pointed to by `LOGICPEARL_GUARDRAIL_BUNDLE_DIR`.
 - Guardrail sampled baselines are lane-aware:
   - the runner prefers `open_guardrail_regression_baseline.sample200.<target-goal>.json`
-  - `QUALITY.json` keeps the active lane under `guardrails_open_sample200.by_target_goal`
+  - the generated report keeps the active lane under `guardrails_open_sample200.by_target_goal`
 - If that bundle is unavailable, the quality report records the guardrail suite as unavailable instead of failing.
-- Raw metrics live in `QUALITY.json`.
+- Raw metrics live in the generated local report.
 - Contributor points and public leaderboards are intentionally not part of the public OSS quality report.
-- GitHub Pages publication for quality data is intentionally disabled; consumers should use the checked-in report or explicit CI/release artifacts.
+- GitHub Pages publication for quality data is intentionally disabled; consumers should use explicit CI or release artifacts when a public quality snapshot is needed.

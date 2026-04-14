@@ -27,7 +27,7 @@ use refresh_cmd::{
 const XTASK_LONG_ABOUT: &str = "\
 LogicPearl project automation lives here.
 
-Use xtask for local verification, benchmark refresh flows, bundle rebuilds, and quality report maintenance.
+Use xtask for local verification, benchmark refresh flows, bundle rebuilds, and local quality reports.
 This surface is intentionally separate from the `logicpearl` product CLI.";
 const COMPARE_SOLVER_TIMEOUT_MS: &str = "5000";
 const COMPARE_COMMAND_TIMEOUT_SECS: u64 = 30;
@@ -67,7 +67,7 @@ enum Commands {
     PackageReleaseBundle(PackageReleaseBundleArgs),
     /// Generate a tap-ready Homebrew formula from release bundle checksum files.
     GenerateHomebrewFormula(GenerateHomebrewFormulaArgs),
-    /// Refresh public benchmark bundles, evals, and the quality report.
+    /// Refresh public benchmark bundles, evals, and a local quality report.
     RefreshBenchmarks(RefreshBenchmarksArgs),
     #[command(hide = true)]
     GuardrailsFreeze(RefreshGuardrailsFreezeArgs),

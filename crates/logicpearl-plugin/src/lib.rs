@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Trusted local process plugin contracts and runner.
+//!
+//! Plugins adapt external sources into normalized LogicPearl inputs or verify
+//! generated artifacts. This crate validates plugin manifests, constructs the
+//! canonical JSON payload, enforces conservative process execution defaults,
+//! captures bounded stdout/stderr metadata, and emits plugin run provenance.
+//! It is not an OS sandbox for untrusted code.
+
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

@@ -19,7 +19,7 @@ Already in the public repo:
 - browser runtime package source under `packages/logicpearl-browser`
 - checked-in getting-started, garden actions, WAF edge, guardrail, and OPA/Rego examples
 - reproducible benchmark documentation that distinguishes checked-in scorecards from larger non-vendored corpus protocols
-- Homebrew tap and GitHub Release packaging automation
+- GitHub Release bundle automation and Homebrew formula generation
 
 Some surfaces are intentionally still early:
 

@@ -642,6 +642,11 @@ pub(crate) fn run_quickstart(args: QuickstartArgs) -> Result<()> {
                 "  {}",
                 "Choose the shortest path for what you want to prove first:".bright_black()
             );
+            println!(
+                "  {}",
+                "Use these commands with the checked-in examples, or copy the shape for your own traces."
+                    .bright_black()
+            );
             println!();
             println!(
                 "  {} {} {}",

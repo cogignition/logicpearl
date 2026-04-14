@@ -347,7 +347,7 @@ enum ColorChoice {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Show the quickest ways to try LogicPearl.
+    /// Print the shortest command recipes for trying LogicPearl.
     Quickstart(QuickstartArgs),
     /// Turn labeled examples into a pearl.
     Build(BuildArgs),

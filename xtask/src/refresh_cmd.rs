@@ -32,7 +32,7 @@ const TRACE_PROJECTION_WAF: &str = "benchmarks/waf/prep/trace_projection.waf_v1.
 const FEATURE_GOVERNANCE_WAF: &str = "benchmarks/waf/prep/feature_governance.waf_v1.json";
 const OBSERVER_MANIFEST_WAF: &str = "examples/waf_edge/plugins/observer/manifest.json";
 const ROUTE_AUDIT_MANIFEST_WAF: &str = "examples/waf_edge/plugins/route_audit/manifest.json";
-const QUALITY_REPORT_PATH: &str = "QUALITY.json";
+const QUALITY_REPORT_PATH: &str = "target/logicpearl/quality/QUALITY.json";
 const GETTING_STARTED_CSV: &str = "examples/getting_started/decision_traces.csv";
 const GETTING_STARTED_INPUT: &str = "examples/getting_started/new_input.json";
 

@@ -3,27 +3,29 @@
 LogicPearl is a small product repository.
 
 The goal is not just to land code. The goal is to make the public engine better:
+
 - easier to run
 - easier to inspect
 - more honest on parity and benchmarks
 - more generic, not more benchmark-shaped
 
-## Quality Tracking
+## Quality Suites
 
-The repository keeps a visible checked-in quality report for the public example and benchmark suites.
+Quality reports are generated locally instead of checked into the repository. The report covers checked-in examples, demo datasets, and the fast open guardrail regression sample.
 
-The report is generated from:
-- checked-in examples
-- demo datasets
-- the fast open guardrail regression sample
+Useful entrypoints:
 
-Files:
-- [QUALITY.json](./QUALITY.json)
-- [scripts/quality/README.md](./scripts/quality/README.md)
+```bash
+cargo xtask quality-report
+cargo xtask refresh-benchmarks
+```
+
+By default, the generated report is written under `target/logicpearl/quality/QUALITY.json`.
 
 ## How To Improve The Quality Suites
 
 High-value contribution patterns:
+
 - improve the generic engine so more datasets build cleanly without special handling
 - improve runtime, IR, validation, or inspection tooling
 - improve observer synthesis or benchmark infrastructure in ways that stay generic
@@ -31,23 +33,24 @@ High-value contribution patterns:
 - reduce regressions and keep benchmarks reproducible
 
 Low-value or rejected patterns:
+
 - benchmark-specific hacks disguised as generic features
 - demo-only shortcuts in shared engine code
 - claims in docs that overstate what a benchmark proves
 - changes that feel magical only because hidden assumptions were baked in
-
-The fastest way to lose the plot here is optimizing for metric movement while making the engine less honest.
 
 ## Design Rules
 
 Keep the engine generic.
 
 Good:
+
 - feature support that works across multiple datasets
 - discovery improvements that do not mention one benchmark by name
 - better simplification, validation, or runtime behavior
 
 Bad:
+
 - hardcoded benchmark heuristics in shared discovery/runtime code
 - public UX shaped around one private workflow
 - synthetic demos that only work because the engine secretly special-cases them
@@ -55,6 +58,7 @@ Bad:
 ## Before You Open A PR
 
 Please make sure:
+
 - tests pass
 - new public docs are accurate and conservative
 - benchmark framing matches what the code actually proves
@@ -176,7 +180,7 @@ git push origin v0.1.5
 
 The `Release Bundles` workflow builds the Linux and macOS archives, writes `.sha256` sidecars, attaches them to the GitHub Release, and generates a Homebrew `logicpearl.rb` formula from those checksums. If `HOMEBREW_TAP_TOKEN` is configured, the same workflow also pushes the formula to `LogicPearlHQ/homebrew-tap`.
 
-Quality report maintenance is explicit and stays out of the git hooks. Refresh the report when you actually intend to update it:
+Quality report maintenance is explicit and stays out of the git hooks. Generate a local report when you need to inspect the public example and benchmark smoke suites:
 
 ```bash
 cargo xtask quality-report

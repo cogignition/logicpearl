@@ -1,7 +1,5 @@
 # `@logicpearl/browser`
 
-> **Note:** This package is not yet published to npm. To use it, copy the `packages/logicpearl-browser` directory into your project or reference it as a local dependency.
-
 Official browser/runtime loader for LogicPearl Wasm artifact bundles.
 
 This package is the supported JavaScript entrypoint for browser-facing LogicPearl usage.
@@ -41,6 +39,10 @@ console.log(wireResult.artifact_hash);
 `evaluate()` keeps the browser-friendly camelCase shape with a `BigInt`
 bitmask. `evaluateJson()` returns the snake_case `logicpearl.*_result.v1`
 shape for schema validation and cross-language handoff.
+
+## Distribution
+
+The package source lives in this repository while npm publication is being prepared. During local integration work, reference `packages/logicpearl-browser` as a workspace or file dependency.
 
 ## Supported Inputs
 

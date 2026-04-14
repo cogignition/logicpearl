@@ -5,6 +5,8 @@ All notable user-facing changes should be added here.
 ## Unreleased
 
 ### Added
+- README launch flow now points `logicpearl quickstart build` at checked-in example commands instead of presenting a domain-specific generated demo as the quickstart.
+- README launch visuals and positioning now show the artifact payoff, including learned rules and verification output before deeper reference material.
 - Versioned runtime JSON schemas for gate, action, pipeline, rule explanation, feature explanation, runtime result, and artifact error payloads under `schema/`.
 - Golden runtime JSON fixtures plus Rust schema-validation coverage for CLI-emitted gate, action, and pipeline results.
 - Browser runtime TypeScript declarations and `evaluateJson()` / `evaluateJsonBatch()` helpers for schema-shaped gate and action results.
@@ -19,6 +21,7 @@ All notable user-facing changes should be added here.
 - Homebrew tap packaging automation via `cargo xtask generate-homebrew-formula`, with release workflow support for attaching `logicpearl.rb` to GitHub Releases and optionally updating `LogicPearlHQ/homebrew-tap`.
 
 ### Changed
+- Quality reports are now generated as local output under `target/logicpearl/quality/` instead of tracked as a stale root `QUALITY.json` snapshot.
 - `logicpearl run --json` and `logicpearl pipeline run --json` now include `schema_version`, `engine_version`, and a deterministic `artifact_hash` in runtime result payloads.
 - `artifact.json` now carries stable v1 bundle metadata including artifact kind, engine version, IR version, artifact hash, file hashes, and build option/input schema digests.
 - Pipeline pearl stages now preserve canonical gate runtime details in `stages[].raw_result` while keeping exported fields such as `bitmask` and `allow` available.

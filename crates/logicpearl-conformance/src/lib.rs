@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Conformance receipts for runtime and artifact contracts.
+//!
+//! This crate helps produce and validate reproducibility evidence: source file
+//! fingerprints, runtime parity manifests, artifact freshness checks, and
+//! signed conformance reports. It supports audit workflows; it does not
+//! replace trace review or artifact inspection.
+
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{ComparisonOperator, Expression, LogicPearlGateIr};

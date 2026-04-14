@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Solver-backed verification helpers.
+//!
+//! This crate contains reusable checks for rule candidates and feature
+//! constraints. It is used by discovery and conformance workflows when
+//! LogicPearl needs to reason about boolean conjunctions or expression
+//! satisfiability. It does not load artifact bundles or run end-user inputs.
+
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     validate_expression_against_schema, ComparisonOperator, ComparisonValue,

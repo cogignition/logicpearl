@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: MIT
+//! Application-facing loader and execution facade.
+//!
+//! This crate is the library entrypoint for services that want to run
+//! LogicPearl bundles without invoking the CLI. It resolves artifact
+//! manifests with the shared bundle path policy, loads gate, action, and
+//! pipeline artifacts, and delegates deterministic evaluation to the runtime.
+//! It does not learn new artifacts or execute build-time discovery.
+//!
+//! ```no_run
+//! use logicpearl_engine::LogicPearlEngine;
+//! use serde_json::json;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let engine = LogicPearlEngine::from_path("artifacts/access_policy")?;
+//! let result = engine.run_single_json(&json!({
+//!     "clearance_ok": false,
+//!     "mfa_enabled": true
+//! }))?;
+//! println!("{result:?}");
+//! # Ok(())
+//! # }
+//! ```
+
 use logicpearl_core::{resolve_manifest_path, LogicPearlError, Result};
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};

@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Deterministic runtime evaluation for LogicPearl artifacts.
+//!
+//! Use this crate when an application already has a validated gate or action
+//! policy IR and wants to evaluate normalized JSON input. It owns input
+//! coercion, derived-feature evaluation, bitmask computation, explanation
+//! assembly, runtime JSON schema identifiers, and artifact hashing. It does
+//! not perform discovery, plugin execution, or artifact bundle loading.
+
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
     derived_feature_evaluation_order, ComparisonExpression, ComparisonOperator, ComparisonValue,

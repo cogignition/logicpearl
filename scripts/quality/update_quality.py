@@ -15,7 +15,7 @@ from typing import Any
 
 SCRIPT_PATH = Path(__file__).resolve()
 REPO_ROOT = SCRIPT_PATH.parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "QUALITY.json"
+DEFAULT_OUTPUT = REPO_ROOT / "target" / "logicpearl" / "quality" / "QUALITY.json"
 DEFAULT_GUARDRAIL_BUNDLE = Path(
     os.environ.get(
         "LOGICPEARL_GUARDRAIL_BUNDLE_DIR",
@@ -374,6 +374,7 @@ def main() -> int:
             ),
         },
     }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(payload, indent=2))
     return 0

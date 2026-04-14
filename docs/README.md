@@ -1,6 +1,6 @@
 # LogicPearl Docs
 
-The README is the shortest path through the product:
+The README is the shortest path through the product. `logicpearl quickstart` points to the product loop:
 
 ```text
 build -> inspect -> run -> verify -> diff

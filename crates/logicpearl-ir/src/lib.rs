@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Intermediate representation for LogicPearl artifacts.
+//!
+//! This crate defines the stable, serializable gate and action-policy shapes
+//! that the CLI writes, the runtime evaluates, and external tools can inspect.
+//! It also owns schema-level validation for expressions, input features,
+//! derived features, and action policies. Runtime behavior must be derived
+//! from this deterministic IR, not from presentation metadata.
+
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

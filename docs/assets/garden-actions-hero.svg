@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620" role="img" aria-labelledby="title desc">
+  <title id="title">LogicPearl example flow</title>
+  <desc id="desc">One example flow: garden notes become reviewed traces, LogicPearl builds a local deterministic artifact, and today's input returns the water action.</desc>
+  <defs>
+    <style>
+      .title { font: 700 34px Arial, sans-serif; fill: #183528; }
+      .subtitle { font: 17px Arial, sans-serif; fill: #5f7067; }
+      .step-label { font: 700 13px Arial, sans-serif; fill: #ffffff; }
+      .section { font: 700 19px Arial, sans-serif; fill: #183528; }
+      .caption { font: 13px Arial, sans-serif; fill: #66766d; }
+      .body { font: 15px Arial, sans-serif; fill: #4e6056; }
+      .body-strong { font: 700 15px Arial, sans-serif; fill: #183528; }
+      .mono { font: 13px Menlo, Consolas, monospace; fill: #253d31; }
+      .mono-muted { font: 13px Menlo, Consolas, monospace; fill: #6c7d72; }
+      .mono-strong { font: 700 13px Menlo, Consolas, monospace; fill: #183528; }
+      .result { font: 700 24px Arial, sans-serif; fill: #183528; }
+      .result-small { font: 14px Arial, sans-serif; fill: #5f7067; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="620" rx="8" fill="#ffffff"/>
+  <rect x="1" y="1" width="1098" height="618" rx="8" fill="none" stroke="#dbe7df"/>
+
+  <text x="48" y="56" class="title">One example of how LogicPearl works</text>
+  <text x="50" y="88" class="subtitle">Reviewed behavior goes in. A deterministic local artifact comes out.</text>
+
+  <rect x="804" y="34" width="248" height="52" rx="8" fill="#f8fbf9" stroke="#c9ded0"/>
+  <text x="826" y="56" class="body-strong">build -&gt; inspect -&gt; run</text>
+  <text x="826" y="76" class="caption">same input, same output</text>
+
+  <rect x="52" y="128" width="298" height="344" rx="8" fill="#f4faf6"/>
+  <rect x="44" y="120" width="298" height="344" rx="8" fill="#ffffff" stroke="#bfd9c8" stroke-width="2"/>
+  <circle cx="70" cy="150" r="14" fill="#2f8d54"/>
+  <text x="66" y="155" class="step-label">1</text>
+  <text x="96" y="151" class="section">Source notes</text>
+  <text x="96" y="174" class="caption">garden_log.md</text>
+
+  <line x1="68" y1="196" x2="318" y2="196" stroke="#e2ece5"/>
+  <text x="70" y="230" class="body-strong">Vera, succulent</text>
+  <text x="82" y="260" class="body">soil moisture read 12%</text>
+  <text x="82" y="290" class="body">had not been watered for a week</text>
+  <text x="82" y="320" class="body">used about 0.1 gallons</text>
+  <text x="82" y="350" class="body">perked up by morning</text>
+
+  <rect x="70" y="388" width="236" height="36" rx="8" fill="#f0f8f2" stroke="#b8d8c1"/>
+  <text x="88" y="411" class="body-strong">outcome: water helped</text>
+
+  <path d="M358 292 L386 292" stroke="#2f8d54" stroke-width="4" stroke-linecap="round"/>
+  <path d="M386 292 L374 283 L374 301 Z" fill="#2f8d54"/>
+
+  <rect x="416" y="128" width="298" height="344" rx="8" fill="#f4faf6"/>
+  <rect x="408" y="120" width="298" height="344" rx="8" fill="#ffffff" stroke="#bfd9c8" stroke-width="2"/>
+  <circle cx="434" cy="150" r="14" fill="#2f8d54"/>
+  <text x="430" y="155" class="step-label">2</text>
+  <text x="460" y="151" class="section">Reviewed traces</text>
+  <text x="460" y="174" class="caption">traces.csv</text>
+
+  <line x1="432" y1="196" x2="682" y2="196" stroke="#e2ece5"/>
+  <text x="432" y="230" class="mono-muted">moisture</text>
+  <text x="516" y="230" class="mono-muted">water</text>
+  <text x="588" y="230" class="mono-muted">pale</text>
+  <text x="650" y="230" class="mono-muted">next</text>
+
+  <rect x="428" y="246" width="254" height="42" rx="8" fill="#f8fbf9"/>
+  <text x="442" y="272" class="mono">12%</text>
+  <text x="518" y="272" class="mono">0.10</text>
+  <text x="594" y="272" class="mono">1</text>
+  <rect x="634" y="255" width="64" height="24" rx="8" fill="#dff1ff" stroke="#b6ccd8"/>
+  <text x="648" y="272" class="mono-strong">water</text>
+
+  <rect x="428" y="302" width="254" height="42" rx="8" fill="#ffffff"/>
+  <text x="442" y="328" class="mono">42%</text>
+  <text x="518" y="328" class="mono">0.60</text>
+  <text x="594" y="328" class="mono">1</text>
+  <rect x="624" y="311" width="74" height="24" rx="8" fill="#eef3ef" stroke="#cbd8cf"/>
+  <text x="633" y="328" class="mono-strong">nothing</text>
+
+  <rect x="428" y="358" width="254" height="42" rx="8" fill="#f8fbf9"/>
+  <text x="442" y="384" class="mono">44%</text>
+  <text x="518" y="384" class="mono">0.55</text>
+  <text x="594" y="384" class="mono">5</text>
+  <rect x="614" y="367" width="84" height="24" rx="8" fill="#fff2bd" stroke="#decf86"/>
+  <text x="625" y="384" class="mono-strong">fertilize</text>
+
+  <text x="432" y="438" class="caption">Rows are normalized before learning.</text>
+
+  <path d="M722 292 L750 292" stroke="#2f8d54" stroke-width="4" stroke-linecap="round"/>
+  <path d="M750 292 L738 283 L738 301 Z" fill="#2f8d54"/>
+
+  <rect x="780" y="128" width="298" height="344" rx="8" fill="#f4faf6"/>
+  <rect x="772" y="120" width="298" height="344" rx="8" fill="#ffffff" stroke="#bfd9c8" stroke-width="2"/>
+  <circle cx="798" cy="150" r="14" fill="#2f8d54"/>
+  <text x="794" y="155" class="step-label">3</text>
+  <text x="824" y="151" class="section">Local artifact</text>
+  <text x="824" y="174" class="caption">no runtime model call</text>
+
+  <line x1="796" y1="196" x2="1046" y2="196" stroke="#e2ece5"/>
+  <text x="800" y="232" class="mono-muted">$ logicpearl build</text>
+  <text x="814" y="260" class="mono-strong">Built garden_actions</text>
+  <text x="814" y="288" class="mono">Training parity 100.0%</text>
+
+  <rect x="800" y="314" width="226" height="72" rx="8" fill="#f8fbf9" stroke="#d6e6dc"/>
+  <text x="816" y="340" class="mono-muted">$ logicpearl inspect</text>
+  <text x="816" y="366" class="mono">water when moisture &lt;= 18%</text>
+
+  <text x="800" y="424" class="mono-muted">$ logicpearl run today.json</text>
+
+  <rect x="246" y="510" width="608" height="66" rx="8" fill="#ffffff" stroke="#9acba4" stroke-width="2"/>
+  <text x="276" y="551" class="result">action: water</text>
+  <text x="476" y="538" class="result-small">today.json matches the learned water rule</text>
+  <text x="476" y="558" class="result-small">the artifact returns the same action every time</text>
+</svg>

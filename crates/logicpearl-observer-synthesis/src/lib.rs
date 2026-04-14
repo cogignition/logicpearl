@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Synthesis helpers for native observer artifacts.
+//!
+//! This crate builds or repairs observer phrase sets from labeled examples.
+//! It is intentionally separate from the runtime so observer bootstrapping can
+//! use solver or optimization helpers without changing deterministic artifact
+//! evaluation.
+
 use good_lp::{
     constraint, microlp, variable, variables, Expression, ResolutionError, Solution, SolverModel,
     Variable,

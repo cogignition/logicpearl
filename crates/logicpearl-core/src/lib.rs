@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Shared primitives used across LogicPearl crates.
+//!
+//! This crate owns small cross-cutting contracts that should not live in the
+//! CLI: common errors, artifact-manifest constants, path confinement helpers,
+//! and the rule bitmask type. Higher-level crates build on these primitives
+//! when loading, validating, and rendering LogicPearl artifacts.
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;

@@ -6,7 +6,7 @@ Do not call raw Wasm exports from application code. The loader owns feature-slot
 
 ## Status
 
-The package source lives at [packages/logicpearl-browser](../packages/logicpearl-browser/). It is not yet published to npm. Until publication, reference it as a local dependency or copy the package into an integration workspace.
+The package source lives at [packages/logicpearl-browser](../packages/logicpearl-browser/). Until npm publication is ready, reference it as a local workspace or file dependency in browser integration work.
 
 The package README is the API reference: [packages/logicpearl-browser/README.md](../packages/logicpearl-browser/README.md).
 

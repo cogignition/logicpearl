@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Pipeline composition and execution for "string of pearls" workflows.
+//!
+//! Pipelines wire together pearl artifacts, plugin stages, stage inputs,
+//! exports, and final outputs. This crate parses pipeline definitions,
+//! prepares manifest-relative paths with the shared path policy, executes
+//! trusted local plugins when requested, and preserves each stage's raw
+//! runtime result for audit.
+
 use logicpearl_core::{resolve_manifest_member_path, LogicPearlError, Result};
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{

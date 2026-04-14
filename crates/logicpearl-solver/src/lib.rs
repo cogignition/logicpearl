@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Solver process integration used by discovery and verification.
+//!
+//! This crate detects configured SMT backends, writes solver inputs, parses
+//! satisfiability results, and normalizes backend diagnostics. It is an
+//! internal support layer for learning and verification workflows, not a
+//! runtime dependency for evaluating already-built pearls.
+
 mod backend;
 mod parse;
 

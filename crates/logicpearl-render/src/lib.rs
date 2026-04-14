@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Human-readable rendering for LogicPearl artifacts.
+//!
+//! This crate converts validated artifact IR into terminal-oriented text for
+//! inspection. It intentionally renders existing metadata and rules instead
+//! of inferring domain meaning that should have been supplied by feature
+//! dictionaries or integrations.
+
 use logicpearl_core::{ArtifactRenderer, Result};
 use logicpearl_ir::{LogicPearlGateIr, RuleVerificationStatus};
 use owo_colors::OwoColorize;

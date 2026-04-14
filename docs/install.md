@@ -1,5 +1,13 @@
 # Install LogicPearl
 
+After any install path, run:
+
+```bash
+logicpearl quickstart
+```
+
+That command prints the shortest command recipes. Use `logicpearl quickstart build` after cloning the repository when you want to run the checked-in example traces.
+
 The recommended public CLI path is a prebuilt release bundle that you download, verify against its published SHA-256 checksum, then extract locally. The bundle includes:
 
 - `logicpearl`
@@ -8,17 +16,6 @@ The recommended public CLI path is a prebuilt release bundle that you download, 
 - license and notice files
 
 You do not need to install Z3 separately for the prebuilt path.
-
-## Homebrew
-
-After the Homebrew tap is published for a release, install with:
-
-```bash
-brew install LogicPearlHQ/tap/logicpearl
-logicpearl quickstart
-```
-
-The tap formula is generated from the same GitHub Release bundle checksums used by the manual verified install path below. See [packaging/homebrew](../packaging/homebrew/) for the release automation.
 
 ## Verified Bundle Install
 
@@ -75,6 +72,17 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 # bash:
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 ```
+
+## Homebrew
+
+Homebrew users can install from the release tap formula when it is available:
+
+```bash
+brew install LogicPearlHQ/tap/logicpearl
+logicpearl quickstart
+```
+
+The tap formula is generated from the same GitHub Release bundle checksums used by the verified bundle path above. See [packaging/homebrew](../packaging/homebrew/) for the release automation.
 
 ## Install A Specific Version
 

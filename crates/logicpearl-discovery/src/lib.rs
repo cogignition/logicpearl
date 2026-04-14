@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Discovery and trace-loading for LogicPearl artifacts.
+//!
+//! This crate turns normalized decision traces into learned gate IR. It owns
+//! trace parsing, label inference, feature generation, rule discovery, exact
+//! selection reports, and build reports. Product orchestration and provenance
+//! assembly live in `logicpearl-build`; this crate stays focused on learning
+//! deterministic logic from already-normalized examples.
+
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,

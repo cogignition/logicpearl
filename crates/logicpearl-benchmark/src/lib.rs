@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+//! Benchmark adapters and scoring helpers.
+//!
+//! This crate keeps benchmark ingestion, trace projection, and score reporting
+//! separate from the deterministic runtime. It is for reproducible evaluation
+//! workflows around public or generated cases, not for adding domain-specific
+//! parsing behavior to the core engine.
+
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

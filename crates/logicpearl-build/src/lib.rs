@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: MIT
+//! Shared build orchestration and provenance assembly.
+//!
+//! This crate keeps product-level build behavior available to library
+//! consumers instead of hiding it inside the CLI. It coordinates gate builds,
+//! prepares and learns action policies, assembles build/source/plugin
+//! provenance, validates source manifests, and records generated file hashes.
+//! The CLI remains responsible for argument parsing and terminal rendering.
+
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_discovery::{
     build_pearl_from_rows, learn_gate_from_rows_without_numeric_interactions,
