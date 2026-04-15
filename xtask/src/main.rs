@@ -419,6 +419,10 @@ fn run_staged_rustfmt_check(repo_root: &Path) -> Result<()> {
     run_command(&mut command)
 }
 
+fn run_workspace_rustfmt_check(repo_root: &Path) -> Result<()> {
+    run_repo_command(repo_root, "cargo", &["fmt", "--all", "--", "--check"])
+}
+
 fn run_public_path_hygiene(repo_root: &Path) -> Result<()> {
     let patterns = [
         format!("/{}{}{}", "Users", "/[A-Za-z0-9._-]+", "/"),
@@ -509,6 +513,7 @@ fn walkdir(dir: &Path) -> Vec<PathBuf> {
 
 fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
     run_repo_command(repo_root, "sh", &["-n", "install.sh"])?;
+    run_workspace_rustfmt_check(repo_root)?;
     run_public_path_hygiene(repo_root)?;
     run_spdx_header_check(repo_root)?;
     run_workspace_clippy(repo_root)?;
