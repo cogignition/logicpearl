@@ -17,6 +17,7 @@ target/
 
 # OS / editor
 .DS_Store
+.claude/
 
 # Generated conformance inputs
 fixtures/ir/eval/.generated-inputs/

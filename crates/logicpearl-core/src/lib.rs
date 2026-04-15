@@ -133,23 +133,10 @@ impl LogicPearlError {
 ///
 /// Manifest member paths must be relative, must not traverse outside the bundle
 /// directory, and existing members must not resolve through symlinks outside the
-/// bundle. A redundant leading bundle-directory component is accepted for
-/// backward compatibility with older manifests.
+/// bundle.
 pub fn resolve_manifest_member_path(base_dir: &Path, raw_path: &str) -> Result<PathBuf> {
     let candidate = PathBuf::from(raw_path);
-    let joined = resolve_manifest_member_relative_path(base_dir, &candidate, raw_path)?;
-    if joined.exists() {
-        return Ok(joined);
-    }
-
-    if let Some(relative) = manifest_member_without_base_prefix(base_dir, &candidate) {
-        let repaired = resolve_manifest_member_relative_path(base_dir, &relative, raw_path)?;
-        if repaired.exists() {
-            return Ok(repaired);
-        }
-    }
-
-    Ok(joined)
+    resolve_manifest_member_relative_path(base_dir, &candidate, raw_path)
 }
 
 /// Resolve a manifest member path relative to the manifest file's directory.
@@ -158,26 +145,6 @@ pub fn resolve_manifest_path(manifest_path: &Path, raw_path: &str) -> Result<Pat
         manifest_path.parent().unwrap_or_else(|| Path::new(".")),
         raw_path,
     )
-}
-
-/// Strip a redundant leading bundle-directory component from a manifest path.
-pub fn manifest_member_without_base_prefix(base_dir: &Path, path: &Path) -> Option<PathBuf> {
-    if let Ok(relative) = path.strip_prefix(base_dir) {
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-
-    let base_name = base_dir.file_name()?;
-    let mut components = path.components();
-    let first = components.next()?;
-    if first.as_os_str() == base_name {
-        let relative = components.as_path();
-        if !relative.as_os_str().is_empty() {
-            return Some(relative.to_path_buf());
-        }
-    }
-    None
 }
 
 fn resolve_manifest_member_relative_path(
@@ -742,8 +709,8 @@ mod tests {
         std::fs::write(bundle.join("pearl.ir.json"), "{}").expect("member file");
 
         assert_eq!(
-            resolve_manifest_member_path(&bundle, "bundle/pearl.ir.json")
-                .expect("redundant bundle prefix should resolve"),
+            resolve_manifest_member_path(&bundle, "pearl.ir.json")
+                .expect("bundle-relative member should resolve"),
             bundle.join("pearl.ir.json")
         );
 

@@ -1,0 +1,875 @@
+// SPDX-License-Identifier: MIT
+use super::{
+    candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
+    candidate_rules, compare_candidate_set_score, conjunction_candidate_rules, recover_rare_rules,
+    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, CandidateRule,
+    CandidateSelectionContext, CandidateSetScore, DISCOVERY_SELECTION_BACKEND_ENV,
+};
+use crate::{
+    discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
+};
+use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression};
+use logicpearl_solver::{check_sat, SolverSettings};
+use serde_json::{Number, Value};
+use std::collections::{BTreeMap, HashMap};
+
+fn solver_available() -> bool {
+    check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
+}
+
+fn with_discovery_selection_backend<T>(backend: &str, test: impl FnOnce() -> T) -> T {
+    let _guard = discovery_selection_env_lock()
+        .lock()
+        .expect("env lock should be available");
+    let saved = std::env::var(DISCOVERY_SELECTION_BACKEND_ENV).ok();
+    std::env::set_var(DISCOVERY_SELECTION_BACKEND_ENV, backend);
+    let result = test();
+    match saved {
+        Some(value) => std::env::set_var(DISCOVERY_SELECTION_BACKEND_ENV, value),
+        None => std::env::remove_var(DISCOVERY_SELECTION_BACKEND_ENV),
+    }
+    result
+}
+
+#[test]
+fn exact_selection_prefers_minimal_general_rule_over_equal_singletons() {
+    if !solver_available() {
+        return;
+    }
+
+    let rows = vec![
+        row(1.0, false),
+        row(2.0, false),
+        row(3.0, true),
+        row(4.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize];
+    let candidates = vec![
+        numeric_candidate("score", ComparisonOperator::Eq, 1.0),
+        numeric_candidate("score", ComparisonOperator::Eq, 2.0),
+        numeric_candidate("score", ComparisonOperator::Lte, 2.0),
+    ];
+
+    let selected =
+        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+            .unwrap()
+            .0
+            .unwrap();
+    assert_eq!(selected.len(), 1);
+    let comparison = candidate_as_comparison(&selected[0]).unwrap();
+    assert_eq!(comparison.op, ComparisonOperator::Lte);
+    assert_eq!(
+        comparison.value.literal().and_then(Value::as_f64),
+        Some(2.0)
+    );
+}
+
+#[test]
+fn mip_exact_selection_matches_smt_choice_beyond_bruteforce_limit() {
+    if !solver_available() {
+        return;
+    }
+
+    let rows = (1..=18)
+        .map(|value| row(value as f64, value == 18))
+        .collect::<Vec<_>>();
+    let denied_indices = (0..17).collect::<Vec<_>>();
+    let allowed_indices = vec![17usize];
+    let mut candidates = (1..=17)
+        .map(|value| numeric_candidate("score", ComparisonOperator::Eq, value as f64))
+        .collect::<Vec<_>>();
+    candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
+
+    let smt_selection = with_discovery_selection_backend("smt", || {
+        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+            .expect("smt exact selection should find a solution")
+            .0
+            .expect("smt exact selection should return a rule set")
+    });
+    let mip_selection = with_discovery_selection_backend("mip", || {
+        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+            .expect("mip exact selection should find a solution")
+            .0
+            .expect("mip exact selection should return a rule set")
+    });
+
+    assert_eq!(smt_selection.len(), 1);
+    let smt_comparison = candidate_as_comparison(&smt_selection[0]).unwrap();
+    assert_eq!(smt_comparison.op, ComparisonOperator::Lte);
+    assert_eq!(
+        smt_comparison.value.literal().and_then(Value::as_f64),
+        Some(17.0)
+    );
+
+    assert_eq!(mip_selection.len(), smt_selection.len());
+    let mip_comparison = candidate_as_comparison(&mip_selection[0]).unwrap();
+    assert_eq!(mip_comparison.op, smt_comparison.op);
+    assert_eq!(
+        mip_comparison.value.literal().and_then(Value::as_f64),
+        smt_comparison.value.literal().and_then(Value::as_f64)
+    );
+}
+
+#[test]
+fn invalid_discovery_selection_backend_is_rejected() {
+    let rows = (1..=18)
+        .map(|value| row(value as f64, value == 18))
+        .collect::<Vec<_>>();
+    let denied_indices = (0..17).collect::<Vec<_>>();
+    let allowed_indices = vec![17usize];
+    let mut candidates = (1..=17)
+        .map(|value| numeric_candidate("score", ComparisonOperator::Eq, value as f64))
+        .collect::<Vec<_>>();
+    candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
+
+    let err = with_discovery_selection_backend("not-a-backend", || {
+        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
+            .expect_err("invalid discovery selection backend should fail loudly")
+    });
+
+    assert!(
+        err.to_string()
+            .contains("unsupported discovery selection backend"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn candidate_set_score_prefers_fewer_false_positives_after_equal_total_error() {
+    let better = CandidateSetScore {
+        total_errors: 2,
+        false_positives: 0,
+        false_negatives: 2,
+        validation_total_errors: 0,
+        validation_false_positives: 0,
+        validation_false_negatives: 0,
+        rule_count: 2,
+        complexity_penalty: 0,
+    };
+    let worse = CandidateSetScore {
+        total_errors: 2,
+        false_positives: 1,
+        false_negatives: 1,
+        validation_total_errors: 0,
+        validation_false_positives: 0,
+        validation_false_negatives: 0,
+        rule_count: 1,
+        complexity_penalty: 0,
+    };
+    assert_eq!(
+        compare_candidate_set_score(&better, &worse),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn candidate_set_score_counts_selected_set_union_errors() {
+    let rows = vec![
+        row(1.0, false),
+        row(2.0, false),
+        row(3.0, true),
+        row(4.0, true),
+    ];
+    let candidate_a = numeric_candidate("score", ComparisonOperator::Eq, 1.0);
+    let candidate_b = numeric_candidate("score", ComparisonOperator::Gte, 3.0);
+    let score = score_candidate_set(&rows, &[candidate_a, candidate_b], None);
+    assert_eq!(score.false_negatives, 1);
+    assert_eq!(score.false_positives, 2);
+    assert_eq!(score.total_errors, 3);
+}
+
+#[test]
+fn candidate_rules_skip_feature_refs_for_binary_numeric_features() {
+    let rows = vec![
+        binary_pair_row(1.0, 0.0, false),
+        binary_pair_row(0.0, 1.0, false),
+        binary_pair_row(0.0, 0.0, true),
+        binary_pair_row(1.0, 1.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize];
+    let candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+    assert!(
+        !candidates.iter().any(|candidate| matches!(
+            candidate_as_comparison(candidate).map(|comparison| &comparison.value),
+            Some(ComparisonValue::FeatureRef { .. })
+        )),
+        "binary numeric features should not produce feature-ref candidates"
+    );
+}
+
+#[test]
+fn candidate_rules_limit_feature_refs_to_ordered_numeric_comparisons() {
+    let rows = vec![
+        binary_pair_row(0.0, 2.0, false),
+        binary_pair_row(1.0, 3.0, false),
+        binary_pair_row(2.0, 1.0, true),
+        binary_pair_row(3.0, 0.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize];
+    let candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+    assert!(
+        candidates
+            .iter()
+            .filter(|candidate| matches!(
+                candidate_as_comparison(candidate).map(|comparison| &comparison.value),
+                Some(ComparisonValue::FeatureRef { .. })
+            ))
+            .all(|candidate| matches!(
+                candidate_as_comparison(candidate).unwrap().op,
+                ComparisonOperator::Lt
+                    | ComparisonOperator::Lte
+                    | ComparisonOperator::Gt
+                    | ComparisonOperator::Gte
+            )),
+        "feature-ref candidates should stay ordered comparisons"
+    );
+}
+
+#[test]
+fn high_cardinality_numeric_features_skip_exact_match_candidates() {
+    let rows = (0..24)
+        .map(|value| row(value as f64, value >= 12))
+        .collect::<Vec<_>>();
+    let denied_indices = (0usize..12usize).collect::<Vec<_>>();
+    let allowed_indices = (12usize..24usize).collect::<Vec<_>>();
+
+    let candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+
+    assert!(
+        !candidates.iter().any(|candidate| {
+            let Some(comparison) = candidate_as_comparison(candidate) else {
+                return false;
+            };
+            comparison.feature == "score" && comparison.op == ComparisonOperator::Eq
+        }),
+        "continuous/high-cardinality numeric features should not emit exact-match candidates"
+    );
+}
+
+#[test]
+fn low_cardinality_numeric_features_can_still_emit_exact_match_candidates() {
+    let rows = vec![
+        row(0.0, false),
+        row(0.0, false),
+        row(0.0, false),
+        row(1.0, true),
+        row(1.0, true),
+        row(1.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize, 2usize];
+    let allowed_indices = vec![3usize, 4usize, 5usize];
+
+    let candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+
+    assert!(
+        candidates.iter().any(|candidate| {
+            let Some(comparison) = candidate_as_comparison(candidate) else {
+                return false;
+            };
+            comparison.feature == "score"
+                && comparison.op == ComparisonOperator::Eq
+                && comparison.value.literal().and_then(Value::as_f64) == Some(0.0)
+        }),
+        "binary/low-cardinality numeric features should still support exact matches"
+    );
+}
+
+#[test]
+fn numeric_exact_match_candidates_require_minimum_support() {
+    let rows = vec![
+        row(0.0, false),
+        row(1.0, false),
+        row(2.0, false),
+        row(9.0, true),
+        row(9.0, true),
+        row(9.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize, 2usize];
+    let allowed_indices = vec![3usize, 4usize, 5usize];
+
+    let candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+
+    assert!(
+        !candidates.iter().any(|candidate| {
+            let Some(comparison) = candidate_as_comparison(candidate) else {
+                return false;
+            };
+            comparison.feature == "score" && comparison.op == ComparisonOperator::Eq
+        }),
+        "singleton numeric exact-match candidates should be filtered by support floor"
+    );
+    assert!(
+        candidates.iter().any(|candidate| {
+            let Some(comparison) = candidate_as_comparison(candidate) else {
+                return false;
+            };
+            comparison.feature == "score" && comparison.op == ComparisonOperator::Lte
+        }),
+        "threshold candidates should remain available"
+    );
+}
+
+#[test]
+fn rare_rule_recovery_adds_uncovered_zero_fp_rule() {
+    let rows = vec![
+        triad_row(1.0, 0.0, 0.0, false),
+        triad_row(2.0, 0.0, 0.0, false),
+        triad_row(3.0, 0.0, 0.0, false),
+        triad_row(9.0, 1.0, 0.0, false),
+        triad_row(3.0, 0.0, 0.0, true),
+        triad_row(7.0, 0.0, 0.0, true),
+        triad_row(8.0, 0.0, 0.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize, 2usize, 3usize];
+    let allowed_indices = vec![4usize, 5usize, 6usize];
+    let selected = vec![candidate_with_metrics(
+        "score",
+        ComparisonOperator::Lte,
+        ComparisonValue::Literal(Value::Number(Number::from_f64(3.0).unwrap())),
+        3,
+        1,
+    )];
+
+    let feature_governance = BTreeMap::new();
+    let selection_context = CandidateSelectionContext {
+        rows: &rows,
+        denied_indices: &denied_indices,
+        allowed_indices: &allowed_indices,
+        validation_indices: None,
+        feature_governance: &feature_governance,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        residual_options: None,
+    };
+    let recovered = recover_rare_rules(&selection_context, selected).unwrap();
+    assert_eq!(recovered.len(), 2);
+    let score = score_candidate_set(&rows, &recovered, None);
+    assert_eq!(score.false_negatives, 0);
+    assert_eq!(score.false_positives, 1);
+}
+
+#[test]
+fn rare_rule_recovery_skips_rules_that_only_add_false_positives() {
+    let rows = vec![
+        triad_row(1.0, 0.0, 0.0, false),
+        triad_row(2.0, 0.0, 0.0, false),
+        triad_row(3.0, 0.0, 0.0, false),
+        triad_row(8.0, 1.0, 1.0, false),
+        triad_row(3.0, 0.0, 0.0, true),
+        triad_row(8.0, 1.0, 1.0, true),
+        triad_row(8.0, 0.0, 0.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize, 2usize, 3usize];
+    let allowed_indices = vec![4usize, 5usize, 6usize];
+    let selected = vec![candidate_with_metrics(
+        "score",
+        ComparisonOperator::Lte,
+        ComparisonValue::Literal(Value::Number(Number::from_f64(3.0).unwrap())),
+        3,
+        1,
+    )];
+
+    let feature_governance = BTreeMap::new();
+    let selection_context = CandidateSelectionContext {
+        rows: &rows,
+        denied_indices: &denied_indices,
+        allowed_indices: &allowed_indices,
+        validation_indices: None,
+        feature_governance: &feature_governance,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        residual_options: None,
+    };
+    let recovered = recover_rare_rules(&selection_context, selected).unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        candidate_as_comparison(&recovered[0]).unwrap().feature,
+        "score"
+    );
+    let score = score_candidate_set(&rows, &recovered, None);
+    assert_eq!(score.false_negatives, 1);
+    assert_eq!(score.false_positives, 1);
+}
+
+#[test]
+fn conjunction_candidate_rules_emit_real_multi_condition_rules() {
+    if !solver_available() {
+        return;
+    }
+
+    let rows = vec![
+        authz_row(0.0, 1.0, 0.0, 0.0, 1.0, 0.0, true),
+        authz_row(0.0, 1.0, 0.0, 0.0, 1.0, 1.0, true),
+        authz_row(1.0, 1.0, 0.0, 0.0, 1.0, 0.0, false),
+        authz_row(0.0, 0.0, 1.0, 0.0, 1.0, 0.0, false),
+        authz_row(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, false),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize, 4usize];
+    let atomic_candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+
+    let compounds = conjunction_candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &atomic_candidates,
+        &ResidualPassOptions {
+            max_conditions: 3,
+            min_positive_support: 2,
+            max_negative_hits: 0,
+            max_rules: 4,
+        },
+    );
+
+    assert!(compounds.iter().any(|candidate| {
+        matches!(
+            &candidate.expression,
+            Expression::All { all }
+                if all.iter().any(|expr| matches!(
+                    expr,
+                    Expression::Comparison(ComparisonExpression { feature, .. })
+                        if feature == "action_delete"
+                )) && all.iter().any(|expr| matches!(
+                    expr,
+                    Expression::Comparison(ComparisonExpression { feature, .. })
+                        if feature == "is_admin"
+                ))
+        )
+    }));
+}
+
+#[test]
+fn conjunction_candidate_rules_cover_policy_style_dataset() {
+    if !solver_available() {
+        return;
+    }
+
+    let rows = vec![
+        policy_style_row(PolicyStyleRowSpec {
+            action_delete: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_delete: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            archived: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            archived: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            is_contractor: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            is_contractor: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            is_authenticated: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            is_authenticated: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            sensitivity: 2.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            sensitivity: 1.0,
+            team_match: 1.0,
+            denied: true,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            is_contractor: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            is_admin: 1.0,
+            action_delete: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            is_admin: 1.0,
+            action_read: 1.0,
+            archived: 1.0,
+            is_authenticated: 1.0,
+            team_match: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            is_authenticated: 1.0,
+            is_public: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+        policy_style_row(PolicyStyleRowSpec {
+            action_read: 1.0,
+            team_match: 1.0,
+            denied: false,
+            ..Default::default()
+        }),
+    ];
+    let denied_indices = (0usize..10usize).collect::<Vec<_>>();
+    let allowed_indices = (10usize..16usize).collect::<Vec<_>>();
+    let atomic_candidates = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+    );
+
+    let compounds = conjunction_candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &atomic_candidates,
+        &ResidualPassOptions {
+            max_conditions: 3,
+            min_positive_support: 2,
+            max_negative_hits: 0,
+            max_rules: 8,
+        },
+    );
+
+    let score = score_candidate_set(&rows, &compounds, None);
+    assert_eq!(score.total_errors, 0);
+}
+
+#[test]
+fn candidate_set_score_prefers_better_validation_when_training_is_equal() {
+    let better = CandidateSetScore {
+        total_errors: 1,
+        false_positives: 0,
+        false_negatives: 1,
+        validation_total_errors: 0,
+        validation_false_positives: 0,
+        validation_false_negatives: 0,
+        rule_count: 2,
+        complexity_penalty: 0,
+    };
+    let worse = CandidateSetScore {
+        total_errors: 1,
+        false_positives: 0,
+        false_negatives: 1,
+        validation_total_errors: 1,
+        validation_false_positives: 1,
+        validation_false_negatives: 0,
+        rule_count: 1,
+        complexity_penalty: 0,
+    };
+    assert_eq!(
+        compare_candidate_set_score(&better, &worse),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn discovered_rule_gets_generated_label_and_counterfactual() {
+    let rule = rule_from_candidate(
+        0,
+        &candidate_with_metrics(
+            "contains_xss_signature",
+            ComparisonOperator::Eq,
+            ComparisonValue::Literal(Value::Bool(true)),
+            3,
+            0,
+        ),
+    );
+
+    assert_eq!(rule.label.as_deref(), Some("XSS Signature Detected"));
+    assert_eq!(
+        rule.counterfactual_hint.as_deref(),
+        Some("Remove XSS Signature")
+    );
+}
+
+#[test]
+fn numeric_exact_match_rules_get_extra_complexity_penalty() {
+    let exact = candidate_with_metrics(
+        "suspicious_token_count",
+        ComparisonOperator::Eq,
+        ComparisonValue::Literal(Value::Number(Number::from(1))),
+        5,
+        0,
+    );
+    let threshold = candidate_with_metrics(
+        "suspicious_token_count",
+        ComparisonOperator::Gte,
+        ComparisonValue::Literal(Value::Number(Number::from(1))),
+        5,
+        0,
+    );
+
+    assert!(
+        candidate_complexity_penalty(&exact, DiscoveryDecisionMode::Standard)
+            > candidate_complexity_penalty(&threshold, DiscoveryDecisionMode::Standard)
+    );
+}
+
+#[test]
+fn review_mode_rejects_numeric_exact_matches() {
+    let exact = candidate_with_metrics(
+        "suspicious_token_count",
+        ComparisonOperator::Eq,
+        ComparisonValue::Literal(Value::Number(Number::from(13))),
+        5,
+        0,
+    );
+    let threshold = candidate_with_metrics(
+        "suspicious_token_count",
+        ComparisonOperator::Gte,
+        ComparisonValue::Literal(Value::Number(Number::from(13))),
+        5,
+        0,
+    );
+
+    assert!(!candidate_allowed_for_mode(
+        &exact,
+        DiscoveryDecisionMode::Review
+    ));
+    assert!(candidate_allowed_for_mode(
+        &threshold,
+        DiscoveryDecisionMode::Review
+    ));
+}
+
+#[test]
+fn review_mode_still_allows_derived_numeric_thresholds() {
+    let candidate = candidate_with_metrics(
+        "derived__query_key_count__minus__suspicious_token_count",
+        ComparisonOperator::Gte,
+        ComparisonValue::Literal(Value::Number(Number::from(13))),
+        5,
+        0,
+    );
+
+    assert!(candidate_allowed_for_mode(
+        &candidate,
+        DiscoveryDecisionMode::Review
+    ));
+}
+
+fn row(score: f64, allowed: bool) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert(
+        "score".to_string(),
+        Value::Number(Number::from_f64(score).unwrap()),
+    );
+    DecisionTraceRow { features, allowed }
+}
+
+fn numeric_candidate(feature: &str, op: ComparisonOperator, value: f64) -> CandidateRule {
+    CandidateRule::new(
+        Expression::Comparison(ComparisonExpression {
+            feature: feature.to_string(),
+            op,
+            value: ComparisonValue::Literal(Value::Number(Number::from_f64(value).unwrap())),
+        }),
+        0,
+        0,
+    )
+}
+
+fn candidate_with_metrics(
+    feature: &str,
+    op: ComparisonOperator,
+    value: ComparisonValue,
+    denied_coverage: usize,
+    false_positives: usize,
+) -> CandidateRule {
+    CandidateRule::new(
+        Expression::Comparison(ComparisonExpression {
+            feature: feature.to_string(),
+            op,
+            value,
+        }),
+        denied_coverage,
+        false_positives,
+    )
+}
+
+fn binary_pair_row(left: f64, right: f64, allowed: bool) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert(
+        "left".to_string(),
+        Value::Number(Number::from_f64(left).unwrap()),
+    );
+    features.insert(
+        "right".to_string(),
+        Value::Number(Number::from_f64(right).unwrap()),
+    );
+    DecisionTraceRow { features, allowed }
+}
+
+fn triad_row(score: f64, rare_flag: f64, noisy_flag: f64, allowed: bool) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert(
+        "score".to_string(),
+        Value::Number(Number::from_f64(score).unwrap()),
+    );
+    features.insert(
+        "rare_flag".to_string(),
+        Value::Number(Number::from_f64(rare_flag).unwrap()),
+    );
+    features.insert(
+        "noisy_flag".to_string(),
+        Value::Number(Number::from_f64(noisy_flag).unwrap()),
+    );
+    DecisionTraceRow { features, allowed }
+}
+
+fn authz_row(
+    is_admin: f64,
+    action_delete: f64,
+    action_read: f64,
+    is_contractor: f64,
+    is_authenticated: f64,
+    sensitivity: f64,
+    denied: bool,
+) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert("is_admin".to_string(), Value::from(is_admin));
+    features.insert("action_delete".to_string(), Value::from(action_delete));
+    features.insert("action_read".to_string(), Value::from(action_read));
+    features.insert("is_contractor".to_string(), Value::from(is_contractor));
+    features.insert(
+        "is_authenticated".to_string(),
+        Value::from(is_authenticated),
+    );
+    features.insert("sensitivity".to_string(), Value::from(sensitivity));
+    DecisionTraceRow {
+        features,
+        allowed: !denied,
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PolicyStyleRowSpec {
+    is_admin: f64,
+    action_delete: f64,
+    action_read: f64,
+    archived: f64,
+    is_authenticated: f64,
+    sensitivity: f64,
+    team_match: f64,
+    is_public: f64,
+    is_contractor: f64,
+    denied: bool,
+}
+
+fn policy_style_row(spec: PolicyStyleRowSpec) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert("is_admin".to_string(), Value::from(spec.is_admin));
+    features.insert("action_delete".to_string(), Value::from(spec.action_delete));
+    features.insert("action_read".to_string(), Value::from(spec.action_read));
+    features.insert("archived".to_string(), Value::from(spec.archived));
+    features.insert(
+        "is_authenticated".to_string(),
+        Value::from(spec.is_authenticated),
+    );
+    features.insert("sensitivity".to_string(), Value::from(spec.sensitivity));
+    features.insert("team_match".to_string(), Value::from(spec.team_match));
+    features.insert("is_public".to_string(), Value::from(spec.is_public));
+    features.insert("is_contractor".to_string(), Value::from(spec.is_contractor));
+    DecisionTraceRow {
+        features,
+        allowed: !spec.denied,
+    }
+}

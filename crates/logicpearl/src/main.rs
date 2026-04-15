@@ -10,20 +10,10 @@ use logicpearl_benchmark::{
     BenchmarkAdaptDefaults, BenchmarkAdapterProfile, BenchmarkCase, ObservedBenchmarkCase,
     SynthesisCase, SynthesisCaseRow,
 };
-use logicpearl_build::{
-    action_rule_report, attach_generated_file_hashes, build_gate_artifact_from_rows,
-    build_provenance, learn_action_policy, load_source_manifest_for_provenance,
-    plugin_provenance_from_execution, prepare_action_traces, source_input_provenance,
-    trace_input_provenance, ActionLearningOptions, ActionRuleBudgetReport, ActionRuleBuildReport,
-    BuildProvenanceInputs,
-};
-use logicpearl_core::ArtifactRenderer;
 use logicpearl_discovery::{
-    discover_from_csv, load_decision_traces_auto, load_flat_records, BuildOptions, BuildProvenance,
-    DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode, ExactSelectionBackend,
-    LoadedFlatRecords, PluginBuildProvenance, ResidualRecoveryState,
+    discover_from_csv, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
 };
-use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
+use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_observer::{
     default_artifact_for_profile, detect_profile_from_input, load_artifact, observe_with_artifact,
     observe_with_profile, profile_id as native_profile_id, profile_registry,
@@ -35,16 +25,10 @@ use logicpearl_observer_synthesis::{
     synthesize_guardrails_artifact_auto, ObserverAutoSynthesisOptions, ObserverBootstrapStrategy,
     ObserverTargetGoal,
 };
-use logicpearl_pipeline::{compose_pipeline, PipelineDefinition};
+use logicpearl_pipeline::PipelineDefinition;
 use logicpearl_plugin::{
     run_plugin_batch_with_policy, run_plugin_with_policy, run_plugin_with_policy_and_metadata,
-    PluginExecutionPolicy, PluginExecutionResult, PluginManifest, PluginRequest, PluginResponse,
-    PluginStage,
-};
-use logicpearl_render::TextInspector;
-use logicpearl_runtime::{
-    evaluate_action_policy, evaluate_gate, explain_gate_result, parse_input_payload,
-    sha256_prefixed, GateEvaluationResult,
+    PluginExecutionPolicy, PluginExecutionResult, PluginManifest, PluginRequest, PluginStage,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;

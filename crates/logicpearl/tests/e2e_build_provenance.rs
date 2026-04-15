@@ -227,6 +227,45 @@ fn absolute_trace_paths_are_redacted_in_public_build_reports() {
 }
 
 #[test]
+fn absolute_discover_paths_are_redacted_in_public_discover_reports() {
+    let temp = tempdir().expect("temp dir should exist");
+    let trace_path = temp.path().join("multi_target.csv");
+    let output_dir = temp.path().join("discovered");
+    fs::write(
+        &trace_path,
+        "signal_a,signal_b,target_a,target_b\n0,0,allowed,allowed\n1,0,denied,allowed\n0,1,allowed,denied\n1,1,denied,denied\n",
+    )
+    .expect("temp discover fixture should write");
+
+    let report = run_cli_json(&[
+        "discover".to_string(),
+        trace_path.display().to_string(),
+        "--targets".to_string(),
+        "target_a,target_b".to_string(),
+        "--output-dir".to_string(),
+        output_dir.display().to_string(),
+        "--json".to_string(),
+    ]);
+
+    assert_no_local_path_leaks(&report, temp.path());
+    assert!(report["source_csv"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("<path:sha256:")));
+    assert_eq!(report["output_files"]["artifact_set"], "artifact_set.json");
+    assert_eq!(
+        report["output_files"]["discover_report"],
+        "discover_report.json"
+    );
+    assert!(report["artifacts"][0]["output_files"]["artifact_dir"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("artifacts/")));
+
+    let persisted = load_json(output_dir.join("discover_report.json"));
+    assert_no_local_path_leaks(&persisted, temp.path());
+    assert_eq!(persisted, report);
+}
+
+#[test]
 fn source_manifest_is_validated_and_attached_to_provenance() {
     let root = repo_root();
     let temp = tempdir().expect("temp dir should exist");

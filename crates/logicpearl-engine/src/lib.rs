@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_manifest_with_redundant_artifact_dir_prefix() {
+    fn does_not_repair_manifest_with_redundant_artifact_dir_prefix() {
         let repo_root = repo_root();
         let dir = tempdir().expect("tempdir should exist");
         let artifact_dir = dir.path().join("gate");
@@ -386,9 +386,10 @@ mod tests {
         )
         .expect("manifest writes");
 
-        let engine =
-            LogicPearlEngine::from_path(&artifact_dir).expect("prefixed manifest path loads");
-        assert_eq!(engine.kind(), EngineKind::Artifact);
+        let error = LogicPearlEngine::from_path(&artifact_dir)
+            .expect_err("prefixed manifest path should not be repaired")
+            .to_string();
+        assert!(error.contains("No such file"), "{error}");
     }
 
     #[test]

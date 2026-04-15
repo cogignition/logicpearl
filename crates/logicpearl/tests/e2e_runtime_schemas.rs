@@ -67,21 +67,28 @@ fn golden_runtime_fixtures_validate_against_committed_schemas() {
 
 #[test]
 fn runtime_schema_files_are_valid_draft_2020_12() {
-    let root = repo_root();
-    for schema_name in [
-        "logicpearl-runtime-result-v1.schema.json",
-        "logicpearl-gate-result-v1.schema.json",
-        "logicpearl-action-result-v1.schema.json",
-        "logicpearl-pipeline-result-v1.schema.json",
-        "logicpearl-rule-explanation-v1.schema.json",
-        "logicpearl-feature-explanation-v1.schema.json",
-        "logicpearl-artifact-error-v1.schema.json",
-        "logicpearl-artifact-manifest-v1.schema.json",
-        "logicpearl-build-provenance-v1.schema.json",
-        "logicpearl-plugin-run-provenance-v1.schema.json",
-        "logicpearl-source-manifest-v1.schema.json",
-    ] {
-        let schema = load_json(root.join("schema").join(schema_name));
+    let schema_dir = repo_root().join("schema");
+    let mut schema_paths = fs::read_dir(&schema_dir)
+        .unwrap_or_else(|err| panic!("failed to list schema dir {}: {err}", schema_dir.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|err| panic!("failed to read schema dir entry: {err}"))
+                .path()
+        })
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    schema_paths.sort();
+    assert!(
+        !schema_paths.is_empty(),
+        "schema directory should not be empty"
+    );
+
+    for schema_path in schema_paths {
+        let schema_name = schema_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("schema filename should be valid UTF-8");
+        let schema = load_json(&schema_path);
         jsonschema::draft202012::meta::validate(&schema).unwrap_or_else(|err| {
             panic!("{schema_name} is not a valid Draft 2020-12 schema: {err}")
         });
