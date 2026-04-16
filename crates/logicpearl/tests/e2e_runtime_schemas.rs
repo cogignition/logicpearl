@@ -55,6 +55,10 @@ fn golden_runtime_fixtures_validate_against_committed_schemas() {
             "fixtures/runtime/pipeline_result_v1.json",
         ),
         (
+            "logicpearl-override-pipeline-result-v1.schema.json",
+            "fixtures/runtime/override_pipeline_result_v1.json",
+        ),
+        (
             "logicpearl-artifact-error-v1.schema.json",
             "fixtures/runtime/artifact_error_v1.json",
         ),
@@ -201,4 +205,79 @@ fn cli_runtime_json_outputs_validate_against_committed_schemas() {
         "logicpearl.pipeline_result.v1"
     );
     validate_against_schema("logicpearl-pipeline-result-v1.schema.json", &pipeline_json);
+
+    let override_dir = temp.path().join("override_pipeline");
+    let override_artifacts = override_dir.join("artifacts");
+    fs::create_dir_all(&override_artifacts).expect("override artifacts dir should exist");
+    fs::copy(
+        root.join("fixtures/ir/valid/auth-demo-v1.json"),
+        override_artifacts.join("auth-demo-v1.json"),
+    )
+    .expect("base artifact should copy");
+    fs::copy(
+        root.join("fixtures/ir/valid/membership-demo-v1.json"),
+        override_artifacts.join("membership-demo-v1.json"),
+    )
+    .expect("refinement artifact should copy");
+    let override_pipeline = override_dir.join("pipeline.yaml");
+    fs::write(
+        &override_pipeline,
+        r#"schema_version: logicpearl.override_pipeline.v1
+pipeline_id: override_demo
+base:
+  id: statute
+  pearl: artifacts/auth-demo-v1.json
+  input:
+    action: $.action
+    resource_archived: $.resource_archived
+    user_role: $.user_role
+    failed_attempts: $.failed_attempts
+refinements:
+  - id: membership_case
+    pearl: artifacts/membership-demo-v1.json
+    action: override_if_fires
+    input:
+      age: $.age
+      is_member: $.is_member
+"#,
+    )
+    .expect("override pipeline should write");
+    let override_input = override_dir.join("input.json");
+    fs::write(
+        &override_input,
+        serde_json::to_string(&serde_json::json!({
+            "action": "read",
+            "resource_archived": false,
+            "user_role": "admin",
+            "failed_attempts": 0,
+            "age": 16,
+            "is_member": 1
+        }))
+        .expect("override input should encode"),
+    )
+    .expect("override input should write");
+    let override_output = Command::new(cli_bin)
+        .arg("pipeline")
+        .arg("run")
+        .arg(&override_pipeline)
+        .arg(&override_input)
+        .arg("--json")
+        .output()
+        .expect("override pipeline run should run");
+    assert!(
+        override_output.status.success(),
+        "override pipeline run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&override_output.stdout),
+        String::from_utf8_lossy(&override_output.stderr)
+    );
+    let override_json: Value = serde_json::from_slice(&override_output.stdout)
+        .expect("override pipeline output should be JSON");
+    assert_eq!(
+        override_json["schema_version"],
+        "logicpearl.override_pipeline_result.v1"
+    );
+    validate_against_schema(
+        "logicpearl-override-pipeline-result-v1.schema.json",
+        &override_json,
+    );
 }

@@ -1,0 +1,89 @@
+{
+  "schema_version": "logicpearl.override_pipeline_result.v1",
+  "engine_version": "logicpearl-test",
+  "artifact_id": "override_demo",
+  "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "decision_kind": "pipeline",
+  "pipeline_id": "override_demo",
+  "ok": true,
+  "output": {
+    "schema_version": "logicpearl.gate_result.v1",
+    "decision_kind": "gate",
+    "allow": false,
+    "bitmask": 1
+  },
+  "selected": "case_law_refinement",
+  "selection": {
+    "mode": "first_match",
+    "selected_stage": "case_law_refinement",
+    "reason": "refinement case_law_refinement fired and applied first-match override"
+  },
+  "base": {
+    "id": "statute",
+    "role": "base",
+    "artifact_id": "statute",
+    "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "artifact_kind": "gate",
+    "decision_kind": "gate",
+    "fired": false,
+    "effect_applied": true,
+    "skipped": false,
+    "result": {
+      "decision_kind": "gate",
+      "allow": true,
+      "bitmask": 0
+    }
+  },
+  "refinements": [
+    {
+      "id": "case_law_refinement",
+      "role": "refinement",
+      "artifact_id": "case_law_refinement",
+      "artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "artifact_kind": "gate",
+      "decision_kind": "gate",
+      "fired": true,
+      "effect_applied": true,
+      "skipped": false,
+      "result": {
+        "decision_kind": "gate",
+        "allow": false,
+        "bitmask": 1
+      }
+    }
+  ],
+  "stages": [
+    {
+      "id": "statute",
+      "role": "base",
+      "artifact_id": "statute",
+      "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "artifact_kind": "gate",
+      "decision_kind": "gate",
+      "fired": false,
+      "effect_applied": true,
+      "skipped": false,
+      "result": {
+        "decision_kind": "gate",
+        "allow": true,
+        "bitmask": 0
+      }
+    },
+    {
+      "id": "case_law_refinement",
+      "role": "refinement",
+      "artifact_id": "case_law_refinement",
+      "artifact_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "artifact_kind": "gate",
+      "decision_kind": "gate",
+      "fired": true,
+      "effect_applied": true,
+      "skipped": false,
+      "result": {
+        "decision_kind": "gate",
+        "allow": false,
+        "bitmask": 1
+      }
+    }
+  ]
+}

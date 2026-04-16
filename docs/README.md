@@ -31,7 +31,7 @@ Use these pages when you need the reference material behind that loop.
 - [Plugins](./plugins.md)
   Local process plugins for observers, trace sources, enrichers, and verifiers.
 - [Pipelines](./pipelines.md)
-  Multi-stage "string of pearls" execution with explicit stage inputs and exports.
+  Multi-stage execution with explicit stage inputs plus first-class override pipelines for layered pearls.
 - [Browser runtime](./browser-runtime.md)
   Browser-safe Wasm evaluation through `@logicpearl/browser`.
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -138,4 +139,107 @@ fn pipeline_validate_inspect_and_trace_expose_expected_stage_data() {
         stages[2]["raw_result"]["plugin_run"]["plugin_id"].as_str(),
         Some("python-pipeline-verify")
     );
+}
+
+#[test]
+fn override_pipeline_yaml_runs_first_matching_refinement() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempfile::tempdir().expect("tempdir should exist");
+    let artifacts_dir = temp.path().join("artifacts");
+    fs::create_dir_all(&artifacts_dir).expect("artifacts dir should be created");
+    fs::copy(
+        repo_root.join("fixtures/ir/valid/auth-demo-v1.json"),
+        artifacts_dir.join("auth-demo-v1.json"),
+    )
+    .expect("base artifact should copy");
+    fs::copy(
+        repo_root.join("fixtures/ir/valid/membership-demo-v1.json"),
+        artifacts_dir.join("membership-demo-v1.json"),
+    )
+    .expect("refinement artifact should copy");
+
+    let pipeline = temp.path().join("pipeline.yaml");
+    fs::write(
+        &pipeline,
+        r#"schema_version: logicpearl.override_pipeline.v1
+pipeline_id: override_demo
+base:
+  id: statute
+  pearl: artifacts/auth-demo-v1.json
+  input:
+    action: $.action
+    resource_archived: $.resource_archived
+    user_role: $.user_role
+    failed_attempts: $.failed_attempts
+refinements:
+  - id: membership_case
+    pearl: artifacts/membership-demo-v1.json
+    action: override_if_fires
+    input:
+      age: $.age
+      is_member: $.is_member
+"#,
+    )
+    .expect("pipeline should write");
+
+    let validate = run_cli_json(
+        cli_bin,
+        &[
+            "pipeline".to_string(),
+            "validate".to_string(),
+            pipeline.display().to_string(),
+            "--json".to_string(),
+        ],
+    );
+    assert_eq!(
+        validate["schema_version"].as_str(),
+        Some("logicpearl.override_pipeline.v1")
+    );
+    assert_eq!(validate["base"]["id"].as_str(), Some("statute"));
+    assert_eq!(
+        validate["refinements"][0]["id"].as_str(),
+        Some("membership_case")
+    );
+
+    let input = temp.path().join("input.json");
+    fs::write(
+        &input,
+        serde_json::to_string(&json!({
+            "action": "read",
+            "resource_archived": false,
+            "user_role": "admin",
+            "failed_attempts": 0,
+            "age": 16,
+            "is_member": 1
+        }))
+        .expect("input should encode"),
+    )
+    .expect("input should write");
+
+    let execution = run_cli_json(
+        cli_bin,
+        &[
+            "pipeline".to_string(),
+            "run".to_string(),
+            pipeline.display().to_string(),
+            input.display().to_string(),
+            "--json".to_string(),
+        ],
+    );
+    assert_eq!(
+        execution["schema_version"].as_str(),
+        Some("logicpearl.override_pipeline_result.v1")
+    );
+    assert_eq!(execution["selected"].as_str(), Some("membership_case"));
+    assert_eq!(execution["selection"]["mode"].as_str(), Some("first_match"));
+    assert_eq!(execution["output"]["decision_kind"].as_str(), Some("gate"));
+    assert_eq!(execution["output"]["allow"].as_bool(), Some(false));
+    assert_eq!(execution["base"]["fired"].as_bool(), Some(false));
+    assert_eq!(execution["refinements"][0]["fired"].as_bool(), Some(true));
+    assert_eq!(
+        execution["refinements"][0]["effect_applied"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(execution["stages"].as_array().map(Vec::len), Some(2));
 }

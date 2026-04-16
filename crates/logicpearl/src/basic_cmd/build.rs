@@ -7,8 +7,8 @@ use logicpearl_build::{
     trace_input_provenance, BuildProvenanceInputs,
 };
 use logicpearl_discovery::{
-    build_result_for_report, load_decision_traces_auto, BuildOptions, DecisionTraceRow,
-    ExactSelectionBackend, ResidualRecoveryState,
+    build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
+    DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ResidualRecoveryState,
 };
 use logicpearl_plugin::{
     run_plugin_with_policy_and_metadata, PluginManifest, PluginRequest, PluginStage,
@@ -16,15 +16,16 @@ use logicpearl_plugin::{
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 use serde_json::Value;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use super::config::apply_build_config;
 use super::{
-    build_trace_plugin_options, default_gate_id_from_path, feature_columns_from_decision_rows,
-    generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
-    parse_key_value_entries, run_action_build, should_generate_feature_dictionary,
-    to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
+    build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
+    feature_columns_from_decision_rows, generated_feature_dictionary_for_output,
+    generated_feature_dictionary_path, guidance, parse_key_value_entries, run_action_build,
+    should_generate_feature_dictionary, to_discovery_decision_mode,
+    write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
     build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -46,6 +47,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         ));
     }
     let plugin_policy = plugin_execution_policy(&args.plugin_execution);
+    let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
@@ -127,11 +129,12 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             (rows, plugin_label_column)
         }
         (None, Some(decision_traces)) => {
-            let loaded = load_decision_traces_auto(
+            let loaded = load_decision_traces_auto_with_feature_selection(
                 decision_traces,
                 args.label_column.as_deref(),
                 args.default_label.as_deref(),
                 args.rule_label.as_deref(),
+                &feature_selection,
             )
             .into_diagnostic()
             .wrap_err("failed to load decision traces")?;
@@ -153,6 +156,14 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             ));
         }
     };
+
+    if args.trace_plugin_manifest.is_some() {
+        apply_feature_selection_to_decision_rows(
+            &mut rows,
+            &feature_selection,
+            "trace plugin decision_traces",
+        )?;
+    }
 
     if should_generate_feature_dictionary(&args) {
         let dictionary_path = generated_feature_dictionary_path(&output_dir);
@@ -176,6 +187,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
         max_rules: None,
+        feature_selection: feature_selection.clone(),
     };
     let build_options_value = serde_json::json!({
         "gate_id": &build_options.gate_id,
@@ -202,6 +214,8 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .map(|path| path.display().to_string()),
         "decision_mode": build_options.decision_mode,
         "max_rules": build_options.max_rules,
+        "feature_columns": &build_options.feature_selection.feature_columns,
+        "exclude_columns": &build_options.feature_selection.exclude_columns,
     });
     let build_options_digest = build_options_hash(&build_options_value);
 
@@ -546,6 +560,43 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                     .bright_black()
             );
         }
+    }
+    Ok(())
+}
+
+fn apply_feature_selection_to_decision_rows(
+    rows: &mut [DecisionTraceRow],
+    feature_selection: &FeatureColumnSelection,
+    source_name: &str,
+) -> Result<()> {
+    if feature_selection.feature_columns.is_none() && feature_selection.exclude_columns.is_empty() {
+        return Ok(());
+    }
+
+    let Some(first) = rows.first() else {
+        return Ok(());
+    };
+    let mut field_names = first.features.keys().cloned().collect::<Vec<_>>();
+    field_names.sort();
+    let selected_columns = feature_selection
+        .selected_feature_columns(Path::new(source_name), &field_names, &[])
+        .into_diagnostic()?;
+    let selected_set = selected_columns.into_iter().collect::<BTreeSet<_>>();
+
+    for (index, row) in rows.iter_mut().enumerate() {
+        for column in &selected_set {
+            if !row.features.contains_key(column) {
+                return Err(guidance(
+                    format!(
+                        "row {} is missing selected feature column {column:?}",
+                        index + 1
+                    ),
+                    "Trace plugins must emit rectangular feature maps before discovery.",
+                ));
+            }
+        }
+        row.features
+            .retain(|column, _| selected_set.contains(column));
     }
     Ok(())
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use clap::Args;
+use logicpearl_discovery::FeatureColumnSelection;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -62,7 +63,7 @@ pub(crate) struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -80,6 +81,23 @@ pub(crate) struct BuildArgs {
     /// Column containing a multi-action label such as water, fertilize, repot, or do_nothing.
     #[arg(long)]
     pub action_column: Option<String>,
+    /// Comma-separated allow-list of input columns to learn as features.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "COLUMNS",
+        help_heading = "Advanced Discovery"
+    )]
+    pub feature_columns: Vec<String>,
+    /// Comma-separated input columns to keep in traces but exclude from learned features.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "COLUMNS",
+        conflicts_with = "feature_columns",
+        help_heading = "Advanced Discovery"
+    )]
+    pub exclude_columns: Vec<String>,
     /// Default/pass value for binary gate builds. Rules fire for the other value unless --rule-label is set.
     #[arg(long, help_heading = "Advanced")]
     pub default_label: Option<String>,
@@ -143,7 +161,7 @@ pub(crate) struct BuildArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --exclude-columns source,note --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
 )]
 pub(crate) struct DiscoverArgs {
     /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
@@ -161,6 +179,23 @@ pub(crate) struct DiscoverArgs {
     /// Stable artifact set identifier.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub artifact_set_id: Option<String>,
+    /// Comma-separated allow-list of input columns to learn as features.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "COLUMNS",
+        help_heading = "Advanced Discovery"
+    )]
+    pub feature_columns: Vec<String>,
+    /// Comma-separated input columns to keep in traces but exclude from learned features.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "COLUMNS",
+        conflicts_with = "feature_columns",
+        help_heading = "Advanced Discovery"
+    )]
+    pub exclude_columns: Vec<String>,
     /// Enable solver-backed conjunction recovery and a second residual pass on each target.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub residual_pass: bool,
@@ -296,6 +331,22 @@ fn build_trace_plugin_options(args: &BuildArgs) -> Result<BTreeMap<String, Strin
         options.insert("label_column".to_string(), label_column.clone());
     }
     Ok(options)
+}
+
+fn feature_column_selection(
+    feature_columns: &[String],
+    exclude_columns: &[String],
+) -> Result<FeatureColumnSelection> {
+    if !feature_columns.is_empty() && !exclude_columns.is_empty() {
+        return Err(guidance(
+            "feature column selection received both an allow-list and an exclude-list",
+            "Use either --feature-columns or --exclude-columns, not both.",
+        ));
+    }
+    Ok(FeatureColumnSelection {
+        feature_columns: (!feature_columns.is_empty()).then(|| feature_columns.to_vec()),
+        exclude_columns: exclude_columns.to_vec(),
+    })
 }
 
 fn parse_key_value_entries(

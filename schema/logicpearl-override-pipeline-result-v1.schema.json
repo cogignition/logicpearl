@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-override-pipeline-result-v1.schema.json",
+  "title": "LogicPearl Override Pipeline Result v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "artifact_id",
+    "artifact_hash",
+    "decision_kind",
+    "pipeline_id",
+    "ok",
+    "output",
+    "selected",
+    "selection",
+    "base",
+    "refinements",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "logicpearl.override_pipeline_result.v1"
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "decision_kind": {
+      "type": "string",
+      "const": "pipeline"
+    },
+    "pipeline_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "output": true,
+    "selected": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selection": {
+      "$ref": "#/$defs/selection"
+    },
+    "base": {
+      "$ref": "#/$defs/pearl_execution"
+    },
+    "refinements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pearl_execution"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/pearl_execution"
+      }
+    }
+  },
+  "$defs": {
+    "selection": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "selected_stage", "reason"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["first_match"]
+        },
+        "selected_stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "pearl_execution": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "role",
+        "artifact_id",
+        "artifact_hash",
+        "artifact_kind",
+        "decision_kind",
+        "fired",
+        "effect_applied",
+        "skipped",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": ["base", "refinement"]
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "enum": ["gate", "action"]
+        },
+        "decision_kind": {
+          "type": "string",
+          "enum": ["gate", "action"]
+        },
+        "fired": {
+          "type": "boolean"
+        },
+        "effect_applied": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "boolean"
+        },
+        "result": true
+      }
+    }
+  }
+}

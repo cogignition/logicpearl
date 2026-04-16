@@ -5,7 +5,7 @@ use logicpearl_discovery::{discover_from_csv, discover_result_for_report, Discov
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 
-use super::{guidance, to_discovery_decision_mode, DiscoverArgs};
+use super::{feature_column_selection, guidance, to_discovery_decision_mode, DiscoverArgs};
 
 pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
     let mut targets = args.targets;
@@ -20,6 +20,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             "Use --target <column> for one binary target or --targets <a,b,c> for multiple targets.",
         ));
     }
+    let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.dataset_csv
@@ -53,6 +54,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             output_dir,
             artifact_set_id,
             target_columns: targets,
+            feature_selection,
             residual_pass: args.residual_pass,
             refine: args.refine,
             pinned_rules: args.pinned_rules.clone(),

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.dev/schema/logicpearl-override-pipeline-v1.schema.json",
+  "title": "LogicPearl Override Pipeline v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "pipeline_id", "base", "refinements"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "logicpearl.override_pipeline.v1"
+    },
+    "pipeline_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "$ref": "#/$defs/input_map"
+    },
+    "base": {
+      "$ref": "#/$defs/base_pearl"
+    },
+    "refinements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/refinement"
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["first_match"],
+          "default": "first_match"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "input_map": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "base_pearl": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "$ref": "#/$defs/pearl"
+        }
+      ]
+    },
+    "pearl": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["artifact"]
+        },
+        {
+          "required": ["pearl"]
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pearl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "#/$defs/input_map"
+        }
+      }
+    },
+    "refinement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "oneOf": [
+        {
+          "required": ["artifact"]
+        },
+        {
+          "required": ["pearl"]
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pearl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "#/$defs/input_map"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["override_if_fires"]
+        },
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["use_result"],
+              "default": "use_result"
+            }
+          }
+        }
+      }
+    }
+  }
+}

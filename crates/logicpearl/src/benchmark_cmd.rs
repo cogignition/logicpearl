@@ -554,6 +554,7 @@ pub(crate) fn run_benchmark_learn(args: BenchmarkLearnArgs) -> Result<()> {
                             .unwrap_or_else(|| "benchmark".to_string())
                     ),
                     target_columns: targets,
+                    feature_selection: logicpearl_discovery::FeatureColumnSelection::default(),
                     residual_pass: false,
                     refine: false,
                     pinned_rules: None,

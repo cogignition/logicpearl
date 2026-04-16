@@ -164,6 +164,30 @@ logicpearl build traces.csv \
   --output-dir /tmp/pearl
 ```
 
+If your trace file carries review-only columns, keep them in the source file and choose the feature set explicitly:
+
+```bash
+logicpearl build traces.csv \
+  --feature-columns role,resource,after_hours \
+  --output-dir /tmp/pearl
+
+logicpearl build traces.csv \
+  --exclude-columns source,note \
+  --output-dir /tmp/pearl
+```
+
+`logicpearl build` also reads `logicpearl.yaml` from the current directory:
+
+```yaml
+build:
+  traces: traces.csv
+  label_column: allowed
+  exclude_columns:
+    - source
+    - note
+  output_dir: output
+```
+
 For multi-action traces, use an action column:
 
 ```bash
@@ -249,7 +273,7 @@ Most new users can stop after `build`, `inspect`, `run`, `artifact verify`, and 
 - [Plugins](./docs/plugins.md)
   Observer, trace-source, enricher, and verifier plugins, including local-process trust boundaries.
 - [Pipelines](./docs/pipelines.md)
-  Multi-stage "string of pearls" execution.
+  Multi-stage execution and layered override/pass pipelines.
 - [Browser runtime](./docs/browser-runtime.md)
   Browser-safe Wasm evaluation through `@logicpearl/browser`.
 - [Conformance](./docs/conformance.md)

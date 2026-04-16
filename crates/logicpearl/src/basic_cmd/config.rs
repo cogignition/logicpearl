@@ -19,6 +19,8 @@ struct LogicPearlBuildConfig {
     gate_id: Option<String>,
     label_column: Option<String>,
     action_column: Option<String>,
+    feature_columns: Option<Vec<String>>,
+    exclude_columns: Option<Vec<String>>,
     default_label: Option<String>,
     rule_label: Option<String>,
     default_action: Option<String>,
@@ -95,6 +97,10 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     }
     if args.action_column.is_none() {
         args.action_column = build.action_column;
+    }
+    if args.feature_columns.is_empty() && args.exclude_columns.is_empty() {
+        args.feature_columns = build.feature_columns.unwrap_or_default();
+        args.exclude_columns = build.exclude_columns.unwrap_or_default();
     }
     if args.default_label.is_none() {
         args.default_label = build.default_label;

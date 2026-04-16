@@ -11,8 +11,9 @@ use logicpearl_core::{provenance_safe_path, provenance_safe_path_string, LogicPe
 use logicpearl_discovery::{
     build_pearl_from_rows, learn_gate_from_rows_without_numeric_interactions,
     BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
-    DecisionTraceRow, DiscoveryDecisionMode, FileProvenance, LoadedFlatRecords,
-    PluginBuildProvenance, SourceManifest, SourceManifestProvenance, TraceInputProvenance,
+    DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection, FileProvenance,
+    LoadedFlatRecords, PluginBuildProvenance, SourceManifest, SourceManifestProvenance,
+    TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -113,22 +114,28 @@ pub fn prepare_action_traces(
     loaded: &LoadedFlatRecords,
     action_column: &str,
 ) -> Result<PreparedActionTraces> {
+    prepare_action_traces_with_feature_selection(
+        loaded,
+        action_column,
+        &FeatureColumnSelection::default(),
+    )
+}
+
+pub fn prepare_action_traces_with_feature_selection(
+    loaded: &LoadedFlatRecords,
+    action_column: &str,
+    feature_selection: &FeatureColumnSelection,
+) -> Result<PreparedActionTraces> {
     if !loaded.field_names.iter().any(|name| name == action_column) {
         return Err(LogicPearlError::message(format!(
             "action trace input is missing action column {action_column:?}"
         )));
     }
-    let feature_columns = loaded
-        .field_names
-        .iter()
-        .filter(|name| *name != action_column)
-        .cloned()
-        .collect::<Vec<_>>();
-    if feature_columns.is_empty() {
-        return Err(LogicPearlError::message(
-            "action traces have no feature columns",
-        ));
-    }
+    let feature_columns = feature_selection.selected_feature_columns(
+        Path::new("action traces"),
+        &loaded.field_names,
+        &[action_column.to_string()],
+    )?;
 
     let mut actions = Vec::<String>::new();
     let mut action_by_row = Vec::<String>::new();
@@ -241,6 +248,7 @@ pub fn learn_action_policy(
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
                 max_rules: Some(action_rule_budget),
+                feature_selection: FeatureColumnSelection::default(),
             },
         )
         .map_err(|err| {
@@ -974,6 +982,8 @@ fn is_safe_build_option_key(key: &str) -> bool {
             | "artifact_name"
             | "decision_mode"
             | "default_action"
+            | "exclude_columns"
+            | "feature_columns"
             | "gate_id"
             | "label_column"
             | "max_rules"

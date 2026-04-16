@@ -64,6 +64,7 @@ Committed fixtures under [fixtures/runtime](../fixtures/runtime/) validate the p
 - `gate_result_v1.json`
 - `action_result_v1.json`
 - `pipeline_result_v1.json`
+- `override_pipeline_result_v1.json`
 - `artifact_error_v1.json`
 
 The schemas live under [schema](../schema/), and Rust E2E tests validate both golden fixtures and CLI-emitted JSON against those schemas.

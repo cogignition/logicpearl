@@ -69,6 +69,7 @@ Runtime result schemas live under [schema](../schema/):
 - `logicpearl.gate_result.v1`
 - `logicpearl.action_result.v1`
 - `logicpearl.pipeline_result.v1`
+- `logicpearl.override_pipeline_result.v1`
 - `logicpearl.rule_explanation.v1`
 - `logicpearl.feature_explanation.v1`
 - `logicpearl.artifact_error.v1`

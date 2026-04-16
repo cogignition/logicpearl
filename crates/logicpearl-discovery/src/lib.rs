@@ -32,8 +32,10 @@ use engine::{build_gate, load_pinned_rule_set};
 use features::augment_rows_with_numeric_interactions;
 use trace_loading::{infer_binary_label_domain, parse_allowed_label_value, BinaryLabelDomain};
 pub use trace_loading::{
-    load_decision_traces, load_decision_traces_auto, load_decision_traces_with_labels,
-    load_flat_records, LoadedFlatRecords,
+    load_decision_traces, load_decision_traces_auto,
+    load_decision_traces_auto_with_feature_selection, load_decision_traces_with_labels,
+    load_decision_traces_with_labels_and_feature_selection, load_flat_records,
+    FeatureColumnSelection, LoadedFlatRecords,
 };
 
 #[cfg(test)]
@@ -58,6 +60,7 @@ pub struct BuildOptions {
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
     pub max_rules: Option<usize>,
+    pub feature_selection: FeatureColumnSelection,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Hash, Default)]
@@ -319,6 +322,7 @@ pub struct DiscoverOptions {
     pub output_dir: PathBuf,
     pub artifact_set_id: String,
     pub target_columns: Vec<String>,
+    pub feature_selection: FeatureColumnSelection,
     pub residual_pass: bool,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
@@ -525,6 +529,15 @@ fn discover_output_files_for_report(
 
 fn artifact_relative_report_path(raw_path: &str, artifact_dir: &Path, fallback: &str) -> String {
     let path = Path::new(raw_path);
+    if !path.is_absolute() {
+        if let Ok(relative) = path.strip_prefix(artifact_dir) {
+            let rendered = relative.display().to_string();
+            if !rendered.is_empty() {
+                return rendered;
+            }
+        }
+    }
+
     let candidate = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -725,6 +738,7 @@ fn build_cache_manifest(
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
         max_rules: Option<usize>,
+        feature_selection: &'a FeatureColumnSelection,
         solver_backend_env: Option<String>,
         resolved_solver_backend: Option<String>,
         solver_timeout_ms_env: Option<String>,
@@ -760,7 +774,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "6".to_string(),
+        cache_version: "7".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -775,6 +789,7 @@ fn build_cache_manifest(
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
             max_rules: options.max_rules,
+            feature_selection: &options.feature_selection,
             solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
             resolved_solver_backend: resolved_solver_backend_name(),
             solver_timeout_ms_env: std::env::var(SOLVER_TIMEOUT_MS_ENV).ok(),
@@ -798,6 +813,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         feature_dictionary_fingerprint: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        feature_selection: &'a FeatureColumnSelection,
         solver_backend_env: Option<String>,
         resolved_solver_backend: Option<String>,
         solver_timeout_ms_env: Option<String>,
@@ -822,7 +838,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "4".to_string(),
+        cache_version: "5".to_string(),
         operation: "discover".to_string(),
         input_fingerprint: fingerprint_file(csv_path)?,
         options_fingerprint: cache_fingerprint(&DiscoverFingerprintOptions {
@@ -834,6 +850,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
             feature_dictionary_fingerprint,
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            feature_selection: &options.feature_selection,
             solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
             resolved_solver_backend: resolved_solver_backend_name(),
             solver_timeout_ms_env: std::env::var(SOLVER_TIMEOUT_MS_ENV).ok(),
@@ -901,11 +918,12 @@ fn validate_feature_dictionary(
 }
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
-    let loaded = load_decision_traces_auto(
+    let loaded = load_decision_traces_auto_with_feature_selection(
         csv_path,
         Some(&options.label_column),
         options.positive_label.as_deref(),
         options.negative_label.as_deref(),
+        &options.feature_selection,
     )?;
     let resolved_options = BuildOptions {
         output_dir: options.output_dir.clone(),
@@ -920,6 +938,7 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         feature_governance: options.feature_governance.clone(),
         decision_mode: options.decision_mode,
         max_rules: options.max_rules,
+        feature_selection: options.feature_selection.clone(),
     };
     build_pearl_from_rows(
         &loaded.rows,
@@ -971,21 +990,11 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         }
     }
 
-    let feature_columns: Vec<String> = headers
-        .iter()
-        .filter(|header| {
-            !options
-                .target_columns
-                .iter()
-                .any(|target| target == *header)
-        })
-        .map(ToOwned::to_owned)
-        .collect();
-    if feature_columns.is_empty() {
-        return Err(LogicPearlError::message(
-            "discover needs at least one feature column after removing targets",
-        ));
-    }
+    let feature_columns = options.feature_selection.selected_feature_columns(
+        csv_path,
+        &headers,
+        &options.target_columns,
+    )?;
 
     let artifacts_dir = options.output_dir.join("artifacts");
     artifacts_dir.mkdir_all()?;
@@ -1024,7 +1033,9 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 );
                 continue;
             }
-            features.insert(header.to_string(), value.clone());
+            if feature_columns.iter().any(|feature| feature == header) {
+                features.insert(header.to_string(), value.clone());
+            }
         }
 
         for target in &options.target_columns {
@@ -1092,6 +1103,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
                 max_rules: None,
+                feature_selection: options.feature_selection.clone(),
             },
         ) {
             Ok(build) => build,

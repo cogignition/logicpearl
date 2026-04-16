@@ -77,9 +77,71 @@ A pipeline defines an entrypoint, ordered stages, and final output exports:
 See [examples/pipelines/authz/pipeline.json](../examples/pipelines/authz/pipeline.json).
 
 Stage artifact and plugin manifest paths are bundle members: they must be
-relative to the pipeline JSON directory and cannot escape it with `..` or
+relative to the pipeline file directory and cannot escape it with `..` or
 symlinks. The `compose` command packages input pearls under `artifacts/` so the
 generated bundle verifies with the same policy used by runtime loading.
+
+## Override Pipelines
+
+Use an override pipeline when the contract is "run a base pearl, then let
+ordered refinements replace that result only when their own rule fires." This is
+the native shape for doctrine or policy layers where a statute, baseline gate,
+or default action policy is refined by separate pearls with independent hashes.
+
+```yaml
+schema_version: logicpearl.override_pipeline.v1
+pipeline_id: statute_with_case_law
+
+base:
+  id: statute
+  pearl: artifacts/statute_exemptions
+  input:
+    applicant_age: $.applicant.age
+    filing_status: $.filing.status
+
+refinements:
+  - id: klamath
+    pearl: artifacts/klamath_refinement
+    action: override_if_fires
+    input:
+      applicant_age: $.applicant.age
+      tribal_status: $.applicant.tribal_status
+
+  - id: hanson
+    pearl: artifacts/hanson_refinement
+    action: override_if_fires
+    input:
+      filing_status: $.filing.status
+      notice_days: $.notice.days
+```
+
+Run it with the same commands:
+
+```bash
+logicpearl pipeline validate pipeline.yaml --json
+logicpearl pipeline run pipeline.yaml input.json --json
+logicpearl pipeline trace pipeline.yaml input.json --json
+```
+
+Override pipeline rules:
+
+- `base` can be a pearl path string or an object with `id`, `pearl`, and `input`.
+- Each refinement must set `action: override_if_fires`.
+- The default conflict mode is `first_match`.
+- All refinements are evaluated for attribution, but only the first fired
+  refinement applies its result.
+- If no refinement fires, the base result passes through unchanged.
+- `input` maps runtime fields from the original pipeline input with `$.path`
+  references. A top-level `input` map can be used as the default for every
+  pearl, and a pearl-level `input` map overrides it.
+- `pearl` and `artifact` are accepted as path keys. Docs prefer `pearl` for
+  readability, while inspect JSON normalizes the field to `artifact`.
+
+`logicpearl pipeline run --json` returns
+`logicpearl.override_pipeline_result.v1` for override pipelines. The selected
+pearl's runtime result is exposed as `output`, and the response also includes
+`base`, `refinements`, `stages`, `selected`, and `selection` for per-pearl
+attribution.
 
 ## Stage References
 
@@ -111,7 +173,12 @@ Plugin-backed stages execute local programs declared by manifests. See [plugins.
 
 ## Runtime JSON
 
-`logicpearl pipeline run --json` returns `logicpearl.pipeline_result.v1`. The schema lives at [schema/logicpearl-pipeline-result-v1.schema.json](../schema/logicpearl-pipeline-result-v1.schema.json).
+`logicpearl pipeline run --json` returns `logicpearl.pipeline_result.v1` for
+staged pipelines and `logicpearl.override_pipeline_result.v1` for override
+pipelines. The schemas live at
+[schema/logicpearl-pipeline-result-v1.schema.json](../schema/logicpearl-pipeline-result-v1.schema.json)
+and
+[schema/logicpearl-override-pipeline-result-v1.schema.json](../schema/logicpearl-override-pipeline-result-v1.schema.json).
 
 Pearl stages preserve canonical gate/action runtime details in `stages[].raw_result` while still exporting stage fields such as `bitmask`, `allow`, or `action` for downstream use.
 

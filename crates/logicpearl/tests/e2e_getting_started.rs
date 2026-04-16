@@ -170,6 +170,62 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
 }
 
 #[test]
+fn build_config_can_exclude_human_review_columns() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    fs::write(
+        temp.path().join("traces.csv"),
+        "age,source,note,allowed\n21,review_a,ok,allowed\n25,review_b,ok,allowed\n16,review_c,manual,denied\n15,review_d,manual,denied\n",
+    )
+    .expect("trace fixture should write");
+    fs::write(
+        temp.path().join("logicpearl.yaml"),
+        "build:\n  traces: traces.csv\n  label_column: allowed\n  exclude_columns:\n    - source\n    - note\n  output_dir: output\n",
+    )
+    .expect("logicpearl config should write");
+
+    let output = Command::new(cli_bin)
+        .arg("build")
+        .arg("--json")
+        .current_dir(temp.path())
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        output.status.success(),
+        "logicpearl build from config failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build_result: BuildResult =
+        serde_json::from_slice(&output.stdout).expect("build output should be valid JSON");
+    assert_eq!(
+        build_result
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.build_options.as_ref())
+            .and_then(|options| options["exclude_columns"].as_array())
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let pearl_ir = report_output_path(
+        &temp.path().join("output"),
+        &build_result.output_files.pearl_ir,
+    );
+    let ir: Value =
+        serde_json::from_str(&fs::read_to_string(&pearl_ir).expect("pearl ir should be readable"))
+            .expect("pearl ir should be valid JSON");
+    let feature_ids = ir["input_schema"]["features"]
+        .as_array()
+        .expect("features should be an array")
+        .iter()
+        .map(|feature| feature["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(feature_ids, vec!["age"]);
+}
+
+#[test]
 fn sample_dataset_passes_formal_spec_verification() {
     let repo_root = repo_root();
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");

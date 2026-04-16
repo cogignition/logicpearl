@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::{DecisionTraceRow, LoadedDecisionTraces};
 use logicpearl_core::{LogicPearlError, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -18,6 +19,115 @@ pub struct LoadedFlatRecords {
     pub records: Vec<BTreeMap<String, Value>>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct FeatureColumnSelection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_columns: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_columns: Vec<String>,
+}
+
+impl FeatureColumnSelection {
+    pub fn selected_feature_columns(
+        &self,
+        path: &Path,
+        field_names: &[String],
+        reserved_columns: &[String],
+    ) -> Result<Vec<String>> {
+        let normalized_feature_columns = self.normalized_feature_columns()?;
+        let normalized_exclude_columns = normalize_column_list(&self.exclude_columns)?;
+        if normalized_feature_columns.is_some() && !normalized_exclude_columns.is_empty() {
+            return Err(LogicPearlError::message(
+                "use either feature_columns or exclude_columns, not both",
+            ));
+        }
+
+        let field_set = field_names.iter().cloned().collect::<BTreeSet<_>>();
+        let reserved_set = reserved_columns.iter().cloned().collect::<BTreeSet<_>>();
+        let candidate_columns = normalized_feature_columns
+            .as_deref()
+            .unwrap_or(normalized_exclude_columns.as_slice());
+        for column in candidate_columns {
+            if !field_set.contains(column) {
+                return Err(LogicPearlError::message(format!(
+                    "decision trace input {} is missing column {column:?}",
+                    path.display()
+                )));
+            }
+            if reserved_set.contains(column) {
+                return Err(LogicPearlError::message(format!(
+                    "column {column:?} is reserved for labels or targets and cannot be selected as a feature"
+                )));
+            }
+        }
+
+        let selected = if let Some(feature_columns) = normalized_feature_columns {
+            let allow_set = feature_columns.into_iter().collect::<BTreeSet<_>>();
+            field_names
+                .iter()
+                .filter(|field| allow_set.contains(*field))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            let exclude_set = normalized_exclude_columns
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            field_names
+                .iter()
+                .filter(|field| !reserved_set.contains(*field) && !exclude_set.contains(*field))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if selected.is_empty() {
+            return Err(LogicPearlError::message(
+                "decision trace input has no feature columns after applying feature column selection",
+            ));
+        }
+        Ok(selected)
+    }
+
+    fn candidate_label_columns(&self, path: &Path, field_names: &[String]) -> Result<Vec<String>> {
+        let normalized_feature_columns = self.normalized_feature_columns()?;
+        let normalized_exclude_columns = normalize_column_list(&self.exclude_columns)?;
+        if normalized_feature_columns.is_some() && !normalized_exclude_columns.is_empty() {
+            return Err(LogicPearlError::message(
+                "use either feature_columns or exclude_columns, not both",
+            ));
+        }
+
+        let field_set = field_names.iter().cloned().collect::<BTreeSet<_>>();
+        let configured_columns = normalized_feature_columns
+            .as_deref()
+            .unwrap_or(normalized_exclude_columns.as_slice());
+        for column in configured_columns {
+            if !field_set.contains(column) {
+                return Err(LogicPearlError::message(format!(
+                    "decision trace input {} is missing column {column:?}",
+                    path.display()
+                )));
+            }
+        }
+
+        let ignored_columns = normalized_feature_columns
+            .unwrap_or(normalized_exclude_columns)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        Ok(field_names
+            .iter()
+            .filter(|field| !ignored_columns.contains(*field))
+            .cloned()
+            .collect())
+    }
+
+    fn normalized_feature_columns(&self) -> Result<Option<Vec<String>>> {
+        self.feature_columns
+            .as_ref()
+            .map(|columns| normalize_column_list(columns))
+            .transpose()
+    }
+}
+
 const NORMALIZED_TRACE_INPUT_HINT: &str = "Build and discover inputs must be normalized rectangular decision traces. Normalize missing, null, optional, or domain-specific raw structures in an observer, trace_source plugin, or adapter before discovery.";
 
 pub fn load_decision_traces(csv_path: &Path, label_column: &str) -> Result<Vec<DecisionTraceRow>> {
@@ -30,6 +140,22 @@ pub fn load_decision_traces_with_labels(
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<Vec<DecisionTraceRow>> {
+    load_decision_traces_with_labels_and_feature_selection(
+        path,
+        label_column,
+        positive_label,
+        negative_label,
+        &FeatureColumnSelection::default(),
+    )
+}
+
+pub fn load_decision_traces_with_labels_and_feature_selection(
+    path: &Path,
+    label_column: &str,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
+    feature_selection: &FeatureColumnSelection,
+) -> Result<Vec<DecisionTraceRow>> {
     let loaded = load_flat_records(path)?;
     load_decision_traces_from_records(
         path,
@@ -38,6 +164,7 @@ pub fn load_decision_traces_with_labels(
         label_column,
         positive_label,
         negative_label,
+        feature_selection,
     )
 }
 
@@ -47,9 +174,30 @@ pub fn load_decision_traces_auto(
     positive_label: Option<&str>,
     negative_label: Option<&str>,
 ) -> Result<LoadedDecisionTraces> {
+    load_decision_traces_auto_with_feature_selection(
+        path,
+        label_column,
+        positive_label,
+        negative_label,
+        &FeatureColumnSelection::default(),
+    )
+}
+
+pub fn load_decision_traces_auto_with_feature_selection(
+    path: &Path,
+    label_column: Option<&str>,
+    positive_label: Option<&str>,
+    negative_label: Option<&str>,
+    feature_selection: &FeatureColumnSelection,
+) -> Result<LoadedDecisionTraces> {
     let loaded = load_flat_records(path)?;
+    let candidate_field_names = if label_column.is_some() {
+        loaded.field_names.clone()
+    } else {
+        feature_selection.candidate_label_columns(path, &loaded.field_names)?
+    };
     let resolved_label =
-        infer_label_column(path, &loaded.field_names, &loaded.records, label_column)?;
+        infer_label_column(path, &candidate_field_names, &loaded.records, label_column)?;
     let rows = load_decision_traces_from_records(
         path,
         &loaded.field_names,
@@ -57,6 +205,7 @@ pub fn load_decision_traces_auto(
         &resolved_label,
         positive_label,
         negative_label,
+        feature_selection,
     )?;
     Ok(LoadedDecisionTraces {
         rows,
@@ -305,6 +454,7 @@ fn load_decision_traces_from_records(
     label_column: &str,
     positive_label: Option<&str>,
     negative_label: Option<&str>,
+    feature_selection: &FeatureColumnSelection,
 ) -> Result<Vec<DecisionTraceRow>> {
     if !field_names.iter().any(|header| header == label_column) {
         let candidates = detect_label_candidates(field_names, records);
@@ -322,40 +472,56 @@ fn load_decision_traces_from_records(
     }
     let label_domain =
         infer_binary_label_domain(records, label_column, positive_label, negative_label)?;
+    let feature_columns = feature_selection.selected_feature_columns(
+        path,
+        field_names,
+        &[label_column.to_string()],
+    )?;
 
     let mut rows = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
         let mut features = std::collections::HashMap::new();
-        let mut allowed = None;
-        for field_name in field_names {
+        let label_value = record.get(label_column).ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "row {} is missing label field {label_column:?}",
+                index + 1
+            ))
+        })?;
+        let allowed =
+            parse_allowed_label_value(label_value, index + 1, label_column, &label_domain)?;
+        for field_name in &feature_columns {
             let value = record.get(field_name).ok_or_else(|| {
                 LogicPearlError::message(format!(
                     "row {} is missing field {field_name:?}",
                     index + 1
                 ))
             })?;
-            if field_name == label_column {
-                allowed = Some(parse_allowed_label_value(
-                    value,
-                    index + 1,
-                    label_column,
-                    &label_domain,
-                )?);
-            } else {
-                features.insert(field_name.to_string(), value.clone());
-            }
+            features.insert(field_name.to_string(), value.clone());
         }
-        rows.push(DecisionTraceRow {
-            features,
-            allowed: allowed.ok_or_else(|| {
-                LogicPearlError::message(format!(
-                    "row {} is missing label field {label_column:?}",
-                    index + 1
-                ))
-            })?,
-        });
+        rows.push(DecisionTraceRow { features, allowed });
     }
     Ok(rows)
+}
+
+fn normalize_column_list(columns: &[String]) -> Result<Vec<String>> {
+    let mut normalized = Vec::with_capacity(columns.len());
+    let mut seen = BTreeSet::new();
+    for column in columns {
+        let trimmed = column.trim();
+        if trimmed.is_empty() {
+            return Err(LogicPearlError::message(
+                "feature column selection contains an empty column name",
+            ));
+        }
+        let value = trimmed.to_string();
+        if !seen.insert(value.clone()) {
+            return Err(LogicPearlError::message(format!(
+                "feature column selection contains duplicate column {value:?}"
+            )));
+        }
+        normalized.push(value);
+    }
+    Ok(normalized)
 }
 
 fn infer_label_column(

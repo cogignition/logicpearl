@@ -3,9 +3,9 @@ use anstream::println;
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_build::{
     action_rule_report, attach_generated_file_hashes, build_provenance, learn_action_policy,
-    load_source_manifest_for_provenance, plugin_provenance_from_execution, prepare_action_traces,
-    source_input_provenance, trace_input_provenance, ActionLearningOptions, ActionRuleBudgetReport,
-    ActionRuleBuildReport, BuildProvenanceInputs,
+    load_source_manifest_for_provenance, plugin_provenance_from_execution,
+    prepare_action_traces_with_feature_selection, source_input_provenance, trace_input_provenance,
+    ActionLearningOptions, ActionRuleBudgetReport, ActionRuleBuildReport, BuildProvenanceInputs,
 };
 use logicpearl_core::{provenance_safe_path_string, ArtifactKind};
 use logicpearl_discovery::{
@@ -24,9 +24,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    build_trace_plugin_options, default_gate_id_from_path, generated_feature_dictionary_for_output,
-    generated_feature_dictionary_path, guidance, parse_key_value_entries,
-    should_generate_feature_dictionary, to_discovery_decision_mode,
+    build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
+    generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
+    parse_key_value_entries, should_generate_feature_dictionary, to_discovery_decision_mode,
     write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
@@ -77,6 +77,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "Pass --action-column <column> or set build.action_column in logicpearl.yaml.",
         )
     })?;
+    let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
     let LoadedActionTraceRecords {
         loaded,
         source_name,
@@ -89,9 +90,10 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     } else {
         Vec::new()
     };
-    let action_traces = prepare_action_traces(&loaded, &action_column)
-        .into_diagnostic()
-        .wrap_err("failed to prepare action traces")?;
+    let action_traces =
+        prepare_action_traces_with_feature_selection(&loaded, &action_column, &feature_selection)
+            .into_diagnostic()
+            .wrap_err("failed to prepare action traces")?;
     let output_dir = args
         .output_dir
         .clone()
@@ -190,6 +192,8 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             .as_ref()
             .map(|path| path.display().to_string()),
         "decision_mode": to_discovery_decision_mode(args.discovery_mode),
+        "feature_columns": &feature_selection.feature_columns,
+        "exclude_columns": &feature_selection.exclude_columns,
     });
     let build_options_digest = build_options_hash(&build_options_value);
 

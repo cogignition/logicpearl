@@ -2,10 +2,11 @@
 use super::{
     build_pearl_from_csv, build_pearl_from_rows, canonicalize_rules, dedupe_rules_by_signature,
     discover_from_csv, discover_residual_rules, discovery_selection_env_lock, gate_from_rules,
-    load_decision_traces, load_decision_traces_auto, merge_discovered_and_pinned_rules,
+    load_decision_traces, load_decision_traces_auto,
+    load_decision_traces_auto_with_feature_selection, merge_discovered_and_pinned_rules,
     prune_redundant_rules, rule_from_candidate, BuildOptions, CandidateRule, DecisionTraceRow,
-    DiscoverOptions, DiscoveryDecisionMode, PinnedRuleSet, ResidualPassOptions,
-    ResidualRecoveryState,
+    DiscoverOptions, DiscoveryDecisionMode, FeatureColumnSelection, PinnedRuleSet,
+    ResidualPassOptions, ResidualRecoveryState,
 };
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
@@ -206,6 +207,98 @@ fn load_decision_traces_auto_rejects_ambiguous_binary_columns() {
 }
 
 #[test]
+fn load_decision_traces_filters_feature_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "age,is_member,source,note,allowed\n21,1,review_a,ok,allowed\n15,1,review_b,manual,denied\n",
+    )
+    .unwrap();
+
+    let loaded = load_decision_traces_auto_with_feature_selection(
+        &csv_path,
+        None,
+        None,
+        None,
+        &FeatureColumnSelection {
+            feature_columns: Some(vec!["is_member".to_string(), "age".to_string()]),
+            exclude_columns: Vec::new(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(loaded.label_column, "allowed");
+    assert_eq!(loaded.rows[0].features.len(), 2);
+    assert_eq!(loaded.rows[0].features["age"], 21);
+    assert_eq!(loaded.rows[0].features["is_member"], 1);
+    assert!(!loaded.rows[0].features.contains_key("source"));
+    assert!(!loaded.rows[0].features.contains_key("note"));
+}
+
+#[test]
+fn load_decision_traces_excludes_non_feature_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "age,is_member,source,note,allowed\n21,1,review_a,ok,allowed\n15,1,review_b,manual,denied\n",
+    )
+    .unwrap();
+
+    let loaded = load_decision_traces_auto_with_feature_selection(
+        &csv_path,
+        Some("allowed"),
+        None,
+        None,
+        &FeatureColumnSelection {
+            feature_columns: None,
+            exclude_columns: vec!["source".to_string(), "note".to_string()],
+        },
+    )
+    .unwrap();
+
+    assert_eq!(loaded.rows[0].features.len(), 2);
+    assert!(loaded.rows[0].features.contains_key("age"));
+    assert!(loaded.rows[0].features.contains_key("is_member"));
+    assert!(!loaded.rows[0].features.contains_key("source"));
+    assert!(!loaded.rows[0].features.contains_key("note"));
+}
+
+#[test]
+fn feature_column_selection_rejects_reserved_or_missing_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(&csv_path, "age,allowed\n21,allowed\n15,denied\n").unwrap();
+
+    let reserved = load_decision_traces_auto_with_feature_selection(
+        &csv_path,
+        Some("allowed"),
+        None,
+        None,
+        &FeatureColumnSelection {
+            feature_columns: Some(vec!["age".to_string(), "allowed".to_string()]),
+            exclude_columns: Vec::new(),
+        },
+    )
+    .unwrap_err();
+    assert!(reserved.to_string().contains("reserved"));
+
+    let missing = load_decision_traces_auto_with_feature_selection(
+        &csv_path,
+        Some("allowed"),
+        None,
+        None,
+        &FeatureColumnSelection {
+            feature_columns: None,
+            exclude_columns: vec!["note".to_string()],
+        },
+    )
+    .unwrap_err();
+    assert!(missing.to_string().contains("missing column"));
+}
+
+#[test]
 fn build_pearl_from_csv_emits_gate_ir_and_report() {
     let dir = tempfile::tempdir().unwrap();
     let csv_path = dir.path().join("decision_traces.csv");
@@ -231,6 +324,7 @@ fn build_pearl_from_csv_emits_gate_ir_and_report() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -272,6 +366,7 @@ fn build_pearl_from_jsonl_emits_gate_ir_and_report() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -388,6 +483,7 @@ fn discover_from_csv_emits_artifact_set_and_reports() {
             output_dir: output_dir.clone(),
             artifact_set_id: "multi_target_demo".to_string(),
             target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+            feature_selection: FeatureColumnSelection::default(),
             residual_pass: false,
             refine: false,
             pinned_rules: None,
@@ -405,6 +501,44 @@ fn discover_from_csv_emits_artifact_set_and_reports() {
     assert!(output_dir.join("artifacts/target_a/pearl.ir.json").exists());
     assert!(output_dir.join("artifacts/target_b/pearl.ir.json").exists());
     assert!(result.skipped_targets.is_empty());
+}
+
+#[test]
+fn discover_from_csv_respects_feature_column_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("multi_target.csv");
+    std::fs::write(
+        &csv_path,
+        "signal,source,note,target_a,target_b\n0,review_a,ok,allowed,allowed\n1,review_b,manual,denied,denied\n0,review_c,ok,allowed,allowed\n1,review_d,manual,denied,denied\n",
+    )
+    .unwrap();
+    let output_dir = dir.path().join("discovered");
+
+    let result = discover_from_csv(
+        &csv_path,
+        &DiscoverOptions {
+            output_dir,
+            artifact_set_id: "filtered_multi_target_demo".to_string(),
+            target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+            feature_selection: FeatureColumnSelection {
+                feature_columns: None,
+                exclude_columns: vec!["source".to_string(), "note".to_string()],
+            },
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.features, vec!["signal"]);
+    assert!(result
+        .artifacts
+        .iter()
+        .all(|artifact| artifact.selected_features == vec!["signal"]));
 }
 
 #[test]
@@ -433,6 +567,7 @@ fn build_prefers_higher_parity_rule_over_tiny_zero_fp_fragment() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -529,6 +664,7 @@ fn build_refine_tightens_uniquely_overbroad_rule() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -796,6 +932,7 @@ fn build_residual_pass_recovers_policy_style_conjunction_rules() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -821,6 +958,7 @@ fn build_residual_pass_recovers_policy_style_conjunction_rules() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -866,6 +1004,7 @@ fn build_discovers_boolean_feature_predicate() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -911,6 +1050,7 @@ fn build_learns_numeric_feature_relationships() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -974,6 +1114,7 @@ fn build_prefers_zero_false_positive_multi_rule_completion() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
@@ -1099,6 +1240,7 @@ fn build_reuses_cached_output_when_rows_and_options_match() {
         feature_governance: None,
         decision_mode: DiscoveryDecisionMode::Standard,
         max_rules: None,
+        feature_selection: FeatureColumnSelection::default(),
     };
 
     let first = build_pearl_from_csv(&csv_path, &options).unwrap();
@@ -1222,6 +1364,7 @@ fn discover_reuses_cached_output_when_dataset_and_options_match() {
         output_dir: output_dir.clone(),
         artifact_set_id: "multi_target_demo".to_string(),
         target_columns: vec!["target_a".to_string(), "target_b".to_string()],
+        feature_selection: FeatureColumnSelection::default(),
         residual_pass: false,
         refine: false,
         pinned_rules: None,
@@ -1343,6 +1486,7 @@ fn build_discovers_ratio_interaction_feature_when_axis_rules_are_insufficient() 
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            feature_selection: FeatureColumnSelection::default(),
         },
     )
     .unwrap();
