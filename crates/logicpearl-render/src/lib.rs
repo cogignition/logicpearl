@@ -177,6 +177,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: Some(RuleVerificationStatus::SolverVerified),
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,

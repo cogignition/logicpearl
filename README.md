@@ -176,6 +176,19 @@ logicpearl build traces.csv \
   --output-dir /tmp/pearl
 ```
 
+When training parity is below 100%, ask LogicPearl to write a row-level
+diagnostic report:
+
+```bash
+logicpearl build traces.csv \
+  --show-conflicts \
+  --output-dir /tmp/pearl
+```
+
+The report records the trace row hash, expected result, predicted result,
+matched rules, rule-referenced feature values, and near-miss predicates. It is
+an opt-in diagnostic sidecar, not part of the artifact's deterministic logic.
+
 `logicpearl build` also reads `logicpearl.yaml` from the current directory:
 
 ```yaml
@@ -185,6 +198,7 @@ build:
   exclude_columns:
     - source
     - note
+  show_conflicts: true
   output_dir: output
 ```
 
@@ -194,6 +208,17 @@ For multi-action traces, use an action column:
 logicpearl build traces.csv \
   --action-column next_action \
   --default-action do_nothing \
+  --output-dir /tmp/actions
+```
+
+When "no learned rule matched" must be different from the business default,
+use a no-match action:
+
+```bash
+logicpearl build traces.csv \
+  --action-column decision \
+  --default-action releasable \
+  --no-match-action insufficient_context \
   --output-dir /tmp/actions
 ```
 

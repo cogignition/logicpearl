@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use super::{DecisionTraceRow, LoadedDecisionTraces};
+use super::{decision_trace_provenance_from_record, DecisionTraceRow, LoadedDecisionTraces};
 use logicpearl_core::{LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
@@ -498,7 +498,14 @@ fn load_decision_traces_from_records(
             })?;
             features.insert(field_name.to_string(), value.clone());
         }
-        rows.push(DecisionTraceRow { features, allowed });
+        let trace_provenance = Some(decision_trace_provenance_from_record(
+            record, &features, allowed,
+        ));
+        rows.push(DecisionTraceRow {
+            features,
+            allowed,
+            trace_provenance,
+        });
     }
     Ok(rows)
 }

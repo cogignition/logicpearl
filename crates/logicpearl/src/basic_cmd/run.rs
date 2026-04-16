@@ -197,7 +197,11 @@ fn run_action_policy_eval(
     if explain {
         println!("action: {}", output.action.bold());
         if output.selected_rules.is_empty() {
-            println!("reason: no rule matched; using default action");
+            if output.no_match_action.is_some() {
+                println!("reason: no rule matched; using no-match action");
+            } else {
+                println!("reason: no rule matched; using default action");
+            }
         } else {
             println!("reason:");
             for reason in &output.selected_rules {

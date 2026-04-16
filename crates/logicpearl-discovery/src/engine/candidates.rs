@@ -581,6 +581,7 @@ pub(super) fn rule_from_candidate_with_context(
         severity: None,
         counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+        evidence: None,
     }
 }
 
@@ -622,6 +623,7 @@ pub(super) fn residual_rule_from_candidate(
         severity: None,
         counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+        evidence: None,
     }
 }
 

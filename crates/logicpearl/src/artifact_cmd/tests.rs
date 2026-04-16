@@ -297,6 +297,7 @@ fn gate_with_rule_count(rule_count: u32) -> LogicPearlGateIr {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: None,
+                evidence: None,
             })
             .collect(),
         evaluation: EvaluationConfig {
@@ -399,6 +400,7 @@ fn gate_with_out_of_order_derived_chain() -> LogicPearlGateIr {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         }],
         evaluation: EvaluationConfig {
             combine: CombineStrategy::BitwiseOr,
@@ -416,6 +418,7 @@ fn action_policy() -> LogicPearlActionIr {
         action_policy_type: "priority_rules".to_string(),
         action_column: "next_action".to_string(),
         default_action: "do_nothing".to_string(),
+        no_match_action: None,
         actions: vec!["do_nothing".to_string(), "water".to_string()],
         input_schema: InputSchema {
             features: vec![FeatureDefinition {
@@ -446,6 +449,7 @@ fn action_policy() -> LogicPearlActionIr {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         }],
         evaluation: ActionEvaluationConfig {
             selection: ActionSelectionStrategy::FirstMatch,

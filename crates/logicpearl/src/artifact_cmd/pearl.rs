@@ -112,6 +112,13 @@ impl CompilablePearl {
         }
     }
 
+    pub(super) fn no_match_action(&self) -> Option<&str> {
+        match self {
+            Self::Gate(_) => None,
+            Self::Action(policy) => policy.no_match_action.as_deref(),
+        }
+    }
+
     pub(super) fn actions(&self) -> &[String] {
         match self {
             Self::Gate(_) => &[],

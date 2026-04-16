@@ -30,6 +30,36 @@ jq '.provenance' /tmp/logicpearl-output/build_report.json
 
 The schema lives at [schema/logicpearl-build-provenance-v1.schema.json](../schema/logicpearl-build-provenance-v1.schema.json).
 
+## Rule Evidence
+
+Learned rules can carry non-semantic `logicpearl.rule_evidence.v1` metadata in
+`rules[].evidence`. Runtime evaluation ignores this field. It exists so review
+tools can connect a portable artifact back to the reviewed traces that supported
+each rule.
+
+Rule evidence records stable, bounded metadata:
+
+- `support.denied_trace_count`
+- `support.allowed_trace_count`
+- capped `support.example_traces[]` entries with deterministic
+  `trace_row_hash` values plus optional `source_id`, `source_anchor`,
+  `citation`, and `quote_hash`
+
+LogicPearl hashes trace quotes instead of embedding raw quote text in the IR.
+That keeps portable artifacts from carrying source-document excerpts or
+customer text by default. Store the underlying quote in the trace corpus or a
+review system, and use the hash plus citation to verify it.
+
+Inspect rule evidence explicitly:
+
+```bash
+logicpearl inspect /tmp/pearl --show-provenance
+logicpearl inspect /tmp/pearl --show-provenance --json
+```
+
+Evidence-only diffs are reported separately from source-schema, learned-rule,
+and rule-explanation changes.
+
 ## Source Manifests
 
 Use a source manifest when traces or feature dictionaries came from policy documents, customer exports, public URLs, PDFs, manual policy notes, or synthetic fixtures:

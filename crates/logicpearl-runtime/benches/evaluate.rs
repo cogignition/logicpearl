@@ -49,6 +49,7 @@ fn comparison_rule(
         severity: None,
         counterfactual_hint: None,
         verification_status: None,
+        evidence: None,
     }
 }
 
@@ -109,6 +110,7 @@ fn gate_1_rule() -> (LogicPearlGateIr, HashMap<String, Value>) {
         severity: None,
         counterfactual_hint: None,
         verification_status: None,
+        evidence: None,
     }];
     let gate = make_gate("bench_1rule", features_def, rules);
     let input = HashMap::from([

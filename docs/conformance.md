@@ -25,6 +25,22 @@ The artifact input can be a bundle directory, `artifact.json`, or `pearl.ir.json
 
 Runtime parity answers a narrow question: does this artifact reproduce this labeled trace file?
 
+During `logicpearl build`, use `--show-conflicts` when training parity is below
+100% and you need to iterate on the trace set:
+
+```bash
+logicpearl build traces.csv \
+  --show-conflicts \
+  --output-dir /tmp/logicpearl-output
+```
+
+This writes `conflict_report.json` beside the artifact when conflicts exist.
+Each conflict includes the trace row hash, expected result, predicted result,
+matched rules, rule-referenced feature values, and near-miss predicates. Raw
+review-only columns are not dumped unless the learned rules reference them as
+features. `row_index` is the zero-based data row index after headers are
+removed.
+
 ## Formal Spec Verification
 
 Verify a gate against an explicit formal spec:

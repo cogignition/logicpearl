@@ -113,11 +113,12 @@ The expression is unchanged.
 
 ## Diff Semantics
 
-`logicpearl diff` separates three kinds of change:
+`logicpearl diff` separates four kinds of change:
 
 - `source_schema_changed`: features or source anchors changed
 - `learned_rule_changed`: raw learned expressions were added, removed, or changed
 - `rule_explanation_changed`: rule text or dictionary explanation text changed while raw logic stayed the same
+- `rule_evidence_changed`: trace support hashes or source evidence changed while raw logic stayed the same
 
 This distinction matters. A new source policy, a different learned threshold, and a better human label are different review events.
 

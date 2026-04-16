@@ -22,7 +22,9 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         .wrap_err_with(|| format!("failed to resolve artifact {}", artifact.display()))?;
     let pearl_ir = bundle.ir_path().into_diagnostic()?;
     match bundle.manifest.artifact_kind {
-        ArtifactKind::Action => return run_action_inspect(&bundle, args.json),
+        ArtifactKind::Action => {
+            return run_action_inspect(&bundle, args.json, args.show_provenance)
+        }
         ArtifactKind::Pipeline => {
             return Err(guidance(
                 "inspect received a pipeline artifact",
@@ -45,7 +47,7 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             "features": gate.input_schema.features.len(),
             "rules": gate.rules.len(),
             "feature_dictionary": inspect_feature_dictionary(&gate),
-            "rule_details": inspect_rule_details(&gate),
+            "rule_details": inspect_rule_details(&gate, args.show_provenance),
             "correctness_scope": gate.verification.as_ref().and_then(|verification| verification.correctness_scope.clone()),
             "verification_summary": gate.verification.as_ref().and_then(|verification| verification.verification_summary.clone()),
             "bundle": descriptor,
@@ -86,6 +88,9 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         }
         println!();
         println!("{}", inspector.render(&gate).into_diagnostic()?);
+        if args.show_provenance {
+            render_gate_rule_provenance(&gate);
+        }
     }
     Ok(())
 }
@@ -107,7 +112,11 @@ fn resolve_inspect_artifact(explicit: Option<&PathBuf>) -> Result<PathBuf> {
     }
 }
 
-fn run_action_inspect(bundle: &LoadedArtifactBundle, json: bool) -> Result<()> {
+fn run_action_inspect(
+    bundle: &LoadedArtifactBundle,
+    json: bool,
+    show_provenance: bool,
+) -> Result<()> {
     let action_policy_path = bundle.ir_path().into_diagnostic()?;
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
@@ -134,40 +143,39 @@ fn run_action_inspect(bundle: &LoadedArtifactBundle, json: bool) -> Result<()> {
         None
     };
     run_action_policy_inspect(
-        &bundle.base_dir,
-        "action",
-        &bundle.manifest.artifact_id,
+        bundle,
         &action_policy_path,
         &action_policy,
         report,
         json,
+        show_provenance,
     )
 }
 
 fn run_action_policy_inspect(
-    artifact_dir: &Path,
-    artifact_kind: &str,
-    artifact_name: &str,
+    bundle: &LoadedArtifactBundle,
     action_policy_path: &Path,
     action_policy: &LogicPearlActionIr,
     report: Option<Value>,
     json: bool,
+    show_provenance: bool,
 ) -> Result<()> {
     if json {
         let summary = serde_json::json!({
-            "artifact_dir": artifact_dir,
-            "artifact_kind": artifact_kind,
-            "artifact_name": artifact_name,
+            "artifact_dir": bundle.base_dir,
+            "artifact_kind": "action",
+            "artifact_name": bundle.manifest.artifact_id,
             "action_policy_id": action_policy.action_policy_id,
             "ir_version": action_policy.ir_version,
             "action_column": action_policy.action_column,
             "default_action": action_policy.default_action,
+            "no_match_action": action_policy.no_match_action,
             "actions": action_policy.actions,
             "features": action_policy.input_schema.features.len(),
             "action_report": report,
             "pearl_ir": action_policy_path,
             "rules": action_policy.rules.iter().map(|rule| {
-                serde_json::json!({
+                let mut value = serde_json::json!({
                     "id": rule.id,
                     "bit": rule.bit,
                     "action": rule.action,
@@ -177,7 +185,11 @@ fn run_action_policy_inspect(
                     "message": rule.message,
                     "counterfactual_hint": rule.counterfactual_hint,
                     "verification_status": rule.verification_status,
-                })
+                });
+                if show_provenance {
+                    value["evidence"] = serde_json::to_value(&rule.evidence).unwrap_or(Value::Null);
+                }
+                value
             }).collect::<Vec<_>>(),
         });
         println!(
@@ -188,7 +200,11 @@ fn run_action_policy_inspect(
     }
 
     println!("{}", "LogicPearl Action Artifact".bold().bright_blue());
-    println!("  {} {}", "Bundle".bright_black(), artifact_dir.display());
+    println!(
+        "  {} {}",
+        "Bundle".bright_black(),
+        bundle.base_dir.display()
+    );
     println!(
         "  {} {}",
         "Action policy".bright_black(),
@@ -204,6 +220,9 @@ fn run_action_policy_inspect(
         "Default action".bright_black(),
         action_policy.default_action
     );
+    if let Some(no_match_action) = &action_policy.no_match_action {
+        println!("  {} {}", "No-match action".bright_black(), no_match_action);
+    }
     println!("Action rules:");
     for (index, rule) in action_policy.rules.iter().enumerate() {
         println!("  {}. {}", index + 1, rule.action.bold());
@@ -214,6 +233,9 @@ fn run_action_policy_inspect(
                 .or(rule.message.as_deref())
                 .unwrap_or(&rule.id)
         );
+        if show_provenance {
+            render_rule_evidence(rule.evidence.as_ref(), 5);
+        }
     }
     if let Some(report) = report {
         if let Some(training_parity) = report.get("training_parity").and_then(Value::as_f64) {
@@ -252,7 +274,7 @@ fn inspect_feature_dictionary(gate: &LogicPearlGateIr) -> Value {
     })
 }
 
-fn inspect_rule_details(gate: &LogicPearlGateIr) -> Vec<Value> {
+fn inspect_rule_details(gate: &LogicPearlGateIr, show_provenance: bool) -> Vec<Value> {
     gate.rules
         .iter()
         .map(|rule| {
@@ -260,7 +282,7 @@ fn inspect_rule_details(gate: &LogicPearlGateIr) -> Vec<Value> {
                 .into_iter()
                 .filter_map(|feature_id| inspect_rule_feature(gate, &feature_id))
                 .collect::<Vec<_>>();
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "id": rule.id,
                 "bit": rule.bit,
                 "deny_when": rule.deny_when,
@@ -270,9 +292,62 @@ fn inspect_rule_details(gate: &LogicPearlGateIr) -> Vec<Value> {
                 "counterfactual_hint": rule.counterfactual_hint,
                 "verification_status": rule.verification_status,
                 "feature_dictionary": referenced_features,
-            })
+            });
+            if show_provenance {
+                value["evidence"] = serde_json::to_value(&rule.evidence).unwrap_or(Value::Null);
+            }
+            value
         })
         .collect()
+}
+
+fn render_gate_rule_provenance(gate: &LogicPearlGateIr) {
+    println!();
+    println!("{}", "Rule provenance".bold().bright_blue());
+    for rule in &gate.rules {
+        println!("  {} {}", "-".bright_black(), rule.id.bold());
+        render_rule_evidence(rule.evidence.as_ref(), 4);
+    }
+}
+
+fn render_rule_evidence(evidence: Option<&logicpearl_ir::RuleEvidence>, indent: usize) {
+    let prefix = " ".repeat(indent);
+    let Some(evidence) = evidence else {
+        println!("{prefix}{} none", "Evidence".bright_black());
+        return;
+    };
+    println!(
+        "{prefix}{} denied={} allowed={}",
+        "Support".bright_black(),
+        evidence.support.denied_trace_count,
+        evidence.support.allowed_trace_count
+    );
+    for example in &evidence.support.example_traces {
+        let source = match (&example.source_id, &example.source_anchor) {
+            (Some(source_id), Some(anchor)) => format!("{source_id}#{anchor}"),
+            (Some(source_id), None) => source_id.clone(),
+            (None, Some(anchor)) => anchor.clone(),
+            (None, None) => "source".to_string(),
+        };
+        let citation = example
+            .citation
+            .as_deref()
+            .map(|value| format!(" citation={value}"))
+            .unwrap_or_default();
+        let quote_hash = example
+            .quote_hash
+            .as_deref()
+            .map(|value| format!(" quote_hash={value}"))
+            .unwrap_or_default();
+        println!(
+            "{prefix}{} {} source={}{}{}",
+            "Trace".bright_black(),
+            example.trace_row_hash,
+            source,
+            citation,
+            quote_hash
+        );
+    }
 }
 
 fn inspect_rule_feature(gate: &LogicPearlGateIr, feature_id: &str) -> Option<Value> {

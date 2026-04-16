@@ -76,6 +76,11 @@ Runtime result schemas live under [schema](../schema/):
 
 Additive fields are allowed within v1 schemas. Breaking wire-format changes require a new schema version.
 
+Action results include the selected `action`, whether no learned rule matched
+(`no_match`), and the configured `default_action`. When an action artifact was
+built with `--no-match-action`, the result also carries `no_match_action` and
+uses it instead of the business default whenever no action rule fires.
+
 ## Inspect, Digest, Verify
 
 Use the artifact commands for bundle review:

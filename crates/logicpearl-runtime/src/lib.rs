@@ -38,8 +38,14 @@ pub struct ActionEvaluationResult {
     pub action_policy_id: String,
     pub decision_kind: String,
     pub action: String,
+    #[serde(default)]
+    pub default_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_match_action: Option<String>,
     pub bitmask: RuleMask,
     pub defaulted: bool,
+    #[serde(default)]
+    pub no_match: bool,
     #[serde(default)]
     pub selected_rules: Vec<ActionRuleMatch>,
     #[serde(default)]
@@ -163,7 +169,7 @@ pub fn evaluate_gate(
     gate: &LogicPearlGateIr,
     features: &HashMap<String, Value>,
 ) -> Result<RuleMask> {
-    let features = with_derived_features(gate, features)?;
+    let features = resolve_gate_features(gate, features)?;
     let mut bitmask = RuleMask::zero();
     for rule in &gate.rules {
         if evaluate_expression(&rule.deny_when, &features)? {
@@ -187,7 +193,7 @@ pub fn evaluate_action_policy(
     policy: &LogicPearlActionIr,
     features: &HashMap<String, Value>,
 ) -> Result<ActionEvaluationResult> {
-    let features = with_action_derived_features(policy, features)?;
+    let features = resolve_action_features(policy, features)?;
     let mut rules = policy.rules.iter().collect::<Vec<_>>();
     rules.sort_by_key(|rule| rule.priority);
 
@@ -218,11 +224,14 @@ pub fn evaluate_action_policy(
         });
     }
 
-    let action = candidate_actions
-        .first()
-        .cloned()
-        .unwrap_or_else(|| policy.default_action.clone());
-    let defaulted = candidate_actions.is_empty();
+    let no_match = candidate_actions.is_empty();
+    let action = candidate_actions.first().cloned().unwrap_or_else(|| {
+        policy
+            .no_match_action
+            .clone()
+            .unwrap_or_else(|| policy.default_action.clone())
+    });
+    let defaulted = no_match;
     let selected_rules = matched_rules
         .iter()
         .filter(|rule| rule.action == action)
@@ -244,8 +253,11 @@ pub fn evaluate_action_policy(
         action_policy_id: policy.action_policy_id.clone(),
         decision_kind: "action".to_string(),
         action,
+        default_action: policy.default_action.clone(),
+        no_match_action: policy.no_match_action.clone(),
         bitmask,
         defaulted,
+        no_match,
         selected_rules,
         matched_rules,
         candidate_actions,
@@ -446,7 +458,15 @@ fn parse_runtime_number(raw: &str) -> Result<Option<Value>> {
     Ok(None)
 }
 
-fn evaluate_expression(expression: &Expression, features: &HashMap<String, Value>) -> Result<bool> {
+/// Evaluate a rule expression against already-resolved input features.
+///
+/// Callers evaluating a full gate or action policy should prefer
+/// [`evaluate_gate`] or [`evaluate_action_policy`], which also resolve derived
+/// features. This helper is exposed for diagnostics that need per-rule detail.
+pub fn evaluate_expression(
+    expression: &Expression,
+    features: &HashMap<String, Value>,
+) -> Result<bool> {
     match expression {
         Expression::Comparison(comparison) => evaluate_comparison(comparison, features),
         Expression::All { all } => {
@@ -519,14 +539,16 @@ fn resolve_derived_features(
     Ok(resolved)
 }
 
-fn with_derived_features(
+/// Resolve derived gate features into a copy of the runtime input.
+pub fn resolve_gate_features(
     gate: &LogicPearlGateIr,
     features: &HashMap<String, Value>,
 ) -> Result<HashMap<String, Value>> {
     resolve_derived_features(&gate.input_schema.features, features)
 }
 
-fn with_action_derived_features(
+/// Resolve derived action-policy features into a copy of the runtime input.
+pub fn resolve_action_features(
     policy: &LogicPearlActionIr,
     features: &HashMap<String, Value>,
 ) -> Result<HashMap<String, Value>> {
@@ -644,6 +666,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
@@ -671,6 +694,7 @@ mod tests {
             action_policy_type: "priority_rules".to_string(),
             action_column: "next_action".to_string(),
             default_action: "do_nothing".to_string(),
+            no_match_action: None,
             actions: vec![
                 "do_nothing".to_string(),
                 "water".to_string(),
@@ -720,6 +744,7 @@ mod tests {
                     severity: None,
                     counterfactual_hint: None,
                     verification_status: None,
+                    evidence: None,
                 },
                 ActionRuleDefinition {
                     id: "rule_001".to_string(),
@@ -736,6 +761,7 @@ mod tests {
                     severity: None,
                     counterfactual_hint: None,
                     verification_status: None,
+                    evidence: None,
                 },
             ],
             evaluation: ActionEvaluationConfig {
@@ -755,6 +781,9 @@ mod tests {
         let result = evaluate_action_policy(&policy, &features).expect("policy should evaluate");
 
         assert_eq!(result.action, "water");
+        assert_eq!(result.default_action, "do_nothing");
+        assert_eq!(result.no_match_action, None);
+        assert!(!result.no_match);
         assert_eq!(result.bitmask.as_u64(), Some(3));
         assert_eq!(result.selected_rules.len(), 1);
         assert_eq!(result.selected_rules[0].id, "rule_000");
@@ -764,6 +793,28 @@ mod tests {
             .ambiguity
             .as_deref()
             .is_some_and(|message| message.contains("water, fertilize")));
+
+        let mut no_match_policy = policy.clone();
+        no_match_policy
+            .actions
+            .push("insufficient_context".to_string());
+        no_match_policy.no_match_action = Some("insufficient_context".to_string());
+        let no_match_features = HashMap::from([
+            ("soil_moisture_pct".to_string(), json!(0.4)),
+            ("leaf_paleness_score".to_string(), json!(1.0)),
+        ]);
+        let no_match = evaluate_action_policy(&no_match_policy, &no_match_features)
+            .expect("no-match policy should evaluate");
+        assert_eq!(no_match.action, "insufficient_context");
+        assert_eq!(no_match.default_action, "do_nothing");
+        assert_eq!(
+            no_match.no_match_action.as_deref(),
+            Some("insufficient_context")
+        );
+        assert!(no_match.defaulted);
+        assert!(no_match.no_match);
+        assert!(no_match.selected_rules.is_empty());
+        assert!(no_match.candidate_actions.is_empty());
     }
 
     #[test]
@@ -936,6 +987,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
@@ -1058,6 +1110,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
@@ -1126,6 +1179,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: None,
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,

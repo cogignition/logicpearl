@@ -24,6 +24,8 @@ struct WasmArtifactMetadata {
     action_policy_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     default_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    no_match_action: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     actions: Vec<String>,
     entrypoint: String,
@@ -121,6 +123,7 @@ pub(super) fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl
         action_policy_id: matches!(pearl, CompilablePearl::Action(_))
             .then(|| pearl.artifact_id().to_string()),
         default_action: pearl.default_action().map(ToOwned::to_owned),
+        no_match_action: pearl.no_match_action().map(ToOwned::to_owned),
         actions: pearl.actions().to_vec(),
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
         status_entrypoint: "logicpearl_eval_status_slots_f64".to_string(),

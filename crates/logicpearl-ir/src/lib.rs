@@ -50,6 +50,8 @@ pub struct LogicPearlActionIr {
     pub action_policy_type: String,
     pub action_column: String,
     pub default_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_match_action: Option<String>,
     pub actions: Vec<String>,
     pub input_schema: InputSchema,
     pub rules: Vec<ActionRuleDefinition>,
@@ -187,6 +189,38 @@ pub struct RuleDefinition {
     pub severity: Option<String>,
     pub counterfactual_hint: Option<String>,
     pub verification_status: Option<RuleVerificationStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<RuleEvidence>,
+}
+
+/// Non-semantic evidence explaining which reviewed traces support a learned rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleEvidence {
+    pub schema_version: String,
+    pub support: RuleSupportEvidence,
+}
+
+/// Stable support counts and bounded supporting trace examples for a rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleSupportEvidence {
+    pub denied_trace_count: usize,
+    pub allowed_trace_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub example_traces: Vec<RuleTraceEvidence>,
+}
+
+/// Bounded evidence copied from a supporting reviewed trace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RuleTraceEvidence {
+    pub trace_row_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_hash: Option<String>,
 }
 
 /// A single rule within an action policy artifact.
@@ -203,6 +237,8 @@ pub struct ActionRuleDefinition {
     pub severity: Option<String>,
     pub counterfactual_hint: Option<String>,
     pub verification_status: Option<RuleVerificationStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<RuleEvidence>,
 }
 
 /// Classification of how a rule's condition is expressed.
@@ -379,6 +415,7 @@ impl LogicPearlGateIr {
                 )));
             }
             validate_expression(&rule.deny_when, &known_features)?;
+            validate_rule_evidence(rule.evidence.as_ref())?;
         }
 
         validate_verification(self.verification.as_ref(), &known_features)?;
@@ -428,6 +465,7 @@ impl LogicPearlActionIr {
         if self.default_action.is_empty() {
             return Err(LogicPearlError::message("default action must be non-empty"));
         }
+        validate_optional_non_empty(&self.no_match_action, "no_match_action")?;
         if self.actions.is_empty() {
             return Err(LogicPearlError::message(
                 "action policy must define at least one action",
@@ -456,6 +494,13 @@ impl LogicPearlActionIr {
                 "default action is not listed in actions: {}",
                 self.default_action
             )));
+        }
+        if let Some(no_match_action) = &self.no_match_action {
+            if !actions.contains(no_match_action) {
+                return Err(LogicPearlError::message(format!(
+                    "no_match_action is not listed in actions: {no_match_action}"
+                )));
+            }
         }
 
         let mut rule_ids = BTreeSet::new();
@@ -494,6 +539,7 @@ impl LogicPearlActionIr {
             validate_optional_non_empty(&rule.severity, "rule severity")?;
             validate_optional_non_empty(&rule.counterfactual_hint, "rule counterfactual_hint")?;
             validate_expression(&rule.predicate, &known_features)?;
+            validate_rule_evidence(rule.evidence.as_ref())?;
         }
 
         validate_verification(self.verification.as_ref(), &known_features)?;
@@ -645,6 +691,43 @@ fn validate_feature_semantics(
             value: state.predicate.value.clone(),
         };
         validate_comparison(&comparison, feature, known_features)?;
+    }
+    Ok(())
+}
+
+fn validate_rule_evidence(evidence: Option<&RuleEvidence>) -> Result<()> {
+    let Some(evidence) = evidence else {
+        return Ok(());
+    };
+    if evidence.schema_version != "logicpearl.rule_evidence.v1" {
+        return Err(LogicPearlError::message(format!(
+            "unsupported rule evidence schema_version: {}",
+            evidence.schema_version
+        )));
+    }
+    for example in &evidence.support.example_traces {
+        validate_sha256_prefixed(&example.trace_row_hash, "rule evidence trace row hash")?;
+        validate_optional_non_empty(&example.source_id, "rule evidence source_id")?;
+        validate_optional_non_empty(&example.source_anchor, "rule evidence source_anchor")?;
+        validate_optional_non_empty(&example.citation, "rule evidence citation")?;
+        validate_optional_non_empty(&example.quote_hash, "rule evidence quote_hash")?;
+        if let Some(quote_hash) = &example.quote_hash {
+            validate_sha256_prefixed(quote_hash, "rule evidence quote_hash")?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_sha256_prefixed(value: &str, label: &str) -> Result<()> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(LogicPearlError::message(format!(
+            "{label} must start with sha256:"
+        )));
+    };
+    if hex.len() != 64 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(LogicPearlError::message(format!(
+            "{label} must be a sha256 hash"
+        )));
     }
     Ok(())
 }
@@ -1152,6 +1235,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: None,
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
@@ -1519,7 +1603,8 @@ mod tests {
                 "action_policy_type": "priority_rules",
                 "action_column": "next_action",
                 "default_action": "do_nothing",
-                "actions": ["do_nothing", "water"],
+                "no_match_action": "insufficient_context",
+                "actions": ["do_nothing", "water", "insufficient_context"],
                 "input_schema": {
                     "features": [
                         {"id": "soil_moisture_pct", "type": "float", "description": null, "values": null, "min": null, "max": null, "editable": null}
@@ -1548,6 +1633,10 @@ mod tests {
         .expect("action policy should validate");
 
         assert_eq!(policy.default_action, "do_nothing");
+        assert_eq!(
+            policy.no_match_action.as_deref(),
+            Some("insufficient_context")
+        );
         assert_eq!(policy.rules[0].action, "water");
     }
 
@@ -1625,6 +1714,7 @@ mod tests {
                 severity: None,
                 counterfactual_hint: None,
                 verification_status: None,
+                evidence: None,
             }],
             evaluation: EvaluationConfig {
                 combine: CombineStrategy::BitwiseOr,
@@ -1640,6 +1730,57 @@ mod tests {
         let gate = minimal_valid_gate();
         gate.validate()
             .expect("minimal valid gate should pass validation");
+    }
+
+    #[test]
+    fn validates_rule_evidence() {
+        let mut gate = minimal_valid_gate();
+        gate.rules[0].evidence = Some(RuleEvidence {
+            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            support: RuleSupportEvidence {
+                denied_trace_count: 1,
+                allowed_trace_count: 0,
+                example_traces: vec![RuleTraceEvidence {
+                    trace_row_hash:
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_string(),
+                    source_id: Some("policy".to_string()),
+                    source_anchor: Some("section-1".to_string()),
+                    citation: Some("Policy section 1".to_string()),
+                    quote_hash: Some(
+                        "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                            .to_string(),
+                    ),
+                }],
+            },
+        });
+
+        gate.validate()
+            .expect("valid rule evidence should pass validation");
+    }
+
+    #[test]
+    fn rejects_rule_evidence_with_invalid_trace_hash() {
+        let mut gate = minimal_valid_gate();
+        gate.rules[0].evidence = Some(RuleEvidence {
+            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            support: RuleSupportEvidence {
+                denied_trace_count: 1,
+                allowed_trace_count: 0,
+                example_traces: vec![RuleTraceEvidence {
+                    trace_row_hash: "trace-1".to_string(),
+                    source_id: None,
+                    source_anchor: None,
+                    citation: None,
+                    quote_hash: None,
+                }],
+            },
+        });
+
+        let err = gate
+            .validate()
+            .expect_err("invalid trace hash should fail validation");
+        assert!(err.to_string().contains("trace row hash"));
     }
 
     #[test]

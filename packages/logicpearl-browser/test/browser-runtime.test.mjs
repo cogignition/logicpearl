@@ -434,7 +434,10 @@ test('loadArtifactFromBundle evaluates action policies from wasm metadata', asyn
   assert.equal(result.actionPolicyId, 'garden_actions');
   assert.equal(result.action, 'water');
   assert.equal(result.schemaVersion, 'logicpearl.action_result.v1');
+  assert.equal(result.defaultAction, 'do_nothing');
+  assert.equal(result.noMatchAction, null);
   assert.equal(result.defaulted, false);
+  assert.equal(result.noMatch, false);
   assert.equal(result.ambiguity, 'multiple action rules matched: water, fertilize');
   assert.deepEqual(result.candidateActions, ['water', 'fertilize']);
   assert.deepEqual(
@@ -482,7 +485,10 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
   assert.equal(result.action_policy_id, 'garden_actions');
   assert.equal(result.decision_kind, 'action');
   assert.equal(result.action, 'water');
+  assert.equal(result.default_action, 'do_nothing');
+  assert.equal(result.no_match_action, null);
   assert.equal(result.bitmask, '1');
+  assert.equal(result.no_match, false);
   assert.deepEqual(result.candidate_actions, ['water']);
   assert.deepEqual(
     result.selected_rules.map((rule) => rule.id),
@@ -499,6 +505,54 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
       counterfactual_hint: 'Increase moisture',
     },
   ]);
+});
+
+test('evaluateJson returns no_match_action when no action rules fire', async () => {
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: {
+        ...sampleManifest,
+        artifact_id: 'garden_actions',
+        artifact_kind: 'action',
+        artifact_name: 'garden_actions',
+      },
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: {
+        ...sampleActionMetadata,
+        no_match_action: 'insufficient_context',
+        actions: ['water', 'do_nothing', 'fertilize', 'insufficient_context'],
+      },
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_bitmask_slots_f64() {
+            return 0n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluateJson({
+    soil_moisture_pct: 0.5,
+    leaf_paleness_score: 0.1,
+  });
+
+  validateAgainstSchema(actionResultSchema, result);
+  assert.equal(result.action, 'insufficient_context');
+  assert.equal(result.default_action, 'do_nothing');
+  assert.equal(result.no_match_action, 'insufficient_context');
+  assert.equal(result.defaulted, true);
+  assert.equal(result.no_match, true);
+  assert.deepEqual(result.matched_rules, []);
+  assert.deepEqual(result.selected_rules, []);
+  assert.deepEqual(result.candidate_actions, []);
 });
 
 test('evaluate treats all u64 bitmask values as valid payloads', async () => {

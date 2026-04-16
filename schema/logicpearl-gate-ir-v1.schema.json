@@ -165,6 +165,81 @@
         },
         "counterfactual_hint": {
           "type": "string"
+        },
+        "verification_status": {
+          "type": ["string", "null"],
+          "enum": [
+            "solver_verified",
+            "pipeline_unverified",
+            "heuristic_unverified",
+            "refined_unverified",
+            null
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/rule_evidence"
+        }
+      }
+    },
+    "rule_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "support"],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "logicpearl.rule_evidence.v1"
+        },
+        "support": {
+          "$ref": "#/$defs/rule_support_evidence"
+        }
+      }
+    },
+    "rule_support_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["denied_trace_count", "allowed_trace_count"],
+      "properties": {
+        "denied_trace_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_trace_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "example_traces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rule_trace_evidence"
+          }
+        }
+      }
+    },
+    "rule_trace_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_row_hash"],
+      "properties": {
+        "trace_row_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_anchor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
         }
       }
     },

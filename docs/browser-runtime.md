@@ -60,6 +60,9 @@ console.log(wireResult.artifact_hash);
 ```
 
 `evaluateJson()` returns the snake_case `logicpearl.*_result.v1` shape for schema validation and cross-language handoff.
+For action policies, this includes the selected `action`, the configured
+`default_action`, `no_match`, and `no_match_action` when the artifact declares a
+separate no-match fallback.
 
 ## Supported Scope
 

@@ -7,10 +7,10 @@
 //! assembly live in `logicpearl-build`; this crate stays focused on learning
 //! deterministic logic from already-normalized examples.
 
-use logicpearl_core::{provenance_safe_path_string, LogicPearlError, Result};
+use logicpearl_core::{artifact_hash, provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
-    RuleVerificationStatus,
+    RuleTraceEvidence, RuleVerificationStatus,
 };
 use logicpearl_runtime::evaluate_gate;
 use logicpearl_solver::{
@@ -75,6 +75,95 @@ pub enum DiscoveryDecisionMode {
 pub struct DecisionTraceRow {
     pub features: HashMap<String, Value>,
     pub allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_provenance: Option<DecisionTraceProvenance>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct DecisionTraceProvenance {
+    pub trace_row_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_hash: Option<String>,
+}
+
+pub fn decision_trace_row_hash(features: &HashMap<String, Value>, allowed: bool) -> String {
+    artifact_hash(&serde_json::json!({
+        "features": features,
+        "allowed": allowed,
+    }))
+}
+
+pub fn action_trace_row_hash(features: &HashMap<String, Value>, action: &str) -> String {
+    artifact_hash(&serde_json::json!({
+        "features": features,
+        "action": action,
+    }))
+}
+
+pub fn decision_trace_provenance_from_record(
+    record: &BTreeMap<String, Value>,
+    features: &HashMap<String, Value>,
+    allowed: bool,
+) -> DecisionTraceProvenance {
+    trace_provenance_from_record(record, decision_trace_row_hash(features, allowed))
+}
+
+pub fn action_trace_provenance_from_record(
+    record: &BTreeMap<String, Value>,
+    features: &HashMap<String, Value>,
+    action: &str,
+) -> DecisionTraceProvenance {
+    trace_provenance_from_record(record, action_trace_row_hash(features, action))
+}
+
+fn trace_provenance_from_record(
+    record: &BTreeMap<String, Value>,
+    trace_row_hash: String,
+) -> DecisionTraceProvenance {
+    DecisionTraceProvenance {
+        trace_row_hash,
+        source_id: first_scalar_string(record, &["source_id"]),
+        source_anchor: first_scalar_string(record, &["source_anchor"]),
+        citation: first_scalar_string(record, &["source_citation", "citation"]),
+        quote_hash: first_scalar_string(record, &["source_quote", "quote"])
+            .map(|quote| logicpearl_core::sha256_prefixed(quote.as_bytes())),
+    }
+}
+
+fn first_scalar_string(record: &BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| record.get(*key))
+        .find_map(scalar_string)
+}
+
+fn scalar_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => non_empty(text.clone()),
+        Value::Number(number) => non_empty(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn rule_trace_evidence(provenance: &DecisionTraceProvenance) -> RuleTraceEvidence {
+    RuleTraceEvidence {
+        trace_row_hash: provenance.trace_row_hash.clone(),
+        source_id: provenance.source_id.clone(),
+        source_anchor: provenance.source_anchor.clone(),
+        citation: provenance.citation.clone(),
+        quote_hash: provenance.quote_hash.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -1053,6 +1142,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 .push(DecisionTraceRow {
                     features: features.clone(),
                     allowed,
+                    trace_provenance: None,
                 });
         }
     }

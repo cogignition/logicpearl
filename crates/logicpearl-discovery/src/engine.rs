@@ -2,13 +2,13 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     CombineStrategy, EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, GateType,
-    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleVerificationStatus,
-    VerificationConfig,
+    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleEvidence, RuleSupportEvidence,
+    RuleTraceEvidence, RuleVerificationStatus, VerificationConfig,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::canonicalize::{canonicalize_rules, prune_redundant_rules};
+use super::canonicalize::{canonicalize_rules, expression_matches, prune_redundant_rules};
 use super::features::{infer_feature_type, sorted_feature_names};
 use super::rule_text::RuleTextContext;
 mod candidates;
@@ -20,9 +20,9 @@ mod selection;
 mod validation;
 
 use super::{
-    CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, ExactSelectionReport, PinnedRuleSet,
-    ResidualPassOptions, ResidualRecoveryReport, ResidualRecoveryState,
-    UniqueCoverageRefinementOptions,
+    decision_trace_row_hash, rule_trace_evidence, CandidateRule, DecisionTraceRow,
+    DiscoveryDecisionMode, ExactSelectionReport, PinnedRuleSet, ResidualPassOptions,
+    ResidualRecoveryReport, ResidualRecoveryState, UniqueCoverageRefinementOptions,
 };
 #[cfg(test)]
 pub(super) use candidates::rule_from_candidate;
@@ -230,6 +230,7 @@ pub(super) fn gate_from_rules(
     gate_id: &str,
     rules: Vec<RuleDefinition>,
 ) -> Result<LogicPearlGateIr> {
+    let rules = attach_rule_evidence(rows, source_rows, rules);
     let feature_sample = source_rows[0].features.clone();
     let mut features = sorted_feature_names(source_rows)
         .into_iter()
@@ -278,6 +279,68 @@ pub(super) fn gate_from_rules(
             created_at: None,
         }),
     })
+}
+
+fn attach_rule_evidence(
+    rows: &[DecisionTraceRow],
+    source_rows: &[DecisionTraceRow],
+    rules: Vec<RuleDefinition>,
+) -> Vec<RuleDefinition> {
+    rules
+        .into_iter()
+        .map(|mut rule| {
+            rule.evidence = Some(rule_evidence(rows, source_rows, &rule.deny_when));
+            rule
+        })
+        .collect()
+}
+
+fn rule_evidence(
+    rows: &[DecisionTraceRow],
+    source_rows: &[DecisionTraceRow],
+    expression: &Expression,
+) -> RuleEvidence {
+    const MAX_EXAMPLE_HASHES: usize = 8;
+
+    let mut denied_trace_count = 0usize;
+    let mut allowed_trace_count = 0usize;
+    let mut example_traces = BTreeSet::<RuleTraceEvidence>::new();
+
+    for (index, row) in rows.iter().enumerate() {
+        if !expression_matches(expression, &row.features) {
+            continue;
+        }
+        if row.allowed {
+            allowed_trace_count += 1;
+            continue;
+        }
+        denied_trace_count += 1;
+        let source_row = source_rows.get(index).unwrap_or(row);
+        let trace_evidence = source_row
+            .trace_provenance
+            .as_ref()
+            .map(rule_trace_evidence)
+            .unwrap_or_else(|| RuleTraceEvidence {
+                trace_row_hash: decision_trace_row_hash(&source_row.features, source_row.allowed),
+                source_id: None,
+                source_anchor: None,
+                citation: None,
+                quote_hash: None,
+            });
+        example_traces.insert(trace_evidence);
+    }
+
+    RuleEvidence {
+        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+        support: RuleSupportEvidence {
+            denied_trace_count,
+            allowed_trace_count,
+            example_traces: example_traces
+                .into_iter()
+                .take(MAX_EXAMPLE_HASHES)
+                .collect(),
+        },
+    }
 }
 
 fn rule_verification_summary(rules: &[RuleDefinition]) -> HashMap<String, u64> {

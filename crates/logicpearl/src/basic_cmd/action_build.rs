@@ -23,6 +23,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::conflicts::{
+    add_conflict_summary_to_json, print_conflict_summary, requested_conflict_report_path,
+    write_action_conflict_report,
+};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
@@ -41,6 +45,8 @@ struct ActionBuildReport {
     artifact_name: String,
     action_column: String,
     default_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    no_match_action: Option<String>,
     rows: usize,
     actions: Vec<String>,
     rule_budget: ActionRuleBudgetReport,
@@ -126,6 +132,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "pearl.wasm.meta.json",
         "action_policy.ir.json",
         "build_report.json",
+        "conflict_report.json",
         ".logicpearl-cache.json",
     ] {
         let path = output_dir.join(stale_file);
@@ -142,6 +149,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             artifact_name: artifact_name.clone(),
             action_column: action_column.clone(),
             default_action: args.default_action.clone(),
+            no_match_action: args.no_match_action.clone(),
             action_priority: args.action_priority.clone(),
             action_max_rules: args.action_max_rules,
             output_dir: output_dir.clone(),
@@ -156,6 +164,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     .wrap_err("failed to learn action policy")?;
     let action_policy = learned_action.action_policy;
     let default_action = learned_action.default_action;
+    let no_match_action = learned_action.no_match_action;
     let priority_order = learned_action.priority_order;
     let rule_budget = learned_action.rule_budget;
     let training_parity = learned_action.training_parity;
@@ -169,7 +178,8 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "artifact_name": &artifact_name,
         "action_column": &action_column,
         "default_action": &default_action,
-        "actions": &action_traces.actions,
+        "no_match_action": &no_match_action,
+        "actions": &action_policy.actions,
         "action_priority": &args.action_priority,
         "priority_order": &priority_order,
         "action_max_rules": args.action_max_rules,
@@ -202,8 +212,9 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         artifact_name: artifact_name.clone(),
         action_column: action_column.clone(),
         default_action: default_action.clone(),
+        no_match_action: no_match_action.clone(),
         rows: loaded.records.len(),
-        actions: action_traces.actions.clone(),
+        actions: action_policy.actions.clone(),
         rule_budget: rule_budget.clone(),
         rules: action_rule_report(&action_policy),
         training_parity,
@@ -280,6 +291,19 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         .flatten(),
     )
     .into_diagnostic()?;
+    let conflicts_requested = args.show_conflicts || args.conflict_report.is_some();
+    let conflict_summary = if conflicts_requested {
+        write_action_conflict_report(
+            requested_conflict_report_path(&output_dir, args.conflict_report.as_ref()),
+            &output_dir,
+            &action_policy,
+            &action_traces,
+            training_parity,
+            args.conflict_report.is_some(),
+        )?
+    } else {
+        None
+    };
     let public_action_report = action_build_report_for_report(&action_report);
     fs::write(
         &action_report_path,
@@ -297,9 +321,15 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "default_action".to_string(),
         serde_json::json!(default_action),
     );
+    if let Some(no_match_action) = &no_match_action {
+        extensions.insert(
+            "no_match_action".to_string(),
+            serde_json::json!(no_match_action),
+        );
+    }
     extensions.insert(
         "actions".to_string(),
-        serde_json::json!(action_traces.actions),
+        serde_json::json!(&action_policy.actions),
     );
     extensions.insert(
         "action_priority".to_string(),
@@ -338,9 +368,13 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     .wrap_err("failed to write action artifact manifest")?;
 
     if args.json {
+        let mut report = serde_json::to_value(&public_action_report)
+            .into_diagnostic()
+            .wrap_err("failed to serialize action build report")?;
+        add_conflict_summary_to_json(&mut report, conflicts_requested, conflict_summary.as_ref());
         println!(
             "{}",
-            serde_json::to_string_pretty(&public_action_report).into_diagnostic()?
+            serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
         println!(
@@ -359,6 +393,9 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "Default action".bright_black(),
             action_report.default_action
         );
+        if let Some(no_match_action) = &action_report.no_match_action {
+            println!("  {} {}", "No-match action".bright_black(), no_match_action);
+        }
         println!(
             "  {} {}",
             "Action priority".bright_black(),
@@ -375,6 +412,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             "Training parity".bright_black(),
             format!("{:.1}%", action_report.training_parity * 100.0).bold()
         );
+        print_conflict_summary(conflict_summary.as_ref(), conflicts_requested);
         println!(
             "  {} {}",
             "Artifact bundle".bright_black(),

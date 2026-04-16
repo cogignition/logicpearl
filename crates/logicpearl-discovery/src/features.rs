@@ -172,6 +172,7 @@ pub(super) fn augment_rows_with_numeric_interactions(
         augmented.push(DecisionTraceRow {
             features,
             allowed: row.allowed,
+            trace_provenance: row.trace_provenance.clone(),
         });
     }
 
@@ -430,5 +431,6 @@ pub(super) fn rule_with_added_condition(
         severity: rule.severity.clone(),
         counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(logicpearl_ir::RuleVerificationStatus::RefinedUnverified),
+        evidence: None,
     }
 }

@@ -175,12 +175,12 @@ fn build_config_can_exclude_human_review_columns() {
     let temp = tempdir().expect("temp output dir should be created");
     fs::write(
         temp.path().join("traces.csv"),
-        "age,source,note,allowed\n21,review_a,ok,allowed\n25,review_b,ok,allowed\n16,review_c,manual,denied\n15,review_d,manual,denied\n",
+        "age,source,note,source_id,source_anchor,source_citation,source_quote,allowed\n21,review_a,ok,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,allowed\n25,review_b,ok,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,allowed\n16,review_c,manual,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,denied\n15,review_d,manual,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,denied\n",
     )
     .expect("trace fixture should write");
     fs::write(
         temp.path().join("logicpearl.yaml"),
-        "build:\n  traces: traces.csv\n  label_column: allowed\n  exclude_columns:\n    - source\n    - note\n  output_dir: output\n",
+        "build:\n  traces: traces.csv\n  label_column: allowed\n  exclude_columns:\n    - source\n    - note\n    - source_id\n    - source_anchor\n    - source_citation\n    - source_quote\n  output_dir: output\n",
     )
     .expect("logicpearl config should write");
 
@@ -206,7 +206,7 @@ fn build_config_can_exclude_human_review_columns() {
             .and_then(|provenance| provenance.build_options.as_ref())
             .and_then(|options| options["exclude_columns"].as_array())
             .map(Vec::len),
-        Some(2)
+        Some(6)
     );
 
     let pearl_ir = report_output_path(
@@ -223,6 +223,236 @@ fn build_config_can_exclude_human_review_columns() {
         .map(|feature| feature["id"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     assert_eq!(feature_ids, vec!["age"]);
+
+    let inspect_output = Command::new(cli_bin)
+        .arg("inspect")
+        .arg(temp.path().join("output"))
+        .arg("--show-provenance")
+        .arg("--json")
+        .output()
+        .expect("logicpearl inspect should run");
+    assert!(
+        inspect_output.status.success(),
+        "logicpearl inspect failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&inspect_output.stdout),
+        String::from_utf8_lossy(&inspect_output.stderr)
+    );
+    let inspect: Value =
+        serde_json::from_slice(&inspect_output.stdout).expect("inspect output should be JSON");
+    let evidence = &inspect["rule_details"][0]["evidence"];
+    assert_eq!(
+        evidence["schema_version"].as_str(),
+        Some("logicpearl.rule_evidence.v1")
+    );
+    assert_eq!(evidence["support"]["denied_trace_count"].as_u64(), Some(2));
+    let example_trace = &evidence["support"]["example_traces"][0];
+    assert!(example_trace["trace_row_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.starts_with("sha256:")));
+    assert_eq!(example_trace["source_id"].as_str(), Some("foia"));
+    assert_eq!(example_trace["source_anchor"].as_str(), Some("552b5"));
+    assert_eq!(example_trace["citation"].as_str(), Some("5 USC 552(b)(5)"));
+    assert!(example_trace["quote_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.starts_with("sha256:")));
+    assert!(
+        !String::from_utf8_lossy(&inspect_output.stdout).contains("inter agency memo exemption"),
+        "inspect provenance should hash raw trace quotes"
+    );
+}
+
+#[test]
+fn build_show_conflicts_writes_gate_conflict_report_for_unfit_traces() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    let traces = temp.path().join("contradictory.csv");
+    let output_dir = temp.path().join("output");
+    fs::write(
+        &traces,
+        "age,note,allowed\n16,review_a,denied\n16,review_b,allowed\n30,review_c,allowed\n",
+    )
+    .expect("trace fixture should write");
+
+    let output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&traces)
+        .arg("--label-column")
+        .arg("allowed")
+        .arg("--exclude-columns")
+        .arg("note")
+        .arg("--show-conflicts")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build_json: Value =
+        serde_json::from_slice(&output.stdout).expect("build output should be JSON");
+    assert!(build_json["training_parity"].as_f64().unwrap_or(1.0) < 1.0);
+    assert!(build_json["conflict_count"].as_u64().unwrap_or(0) > 0);
+    let conflict_path = report_output_path(
+        &output_dir,
+        build_json["conflict_report"]
+            .as_str()
+            .expect("conflict report path should be present"),
+    );
+    let conflict_report: Value = serde_json::from_str(
+        &fs::read_to_string(conflict_path).expect("conflict report should be readable"),
+    )
+    .expect("conflict report should be JSON");
+    assert_eq!(
+        conflict_report["schema_version"].as_str(),
+        Some("logicpearl.build_conflicts.v1")
+    );
+    assert_eq!(conflict_report["decision_kind"].as_str(), Some("gate"));
+    assert_eq!(
+        conflict_report["conflict_count"].as_u64(),
+        Some(
+            conflict_report["conflicts"]
+                .as_array()
+                .expect("conflicts should be an array")
+                .len() as u64
+        )
+    );
+    let conflict = &conflict_report["conflicts"][0];
+    assert!(conflict["trace_row_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.starts_with("sha256:")));
+    assert!(conflict["expected"]["allowed"].is_boolean());
+    assert!(conflict["predicted"]["allowed"].is_boolean());
+    assert!(
+        !serde_json::to_string(conflict)
+            .expect("conflict should serialize")
+            .contains("review_"),
+        "conflict report should only include rule-referenced features"
+    );
+}
+
+#[test]
+fn build_show_conflicts_writes_action_conflict_report_for_unfit_traces() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    let traces = temp.path().join("actions.csv");
+    let output_dir = temp.path().join("actions_output");
+    fs::write(
+        &traces,
+        "soil_moisture,next_action\n10,water\n10,wait\n40,wait\n",
+    )
+    .expect("trace fixture should write");
+
+    let output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&traces)
+        .arg("--action-column")
+        .arg("next_action")
+        .arg("--default-action")
+        .arg("wait")
+        .arg("--show-conflicts")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--json")
+        .output()
+        .expect("logicpearl action build should run");
+    assert!(
+        output.status.success(),
+        "logicpearl action build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build_json: Value =
+        serde_json::from_slice(&output.stdout).expect("build output should be JSON");
+    assert!(build_json["training_parity"].as_f64().unwrap_or(1.0) < 1.0);
+    assert!(build_json["conflict_count"].as_u64().unwrap_or(0) > 0);
+    let conflict_path = report_output_path(
+        &output_dir,
+        build_json["conflict_report"]
+            .as_str()
+            .expect("conflict report path should be present"),
+    );
+    let conflict_report: Value = serde_json::from_str(
+        &fs::read_to_string(conflict_path).expect("conflict report should be readable"),
+    )
+    .expect("conflict report should be JSON");
+    assert_eq!(conflict_report["decision_kind"].as_str(), Some("action"));
+    let conflict = &conflict_report["conflicts"][0];
+    assert!(conflict["expected"]["action"].is_string());
+    assert!(conflict["predicted"]["action"].is_string());
+    assert!(conflict["predicted"]["bitmask"].is_number());
+}
+
+#[test]
+fn action_build_can_return_distinct_no_match_action() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp output dir should be created");
+    let traces = temp.path().join("actions.csv");
+    let output_dir = temp.path().join("actions_output");
+    let input = temp.path().join("input.json");
+    fs::write(
+        &traces,
+        "soil_moisture,next_action\n10,water\n12,water\n40,releasable\n45,releasable\n",
+    )
+    .expect("trace fixture should write");
+    fs::write(&input, r#"{"soil_moisture": 25}"#).expect("input fixture should write");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&traces)
+        .arg("--action-column")
+        .arg("next_action")
+        .arg("--default-action")
+        .arg("releasable")
+        .arg("--no-match-action")
+        .arg("insufficient_context")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--json")
+        .output()
+        .expect("logicpearl action build should run");
+    assert!(
+        build_output.status.success(),
+        "logicpearl action build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    let build_json: Value =
+        serde_json::from_slice(&build_output.stdout).expect("build output should be JSON");
+    assert_eq!(
+        build_json["no_match_action"].as_str(),
+        Some("insufficient_context")
+    );
+
+    let run_output = Command::new(cli_bin)
+        .arg("run")
+        .arg(&output_dir)
+        .arg(&input)
+        .arg("--json")
+        .output()
+        .expect("logicpearl run should run");
+    assert!(
+        run_output.status.success(),
+        "logicpearl run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let run_json: Value =
+        serde_json::from_slice(&run_output.stdout).expect("run output should be JSON");
+    assert_eq!(run_json["action"].as_str(), Some("insufficient_context"));
+    assert_eq!(run_json["default_action"].as_str(), Some("releasable"));
+    assert_eq!(
+        run_json["no_match_action"].as_str(),
+        Some("insufficient_context")
+    );
+    assert_eq!(run_json["defaulted"].as_bool(), Some(true));
+    assert_eq!(run_json["no_match"].as_bool(), Some(true));
+    assert_eq!(run_json["matched_rules"].as_array().map(Vec::len), Some(0));
 }
 
 #[test]

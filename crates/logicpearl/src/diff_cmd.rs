@@ -4,7 +4,7 @@ use anstream::println;
 use clap::Args;
 use logicpearl_ir::{
     canonical_expression_key, ActionRuleDefinition, ComparisonValue, Expression, FeatureSemantics,
-    InputSchema, LogicPearlActionIr, LogicPearlGateIr, RuleDefinition,
+    InputSchema, LogicPearlActionIr, LogicPearlGateIr, RuleDefinition, RuleEvidence,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,6 +32,7 @@ struct ArtifactDiffReport {
     summary: DiffSummary,
     changed_rules: Vec<RuleChange>,
     reordered_rules: Vec<RulePairChange>,
+    evidence_changed_rules: Vec<RuleChange>,
     added_rules: Vec<RuleSnapshot>,
     removed_rules: Vec<RuleSnapshot>,
 }
@@ -44,12 +45,15 @@ struct ActionPolicyDiffReport {
     new_action_policy_id: String,
     old_default_action: String,
     new_default_action: String,
+    old_no_match_action: Option<String>,
+    new_no_match_action: Option<String>,
     action_changes: ActionChanges,
     feature_changes: FeatureChanges,
     feature_dictionary_changes: FeatureDictionaryChanges,
     summary: ActionDiffSummary,
     changed_rules: Vec<RuleChange>,
     reordered_rules: Vec<RulePairChange>,
+    evidence_changed_rules: Vec<RuleChange>,
     added_rules: Vec<RuleSnapshot>,
     removed_rules: Vec<RuleSnapshot>,
 }
@@ -109,8 +113,10 @@ struct DiffSummary {
     source_schema_changed: bool,
     learned_rule_changed: bool,
     rule_explanation_changed: bool,
+    rule_evidence_changed: bool,
     changed_rules: usize,
     reordered_rules: usize,
+    evidence_changed_rules: usize,
     added_rules: usize,
     removed_rules: usize,
 }
@@ -120,12 +126,15 @@ struct ActionDiffSummary {
     source_schema_changed: bool,
     action_set_changed: bool,
     default_action_changed: bool,
+    no_match_action_changed: bool,
     rule_predicate_changed: bool,
     rule_priority_changed: bool,
     learned_rule_changed: bool,
     rule_explanation_changed: bool,
+    rule_evidence_changed: bool,
     changed_rules: usize,
     reordered_rules: usize,
+    evidence_changed_rules: usize,
     added_rules: usize,
     removed_rules: usize,
 }
@@ -149,6 +158,8 @@ struct RuleSnapshot {
     severity: Option<String>,
     counterfactual_hint: Option<String>,
     verification_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<RuleEvidence>,
     semantic_signature: String,
     raw_expression: Value,
     expression: Value,
@@ -276,15 +287,17 @@ fn render_gate_diff_report(report: &ArtifactDiffReport, json: bool) -> Result<()
             format!("-{}", report.summary.removed_rules).red()
         );
         println!(
-            "  {} source_schema={} learned_rule={} rule_explanation={}",
+            "  {} source_schema={} learned_rule={} rule_explanation={} rule_evidence={}",
             "Change classes".bright_black(),
             report.summary.source_schema_changed,
             report.summary.learned_rule_changed,
-            report.summary.rule_explanation_changed
+            report.summary.rule_explanation_changed,
+            report.summary.rule_evidence_changed
         );
 
         render_changed_rules("Changed Rules", &report.changed_rules);
         render_reordered_rules("Reordered Or Renamed Rules", &report.reordered_rules);
+        render_changed_rules("Evidence Changed Rules", &report.evidence_changed_rules);
         render_rule_snapshots("Added Rules", &report.added_rules, "Added");
         render_rule_snapshots("Removed Rules", &report.removed_rules, "Removed");
     }
@@ -329,6 +342,22 @@ fn render_action_diff_report(report: &ActionPolicyDiffReport, json: bool) -> Res
                 report.old_default_action
             );
         }
+        if report.old_no_match_action != report.new_no_match_action {
+            println!(
+                "  {} {} → {}",
+                "No-match action".bright_black(),
+                report
+                    .old_no_match_action
+                    .as_deref()
+                    .unwrap_or("<default-action>"),
+                report
+                    .new_no_match_action
+                    .as_deref()
+                    .unwrap_or("<default-action>")
+            );
+        } else if let Some(no_match_action) = &report.old_no_match_action {
+            println!("  {} {}", "No-match action".bright_black(), no_match_action);
+        }
         println!(
             "  {} {} / {}",
             "Actions".bright_black(),
@@ -350,19 +379,22 @@ fn render_action_diff_report(report: &ActionPolicyDiffReport, json: bool) -> Res
             format!("-{}", report.summary.removed_rules).red()
         );
         println!(
-            "  {} source_schema={} action_set={} default_action={} rule_predicate={} rule_priority={} learned_rule={} rule_explanation={}",
+            "  {} source_schema={} action_set={} default_action={} no_match_action={} rule_predicate={} rule_priority={} learned_rule={} rule_explanation={} rule_evidence={}",
             "Change classes".bright_black(),
             report.summary.source_schema_changed,
             report.summary.action_set_changed,
             report.summary.default_action_changed,
+            report.summary.no_match_action_changed,
             report.summary.rule_predicate_changed,
             report.summary.rule_priority_changed,
             report.summary.learned_rule_changed,
-            report.summary.rule_explanation_changed
+            report.summary.rule_explanation_changed,
+            report.summary.rule_evidence_changed
         );
 
         render_changed_rules("Changed Rules", &report.changed_rules);
         render_reordered_rules("Reordered Or Renamed Rules", &report.reordered_rules);
+        render_changed_rules("Evidence Changed Rules", &report.evidence_changed_rules);
         render_rule_snapshots("Added Rules", &report.added_rules, "Added");
         render_rule_snapshots("Removed Rules", &report.removed_rules, "Removed");
     }
@@ -534,6 +566,7 @@ fn diff_gates(
 
     let mut changed_rules = Vec::new();
     let mut reordered_rules = Vec::new();
+    let mut evidence_changed_rules = Vec::new();
 
     let old_by_id = old_indexed
         .iter()
@@ -573,6 +606,15 @@ fn diff_gates(
                 } else {
                     "metadata_changed".to_string()
                 },
+            });
+        } else if evidence_signature(old_rule.rule.evidence.as_ref())
+            != evidence_signature(new_rule.rule.evidence.as_ref())
+        {
+            evidence_changed_rules.push(RuleChange {
+                rule_id: rule_id.clone(),
+                change_kind: "evidence_changed".to_string(),
+                old_rule: snapshot_rule(old_rule, old_gate),
+                new_rule: snapshot_rule(new_rule, new_gate),
             });
         }
     }
@@ -650,8 +692,10 @@ fn diff_gates(
         source_schema_changed,
         learned_rule_changed,
         rule_explanation_changed,
+        rule_evidence_changed: !evidence_changed_rules.is_empty(),
         changed_rules: changed_rules.len(),
         reordered_rules: reordered_rules.len(),
+        evidence_changed_rules: evidence_changed_rules.len(),
         added_rules: added_rules.len(),
         removed_rules: removed_rules.len(),
     };
@@ -666,6 +710,7 @@ fn diff_gates(
         summary,
         changed_rules,
         reordered_rules,
+        evidence_changed_rules,
         added_rules,
         removed_rules,
     })
@@ -700,6 +745,7 @@ fn diff_action_policies(
 
     let mut changed_rules = Vec::new();
     let mut reordered_rules = Vec::new();
+    let mut evidence_changed_rules = Vec::new();
 
     let old_by_id = old_indexed
         .iter()
@@ -751,6 +797,15 @@ fn diff_action_policies(
                 } else {
                     "metadata_changed".to_string()
                 },
+            });
+        } else if evidence_signature(old_rule.rule.evidence.as_ref())
+            != evidence_signature(new_rule.rule.evidence.as_ref())
+        {
+            evidence_changed_rules.push(RuleChange {
+                rule_id: rule_id.clone(),
+                change_kind: "evidence_changed".to_string(),
+                old_rule: snapshot_action_rule(old_rule, old_policy),
+                new_rule: snapshot_action_rule(new_rule, new_policy),
             });
         }
     }
@@ -821,6 +876,7 @@ fn diff_action_policies(
 
     let action_set_changed = !action_changes.added.is_empty() || !action_changes.removed.is_empty();
     let default_action_changed = old_policy.default_action != new_policy.default_action;
+    let no_match_action_changed = old_policy.no_match_action != new_policy.no_match_action;
     let rule_predicate_changed = changed_rules
         .iter()
         .any(|change| change.change_kind == "rule_predicate_changed");
@@ -853,12 +909,15 @@ fn diff_action_policies(
         source_schema_changed,
         action_set_changed,
         default_action_changed,
+        no_match_action_changed,
         rule_predicate_changed,
         rule_priority_changed,
         learned_rule_changed,
         rule_explanation_changed,
+        rule_evidence_changed: !evidence_changed_rules.is_empty(),
         changed_rules: changed_rules.len(),
         reordered_rules: reordered_rules.len(),
+        evidence_changed_rules: evidence_changed_rules.len(),
         added_rules: added_rules.len(),
         removed_rules: removed_rules.len(),
     };
@@ -870,12 +929,15 @@ fn diff_action_policies(
         new_action_policy_id: new_policy.action_policy_id.clone(),
         old_default_action: old_policy.default_action.clone(),
         new_default_action: new_policy.default_action.clone(),
+        old_no_match_action: old_policy.no_match_action.clone(),
+        new_no_match_action: new_policy.no_match_action.clone(),
         action_changes,
         feature_changes,
         feature_dictionary_changes,
         summary,
         changed_rules,
         reordered_rules,
+        evidence_changed_rules,
         added_rules,
         removed_rules,
     })
@@ -942,6 +1004,7 @@ fn snapshot_rule_inner(
                 .trim_matches('"')
                 .to_string()
         }),
+        evidence: rule.rule.evidence.clone(),
         semantic_signature: rule.semantic_signature.clone(),
         raw_expression: raw_expression.clone(),
         expression: raw_expression,
@@ -985,6 +1048,7 @@ fn snapshot_action_rule_inner(
                 .trim_matches('"')
                 .to_string()
         }),
+        evidence: rule.rule.evidence.clone(),
         semantic_signature: rule.semantic_signature.clone(),
         raw_expression: raw_expression.clone(),
         expression: raw_expression,
@@ -1307,6 +1371,10 @@ fn metadata_signature(rule: &RuleDefinition) -> String {
     .unwrap_or_default()
 }
 
+fn evidence_signature(evidence: Option<&RuleEvidence>) -> String {
+    serde_json::to_string(&evidence).unwrap_or_default()
+}
+
 fn action_metadata_signature(rule: &ActionRuleDefinition) -> String {
     serde_json::to_string(&serde_json::json!({
         "label": rule.label,
@@ -1340,7 +1408,8 @@ mod tests {
     use logicpearl_ir::{
         ActionEvaluationConfig, ActionSelectionStrategy, CombineStrategy, ComparisonExpression,
         ComparisonOperator, ComparisonValue, EvaluationConfig, Expression, FeatureDefinition,
-        FeatureType, GateType, InputSchema, LogicPearlGateIr, RuleKind,
+        FeatureType, GateType, InputSchema, LogicPearlGateIr, RuleEvidence, RuleKind,
+        RuleSupportEvidence, RuleTraceEvidence,
     };
     use serde_json::{json, Value};
     use std::path::PathBuf;
@@ -1389,6 +1458,7 @@ mod tests {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         }
     }
 
@@ -1403,6 +1473,7 @@ mod tests {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         }
     }
 
@@ -1417,6 +1488,7 @@ mod tests {
             action_policy_type: "priority_rules".to_string(),
             action_column: "next_action".to_string(),
             default_action: default_action.to_string(),
+            no_match_action: None,
             actions: actions.into_iter().map(ToOwned::to_owned).collect(),
             input_schema: InputSchema {
                 features: vec![FeatureDefinition {
@@ -1464,6 +1536,7 @@ mod tests {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         }
     }
 
@@ -1481,6 +1554,23 @@ mod tests {
                 pearl_ir: PathBuf::from("/tmp/new/pearl.ir.json"),
             },
         )
+    }
+
+    fn rule_evidence(trace_hash: &str) -> RuleEvidence {
+        RuleEvidence {
+            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            support: RuleSupportEvidence {
+                denied_trace_count: 1,
+                allowed_trace_count: 0,
+                example_traces: vec![RuleTraceEvidence {
+                    trace_row_hash: trace_hash.to_string(),
+                    source_id: Some("policy".to_string()),
+                    source_anchor: Some("section-1".to_string()),
+                    citation: Some("Policy section 1".to_string()),
+                    quote_hash: Some(trace_hash.to_string()),
+                }],
+            },
+        }
     }
 
     fn feature_semantics(
@@ -1649,6 +1739,72 @@ mod tests {
     }
 
     #[test]
+    fn diff_action_policies_separates_no_match_action_changes() {
+        let old_policy = action_policy_with_rules(
+            "do_nothing",
+            vec!["do_nothing", "water", "insufficient_context"],
+            vec![action_rule(
+                "rule_water",
+                0,
+                "water",
+                0,
+                ComparisonOperator::Lt,
+                json!(21),
+            )],
+        );
+        let mut new_policy = old_policy.clone();
+        new_policy.no_match_action = Some("insufficient_context".to_string());
+        let (old_resolved, new_resolved) = resolved_inputs();
+
+        let report = diff_action_policies(&old_policy, &new_policy, &old_resolved, &new_resolved)
+            .expect("action diff should succeed");
+
+        assert!(report.summary.no_match_action_changed);
+        assert!(!report.summary.action_set_changed);
+        assert!(!report.summary.learned_rule_changed);
+        assert!(!report.summary.rule_explanation_changed);
+        assert_eq!(report.old_no_match_action, None);
+        assert_eq!(
+            report.new_no_match_action.as_deref(),
+            Some("insufficient_context")
+        );
+    }
+
+    #[test]
+    fn diff_action_policies_separates_rule_evidence_only_changes() {
+        let mut old_policy = action_policy_with_rules(
+            "do_nothing",
+            vec!["do_nothing", "water"],
+            vec![action_rule(
+                "rule_water",
+                0,
+                "water",
+                0,
+                ComparisonOperator::Lt,
+                json!(18),
+            )],
+        );
+        let mut new_policy = old_policy.clone();
+        old_policy.rules[0].evidence = Some(rule_evidence(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ));
+        new_policy.rules[0].evidence = Some(rule_evidence(
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        ));
+        let (old_resolved, new_resolved) = resolved_inputs();
+
+        let report = diff_action_policies(&old_policy, &new_policy, &old_resolved, &new_resolved)
+            .expect("action diff should succeed");
+
+        assert!(!report.summary.source_schema_changed);
+        assert!(!report.summary.learned_rule_changed);
+        assert!(!report.summary.rule_explanation_changed);
+        assert!(report.summary.rule_evidence_changed);
+        assert_eq!(report.summary.evidence_changed_rules, 1);
+        assert_eq!(report.evidence_changed_rules[0].rule_id, "rule_water");
+    }
+
+    #[test]
     fn diff_reports_added_and_removed_rules() {
         let old_gate = gate_with_rules(vec![predicate_rule(
             "rule_a",
@@ -1783,6 +1939,33 @@ mod tests {
         assert!(report.summary.rule_explanation_changed);
         assert_eq!(report.feature_dictionary_changes.changed.len(), 1);
         assert!(report.feature_dictionary_changes.changed[0].explanation_changed);
+    }
+
+    #[test]
+    fn diff_separates_rule_evidence_only_changes() {
+        let mut old_gate = gate_with_rules(vec![predicate_rule(
+            "age_guard",
+            0,
+            ComparisonOperator::Lt,
+            json!(18),
+        )]);
+        let mut new_gate = old_gate.clone();
+        old_gate.rules[0].evidence = Some(rule_evidence(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ));
+        new_gate.rules[0].evidence = Some(rule_evidence(
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        ));
+        let (old_resolved, new_resolved) = resolved_inputs();
+
+        let report = diff_gates(&old_gate, &new_gate, &old_resolved, &new_resolved)
+            .expect("diff should succeed");
+        assert!(!report.summary.source_schema_changed);
+        assert!(!report.summary.learned_rule_changed);
+        assert!(!report.summary.rule_explanation_changed);
+        assert!(report.summary.rule_evidence_changed);
+        assert_eq!(report.summary.evidence_changed_rules, 1);
+        assert_eq!(report.evidence_changed_rules[0].rule_id, "age_guard");
     }
 
     #[test]

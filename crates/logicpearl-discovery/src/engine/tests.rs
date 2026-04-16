@@ -752,7 +752,11 @@ fn row(score: f64, allowed: bool) -> DecisionTraceRow {
         "score".to_string(),
         Value::Number(Number::from_f64(score).unwrap()),
     );
-    DecisionTraceRow { features, allowed }
+    DecisionTraceRow {
+        features,
+        allowed,
+        trace_provenance: None,
+    }
 }
 
 fn numeric_candidate(feature: &str, op: ComparisonOperator, value: f64) -> CandidateRule {
@@ -795,7 +799,11 @@ fn binary_pair_row(left: f64, right: f64, allowed: bool) -> DecisionTraceRow {
         "right".to_string(),
         Value::Number(Number::from_f64(right).unwrap()),
     );
-    DecisionTraceRow { features, allowed }
+    DecisionTraceRow {
+        features,
+        allowed,
+        trace_provenance: None,
+    }
 }
 
 fn triad_row(score: f64, rare_flag: f64, noisy_flag: f64, allowed: bool) -> DecisionTraceRow {
@@ -812,7 +820,11 @@ fn triad_row(score: f64, rare_flag: f64, noisy_flag: f64, allowed: bool) -> Deci
         "noisy_flag".to_string(),
         Value::Number(Number::from_f64(noisy_flag).unwrap()),
     );
-    DecisionTraceRow { features, allowed }
+    DecisionTraceRow {
+        features,
+        allowed,
+        trace_provenance: None,
+    }
 }
 
 fn authz_row(
@@ -837,6 +849,7 @@ fn authz_row(
     DecisionTraceRow {
         features,
         allowed: !denied,
+        trace_provenance: None,
     }
 }
 
@@ -871,5 +884,6 @@ fn policy_style_row(spec: PolicyStyleRowSpec) -> DecisionTraceRow {
     DecisionTraceRow {
         features,
         allowed: !spec.denied,
+        trace_provenance: None,
     }
 }

@@ -645,6 +645,7 @@ fn generation_gate(spec: &TraceGenerationSpec) -> Result<LogicPearlGateIr> {
             severity: None,
             counterfactual_hint: None,
             verification_status: None,
+            evidence: None,
         })
         .collect();
     let gate = LogicPearlGateIr {
@@ -796,6 +797,7 @@ fn generate_trace_rows(spec: &TraceGenerationSpec, seed: u64) -> Result<Vec<Deci
         .map(|row| DecisionTraceRow {
             features: row.features,
             allowed: row.allowed,
+            trace_provenance: None,
         })
         .collect())
 }
@@ -1640,18 +1642,22 @@ mod tests {
             DecisionTraceRow {
                 features: HashMap::from([("device".to_string(), json!("web"))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("device".to_string(), json!("web"))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("device".to_string(), json!("mobile"))]),
                 allowed: false,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("device".to_string(), json!("mobile"))]),
                 allowed: false,
+                trace_provenance: None,
             },
         ];
         let report = audit_generated_rows(
@@ -1674,18 +1680,22 @@ mod tests {
             DecisionTraceRow {
                 features: HashMap::from([("contains_xss_signature".to_string(), json!(false))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("contains_xss_signature".to_string(), json!(false))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("contains_xss_signature".to_string(), json!(true))]),
                 allowed: false,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("contains_xss_signature".to_string(), json!(true))]),
                 allowed: false,
+                trace_provenance: None,
             },
         ];
         let report = audit_generated_rows(&rows, "allowed", &HashMap::new(), &HashMap::new(), 0.15)
@@ -1704,18 +1714,22 @@ mod tests {
             DecisionTraceRow {
                 features: HashMap::from([("request_has_body".to_string(), json!(false))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("request_has_body".to_string(), json!(true))]),
                 allowed: true,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("request_has_body".to_string(), json!(true))]),
                 allowed: false,
+                trace_provenance: None,
             },
             DecisionTraceRow {
                 features: HashMap::from([("request_has_body".to_string(), json!(false))]),
                 allowed: false,
+                trace_provenance: None,
             },
         ];
         let report = audit_generated_rows(&rows, "allowed", &HashMap::new(), &HashMap::new(), 0.15)

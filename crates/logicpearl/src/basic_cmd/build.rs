@@ -10,6 +10,7 @@ use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
     DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ResidualRecoveryState,
 };
+use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
     run_plugin_with_policy_and_metadata, PluginManifest, PluginRequest, PluginStage,
 };
@@ -20,6 +21,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::config::apply_build_config;
+use super::conflicts::{
+    add_conflict_summary_to_json, print_conflict_summary, requested_conflict_report_path,
+    write_gate_conflict_report,
+};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, generated_feature_dictionary_for_output,
@@ -392,6 +397,22 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         .flatten(),
     )
     .into_diagnostic()?;
+    let conflicts_requested = args.show_conflicts || args.conflict_report.is_some();
+    let conflict_summary = if conflicts_requested {
+        let gate = LogicPearlGateIr::from_path(&pearl_ir_path)
+            .into_diagnostic()
+            .wrap_err("failed to load pearl IR for conflict report")?;
+        write_gate_conflict_report(
+            requested_conflict_report_path(&artifact_dir, args.conflict_report.as_ref()),
+            &artifact_dir,
+            &gate,
+            &rows,
+            result.training_parity,
+            args.conflict_report.is_some(),
+        )?
+    } else {
+        None
+    };
     persist_build_report(&result)?;
     write_named_artifact_manifest(
         &artifact_dir,
@@ -402,7 +423,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     )?;
 
     if args.json {
-        let report = build_result_for_report(&result);
+        let mut report = serde_json::to_value(build_result_for_report(&result))
+            .into_diagnostic()
+            .wrap_err("failed to serialize build report")?;
+        add_conflict_summary_to_json(&mut report, conflicts_requested, conflict_summary.as_ref());
         println!(
             "{}",
             serde_json::to_string_pretty(&report).into_diagnostic()?
@@ -509,6 +533,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             "Training parity".bright_black(),
             format!("{:.1}%", result.training_parity * 100.0).bold()
         );
+        print_conflict_summary(conflict_summary.as_ref(), conflicts_requested);
         println!(
             "  {} {}",
             "Artifact bundle".bright_black(),

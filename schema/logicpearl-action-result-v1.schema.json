@@ -53,10 +53,21 @@
       "type": "string",
       "minLength": 1
     },
+    "default_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "no_match_action": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
     "bitmask": {
       "$ref": "#/$defs/rule_mask"
     },
     "defaulted": {
+      "type": "boolean"
+    },
+    "no_match": {
       "type": "boolean"
     },
     "selected_rules": {

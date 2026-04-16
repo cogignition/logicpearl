@@ -10,6 +10,7 @@ mod build;
 mod compile;
 mod compose;
 mod config;
+mod conflicts;
 mod discover;
 mod feature_dictionary;
 mod inspect;
@@ -63,7 +64,7 @@ pub(crate) struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -104,9 +105,12 @@ pub(crate) struct BuildArgs {
     /// Rule/fire value for binary gate builds.
     #[arg(long, help_heading = "Advanced")]
     pub rule_label: Option<String>,
-    /// Default action when no action route matches. If omitted, LogicPearl prefers do_nothing, wait, none, or noop when present.
+    /// Business default action. Also used when no action route matches unless --no-match-action is set.
     #[arg(long, help_heading = "Advanced")]
     pub default_action: Option<String>,
+    /// Action returned when no learned action rule matches. Defaults to --default-action.
+    #[arg(long, help_heading = "Advanced")]
+    pub no_match_action: Option<String>,
     /// Maximum total rules emitted across non-default action routes. If omitted, LogicPearl scales per-action budgets from trace support.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub action_max_rules: Option<usize>,
@@ -146,6 +150,12 @@ pub(crate) struct BuildArgs {
     /// JSON file declaring feature governance such as one-sided boolean evidence.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub feature_governance: Option<PathBuf>,
+    /// Write a diagnostic report for trace rows not reproduced by the learned artifact.
+    #[arg(long, help_heading = "Diagnostics")]
+    pub show_conflicts: bool,
+    /// Path for --show-conflicts output. Defaults to conflict_report.json in the output directory.
+    #[arg(long, value_name = "PATH", help_heading = "Diagnostics")]
+    pub conflict_report: Option<PathBuf>,
     /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
     #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
     pub discovery_mode: DiscoveryDecisionModeArg,
@@ -274,7 +284,7 @@ pub(crate) struct CompileArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl inspect examples/getting_started/output --json\n  logicpearl inspect examples/getting_started/output/pearl.ir.json --json"
+    after_help = "Examples:\n  logicpearl inspect examples/getting_started/output --json\n  logicpearl inspect examples/getting_started/output --show-provenance\n  logicpearl inspect examples/getting_started/output/pearl.ir.json --json"
 )]
 pub(crate) struct InspectArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
@@ -283,6 +293,9 @@ pub(crate) struct InspectArgs {
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,
+    /// Include rule evidence such as trace row hashes and source refs.
+    #[arg(long)]
+    pub show_provenance: bool,
 }
 
 #[derive(Debug, Args)]

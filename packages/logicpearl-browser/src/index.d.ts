@@ -52,8 +52,11 @@ export interface ActionResultV1 {
   action_policy_id: string;
   decision_kind: 'action';
   action: string;
+  default_action?: string;
+  no_match_action?: string | null;
   bitmask: RuleMaskJson;
   defaulted: boolean;
+  no_match?: boolean;
   selected_rules: ActionRuleExplanationV1[];
   matched_rules: ActionRuleExplanationV1[];
   candidate_actions: string[];
@@ -168,7 +171,10 @@ export interface BrowserActionEvaluation {
   policyId: string;
   actionPolicyId: string;
   action: string;
+  defaultAction: string;
+  noMatchAction: string | null;
   defaulted: boolean;
+  noMatch: boolean;
   ambiguity: string | null;
   bitmask: bigint;
   matchedRuleIds: string[];

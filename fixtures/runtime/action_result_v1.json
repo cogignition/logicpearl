@@ -7,8 +7,11 @@
   "action_policy_id": "garden_actions",
   "decision_kind": "action",
   "action": "water",
+  "default_action": "do_nothing",
+  "no_match_action": null,
   "bitmask": 1,
   "defaulted": false,
+  "no_match": false,
   "selected_rules": [
     {
       "id": "rule_000",

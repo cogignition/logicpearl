@@ -9,8 +9,9 @@
 
 use logicpearl_core::{provenance_safe_path, provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_discovery::{
-    build_pearl_from_rows, learn_gate_from_rows_without_numeric_interactions,
-    BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
+    action_trace_provenance_from_record, build_pearl_from_rows,
+    learn_gate_from_rows_without_numeric_interactions, BuildCommandProvenance,
+    BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult, DecisionTraceProvenance,
     DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection, FileProvenance,
     LoadedFlatRecords, PluginBuildProvenance, SourceManifest, SourceManifestProvenance,
     TraceInputProvenance,
@@ -39,6 +40,7 @@ pub struct PreparedActionTraces {
     pub actions: Vec<String>,
     pub action_by_row: Vec<String>,
     pub features_by_row: Vec<HashMap<String, Value>>,
+    pub trace_provenance_by_row: Vec<DecisionTraceProvenance>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +48,7 @@ pub struct ActionLearningOptions {
     pub artifact_name: String,
     pub action_column: String,
     pub default_action: Option<String>,
+    pub no_match_action: Option<String>,
     pub action_priority: Option<String>,
     pub action_max_rules: Option<usize>,
     pub output_dir: PathBuf,
@@ -60,6 +63,7 @@ pub struct ActionLearningOptions {
 pub struct ActionLearningResult {
     pub action_policy: LogicPearlActionIr,
     pub default_action: String,
+    pub no_match_action: Option<String>,
     pub priority_order: Vec<String>,
     pub rule_budget: ActionRuleBudgetReport,
     pub training_parity: f64,
@@ -140,6 +144,7 @@ pub fn prepare_action_traces_with_feature_selection(
     let mut actions = Vec::<String>::new();
     let mut action_by_row = Vec::<String>::new();
     let mut features_by_row = Vec::<HashMap<String, Value>>::new();
+    let mut trace_provenance_by_row = Vec::<DecisionTraceProvenance>::new();
     for (index, record) in loaded.records.iter().enumerate() {
         let raw_action = record.get(action_column).ok_or_else(|| {
             LogicPearlError::message(format!(
@@ -167,8 +172,10 @@ pub fn prepare_action_traces_with_feature_selection(
             })?;
             features.insert(feature.clone(), value.clone());
         }
+        let trace_provenance = action_trace_provenance_from_record(record, &features, &action);
         action_by_row.push(action);
         features_by_row.push(features);
+        trace_provenance_by_row.push(trace_provenance);
     }
     if actions.len() < 2 {
         return Err(LogicPearlError::message(
@@ -181,6 +188,7 @@ pub fn prepare_action_traces_with_feature_selection(
         actions,
         action_by_row,
         features_by_row,
+        trace_provenance_by_row,
     })
 }
 
@@ -190,6 +198,7 @@ pub fn learn_action_policy(
 ) -> Result<ActionLearningResult> {
     let default_action =
         resolve_default_action(options.default_action.as_deref(), &traces.actions)?;
+    let no_match_action = resolve_no_match_action(options.no_match_action.as_deref())?;
     let support_counts = action_support_counts(&traces.action_by_row);
     let priority_order = resolve_action_priority_order(
         &traces.actions,
@@ -225,6 +234,7 @@ pub fn learn_action_policy(
                 Some(DecisionTraceRow {
                     features: features.clone(),
                     allowed: !is_target_action,
+                    trace_provenance: traces.trace_provenance_by_row.get(index).cloned(),
                 })
             })
             .collect::<Vec<_>>();
@@ -288,6 +298,7 @@ pub fn learn_action_policy(
                 severity: rule.severity,
                 counterfactual_hint: rule.counterfactual_hint,
                 verification_status: rule.verification_status,
+                evidence: rule.evidence,
             });
         }
     }
@@ -295,13 +306,21 @@ pub fn learn_action_policy(
     let input_schema = input_schema.ok_or_else(|| {
         LogicPearlError::message("action build did not produce any non-default action rules")
     })?;
+    let mut actions = traces.actions.clone();
+    if let Some(no_match_action) = &no_match_action {
+        if !actions.iter().any(|known| known == no_match_action) {
+            actions.push(no_match_action.clone());
+        }
+    }
+
     let action_policy = LogicPearlActionIr {
         ir_version: "1.0".to_string(),
         action_policy_id: options.artifact_name.clone(),
         action_policy_type: "priority_rules".to_string(),
         action_column: options.action_column.clone(),
         default_action: default_action.clone(),
-        actions: traces.actions.clone(),
+        no_match_action: no_match_action.clone(),
+        actions,
         input_schema,
         rules: action_rules,
         evaluation: ActionEvaluationConfig {
@@ -327,6 +346,7 @@ pub fn learn_action_policy(
     Ok(ActionLearningResult {
         action_policy,
         default_action,
+        no_match_action,
         priority_order,
         rule_budget,
         training_parity,
@@ -586,6 +606,19 @@ fn resolve_default_action(explicit: Option<&str>, actions: &[String]) -> Result<
         }
     }
     Ok(actions[0].clone())
+}
+
+fn resolve_no_match_action(explicit: Option<&str>) -> Result<Option<String>> {
+    let Some(action) = explicit else {
+        return Ok(None);
+    };
+    let action = action.trim();
+    if action.is_empty() {
+        return Err(LogicPearlError::message(
+            "--no-match-action must be non-empty when provided",
+        ));
+    }
+    Ok(Some(action.to_string()))
 }
 
 fn action_support_counts(action_by_row: &[String]) -> BTreeMap<String, usize> {
@@ -988,6 +1021,7 @@ fn is_safe_build_option_key(key: &str) -> bool {
             | "label_column"
             | "max_rules"
             | "negative_label"
+            | "no_match_action"
             | "positive_label"
             | "priority_order"
             | "refine"

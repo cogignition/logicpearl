@@ -24,6 +24,7 @@ struct LogicPearlBuildConfig {
     default_label: Option<String>,
     rule_label: Option<String>,
     default_action: Option<String>,
+    no_match_action: Option<String>,
     action_max_rules: Option<usize>,
     action_priority: Option<String>,
     #[serde(default)]
@@ -31,6 +32,9 @@ struct LogicPearlBuildConfig {
     feature_dictionary: Option<PathBuf>,
     source_manifest: Option<PathBuf>,
     feature_governance: Option<PathBuf>,
+    #[serde(default)]
+    show_conflicts: bool,
+    conflict_report: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -111,6 +115,9 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     if args.default_action.is_none() {
         args.default_action = build.default_action;
     }
+    if args.no_match_action.is_none() {
+        args.no_match_action = build.no_match_action;
+    }
     if args.action_max_rules.is_none() {
         args.action_max_rules = build.action_max_rules;
     }
@@ -133,6 +140,14 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     if args.feature_governance.is_none() {
         args.feature_governance = build
             .feature_governance
+            .map(|path| resolve_config_path(&config_path, path));
+    }
+    if !args.show_conflicts {
+        args.show_conflicts = build.show_conflicts;
+    }
+    if args.conflict_report.is_none() {
+        args.conflict_report = build
+            .conflict_report
             .map(|path| resolve_config_path(&config_path, path));
     }
     Ok(())

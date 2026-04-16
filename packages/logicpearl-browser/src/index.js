@@ -205,7 +205,7 @@ export class LogicPearlBrowserArtifact {
         );
         const defaulted = candidateActions.length === 0;
         const action = defaulted
-          ? this.metadata.default_action
+          ? (this.metadata.no_match_action ?? this.metadata.default_action)
           : candidateActions[0];
         const selectedRules = orderedRules.filter((rule) => rule.action === action);
         const ambiguity =
@@ -221,7 +221,10 @@ export class LogicPearlBrowserArtifact {
           policyId: artifactId,
           actionPolicyId: this.metadata.action_policy_id ?? artifactId,
           action,
+          defaultAction: this.metadata.default_action,
+          noMatchAction: this.metadata.no_match_action ?? null,
           defaulted,
+          noMatch: defaulted,
           ambiguity,
           bitmask,
           matchedRuleIds: orderedRules.map((rule) => rule.id),
@@ -277,8 +280,11 @@ export class LogicPearlBrowserArtifact {
         action_policy_id: result.actionPolicyId,
         decision_kind: 'action',
         action: result.action,
+        default_action: result.defaultAction,
+        no_match_action: result.noMatchAction,
         bitmask: bitmaskToJson(result.bitmask),
         defaulted: result.defaulted,
+        no_match: result.noMatch,
         selected_rules: result.selectedRules.map(normalizeActionRuleExplanation),
         matched_rules: result.matchedRules.map(normalizeActionRuleExplanation),
         candidate_actions: result.candidateActions,

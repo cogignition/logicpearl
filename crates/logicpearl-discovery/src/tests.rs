@@ -341,6 +341,68 @@ fn build_pearl_from_csv_emits_gate_ir_and_report() {
 }
 
 #[test]
+fn build_pearl_records_rule_evidence_from_trace_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "age,source_id,source_anchor,source_citation,source_quote,allowed\n21,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,allowed\n25,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,allowed\n16,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,denied\n15,foia,552b5,5 USC 552(b)(5),inter agency memo exemption,denied\n",
+    )
+    .unwrap();
+    let output_dir = dir.path().join("output");
+
+    let result = build_pearl_from_csv(
+        &csv_path,
+        &BuildOptions {
+            output_dir: PathBuf::from(&output_dir),
+            gate_id: "evidence_gate".to_string(),
+            label_column: "allowed".to_string(),
+            positive_label: None,
+            negative_label: None,
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+            max_rules: None,
+            feature_selection: FeatureColumnSelection {
+                feature_columns: None,
+                exclude_columns: vec![
+                    "source_id".to_string(),
+                    "source_anchor".to_string(),
+                    "source_citation".to_string(),
+                    "source_quote".to_string(),
+                ],
+            },
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.rules_discovered, 1);
+    let ir = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    let evidence = ir.rules[0]
+        .evidence
+        .as_ref()
+        .expect("learned rule should carry evidence");
+    assert_eq!(evidence.schema_version, "logicpearl.rule_evidence.v1");
+    assert_eq!(evidence.support.denied_trace_count, 2);
+    assert_eq!(evidence.support.allowed_trace_count, 0);
+    assert!(!evidence.support.example_traces.is_empty());
+    let example = &evidence.support.example_traces[0];
+    assert!(example.trace_row_hash.starts_with("sha256:"));
+    assert_eq!(example.source_id.as_deref(), Some("foia"));
+    assert_eq!(example.source_anchor.as_deref(), Some("552b5"));
+    assert_eq!(example.citation.as_deref(), Some("5 USC 552(b)(5)"));
+    assert!(example
+        .quote_hash
+        .as_deref()
+        .is_some_and(|hash| hash.starts_with("sha256:")));
+    let ir_text = std::fs::read_to_string(output_dir.join("pearl.ir.json")).unwrap();
+    assert!(!ir_text.contains("inter agency memo exemption"));
+}
+
+#[test]
 fn build_pearl_from_jsonl_emits_gate_ir_and_report() {
     let dir = tempfile::tempdir().unwrap();
     let jsonl_path = dir.path().join("decision_traces.jsonl");
@@ -393,6 +455,7 @@ fn canonicalize_rules_merges_adjacent_numeric_intervals() {
             severity: Some("high".to_string()),
             counterfactual_hint: Some("lower toxicity".to_string()),
             verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            evidence: None,
         },
         RuleDefinition {
             id: "rule_b".to_string(),
@@ -408,6 +471,7 @@ fn canonicalize_rules_merges_adjacent_numeric_intervals() {
             severity: Some("high".to_string()),
             counterfactual_hint: Some("lower toxicity".to_string()),
             verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+            evidence: None,
         },
     ];
 
@@ -444,6 +508,7 @@ fn canonicalize_rules_preserves_distinct_messages() {
             severity: None,
             counterfactual_hint: None,
             verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            evidence: None,
         },
         RuleDefinition {
             id: "rule_b".to_string(),
@@ -459,6 +524,7 @@ fn canonicalize_rules_preserves_distinct_messages() {
             severity: None,
             counterfactual_hint: None,
             verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+            evidence: None,
         },
     ];
 
@@ -1268,6 +1334,7 @@ fn dedupe_prefers_stronger_verification_for_same_rule() {
         severity: None,
         counterfactual_hint: None,
         verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+        evidence: None,
     };
     let refined_rule = RuleDefinition {
         id: "rule_b".to_string(),
@@ -1283,6 +1350,7 @@ fn dedupe_prefers_stronger_verification_for_same_rule() {
         severity: None,
         counterfactual_hint: None,
         verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+        evidence: None,
     };
 
     let deduped = dedupe_rules_by_signature(vec![pipeline_rule, refined_rule]);
@@ -1311,6 +1379,7 @@ fn merge_applies_pinned_rule_layer() {
         severity: None,
         counterfactual_hint: None,
         verification_status: Some(RuleVerificationStatus::PipelineUnverified),
+        evidence: None,
     }];
     let pinned = PinnedRuleSet {
         rule_set_version: "1.0".to_string(),
@@ -1338,6 +1407,7 @@ fn merge_applies_pinned_rule_layer() {
             severity: None,
             counterfactual_hint: None,
             verification_status: Some(RuleVerificationStatus::RefinedUnverified),
+            evidence: None,
         }],
     };
 
@@ -1419,6 +1489,7 @@ fn row(features: &[(&str, i64)], allowed: bool) -> DecisionTraceRow {
             .map(|(name, value)| ((*name).to_string(), Value::Number(Number::from(*value))))
             .collect::<HashMap<_, _>>(),
         allowed,
+        trace_provenance: None,
     }
 }
 
@@ -1429,6 +1500,7 @@ fn row_values(features: &[(&str, Value)], allowed: bool) -> DecisionTraceRow {
             .map(|(name, value)| ((*name).to_string(), value.clone()))
             .collect::<HashMap<_, _>>(),
         allowed,
+        trace_provenance: None,
     }
 }
 
