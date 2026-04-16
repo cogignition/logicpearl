@@ -175,6 +175,7 @@ fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
     run_workspace_clippy(repo_root)?;
     run_workspace_tests(repo_root)?;
     run_browser_runtime_tests(repo_root)?;
+    run_python_runtime_checks(repo_root)?;
     run_install_smoke_test(repo_root)?;
     run_repo_command(
         repo_root,
@@ -192,6 +193,7 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
     run_workspace_clippy(repo_root)?;
     run_pre_commit_contract_tests(repo_root)?;
     run_browser_runtime_tests(repo_root)?;
+    run_python_runtime_checks(repo_root)?;
     Ok(())
 }
 
@@ -286,6 +288,31 @@ fn run_browser_runtime_tests(repo_root: &Path) -> Result<()> {
         &[
             "--test",
             "packages/logicpearl-browser/test/browser-runtime.test.mjs",
+        ],
+    )
+}
+
+fn run_python_runtime_checks(repo_root: &Path) -> Result<()> {
+    run_repo_command(
+        repo_root,
+        "cargo",
+        &[
+            "clippy",
+            "--manifest-path",
+            "packages/logicpearl-python/Cargo.toml",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    run_repo_command(
+        repo_root,
+        "cargo",
+        &[
+            "test",
+            "--manifest-path",
+            "packages/logicpearl-python/Cargo.toml",
         ],
     )
 }

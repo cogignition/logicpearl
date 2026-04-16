@@ -12,8 +12,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_MANIFEST = REPO_ROOT / "Cargo.toml"
 BROWSER_PACKAGE_JSON = REPO_ROOT / "packages" / "logicpearl-browser" / "package.json"
-PYTHON_PYPROJECT = REPO_ROOT / "reserved-python" / "logicpearl" / "pyproject.toml"
-PYTHON_MANIFEST = REPO_ROOT / "reserved-python" / "logicpearl" / "Cargo.toml"
+PYTHON_PYPROJECT = REPO_ROOT / "packages" / "logicpearl-python" / "pyproject.toml"
+PYTHON_MANIFEST = REPO_ROOT / "packages" / "logicpearl-python" / "Cargo.toml"
 
 
 def load_toml(path: Path) -> dict:

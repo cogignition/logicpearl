@@ -34,6 +34,8 @@ Use these pages when you need the reference material behind that loop.
   Multi-stage execution with explicit stage inputs plus first-class override pipelines for layered pearls.
 - [Browser runtime](./browser-runtime.md)
   Browser-safe Wasm evaluation through `@logicpearl/browser`.
+- [Python runtime](./python-runtime.md)
+  In-process Python bindings over `logicpearl-engine`.
 
 ## Evidence And Examples
 

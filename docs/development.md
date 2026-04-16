@@ -40,6 +40,13 @@ Browser runtime tests:
 node --test packages/logicpearl-browser/test/browser-runtime.test.mjs
 ```
 
+Python runtime binding tests:
+
+```bash
+cargo clippy --manifest-path packages/logicpearl-python/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path packages/logicpearl-python/Cargo.toml
+```
+
 ## Xtask Verification
 
 The repo uses `xtask` for the same check groups used by hooks and CI:

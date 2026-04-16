@@ -70,7 +70,7 @@ No changes yet.
 - `logicpearl run` and `logicpearl pipeline run` now accept `-` or omitted input paths to read JSON from stdin, which makes shell composition and adapter debugging easier without changing runtime semantics.
 - First-class `trace_source_plugin` stages in public pipelines, including explicit `payload` and `options` fields for non-object stage input and plugin configuration.
 - Public `logicpearl-engine` crate as the library-level execution facade for app backends and services.
-- Official `logicpearl` Python package under `reserved-python/logicpearl` as a thin native bridge over `logicpearl-engine`.
+- Official `logicpearl` Python package under `packages/logicpearl-python` as a thin native bridge over `logicpearl-engine`.
 
 ### Changed
 - Public example plugins use `payload.input`.

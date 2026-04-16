@@ -116,8 +116,8 @@ fn cleanup_candidates(
 
     add_cleanup_candidate(
         &mut candidates,
-        repo_root.join("reserved-python/logicpearl/target"),
-        "reserved Python package Cargo build cache",
+        repo_root.join("packages/logicpearl-python/target"),
+        "Python package Cargo build cache",
     );
     collect_direct_child_targets(
         &repo_root.join("reserved-crates"),

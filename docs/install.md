@@ -142,6 +142,24 @@ cargo install --path crates/logicpearl
 
 That path builds the CLI only. Use the workspace-local crate path because the checked-in examples and CLI crate live in this repository. For normal build/discovery workflows you still need a solver available. The simplest source-build setup is to install `z3` separately and make sure it is on your `PATH`.
 
+## Python Package
+
+Python services can use the native `logicpearl` package to load artifacts once
+and evaluate in-process:
+
+```bash
+python3 -m pip install logicpearl
+```
+
+From a source checkout, build/install the local package with pip:
+
+```bash
+python3 -m pip install ./packages/logicpearl-python
+```
+
+The Python package wraps `logicpearl-engine`; it does not invoke the
+`logicpearl` CLI per request. See [Python runtime](./python-runtime.md).
+
 ## Optional cvc5
 
 `cvc5` is an optional secondary backend for solver bring-up and parity testing. It is not required for the default LogicPearl install path.

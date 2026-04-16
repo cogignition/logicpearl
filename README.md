@@ -136,6 +136,16 @@ logicpearl inspect /tmp/logicpearl-output
 logicpearl run /tmp/logicpearl-output input.json
 ```
 
+Python services can load the same artifact once and evaluate in-process:
+
+```python
+from logicpearl import LogicPearlEngine
+
+engine = LogicPearlEngine.from_path("/tmp/logicpearl-output")
+result = engine.evaluate({"age": 34, "is_member": True})
+print(result["decision_kind"])
+```
+
 The runtime JSON has versioned schemas under [schema](./schema/), including gate, action, explanation, and artifact-error result shapes. See [docs/artifacts.md](./docs/artifacts.md) for the full bundle contract.
 
 ## Decision Traces
