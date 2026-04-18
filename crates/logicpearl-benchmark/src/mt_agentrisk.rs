@@ -197,7 +197,7 @@ fn read_trimmed_text(path: &Path) -> Result<String> {
 fn load_mt_agentrisk_turns(turns_path: &Path) -> Result<Vec<String>> {
     let raw = fs::read_to_string(turns_path)?;
     let turns_dir = turns_path.parent().unwrap_or(Path::new("."));
-    if let Ok(spec) = serde_yaml::from_str::<MtAgentRiskTurnsFile>(&raw) {
+    if let Ok(spec) = serde_norway::from_str::<MtAgentRiskTurnsFile>(&raw) {
         if !spec.turns.is_empty() {
             return spec
                 .turns

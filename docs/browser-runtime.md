@@ -29,6 +29,10 @@ The bundle should include:
 - `pearl.wasm.meta.json`
 
 `artifact.json` and `pearl.wasm.meta.json` carry the metadata needed for browser-safe evaluation.
+The browser loader requires a v1 `artifact.json` and reads the Wasm paths from
+canonical `files.wasm` and `files.wasm_metadata` entries. It does not fall back
+to legacy file aliases or infer a conventional directory layout when
+`artifact.json` is absent.
 
 ## Load And Evaluate
 

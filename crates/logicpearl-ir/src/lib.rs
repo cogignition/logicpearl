@@ -111,7 +111,7 @@ pub struct FeatureStateSemantics {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    #[serde(default, alias = "fix", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counterfactual_hint: Option<String>,
 }
 
@@ -1490,6 +1490,25 @@ mod tests {
             Some("Failed conservative therapy")
         );
         assert!(semantics.states.contains_key("missing"));
+    }
+
+    #[test]
+    fn feature_state_semantics_do_not_accept_old_fix_alias() {
+        let semantics: FeatureSemantics = serde_json::from_value(json!({
+            "states": {
+                "missing": {
+                    "when": {"op": "<=", "value": 0.0},
+                    "fix": "Add evidence using the old field name."
+                }
+            }
+        }))
+        .expect("unknown fields remain ignored, but old aliases should not map to v1 fields");
+
+        let state = semantics
+            .states
+            .get("missing")
+            .expect("state should deserialize");
+        assert_eq!(state.counterfactual_hint, None);
     }
 
     #[test]

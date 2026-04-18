@@ -58,7 +58,7 @@ fn load_project_config() -> Result<Option<(PathBuf, LogicPearlProjectConfig)>> {
         let content = fs::read_to_string(&path)
             .into_diagnostic()
             .wrap_err("failed to read logicpearl project config")?;
-        let config = serde_yaml::from_str(&content)
+        let config = serde_norway::from_str(&content)
             .into_diagnostic()
             .wrap_err("failed to parse logicpearl project config")?;
         return Ok(Some((path, config)));

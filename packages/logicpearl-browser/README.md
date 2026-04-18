@@ -50,8 +50,24 @@ The package source lives in this repository while npm publication is being prepa
 - an artifact directory path or URL
 - an `artifact.json` path or URL using `logicpearl.artifact_manifest.v1`
 
+The manifest must declare canonical v1 file keys. Path excerpt:
+
+```json
+{
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "files": {
+    "ir": "pearl.ir.json",
+    "wasm": "pearl.wasm",
+    "wasm_metadata": "pearl.wasm.meta.json"
+  }
+}
+```
+
+The browser loader does not probe conventional layouts or legacy file aliases
+such as `files.wasm_module`; serve the v1 `artifact.json` with the bundle.
+
 `loadArtifactFromBundle(...)` accepts:
-- a manifest object
+- a `logicpearl.artifact_manifest.v1` manifest object
 - Wasm module bytes
 - wasm metadata JSON
 

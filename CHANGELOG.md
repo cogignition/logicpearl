@@ -4,7 +4,8 @@ All notable user-facing changes should be added here.
 
 ## Unreleased
 
-No changes yet.
+### Added
+- Versioned `logicpearl.observation_schema.v1` contracts for upstream observed-feature availability, plus `logicpearl traces observation-schema` to validate and summarize them before review/build.
 
 ## 0.1.5 - 2026-04-14
 

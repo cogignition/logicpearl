@@ -19,6 +19,7 @@ use logicpearl_solver::{
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
@@ -331,6 +332,62 @@ pub struct SourceManifest {
     pub schema_version: String,
     #[serde(default)]
     pub sources: Vec<SourceManifestSource>,
+}
+
+pub const OBSERVATION_SCHEMA_VERSION: &str = "logicpearl.observation_schema.v1";
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ObservationSchema {
+    pub schema_version: String,
+    #[serde(default)]
+    pub features: Vec<ObservedFeature>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ObservedFeature {
+    pub feature_id: String,
+    #[serde(rename = "type")]
+    pub feature_type: ObservationFeatureType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(default)]
+    pub operators: Vec<ObservationOperator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+pub enum ObservationFeatureType {
+    Boolean,
+    Integer,
+    Number,
+    String,
+    Enum,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationOperator {
+    Eq,
+    In,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+    Startswith,
+    IsNull,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -953,19 +1010,194 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
 }
 
 fn fingerprint_file(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fs::read(path)?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     Ok(format!("{:016x}", hasher.finish()))
 }
 
+pub fn load_observation_schema(path: &Path) -> Result<ObservationSchema> {
+    let payload = fs::read_to_string(path).map_err(|err| {
+        LogicPearlError::message(format!(
+            "failed to read observation schema {}: {err}",
+            path.display()
+        ))
+    })?;
+    let schema: ObservationSchema = serde_json::from_str(&payload).map_err(|err| {
+        LogicPearlError::message(format!("observation schema is not valid JSON: {err}"))
+    })?;
+    validate_observation_schema(&schema)?;
+    Ok(schema)
+}
+
+pub fn validate_observation_schema(schema: &ObservationSchema) -> Result<()> {
+    if schema.schema_version != OBSERVATION_SCHEMA_VERSION {
+        return Err(LogicPearlError::message(format!(
+            "unsupported observation schema_version {:?}; use {OBSERVATION_SCHEMA_VERSION}",
+            schema.schema_version
+        )));
+    }
+    if schema.features.is_empty() {
+        return Err(LogicPearlError::message(
+            "observation schema must declare at least one feature",
+        ));
+    }
+
+    let mut seen_features = BTreeSet::new();
+    for feature in &schema.features {
+        validate_observed_feature(feature, &mut seen_features)?;
+    }
+    Ok(())
+}
+
+fn validate_observed_feature(
+    feature: &ObservedFeature,
+    seen_features: &mut BTreeSet<String>,
+) -> Result<()> {
+    if feature.feature_id.trim().is_empty() {
+        return Err(LogicPearlError::message(
+            "observation schema contains an empty feature_id",
+        ));
+    }
+    if !seen_features.insert(feature.feature_id.clone()) {
+        return Err(LogicPearlError::message(format!(
+            "observation schema repeats feature_id {:?}",
+            feature.feature_id
+        )));
+    }
+    validate_optional_nonempty(&feature.label, &feature.feature_id, "label")?;
+    validate_optional_nonempty(&feature.description, &feature.feature_id, "description")?;
+    validate_optional_nonempty(&feature.source_id, &feature.feature_id, "source_id")?;
+    validate_optional_nonempty(&feature.source_anchor, &feature.feature_id, "source_anchor")?;
+    if feature.source_anchor.is_some() && feature.source_id.is_none() {
+        return Err(LogicPearlError::message(format!(
+            "feature {:?} declares source_anchor without source_id",
+            feature.feature_id
+        )));
+    }
+
+    if feature.operators.is_empty() {
+        return Err(LogicPearlError::message(format!(
+            "feature {:?} must declare at least one operator",
+            feature.feature_id
+        )));
+    }
+    let mut seen_operators = BTreeSet::new();
+    for operator in &feature.operators {
+        if !seen_operators.insert(operator.clone()) {
+            return Err(LogicPearlError::message(format!(
+                "feature {:?} repeats operator {:?}",
+                feature.feature_id, operator
+            )));
+        }
+        if !observation_operator_allowed(
+            &feature.feature_type,
+            operator,
+            feature.nullable.unwrap_or(false),
+        ) {
+            return Err(LogicPearlError::message(format!(
+                "feature {:?} of type {:?} does not support operator {:?}",
+                feature.feature_id, feature.feature_type, operator
+            )));
+        }
+    }
+
+    match (&feature.feature_type, &feature.values) {
+        (ObservationFeatureType::Enum, None) => {
+            return Err(LogicPearlError::message(format!(
+                "enum feature {:?} must declare non-empty values",
+                feature.feature_id
+            )));
+        }
+        (_, Some(values)) if values.is_empty() => {
+            return Err(LogicPearlError::message(format!(
+                "feature {:?} declares empty values",
+                feature.feature_id
+            )));
+        }
+        _ => {}
+    }
+    if let Some(values) = &feature.values {
+        let mut seen_values = BTreeSet::new();
+        for value in values {
+            validate_observation_value(feature, value)?;
+            let encoded = serde_json::to_string(value)?;
+            if !seen_values.insert(encoded) {
+                return Err(LogicPearlError::message(format!(
+                    "feature {:?} repeats a value",
+                    feature.feature_id
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_optional_nonempty(value: &Option<String>, feature_id: &str, field: &str) -> Result<()> {
+    if value
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(LogicPearlError::message(format!(
+            "feature {feature_id:?} has an empty {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn observation_operator_allowed(
+    feature_type: &ObservationFeatureType,
+    operator: &ObservationOperator,
+    nullable: bool,
+) -> bool {
+    use ObservationFeatureType as Type;
+    use ObservationOperator as Op;
+
+    if matches!(operator, Op::IsNull) {
+        return nullable;
+    }
+
+    match feature_type {
+        Type::Boolean => matches!(operator, Op::Eq | Op::In),
+        Type::Integer | Type::Number => {
+            matches!(
+                operator,
+                Op::Eq | Op::In | Op::Gt | Op::Gte | Op::Lt | Op::Lte
+            )
+        }
+        Type::String => matches!(operator, Op::Eq | Op::In | Op::Contains | Op::Startswith),
+        Type::Enum => matches!(operator, Op::Eq | Op::In),
+    }
+}
+
+fn validate_observation_value(feature: &ObservedFeature, value: &Value) -> Result<()> {
+    let valid = match feature.feature_type {
+        ObservationFeatureType::Boolean => value.is_boolean(),
+        ObservationFeatureType::Integer => value.as_i64().is_some() || value.as_u64().is_some(),
+        ObservationFeatureType::Number => value.is_number(),
+        ObservationFeatureType::String => value.is_string(),
+        ObservationFeatureType::Enum => {
+            value.is_boolean() || value.is_number() || value.is_string()
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(LogicPearlError::message(format!(
+            "feature {:?} has value {} incompatible with type {:?}",
+            feature.feature_id, value, feature.feature_type
+        )))
+    }
+}
+
 pub fn load_feature_governance(path: &Path) -> Result<FeatureGovernanceConfig> {
-    let payload = std::fs::read_to_string(path)?;
+    let payload = fs::read_to_string(path)?;
     Ok(serde_json::from_str(&payload)?)
 }
 
 pub fn load_feature_dictionary(path: &Path) -> Result<FeatureDictionaryConfig> {
-    let payload = std::fs::read_to_string(path)?;
+    let payload = fs::read_to_string(path)?;
     let config: FeatureDictionaryConfig = serde_json::from_str(&payload)?;
     if config.feature_dictionary_version != "1.0" {
         return Err(LogicPearlError::message(format!(

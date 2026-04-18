@@ -1,11 +1,11 @@
 const DEFAULT_BITMASK_ENTRYPOINT = 'logicpearl_eval_bitmask_slots_f64';
 const DEFAULT_STATUS_ENTRYPOINT = 'logicpearl_eval_status_slots_f64';
+const ARTIFACT_MANIFEST_SCHEMA_VERSION = 'logicpearl.artifact_manifest.v1';
 
 export async function loadArtifact(reference, options = {}) {
   const {
     fetchImpl = globalThis.fetch,
     instantiateWasm = defaultInstantiateWasm,
-    layout = 'auto',
   } = options;
   if (typeof fetchImpl !== 'function') {
     throw new Error(
@@ -14,33 +14,9 @@ export async function loadArtifact(reference, options = {}) {
   }
 
   const { manifestUrl, artifactBaseUrl } = normalizeArtifactReference(reference);
-  let manifest = null;
-  if (layout !== 'conventional') {
-    try {
-      manifest = await fetchJson(fetchImpl, manifestUrl);
-    } catch (error) {
-      if (!isMissingResourceError(error)) {
-        throw error;
-      }
-    }
-  }
-
-  const wasmModulePath =
-    manifest?.files?.wasm ??
-    manifest?.files?.wasm_module ??
-    manifest?.bundle?.deployables?.find((item) => item.kind === 'wasm_module')?.path ??
-    'pearl.wasm';
-  if (!wasmModulePath) {
-    throw new Error('Artifact manifest does not declare a wasm_module deployable.');
-  }
-
-  const wasmMetadataPath =
-    manifest?.files?.wasm_metadata ??
-    manifest?.bundle?.metadata_files?.find((item) => item.kind === 'wasm_metadata')?.path ??
-    'pearl.wasm.meta.json';
-  if (!wasmMetadataPath) {
-    throw new Error('Artifact manifest does not declare wasm metadata.');
-  }
+  const manifest = requireArtifactManifestV1(await fetchJson(fetchImpl, manifestUrl));
+  const wasmModulePath = requireManifestFile(manifest, 'wasm');
+  const wasmMetadataPath = requireManifestFile(manifest, 'wasm_metadata');
 
   const [wasmModule, wasmMetadata] = await Promise.all([
     fetchArrayBuffer(fetchImpl, joinArtifactPath(artifactBaseUrl, wasmModulePath)),
@@ -53,7 +29,7 @@ export async function loadArtifact(reference, options = {}) {
       wasmModule,
       wasmMetadata,
       artifactBaseUrl,
-      manifestUrl: manifest ? manifestUrl : null,
+      manifestUrl,
     },
     { instantiateWasm }
   );
@@ -68,12 +44,7 @@ export async function loadArtifactFromBundle(bundle, options = {}) {
   if (!wasmMetadata) {
     throw new Error('loadArtifactFromBundle requires wasmMetadata.');
   }
-  const resolvedManifest =
-    manifest ??
-    buildFallbackManifest({
-      gateId: wasmMetadata.gate_id ?? wasmMetadata.action_policy_id,
-      decisionKind: wasmMetadata.decision_kind,
-    });
+  const resolvedManifest = requireArtifactManifestV1(manifest);
 
   const instance = await instantiateWasm(wasmModule);
   return new LogicPearlBrowserArtifact({
@@ -153,15 +124,15 @@ export class LogicPearlBrowserArtifact {
       decisionKind,
       gateId: this.metadata.gate_id,
       actionPolicyId: this.metadata.action_policy_id ?? null,
-      artifactName: this.manifest.artifact_name,
+      artifactId: this.manifest.artifact_id,
+      artifactKind: this.manifest.artifact_kind,
       engineVersion: this.metadata.engine_version ?? this.manifest.engine_version ?? null,
       artifactHash: this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null,
       featureCount: this.metadata.feature_count,
       ruleCount: (this.metadata.rules ?? []).length,
-      artifactVersion: this.manifest.artifact_version,
       artifactBaseUrl: this.artifactBaseUrl,
       manifestUrl: this.manifestUrl,
-      primaryRuntime: this.manifest.bundle?.primary_runtime ?? null,
+      browserRuntime: this.manifest.files?.wasm ? 'wasm' : null,
     };
   }
 
@@ -173,9 +144,9 @@ export class LogicPearlBrowserArtifact {
     const slots = encodeFeatureSlots(input, this.metadata);
     const exports = this.instance.exports;
     const artifactId =
+      this.manifest.artifact_id ??
       this.metadata.action_policy_id ??
       this.metadata.gate_id ??
-      this.manifest.artifact_name ??
       'logicpearl_artifact';
     const engineVersion = this.metadata.engine_version ?? this.manifest.engine_version ?? null;
     const artifactHash = this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null;
@@ -492,39 +463,49 @@ async function fetchArrayBuffer(fetchImpl, url) {
   return response.arrayBuffer();
 }
 
-function buildFallbackManifest({ gateId, decisionKind }) {
-  return {
-    schema_version: 'logicpearl.artifact_manifest.v1',
-    artifact_version: '1.0',
-    artifact_id: gateId ?? 'logicpearl_artifact',
-    artifact_name: gateId ?? 'logicpearl_artifact',
-    artifact_kind: decisionKind === 'action' ? 'action' : 'gate',
-    gate_id: gateId ?? 'logicpearl_artifact',
-    files: {
-      ir: 'pearl.ir.json',
-      pearl_ir: 'pearl.ir.json',
-      build_report: 'build_report.json',
-      wasm: 'pearl.wasm',
-      native_binary: null,
-      wasm_module: 'pearl.wasm',
-      wasm_metadata: 'pearl.wasm.meta.json',
-    },
-    bundle: {
-      bundle_kind: 'conventional_directory_bundle',
-      cli_entrypoint: 'artifact.json',
-      primary_runtime: 'wasm_module',
-      deployables: [
-        { kind: 'wasm_module', path: 'pearl.wasm' },
-      ],
-      metadata_files: [
-        { kind: 'wasm_metadata', path: 'pearl.wasm.meta.json', companion_to: 'pearl.wasm' },
-      ],
-    },
-  };
+function requireArtifactManifestV1(manifest) {
+  if (!isPlainObject(manifest)) {
+    throw new Error('LogicPearl browser loading requires an artifact manifest object.');
+  }
+  if (manifest.schema_version !== ARTIFACT_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported artifact manifest schema_version ${JSON.stringify(manifest.schema_version)}; expected ${ARTIFACT_MANIFEST_SCHEMA_VERSION}.`
+    );
+  }
+  for (const field of [
+    'artifact_id',
+    'artifact_kind',
+    'engine_version',
+    'ir_version',
+    'created_at',
+    'artifact_hash',
+  ]) {
+    if (typeof manifest[field] !== 'string' || manifest[field].length === 0) {
+      throw new Error(`Artifact manifest v1 is missing required string field ${field}.`);
+    }
+  }
+  if (!['gate', 'action', 'pipeline'].includes(manifest.artifact_kind)) {
+    throw new Error(
+      `Artifact manifest v1 has unsupported artifact_kind ${JSON.stringify(manifest.artifact_kind)}.`
+    );
+  }
+  if (!isPlainObject(manifest.files)) {
+    throw new Error('Artifact manifest v1 is missing required files object.');
+  }
+  requireManifestFile(manifest, 'ir');
+  return manifest;
 }
 
-function isMissingResourceError(error) {
-  return error instanceof Error && /Failed to load .*: 404\b/.test(error.message);
+function requireManifestFile(manifest, key) {
+  const value = manifest.files?.[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Artifact manifest v1 files.${key} is required for browser Wasm loading.`);
+  }
+  return value;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 async function defaultInstantiateWasm(bytes) {

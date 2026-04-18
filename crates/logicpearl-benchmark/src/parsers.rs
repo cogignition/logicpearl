@@ -44,7 +44,7 @@ pub(crate) fn parse_json_object_rows(raw: &str) -> Result<Vec<serde_json::Map<St
 }
 
 pub(crate) fn parse_yaml_object_rows(raw: &str) -> Result<Vec<serde_json::Map<String, Value>>> {
-    let yaml_value: serde_yaml::Value = serde_yaml::from_str(raw)
+    let yaml_value: serde_norway::Value = serde_norway::from_str(raw)
         .map_err(|error| LogicPearlError::message(format!("invalid YAML: {error}")))?;
     let json_value = serde_json::to_value(yaml_value).map_err(|error| {
         LogicPearlError::message(format!("could not convert YAML to JSON value ({error})"))

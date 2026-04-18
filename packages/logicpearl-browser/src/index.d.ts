@@ -107,10 +107,7 @@ export interface ArtifactManifestFilesV1 {
   wasm?: string;
   wasm_metadata?: string;
   native?: string;
-  pearl_ir?: string;
   action_report?: string;
-  wasm_module?: string;
-  native_binary?: string | null;
   [key: string]: unknown;
 }
 
@@ -196,8 +193,26 @@ export interface LogicPearlBrowserArtifact {
   evaluateJsonBatch(inputs: Array<Record<string, unknown>>): Array<GateResultV1 | ActionResultV1>;
 }
 
-export function loadArtifact(reference: string, options?: Record<string, unknown>): Promise<LogicPearlBrowserArtifact>;
-export function loadArtifactFromBundle(bundle: Record<string, unknown>, options?: Record<string, unknown>): Promise<LogicPearlBrowserArtifact>;
+export interface LoadArtifactOptions {
+  fetchImpl?: (url: string) => Promise<{
+    ok?: boolean;
+    status?: number | string;
+    json?: () => Promise<unknown>;
+    arrayBuffer?: () => Promise<ArrayBuffer>;
+  }>;
+  instantiateWasm?: (bytes: ArrayBuffer) => Promise<{ exports: Record<string, unknown> }>;
+}
+
+export interface BrowserArtifactBundle {
+  manifest: ArtifactManifestV1;
+  wasmModule: ArrayBuffer;
+  wasmMetadata: Record<string, unknown>;
+  artifactBaseUrl?: string | null;
+  manifestUrl?: string | null;
+}
+
+export function loadArtifact(reference: string, options?: LoadArtifactOptions): Promise<LogicPearlBrowserArtifact>;
+export function loadArtifactFromBundle(bundle: BrowserArtifactBundle, options?: Pick<LoadArtifactOptions, 'instantiateWasm'>): Promise<LogicPearlBrowserArtifact>;
 export function normalizeArtifactReference(reference: string): { manifestUrl: string; artifactBaseUrl: string };
 export function encodeFeatureSlots(input: Record<string, unknown>, metadata: Record<string, unknown>): Float64Array;
 export function decodeFiredRules(bitmask: bigint, rules: BrowserRuleMetadata[]): BrowserRuleMetadata[];

@@ -16,6 +16,8 @@ Use these pages when you need the reference material behind that loop.
   Core vocabulary: traces, observers, pearls, bitmasks, pipelines, and correctness scope.
 - [Feature dictionaries](./feature-dictionary.md)
   Reviewer-facing labels, messages, source anchors, and counterfactual hints without changing runtime evaluation.
+- [Observation schemas](./observations.md)
+  Upstream observed-feature contracts for extraction plugins before review and build.
 
 ## Core Contracts
 

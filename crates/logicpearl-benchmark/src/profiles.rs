@@ -240,5 +240,7 @@ pub fn builtin_adapter_config(profile: BenchmarkAdapterProfile) -> Option<Benchm
         }
         _ => return None,
     };
-    Some(serde_yaml::from_str(raw).expect("built-in benchmark adapter profile must be valid YAML"))
+    Some(
+        serde_norway::from_str(raw).expect("built-in benchmark adapter profile must be valid YAML"),
+    )
 }

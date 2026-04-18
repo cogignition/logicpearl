@@ -1502,7 +1502,7 @@ where
 {
     match serde_json::from_str(content) {
         Ok(value) => Ok(value),
-        Err(json_error) => serde_yaml::from_str(content).map_err(|yaml_error| {
+        Err(json_error) => serde_norway::from_str(content).map_err(|yaml_error| {
             LogicPearlError::message(format!(
                 "document is not valid JSON or YAML: JSON error: {json_error}; YAML error: {yaml_error}"
             ))

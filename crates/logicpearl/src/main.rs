@@ -91,7 +91,10 @@ use pipeline_cmd::{
     PipelineInspectArgs, PipelineRunArgs, PipelineTraceArgs, PipelineValidateArgs,
 };
 use plugin_cmd::{run_plugin_run, run_plugin_validate, PluginRunArgs, PluginValidateArgs};
-use trace_cmd::{run_traces_audit, run_traces_generate, TraceAuditArgs, TraceGenerateArgs};
+use trace_cmd::{
+    run_traces_audit, run_traces_generate, run_traces_observation_schema, TraceAuditArgs,
+    TraceGenerateArgs, TraceObservationSchemaArgs,
+};
 
 const CLI_LONG_ABOUT: &str = "\
 LogicPearl turns normalized decision behavior into deterministic artifacts.
@@ -213,7 +216,8 @@ const TRACES_AFTER_HELP: &str = "\
 Examples:
   logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl
   logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json
-  logicpearl traces audit examples/getting_started/decision_traces.csv --label-column allowed --json";
+  logicpearl traces audit examples/getting_started/decision_traces.csv --label-column allowed --json
+  logicpearl traces observation-schema observation_schema.json --json";
 
 fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
     miette::miette!(help = hint.as_ref().to_owned(), "{}", message.as_ref())
@@ -445,6 +449,8 @@ enum TraceCommand {
     Generate(TraceGenerateArgs),
     /// Audit feature-label skew in a trace dataset and flag nuisance leakage.
     Audit(TraceAuditArgs),
+    /// Validate and summarize an upstream observation schema contract.
+    ObservationSchema(TraceObservationSchemaArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -560,6 +566,9 @@ fn main() -> Result<()> {
         Commands::Traces {
             command: TraceCommand::Audit(args),
         } => run_traces_audit(args),
+        Commands::Traces {
+            command: TraceCommand::ObservationSchema(args),
+        } => run_traces_observation_schema(args),
         Commands::Build(args) => run_build(args),
         Commands::Quickstart(args) => run_quickstart(args),
         Commands::Discover(args) => run_discover(args),

@@ -1,0 +1,28 @@
+{
+  "schema_version": "logicpearl.observation_schema.v1",
+  "features": [
+    {
+      "feature_id": "notification_sent_on_time",
+      "type": "boolean",
+      "label": "Notification sent on time",
+      "source_id": "policy_manual_2026_04",
+      "source_anchor": "section-3.2",
+      "operators": ["eq"],
+      "description": "Whether the notification was sent within the required window."
+    },
+    {
+      "feature_id": "notice_days",
+      "type": "integer",
+      "label": "Notice window in days",
+      "operators": ["eq", "gte", "lte"],
+      "description": "Observed number of days between notice and the required event."
+    },
+    {
+      "feature_id": "jurisdiction",
+      "type": "enum",
+      "label": "Jurisdiction",
+      "operators": ["eq", "in"],
+      "values": ["WA", "OR", "CA"]
+    }
+  ]
+}

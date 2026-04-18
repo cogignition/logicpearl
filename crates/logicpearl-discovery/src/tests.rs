@@ -3,9 +3,10 @@ use super::{
     build_pearl_from_csv, build_pearl_from_rows, canonicalize_rules, dedupe_rules_by_signature,
     discover_from_csv, discover_residual_rules, discovery_selection_env_lock, gate_from_rules,
     load_decision_traces, load_decision_traces_auto,
-    load_decision_traces_auto_with_feature_selection, merge_discovered_and_pinned_rules,
-    prune_redundant_rules, rule_from_candidate, BuildOptions, CandidateRule, DecisionTraceRow,
-    DiscoverOptions, DiscoveryDecisionMode, FeatureColumnSelection, PinnedRuleSet,
+    load_decision_traces_auto_with_feature_selection, load_observation_schema,
+    merge_discovered_and_pinned_rules, prune_redundant_rules, rule_from_candidate, BuildOptions,
+    CandidateRule, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
+    FeatureColumnSelection, ObservationFeatureType, ObservationOperator, PinnedRuleSet,
     ResidualPassOptions, ResidualRecoveryState,
 };
 use logicpearl_ir::{
@@ -19,6 +20,67 @@ use std::path::PathBuf;
 
 fn solver_available() -> bool {
     check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
+}
+
+#[test]
+fn observation_schema_loader_accepts_discoverable_feature_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("observation_schema.json");
+    std::fs::write(
+        &schema_path,
+        r#"{
+  "schema_version": "logicpearl.observation_schema.v1",
+  "features": [
+    {
+      "feature_id": "notification_sent_on_time",
+      "type": "boolean",
+      "label": "Notification sent on time",
+      "source_id": "policy_manual_2026_04",
+      "source_anchor": "section-3.2",
+      "operators": ["eq"],
+      "description": "Whether the notification was sent within the required window."
+    },
+    {
+      "feature_id": "notice_days",
+      "type": "integer",
+      "operators": ["eq", "gte", "lte"]
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let schema = load_observation_schema(&schema_path).unwrap();
+    assert_eq!(schema.features.len(), 2);
+    assert_eq!(schema.features[0].feature_id, "notification_sent_on_time");
+    assert_eq!(
+        schema.features[0].feature_type,
+        ObservationFeatureType::Boolean
+    );
+    assert_eq!(schema.features[0].operators, vec![ObservationOperator::Eq]);
+}
+
+#[test]
+fn observation_schema_loader_rejects_policy_impossible_operator() {
+    let dir = tempfile::tempdir().unwrap();
+    let schema_path = dir.path().join("bad_observation_schema.json");
+    std::fs::write(
+        &schema_path,
+        r#"{
+  "schema_version": "logicpearl.observation_schema.v1",
+  "features": [
+    {
+      "feature_id": "notification_sent_on_time",
+      "type": "boolean",
+      "operators": ["gt"]
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let err = load_observation_schema(&schema_path).unwrap_err();
+    assert!(err.to_string().contains("does not support operator"));
 }
 
 #[test]

@@ -3,7 +3,10 @@ use super::*;
 use anstream::println;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use logicpearl_discovery::{load_decision_traces_auto, FeatureGovernanceConfig};
+use logicpearl_discovery::{
+    load_decision_traces_auto, load_observation_schema, FeatureGovernanceConfig,
+    ObservationFeatureType, ObservationOperator, ObservationSchema,
+};
 use logicpearl_ir::{
     validate_expression_against_schema, BooleanEvidencePolicy, CombineStrategy, ComparisonValue,
     EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, FeatureType, GateType,
@@ -78,6 +81,18 @@ pub(crate) struct TraceAuditArgs {
     /// Write a starter feature-governance JSON file with automatic suggestions.
     #[arg(long)]
     pub write_feature_governance: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl traces observation-schema observation_schema.json\n  logicpearl traces observation-schema observation_schema.json --json"
+)]
+pub(crate) struct TraceObservationSchemaArgs {
+    /// Observation schema JSON to validate and summarize.
+    pub schema: PathBuf,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,
@@ -193,6 +208,35 @@ struct TraceAuditReport {
     max_nuisance_drift: Option<f64>,
     governance_suggestions: Vec<TraceGovernanceSuggestion>,
     fields: Vec<TraceFieldAudit>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ObservationSchemaReport {
+    schema_version: String,
+    feature_count: usize,
+    features: Vec<ObservationFeatureReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ObservationFeatureReport {
+    feature_id: String,
+    #[serde(rename = "type")]
+    feature_type: String,
+    operators: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_anchor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nullable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    values: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -447,6 +491,109 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn run_traces_observation_schema(args: TraceObservationSchemaArgs) -> Result<()> {
+    let schema = load_observation_schema(&args.schema)
+        .into_diagnostic()
+        .wrap_err("failed to load observation schema")?;
+    let report = observation_schema_report(&schema);
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).into_diagnostic()?
+        );
+    } else {
+        println!("{}", "Observation Schema".bold().bright_blue());
+        println!(
+            "  {} {}",
+            "Schema version".bright_black(),
+            report.schema_version
+        );
+        println!("  {} {}", "Features".bright_black(), report.feature_count);
+        for feature in &report.features {
+            let label = feature
+                .label
+                .as_deref()
+                .map(|label| format!(" - {label}"))
+                .unwrap_or_default();
+            println!(
+                "  {} {} {} [{}]{}",
+                "Feature".bright_black(),
+                feature.feature_id,
+                feature.feature_type,
+                feature.operators.join(","),
+                label
+            );
+            if let Some(source_id) = &feature.source_id {
+                let source_anchor = feature
+                    .source_anchor
+                    .as_deref()
+                    .map(|anchor| format!("#{anchor}"))
+                    .unwrap_or_default();
+                println!(
+                    "    {} {}{}",
+                    "Source".bright_black(),
+                    source_id,
+                    source_anchor
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn observation_schema_report(schema: &ObservationSchema) -> ObservationSchemaReport {
+    ObservationSchemaReport {
+        schema_version: schema.schema_version.clone(),
+        feature_count: schema.features.len(),
+        features: schema
+            .features
+            .iter()
+            .map(|feature| ObservationFeatureReport {
+                feature_id: feature.feature_id.clone(),
+                feature_type: observation_feature_type_name(&feature.feature_type).to_string(),
+                operators: feature
+                    .operators
+                    .iter()
+                    .map(|operator| observation_operator_name(operator).to_string())
+                    .collect(),
+                label: feature.label.clone(),
+                description: feature.description.clone(),
+                source_id: feature.source_id.clone(),
+                source_anchor: feature.source_anchor.clone(),
+                required: feature.required,
+                nullable: feature.nullable,
+                values: feature.values.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn observation_feature_type_name(feature_type: &ObservationFeatureType) -> &'static str {
+    match feature_type {
+        ObservationFeatureType::Boolean => "boolean",
+        ObservationFeatureType::Integer => "integer",
+        ObservationFeatureType::Number => "number",
+        ObservationFeatureType::String => "string",
+        ObservationFeatureType::Enum => "enum",
+    }
+}
+
+fn observation_operator_name(operator: &ObservationOperator) -> &'static str {
+    match operator {
+        ObservationOperator::Eq => "eq",
+        ObservationOperator::In => "in",
+        ObservationOperator::Gt => "gt",
+        ObservationOperator::Gte => "gte",
+        ObservationOperator::Lt => "lt",
+        ObservationOperator::Lte => "lte",
+        ObservationOperator::Contains => "contains",
+        ObservationOperator::Startswith => "startswith",
+        ObservationOperator::IsNull => "is_null",
+    }
+}
+
 fn load_trace_generation_spec(path: &Path) -> Result<TraceGenerationSpec> {
     let payload = fs::read_to_string(path).into_diagnostic()?;
     let extension = path
@@ -454,7 +601,7 @@ fn load_trace_generation_spec(path: &Path) -> Result<TraceGenerationSpec> {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase());
     let spec = match extension.as_deref() {
-        Some("yaml") | Some("yml") => serde_yaml::from_str(&payload).into_diagnostic()?,
+        Some("yaml") | Some("yml") => serde_norway::from_str(&payload).into_diagnostic()?,
         _ => serde_json::from_str(&payload).into_diagnostic()?,
     };
     Ok(spec)

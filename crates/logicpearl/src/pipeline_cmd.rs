@@ -382,7 +382,7 @@ fn is_override_pipeline(path: &Path) -> Result<bool> {
         .into_diagnostic()
         .wrap_err("failed to read pipeline artifact")?;
     let value: Value = serde_json::from_str(&content)
-        .or_else(|_| serde_yaml::from_str(&content))
+        .or_else(|_| serde_norway::from_str(&content))
         .into_diagnostic()
         .wrap_err("pipeline artifact is not valid JSON or YAML")?;
     Ok(value
