@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
+#[cfg(test)]
+use super::candidates::matches_candidate;
 use super::candidates::{
-    candidate_complexity_penalty, candidate_memorization_penalty, matches_candidate,
+    candidate_complexity_penalty, candidate_memorization_penalty, CandidateMatchCache,
 };
-use super::{CandidateRule, DecisionTraceRow, DiscoveryDecisionMode};
+#[cfg(test)]
+use super::DecisionTraceRow;
+use super::{CandidateRule, DiscoveryDecisionMode};
 use std::cmp::Ordering;
+#[cfg(test)]
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +47,7 @@ pub(super) fn compare_candidate_set_score(
         })
 }
 
+#[cfg(test)]
 pub(super) fn score_candidate_set(
     rows: &[DecisionTraceRow],
     candidates: &[CandidateRule],
@@ -71,6 +77,32 @@ pub(super) fn score_candidate_set(
     }
 }
 
+pub(super) fn score_candidate_set_cached(
+    candidates: &[CandidateRule],
+    training_indices: &[usize],
+    validation_indices: &[usize],
+    match_cache: &CandidateMatchCache<'_>,
+) -> CandidateSetScore {
+    let training_score = score_candidate_subset_cached(candidates, training_indices, match_cache);
+    let validation_score =
+        score_candidate_subset_cached(candidates, validation_indices, match_cache);
+    let complexity_penalty = candidates
+        .iter()
+        .map(|candidate| candidate_total_penalty_cached(candidate, match_cache))
+        .sum();
+    CandidateSetScore {
+        total_errors: training_score.total_errors,
+        false_positives: training_score.false_positives,
+        false_negatives: training_score.false_negatives,
+        validation_total_errors: validation_score.total_errors,
+        validation_false_positives: validation_score.false_positives,
+        validation_false_negatives: validation_score.false_negatives,
+        rule_count: candidates.len(),
+        complexity_penalty,
+    }
+}
+
+#[cfg(test)]
 pub(super) fn score_candidate_subset(
     rows: &[DecisionTraceRow],
     candidates: &[CandidateRule],
@@ -101,6 +133,36 @@ pub(super) fn score_candidate_subset(
     }
 }
 
+pub(super) fn score_candidate_subset_cached(
+    candidates: &[CandidateRule],
+    indices: &[usize],
+    match_cache: &CandidateMatchCache<'_>,
+) -> CandidateSubsetScore {
+    let false_positives = indices
+        .iter()
+        .filter(|index| {
+            match_cache.rows()[**index].allowed
+                && candidates
+                    .iter()
+                    .any(|rule| match_cache.matches_candidate(**index, rule))
+        })
+        .count();
+    let false_negatives = indices
+        .iter()
+        .filter(|index| {
+            !match_cache.rows()[**index].allowed
+                && !candidates
+                    .iter()
+                    .any(|rule| match_cache.matches_candidate(**index, rule))
+        })
+        .count();
+    CandidateSubsetScore {
+        total_errors: false_positives + false_negatives,
+        false_positives,
+        false_negatives,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CandidateSubsetScore {
     pub(super) total_errors: usize,
@@ -110,5 +172,13 @@ pub(super) struct CandidateSubsetScore {
 
 pub(super) fn candidate_total_penalty(candidate: &CandidateRule) -> usize {
     candidate_complexity_penalty(candidate, DiscoveryDecisionMode::Standard)
+        + candidate_memorization_penalty(candidate)
+}
+
+fn candidate_total_penalty_cached(
+    candidate: &CandidateRule,
+    match_cache: &CandidateMatchCache<'_>,
+) -> usize {
+    match_cache.complexity_penalty(candidate, DiscoveryDecisionMode::Standard)
         + candidate_memorization_penalty(candidate)
 }

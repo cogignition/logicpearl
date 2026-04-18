@@ -7,6 +7,7 @@ use logicpearl_ir::{
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use super::canonicalize::{canonicalize_rules, expression_matches, prune_redundant_rules};
 use super::features::{infer_feature_type, sorted_feature_names};
@@ -20,27 +21,30 @@ mod selection;
 mod validation;
 
 use super::{
-    decision_trace_row_hash, rule_trace_evidence, CandidateRule, DecisionTraceRow,
-    DiscoveryDecisionMode, ExactSelectionReport, PinnedRuleSet, ResidualPassOptions,
-    ResidualRecoveryReport, ResidualRecoveryState, UniqueCoverageRefinementOptions,
+    decision_trace_row_hash, report_progress, rule_trace_evidence, CandidateRule, DecisionTraceRow,
+    DiscoveryDecisionMode, ExactSelectionReport, PinnedRuleSet, ProgressCallback,
+    ResidualPassOptions, ResidualRecoveryReport, ResidualRecoveryState,
+    UniqueCoverageRefinementOptions,
 };
 #[cfg(test)]
 pub(super) use candidates::rule_from_candidate;
 use candidates::{
-    best_immediate_candidate_rule, candidate_rules, compare_candidate_priority, matches_candidate,
-    rule_from_candidate_with_context,
+    best_immediate_candidate_rule_with_cache, candidate_rules_with_cache,
+    compare_candidate_priority, rule_from_candidate_with_context, CandidateMatchCache,
 };
 #[cfg(test)]
 use candidates::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
-    conjunction_candidate_rules,
+    candidate_rules, conjunction_candidate_rules,
 };
 pub(super) use residual_recovery::{discover_residual_rules, refine_rules_unique_coverage};
 pub(super) use rule_hygiene::{dedupe_rules_by_signature, merge_discovered_and_pinned_rules};
 use rule_limit::limit_rules_by_training_coverage;
+use scoring::{
+    compare_candidate_set_score, score_candidate_set_cached, score_candidate_subset_cached,
+};
 #[cfg(test)]
-use scoring::CandidateSetScore;
-use scoring::{compare_candidate_set_score, score_candidate_set, score_candidate_subset};
+use scoring::{score_candidate_set, CandidateSetScore};
 pub(crate) use selection::DISCOVERY_SELECTION_BACKEND_ENV;
 use selection::{current_solver_backend, exact_selection_shortlist, select_candidate_rules_exact};
 use validation::discovery_validation_split;
@@ -64,15 +68,17 @@ struct CandidatePlanScore {
     rule_count: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CandidateSelectionContext<'a> {
     rows: &'a [DecisionTraceRow],
     denied_indices: &'a [usize],
     allowed_indices: &'a [usize],
-    validation_indices: Option<&'a [usize]>,
+    training_indices: Vec<usize>,
+    validation_indices: &'a [usize],
     feature_governance: &'a BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&'a ResidualPassOptions>,
+    match_cache: Arc<CandidateMatchCache<'a>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,6 +94,7 @@ pub(super) fn build_gate(
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
     pinned_rules: Option<&PinnedRuleSet>,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<(
     LogicPearlGateIr,
     ExactSelectionReport,
@@ -96,12 +103,18 @@ pub(super) fn build_gate(
     usize,
     usize,
 )> {
+    report_progress(
+        progress,
+        "discover_rules",
+        format!("discover_rules: {} rows", rows.len()),
+    );
     let (mut rules, exact_selection) = discover_rules(
         rows,
         feature_governance,
         feature_semantics,
         decision_mode,
         residual_options,
+        progress,
     )?;
     let mut residual_rules_discovered = 0usize;
     let primary_discovery_used_solver_recovery =
@@ -120,6 +133,11 @@ pub(super) fn build_gate(
         })
         .unwrap_or_default();
     if let Some(options) = residual_options {
+        report_progress(
+            progress,
+            "residual_recovery",
+            "residual_recovery: checking missed deny slices",
+        );
         let first_pass_gate = gate_from_rules(
             rows,
             source_rows,
@@ -176,17 +194,35 @@ pub(super) fn build_gate(
     }
     let mut refined_rules_applied = 0usize;
     if let Some(options) = refinement_options {
+        report_progress(
+            progress,
+            "refinement",
+            format!("refinement: tightening {} discovered rules", rules.len()),
+        );
         let (refined_rules, applied) = refine_rules_unique_coverage(rows, &rules, options)?;
         rules = refined_rules;
         refined_rules_applied = applied;
     }
     let mut pinned_rules_applied = 0usize;
     if let Some(pinned_rules) = pinned_rules {
+        report_progress(
+            progress,
+            "pinned_rules",
+            format!(
+                "pinned_rules: merging {} pinned rules",
+                pinned_rules.rules.len()
+            ),
+        );
         pinned_rules_applied = pinned_rules.rules.len();
         rules = merge_discovered_and_pinned_rules(rules, pinned_rules);
     } else {
         rules = dedupe_rules_by_signature(rules);
     }
+    report_progress(
+        progress,
+        "rule_hygiene",
+        format!("rule_hygiene: canonicalizing {} rules", rules.len()),
+    );
     rules = canonicalize_rules(rules);
     rules = dedupe_rules_by_signature(rules);
     rules = prune_redundant_rules(rows, rules);
@@ -372,6 +408,7 @@ pub(super) fn discover_rules(
     feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<(Vec<RuleDefinition>, ExactSelectionReport)> {
     let denied_indices: Vec<usize> = rows
         .iter()
@@ -385,6 +422,15 @@ pub(super) fn discover_rules(
         .collect();
 
     let validation_split = discovery_validation_split(rows, &denied_indices, &allowed_indices);
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: {} denied / {} allowed rows",
+            denied_indices.len(),
+            allowed_indices.len()
+        ),
+    );
     let (train_denied_indices, train_allowed_indices, validation_indices) =
         match validation_split.as_ref() {
             Some(split) => (
@@ -394,32 +440,66 @@ pub(super) fn discover_rules(
             ),
             None => (denied_indices.clone(), allowed_indices.clone(), None),
         };
+    let validation_indices_slice = validation_indices.unwrap_or(&[]);
+    let training_indices = training_indices(rows, validation_indices_slice);
+    let match_cache = Arc::new(CandidateMatchCache::new(rows));
 
-    let all_candidates = candidate_rules(
+    let all_candidates = candidate_rules_with_cache(
         rows,
         &train_denied_indices,
         &train_allowed_indices,
         feature_governance,
         decision_mode,
         residual_options,
+        progress,
+        Some(match_cache.as_ref()),
     );
     if all_candidates.is_empty() {
         return Err(LogicPearlError::message("no recoverable deny rule found"));
     }
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: {} candidate rules",
+            all_candidates.len()
+        ),
+    );
 
-    let greedy_plan = discover_rules_greedy(
+    let selection_context = CandidateSelectionContext {
         rows,
-        &train_denied_indices,
-        &train_allowed_indices,
-        validation_indices,
+        denied_indices: &train_denied_indices,
+        allowed_indices: &train_allowed_indices,
+        training_indices,
+        validation_indices: validation_indices_slice,
         feature_governance,
         decision_mode,
         residual_options,
-    )?;
+        match_cache,
+    };
+    report_progress(
+        progress,
+        "greedy_selection",
+        "greedy_selection: selecting rule plan",
+    );
+    let greedy_plan = discover_rules_greedy(&selection_context, progress)?;
+    report_progress(
+        progress,
+        "greedy_selection",
+        format!("greedy_selection: {} rules shortlisted", greedy_plan.len()),
+    );
     let shortlist = exact_selection_shortlist(
         &all_candidates,
         &greedy_plan,
         EXACT_SELECTION_FRONTIER_LIMIT,
+    );
+    report_progress(
+        progress,
+        "exact_selection",
+        format!(
+            "exact_selection: evaluating {} shortlisted candidates",
+            shortlist.len()
+        ),
     );
     let (exact_plan, mut exact_selection) = select_candidate_rules_exact(
         rows,
@@ -429,8 +509,18 @@ pub(super) fn discover_rules(
     )?;
     let selected_candidates = match exact_plan {
         Some(exact_plan) if !exact_plan.is_empty() => {
-            let greedy_score = score_candidate_set(rows, &greedy_plan, validation_indices);
-            let exact_score = score_candidate_set(rows, &exact_plan, validation_indices);
+            let greedy_score = score_candidate_set_cached(
+                &greedy_plan,
+                &selection_context.training_indices,
+                selection_context.validation_indices,
+                &selection_context.match_cache,
+            );
+            let exact_score = score_candidate_set_cached(
+                &exact_plan,
+                &selection_context.training_indices,
+                selection_context.validation_indices,
+                &selection_context.match_cache,
+            );
             if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
                 exact_selection.adopted = true;
                 exact_plan
@@ -442,16 +532,21 @@ pub(super) fn discover_rules(
         }
         _ => greedy_plan,
     };
-    let selection_context = CandidateSelectionContext {
-        rows,
-        denied_indices: &train_denied_indices,
-        allowed_indices: &train_allowed_indices,
-        validation_indices,
-        feature_governance,
-        decision_mode,
-        residual_options,
-    };
-    let selected_candidates = recover_rare_rules(&selection_context, selected_candidates)?;
+    report_progress(
+        progress,
+        "rare_rule_recovery",
+        "rare_rule_recovery: checking uncovered deny slices",
+    );
+    let selected_candidates =
+        recover_rare_rules(&selection_context, selected_candidates, progress)?;
+    report_progress(
+        progress,
+        "rule_text",
+        format!(
+            "rule_text: rendering {} selected rules",
+            selected_candidates.len()
+        ),
+    );
 
     Ok((
         selected_candidates
@@ -472,6 +567,7 @@ pub(super) fn discover_rules(
 fn recover_rare_rules(
     selection_context: &CandidateSelectionContext<'_>,
     selected_candidates: Vec<CandidateRule>,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<Vec<CandidateRule>> {
     let mut recovered = selected_candidates;
     for _ in 0..RARE_RULE_RECOVERY_MAX_PASSES {
@@ -481,7 +577,9 @@ fn recover_rare_rules(
             .copied()
             .filter(|index| {
                 !recovered.iter().any(|candidate| {
-                    matches_candidate(&selection_context.rows[*index].features, candidate)
+                    selection_context
+                        .match_cache
+                        .matches_candidate(*index, candidate)
                 })
             })
             .collect::<Vec<_>>();
@@ -493,13 +591,15 @@ fn recover_rare_rules(
             .iter()
             .map(|c| c.signature().to_string())
             .collect::<BTreeSet<_>>();
-        let rescue_shortlist = candidate_rules(
+        let rescue_shortlist = candidate_rules_with_cache(
             selection_context.rows,
             &uncovered_denied,
             selection_context.allowed_indices,
             selection_context.feature_governance,
             selection_context.decision_mode,
             selection_context.residual_options,
+            progress,
+            Some(selection_context.match_cache.as_ref()),
         )
         .into_iter()
         .filter(|candidate| !existing_signatures.contains(candidate.signature()))
@@ -526,15 +626,17 @@ fn recover_rare_rules(
         candidate_combined.extend(rescue_plan);
         candidate_combined = dedupe_candidate_rules_by_signature(candidate_combined);
 
-        let current_score = score_candidate_set(
-            selection_context.rows,
+        let current_score = score_candidate_set_cached(
             &recovered,
+            &selection_context.training_indices,
             selection_context.validation_indices,
+            &selection_context.match_cache,
         );
-        let combined_score = score_candidate_set(
-            selection_context.rows,
+        let combined_score = score_candidate_set_cached(
             &candidate_combined,
+            &selection_context.training_indices,
             selection_context.validation_indices,
+            &selection_context.match_cache,
         );
         let improved = compare_candidate_set_score(&combined_score, &current_score)
             == Ordering::Less
@@ -561,77 +663,126 @@ fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<Ca
     deduped
 }
 
+fn training_indices(rows: &[DecisionTraceRow], validation_indices: &[usize]) -> Vec<usize> {
+    let validation_set = validation_indices.iter().copied().collect::<BTreeSet<_>>();
+    rows.iter()
+        .enumerate()
+        .filter_map(|(index, _)| (!validation_set.contains(&index)).then_some(index))
+        .collect()
+}
+
 fn discover_rules_greedy(
-    rows: &[DecisionTraceRow],
-    denied_indices: &[usize],
-    allowed_indices: &[usize],
-    validation_indices: Option<&[usize]>,
-    feature_governance: &BTreeMap<String, FeatureGovernance>,
-    decision_mode: DiscoveryDecisionMode,
-    residual_options: Option<&ResidualPassOptions>,
+    selection_context: &CandidateSelectionContext<'_>,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<Vec<CandidateRule>> {
-    let mut remaining_denied = denied_indices.to_vec();
+    let mut remaining_denied = selection_context.denied_indices.to_vec();
     let mut discovered = Vec::new();
+    let total_denied = selection_context.denied_indices.len();
     while !remaining_denied.is_empty() {
-        let candidate = select_candidate_rule(
-            rows,
-            &remaining_denied,
-            allowed_indices,
-            validation_indices,
-            feature_governance,
-            decision_mode,
-            residual_options,
-        )
-        .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
+        let pass = discovered.len() + 1;
+        report_progress(
+            progress,
+            "greedy_selection",
+            format!(
+                "greedy_selection: pass {pass}; remaining_denied={}/{}; selected_rules={}",
+                remaining_denied.len(),
+                total_denied,
+                discovered.len()
+            ),
+        );
+        let candidate = select_candidate_rule(&remaining_denied, selection_context, progress, pass)
+            .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
         if candidate.denied_coverage == 0 {
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!("greedy_selection: pass {pass}; selected candidate covered 0 rows"),
+            );
             break;
         }
 
         let has_false_positives = candidate.false_positives > 0;
+        report_progress(
+            progress,
+            "greedy_selection",
+            format!(
+                "greedy_selection: pass {pass}; selected candidate denied_coverage={} false_positives={}",
+                candidate.denied_coverage,
+                candidate.false_positives
+            ),
+        );
         discovered.push(candidate.clone());
-        remaining_denied.retain(|index| !matches_candidate(&rows[*index].features, &candidate));
+        remaining_denied.retain(|index| {
+            !selection_context
+                .match_cache
+                .matches_candidate(*index, &candidate)
+        });
+        report_progress(
+            progress,
+            "greedy_selection",
+            format!(
+                "greedy_selection: pass {pass}; remaining_denied={}/{} after selection",
+                remaining_denied.len(),
+                total_denied
+            ),
+        );
         if has_false_positives {
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!("greedy_selection: pass {pass}; stopping after false-positive rule"),
+            );
             break;
         }
     }
+    report_progress(
+        progress,
+        "greedy_selection",
+        format!("greedy_selection: selected {} rules", discovered.len()),
+    );
     Ok(discovered)
 }
 
 fn select_candidate_rule(
-    rows: &[DecisionTraceRow],
     denied_indices: &[usize],
-    allowed_indices: &[usize],
-    validation_indices: Option<&[usize]>,
-    feature_governance: &BTreeMap<String, FeatureGovernance>,
-    decision_mode: DiscoveryDecisionMode,
-    residual_options: Option<&ResidualPassOptions>,
+    selection_context: &CandidateSelectionContext<'_>,
+    progress: Option<&ProgressCallback<'_>>,
+    pass: usize,
 ) -> Option<CandidateRule> {
-    let selection_context = CandidateSelectionContext {
-        rows,
+    report_progress(
+        progress,
+        "greedy_selection",
+        format!("greedy_selection: pass {pass}; enumerating lookahead candidates"),
+    );
+    let mut candidates = candidate_rules_with_cache(
+        selection_context.rows,
         denied_indices,
-        allowed_indices,
-        validation_indices,
-        feature_governance,
-        decision_mode,
-        residual_options,
-    };
-    let mut candidates = candidate_rules(
-        rows,
-        denied_indices,
-        allowed_indices,
-        feature_governance,
-        decision_mode,
-        residual_options,
+        selection_context.allowed_indices,
+        selection_context.feature_governance,
+        selection_context.decision_mode,
+        selection_context.residual_options,
+        progress,
+        Some(selection_context.match_cache.as_ref()),
     );
     if candidates.is_empty() {
         return None;
     }
     candidates.sort_by(compare_candidate_priority);
     candidates.truncate(LOOKAHEAD_FRONTIER_LIMIT);
+    report_progress(
+        progress,
+        "greedy_selection",
+        format!(
+            "greedy_selection: pass {pass}; evaluating {} lookahead candidates",
+            candidates.len()
+        ),
+    );
+
+    let scored_candidates =
+        score_lookahead_candidates(selection_context, candidates, progress, pass);
 
     let mut best: Option<(CandidateRule, CandidatePlanScore)> = None;
-    for candidate in candidates {
-        let score = simulate_candidate_plan(&selection_context, &candidate);
+    for (index, candidate, score) in scored_candidates {
         let better = match &best {
             None => true,
             Some((current_candidate, current_score)) => {
@@ -640,15 +791,101 @@ fn select_candidate_rule(
             }
         };
         if better {
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!(
+                    "greedy_selection: pass {pass}; best lookahead={} training_errors={} validation_errors={} uncovered_denied={} projected_rules={}",
+                    index + 1,
+                    score.training_total_errors,
+                    score.validation_total_errors,
+                    score.uncovered_denied,
+                    score.rule_count
+                ),
+            );
             best = Some((candidate, score));
         }
     }
     best.map(|(candidate, _score)| candidate)
 }
 
+fn score_lookahead_candidates(
+    selection_context: &CandidateSelectionContext<'_>,
+    candidates: Vec<CandidateRule>,
+    progress: Option<&ProgressCallback<'_>>,
+    pass: usize,
+) -> Vec<(usize, CandidateRule, CandidatePlanScore)> {
+    let candidate_count = candidates.len();
+    if candidate_count <= 1
+        || std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1)
+            <= 1
+    {
+        return candidates
+            .into_iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                report_progress(
+                    progress,
+                    "greedy_selection",
+                    format!(
+                        "greedy_selection: pass {pass}; evaluating lookahead {}/{}",
+                        index + 1,
+                        candidate_count
+                    ),
+                );
+                let score = simulate_candidate_plan(
+                    selection_context,
+                    &candidate,
+                    progress,
+                    pass,
+                    index + 1,
+                );
+                (index, candidate, score)
+            })
+            .collect();
+    }
+
+    report_progress(
+        progress,
+        "greedy_selection",
+        format!(
+            "greedy_selection: pass {pass}; evaluating {candidate_count} lookahead candidates in parallel"
+        ),
+    );
+    let mut scored = std::thread::scope(|scope| {
+        let handles = candidates
+            .into_iter()
+            .enumerate()
+            .map(|(index, candidate)| {
+                scope.spawn(move || {
+                    let score = simulate_candidate_plan(
+                        selection_context,
+                        &candidate,
+                        None,
+                        pass,
+                        index + 1,
+                    );
+                    (index, candidate, score)
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("greedy-selection worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    scored.sort_by_key(|(index, _, _)| *index);
+    scored
+}
+
 fn simulate_candidate_plan(
     selection_context: &CandidateSelectionContext<'_>,
     first_candidate: &CandidateRule,
+    progress: Option<&ProgressCallback<'_>>,
+    pass: usize,
+    lookahead_index: usize,
 ) -> CandidatePlanScore {
     let mut rules = vec![first_candidate.clone()];
     let mut remaining_denied: Vec<usize> = selection_context
@@ -656,19 +893,31 @@ fn simulate_candidate_plan(
         .iter()
         .copied()
         .filter(|index| {
-            !matches_candidate(&selection_context.rows[*index].features, first_candidate)
+            !selection_context
+                .match_cache
+                .matches_candidate(*index, first_candidate)
         })
         .collect();
 
     if first_candidate.false_positives == 0 {
         while !remaining_denied.is_empty() {
-            let Some(next) = best_immediate_candidate_rule(
+            let simulated_step = rules.len() + 1;
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!(
+                    "greedy_selection: pass {pass}; lookahead={lookahead_index}; sim_step={simulated_step}; remaining_denied={}",
+                    remaining_denied.len()
+                ),
+            );
+            let Some(next) = best_immediate_candidate_rule_with_cache(
                 selection_context.rows,
                 &remaining_denied,
                 selection_context.allowed_indices,
                 selection_context.feature_governance,
                 selection_context.decision_mode,
                 selection_context.residual_options,
+                &selection_context.match_cache,
             ) else {
                 break;
             };
@@ -676,7 +925,9 @@ fn simulate_candidate_plan(
                 break;
             }
             remaining_denied.retain(|index| {
-                !matches_candidate(&selection_context.rows[*index].features, &next)
+                !selection_context
+                    .match_cache
+                    .matches_candidate(*index, &next)
             });
             let has_false_positives = next.false_positives > 0;
             rules.push(next);
@@ -686,21 +937,15 @@ fn simulate_candidate_plan(
         }
     }
 
-    let validation_set = selection_context
-        .validation_indices
-        .map(|indices| indices.iter().copied().collect::<BTreeSet<_>>())
-        .unwrap_or_default();
-    let training_indices = selection_context
-        .rows
-        .iter()
-        .enumerate()
-        .filter_map(|(index, _)| (!validation_set.contains(&index)).then_some(index))
-        .collect::<Vec<_>>();
-    let training_score = score_candidate_subset(selection_context.rows, &rules, &training_indices);
-    let validation_score = score_candidate_subset(
-        selection_context.rows,
+    let training_score = score_candidate_subset_cached(
         &rules,
-        selection_context.validation_indices.unwrap_or(&[]),
+        &selection_context.training_indices,
+        &selection_context.match_cache,
+    );
+    let validation_score = score_candidate_subset_cached(
+        &rules,
+        selection_context.validation_indices,
+        &selection_context.match_cache,
     );
 
     CandidatePlanScore {

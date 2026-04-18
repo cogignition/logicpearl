@@ -9,12 +9,12 @@
 
 use logicpearl_core::{provenance_safe_path, provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_discovery::{
-    action_trace_provenance_from_record, build_pearl_from_rows,
-    learn_gate_from_rows_without_numeric_interactions, BuildCommandProvenance,
-    BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult, DecisionTraceProvenance,
-    DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection, FileProvenance,
-    LoadedFlatRecords, PluginBuildProvenance, SourceManifest, SourceManifestProvenance,
-    TraceInputProvenance,
+    action_trace_provenance_from_record, build_pearl_from_rows_with_progress,
+    learn_gate_from_rows_without_numeric_interactions_with_progress, report_progress,
+    BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
+    DecisionTraceProvenance, DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection,
+    FileProvenance, LoadedFlatRecords, PluginBuildProvenance, ProgressCallback, SourceManifest,
+    SourceManifestProvenance, TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -108,8 +108,18 @@ pub fn build_gate_artifact_from_rows(
     options: &BuildOptions,
     provenance_inputs: BuildProvenanceInputs,
 ) -> Result<BuildResult> {
+    build_gate_artifact_from_rows_with_progress(rows, source_name, options, provenance_inputs, None)
+}
+
+pub fn build_gate_artifact_from_rows_with_progress(
+    rows: &[DecisionTraceRow],
+    source_name: String,
+    options: &BuildOptions,
+    provenance_inputs: BuildProvenanceInputs,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<BuildResult> {
     let provenance = build_provenance(provenance_inputs)?;
-    let mut result = build_pearl_from_rows(rows, source_name, options)?;
+    let mut result = build_pearl_from_rows_with_progress(rows, source_name, options, progress)?;
     result.provenance = Some(provenance);
     Ok(result)
 }
@@ -196,10 +206,27 @@ pub fn learn_action_policy(
     traces: &PreparedActionTraces,
     options: &ActionLearningOptions,
 ) -> Result<ActionLearningResult> {
+    learn_action_policy_with_progress(traces, options, None)
+}
+
+pub fn learn_action_policy_with_progress(
+    traces: &PreparedActionTraces,
+    options: &ActionLearningOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<ActionLearningResult> {
     let default_action =
         resolve_default_action(options.default_action.as_deref(), &traces.actions)?;
     let no_match_action = resolve_no_match_action(options.no_match_action.as_deref())?;
     let support_counts = action_support_counts(&traces.action_by_row);
+    report_progress(
+        progress,
+        "action_priority",
+        format!(
+            "action_priority: {} rows across {} actions",
+            traces.action_by_row.len(),
+            traces.actions.len()
+        ),
+    );
     let priority_order = resolve_action_priority_order(
         &traces.actions,
         &default_action,
@@ -213,6 +240,11 @@ pub fn learn_action_policy(
     let mut action_rules = Vec::new();
     let mut covered_by_priority = vec![false; traces.action_by_row.len()];
     for action in &priority_order {
+        report_progress(
+            progress,
+            "action_route",
+            format!("action_route: learning {action}"),
+        );
         let action_rule_budget = rule_budget.per_action.get(action).copied().unwrap_or(0);
         if action_rule_budget == 0 {
             continue;
@@ -243,7 +275,7 @@ pub fn learn_action_policy(
         }
         let route_name = sanitize_identifier(action);
         let route_gate_id = format!("{}_{}", options.artifact_name, route_name);
-        let learned = learn_gate_from_rows_without_numeric_interactions(
+        let learned = learn_gate_from_rows_without_numeric_interactions_with_progress(
             &route_rows,
             &BuildOptions {
                 output_dir: options.output_dir.clone(),
@@ -260,6 +292,7 @@ pub fn learn_action_policy(
                 max_rules: Some(action_rule_budget),
                 feature_selection: FeatureColumnSelection::default(),
             },
+            progress,
         )
         .map_err(|err| {
             LogicPearlError::message(format!(

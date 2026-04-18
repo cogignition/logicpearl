@@ -8,6 +8,16 @@ build -> inspect -> run -> verify -> diff
 
 Use these pages when you need the reference material behind that loop.
 
+Long-running `build` and `discover` runs can report phase progress on stderr:
+
+```bash
+logicpearl build traces.csv --json --progress > build-result.json
+```
+
+The JSON result stays on stdout for piping into tools such as `jq`.
+Candidate discovery also reports subphase ticks while enumerating atomic,
+numeric, feature-reference, and conjunction candidates.
+
 ## Start Here
 
 - [Install](./install.md)

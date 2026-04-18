@@ -4,7 +4,10 @@ use super::super::features::{
     is_derived_feature_name, numeric_feature_names, sorted_feature_names,
 };
 use super::super::rule_text::{generate_rule_text, RuleTextContext};
-use super::super::{CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions};
+use super::super::{
+    report_progress, CandidateRule, DecisionTraceRow, DiscoveryDecisionMode, ProgressCallback,
+    ResidualPassOptions,
+};
 use super::{
     CONJUNCTION_ATOM_FRONTIER_LIMIT, NUMERIC_EQ_MAX_DISTINCT_VALUES,
     NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE, NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS,
@@ -20,7 +23,12 @@ use logicpearl_verify::{
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
+const CONJUNCTION_SYNTHESIS_HEARTBEAT: Duration = Duration::from_secs(30);
+
+#[cfg(test)]
 pub(super) fn candidate_rules(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
@@ -28,6 +36,30 @@ pub(super) fn candidate_rules(
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Vec<CandidateRule> {
+    candidate_rules_with_cache(
+        rows,
+        denied_indices,
+        allowed_indices,
+        feature_governance,
+        decision_mode,
+        residual_options,
+        progress,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn candidate_rules_with_cache(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+    feature_governance: &BTreeMap<String, FeatureGovernance>,
+    decision_mode: DiscoveryDecisionMode,
+    residual_options: Option<&ResidualPassOptions>,
+    progress: Option<&ProgressCallback<'_>>,
+    match_cache: Option<&CandidateMatchCache<'_>>,
 ) -> Vec<CandidateRule> {
     let mut candidates = atomic_candidate_rules(
         rows,
@@ -35,17 +67,29 @@ pub(super) fn candidate_rules(
         allowed_indices,
         feature_governance,
         decision_mode,
+        progress,
+        match_cache,
     );
     candidates.retain(|candidate| candidate.denied_coverage > 0);
     candidates.sort_by(compare_candidate_priority);
     candidates.dedup_by(|left, right| left.signature() == right.signature());
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: {} atomic candidate rules retained",
+            candidates.len()
+        ),
+    );
     if let Some(options) = residual_options {
-        candidates.extend(conjunction_candidate_rules(
+        candidates.extend(conjunction_candidate_rules_with_cache(
             rows,
             denied_indices,
             allowed_indices,
             &candidates,
             options,
+            progress,
+            match_cache,
         ));
     }
 
@@ -60,6 +104,8 @@ fn atomic_candidate_rules(
     allowed_indices: &[usize],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
+    progress: Option<&ProgressCallback<'_>>,
+    match_cache: Option<&CandidateMatchCache<'_>>,
 ) -> Vec<CandidateRule> {
     let feature_names = sorted_feature_names(rows);
     let numeric_features = numeric_feature_names(rows)
@@ -72,8 +118,16 @@ fn atomic_candidate_rules(
         .cloned()
         .collect::<Vec<_>>();
     let mut candidates = Vec::new();
+    let feature_total = feature_names.len();
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: enumerating atomic predicates across {feature_total} features"
+        ),
+    );
 
-    for feature in feature_names {
+    for (feature_index, feature) in feature_names.into_iter().enumerate() {
         let values: Vec<&Value> = rows
             .iter()
             .filter_map(|row| row.features.get(&feature))
@@ -82,6 +136,8 @@ fn atomic_candidate_rules(
             let unique_thresholds = numeric_thresholds(rows, denied_indices, &feature);
             let allow_numeric_eq = numeric_feature_supports_exact_match(rows, &feature);
             let min_numeric_eq_support = numeric_eq_min_support(denied_indices.len());
+            let mut numeric_checks = 0usize;
+            let numeric_total = unique_thresholds.len() * 5;
             for threshold in unique_thresholds {
                 for op in [
                     ComparisonOperator::Lt,
@@ -102,16 +158,24 @@ fn atomic_candidate_rules(
                         denied_indices,
                         allowed_indices,
                         Expression::Comparison(comparison.clone()),
+                        match_cache,
                     );
-                    if comparison.op == ComparisonOperator::Eq
+                    let skip_numeric_eq = comparison.op == ComparisonOperator::Eq
                         && comparison.value.literal().and_then(Value::as_f64).is_some()
-                        && (!allow_numeric_eq || candidate.denied_coverage < min_numeric_eq_support)
-                    {
-                        continue;
-                    }
-                    if candidate_allowed_for_mode(&candidate, decision_mode) {
+                        && (!allow_numeric_eq
+                            || candidate.denied_coverage < min_numeric_eq_support);
+                    if !skip_numeric_eq && candidate_allowed_for_mode(&candidate, decision_mode) {
                         candidates.push(candidate);
                     }
+                    numeric_checks += 1;
+                    report_candidate_subphase_progress(
+                        progress,
+                        "numeric predicates",
+                        numeric_checks,
+                        numeric_total,
+                        Some(&feature),
+                        candidates.len(),
+                    );
                 }
             }
         } else if values.iter().all(|value| value.is_boolean()) {
@@ -133,6 +197,7 @@ fn atomic_candidate_rules(
                         op: ComparisonOperator::Eq,
                         value: ComparisonValue::Literal(Value::Bool(boolean)),
                     }),
+                    match_cache,
                 );
                 if candidate_allowed_for_mode(&candidate, decision_mode) {
                     candidates.push(candidate);
@@ -154,14 +219,28 @@ fn atomic_candidate_rules(
                         op: ComparisonOperator::Eq,
                         value: ComparisonValue::Literal(Value::String(text.clone())),
                     }),
+                    match_cache,
                 );
                 if candidate_allowed_for_mode(&candidate, decision_mode) {
                     candidates.push(candidate);
                 }
             }
         }
+        report_candidate_subphase_progress(
+            progress,
+            "atomic features",
+            feature_index + 1,
+            feature_total,
+            Some(&feature),
+            candidates.len(),
+        );
     }
 
+    let feature_ref_total = feature_ref_numeric_features
+        .len()
+        .saturating_mul(feature_ref_numeric_features.len().saturating_sub(1))
+        .saturating_mul(4);
+    let mut feature_ref_checks = 0usize;
     for left in &feature_ref_numeric_features {
         for right in &feature_ref_numeric_features {
             if left == right {
@@ -184,10 +263,20 @@ fn atomic_candidate_rules(
                             feature_ref: right.clone(),
                         },
                     }),
+                    match_cache,
                 );
                 if candidate_allowed_for_mode(&candidate, decision_mode) {
                     candidates.push(candidate);
                 }
+                feature_ref_checks += 1;
+                report_candidate_subphase_progress(
+                    progress,
+                    "feature-reference predicates",
+                    feature_ref_checks,
+                    feature_ref_total,
+                    Some(left),
+                    candidates.len(),
+                );
             }
         }
     }
@@ -195,12 +284,34 @@ fn atomic_candidate_rules(
     candidates
 }
 
+#[cfg(test)]
 pub(super) fn conjunction_candidate_rules(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
     atomic_candidates: &[CandidateRule],
     options: &ResidualPassOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Vec<CandidateRule> {
+    conjunction_candidate_rules_with_cache(
+        rows,
+        denied_indices,
+        allowed_indices,
+        atomic_candidates,
+        options,
+        progress,
+        None,
+    )
+}
+
+fn conjunction_candidate_rules_with_cache(
+    rows: &[DecisionTraceRow],
+    denied_indices: &[usize],
+    allowed_indices: &[usize],
+    atomic_candidates: &[CandidateRule],
+    options: &ResidualPassOptions,
+    progress: Option<&ProgressCallback<'_>>,
+    match_cache: Option<&CandidateMatchCache<'_>>,
 ) -> Vec<CandidateRule> {
     let mut prioritized_atoms = atomic_candidates
         .iter()
@@ -216,6 +327,16 @@ pub(super) fn conjunction_candidate_rules(
     if atomic_comparisons.len() < 2 {
         return Vec::new();
     }
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: synthesizing boolean conjunctions from {} atoms (max_conditions={}, max_rules={})",
+            atomic_comparisons.len(),
+            options.max_conditions,
+            options.max_rules
+        ),
+    );
 
     let atom_ids = atomic_comparisons
         .iter()
@@ -242,7 +363,7 @@ pub(super) fn conjunction_candidate_rules(
         }))
         .collect::<Vec<_>>();
 
-    let conjunctions = match synthesize_boolean_conjunctions(
+    let conjunctions = match synthesize_boolean_conjunctions_with_progress(
         &examples,
         &BooleanConjunctionSearchOptions {
             min_conditions: 2,
@@ -251,6 +372,7 @@ pub(super) fn conjunction_candidate_rules(
             max_negative_hits: options.max_negative_hits,
             max_rules: options.max_rules,
         },
+        progress,
     ) {
         Ok(conjunctions) => conjunctions,
         Err(err) => {
@@ -261,6 +383,14 @@ pub(super) fn conjunction_candidate_rules(
             return Vec::new();
         }
     };
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: synthesized {} boolean conjunctions",
+            conjunctions.len()
+        ),
+    );
 
     let atom_lookup = atom_ids
         .iter()
@@ -283,9 +413,75 @@ pub(super) fn conjunction_candidate_rules(
                 denied_indices,
                 allowed_indices,
                 conjunction_expression(comparisons),
+                match_cache,
             ))
         })
         .collect()
+}
+
+fn synthesize_boolean_conjunctions_with_progress(
+    examples: &[BooleanSearchExample],
+    options: &BooleanConjunctionSearchOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> logicpearl_core::Result<Vec<BooleanConjunctionCandidate>> {
+    let Some(progress) = progress else {
+        return synthesize_boolean_conjunctions(examples, options);
+    };
+    let started = Instant::now();
+    std::thread::scope(|scope| {
+        let (done_tx, done_rx) = mpsc::channel();
+        scope.spawn(move || {
+            loop {
+                match done_rx.recv_timeout(CONJUNCTION_SYNTHESIS_HEARTBEAT) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => report_progress(
+                        Some(progress),
+                        "candidate_generation",
+                        format!(
+                            "candidate_generation: synthesizing boolean conjunctions still running (elapsed={}s)",
+                            started.elapsed().as_secs()
+                        ),
+                    ),
+                }
+            }
+        });
+        let result = synthesize_boolean_conjunctions(examples, options);
+        let _ = done_tx.send(());
+        result
+    })
+}
+
+fn report_candidate_subphase_progress(
+    progress: Option<&ProgressCallback<'_>>,
+    subphase: &str,
+    completed: usize,
+    total: usize,
+    current: Option<&str>,
+    candidate_count: usize,
+) {
+    if total == 0 || !crossed_progress_bucket(completed, total) {
+        return;
+    }
+    let percent = completed.saturating_mul(100) / total;
+    let current = current
+        .map(|value| format!("; current={value}"))
+        .unwrap_or_default();
+    report_progress(
+        progress,
+        "candidate_generation",
+        format!(
+            "candidate_generation: {subphase} {completed}/{total} ({percent}%); candidates={candidate_count}{current}"
+        ),
+    );
+}
+
+fn crossed_progress_bucket(completed: usize, total: usize) -> bool {
+    if completed == 0 || completed == total {
+        return completed == total;
+    }
+    let previous_bucket = completed.saturating_sub(1).saturating_mul(10) / total;
+    let current_bucket = completed.saturating_mul(10) / total;
+    current_bucket != previous_bucket
 }
 
 fn compare_conjunction_atom_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
@@ -342,9 +538,16 @@ fn candidate_from_expression(
     denied_indices: &[usize],
     allowed_indices: &[usize],
     expression: Expression,
+    match_cache: Option<&CandidateMatchCache<'_>>,
 ) -> CandidateRule {
-    let denied_coverage = candidate_coverage(rows, denied_indices, &expression);
-    let false_positives = candidate_coverage(rows, allowed_indices, &expression);
+    let denied_coverage = match match_cache {
+        Some(cache) => cache.coverage_for_expression(denied_indices, &expression),
+        None => candidate_coverage(rows, denied_indices, &expression),
+    };
+    let false_positives = match match_cache {
+        Some(cache) => cache.coverage_for_expression(allowed_indices, &expression),
+        None => candidate_coverage(rows, allowed_indices, &expression),
+    };
     CandidateRule::new(expression, denied_coverage, false_positives)
 }
 
@@ -368,24 +571,123 @@ fn boolean_candidate_allowed(governance: Option<&FeatureGovernance>, value: bool
     }
 }
 
-pub(super) fn best_immediate_candidate_rule(
+pub(super) fn best_immediate_candidate_rule_with_cache(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
     residual_options: Option<&ResidualPassOptions>,
+    match_cache: &CandidateMatchCache<'_>,
 ) -> Option<CandidateRule> {
-    candidate_rules(
+    candidate_rules_with_cache(
         rows,
         denied_indices,
         allowed_indices,
         feature_governance,
         decision_mode,
         residual_options,
+        None,
+        Some(match_cache),
     )
     .into_iter()
     .next()
+}
+
+#[derive(Debug)]
+pub(super) struct CandidateMatchCache<'a> {
+    rows: &'a [DecisionTraceRow],
+    matches_by_signature: Mutex<HashMap<String, Arc<Vec<bool>>>>,
+    complexity_by_signature: Mutex<HashMap<String, usize>>,
+}
+
+impl<'a> CandidateMatchCache<'a> {
+    pub(super) fn new(rows: &'a [DecisionTraceRow]) -> Self {
+        Self {
+            rows,
+            matches_by_signature: Mutex::new(HashMap::new()),
+            complexity_by_signature: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(super) fn matches_candidate(&self, row_index: usize, candidate: &CandidateRule) -> bool {
+        self.mask_for_candidate(candidate)[row_index]
+    }
+
+    pub(super) fn rows(&self) -> &[DecisionTraceRow] {
+        self.rows
+    }
+
+    pub(super) fn coverage_for_expression(
+        &self,
+        indices: &[usize],
+        expression: &Expression,
+    ) -> usize {
+        let mask = self.mask_for_expression(expression);
+        indices.iter().filter(|index| mask[**index]).count()
+    }
+
+    pub(super) fn complexity_penalty(
+        &self,
+        candidate: &CandidateRule,
+        decision_mode: DiscoveryDecisionMode,
+    ) -> usize {
+        let key = format!("{decision_mode:?}:{}", candidate.signature());
+        if let Some(penalty) = self
+            .complexity_by_signature
+            .lock()
+            .expect("candidate complexity cache poisoned")
+            .get(&key)
+            .copied()
+        {
+            return penalty;
+        }
+        let penalty = candidate_complexity_penalty(candidate, decision_mode);
+        *self
+            .complexity_by_signature
+            .lock()
+            .expect("candidate complexity cache poisoned")
+            .entry(key)
+            .or_insert(penalty)
+    }
+
+    fn mask_for_candidate(&self, candidate: &CandidateRule) -> Arc<Vec<bool>> {
+        if let Some(mask) = self
+            .matches_by_signature
+            .lock()
+            .expect("candidate match cache poisoned")
+            .get(candidate.signature())
+            .cloned()
+        {
+            return mask;
+        }
+        self.mask_for_expression(&candidate.expression)
+    }
+
+    fn mask_for_expression(&self, expression: &Expression) -> Arc<Vec<bool>> {
+        let signature = serde_json::to_string(expression).unwrap_or_default();
+        if let Some(mask) = self
+            .matches_by_signature
+            .lock()
+            .expect("candidate match cache poisoned")
+            .get(&signature)
+            .cloned()
+        {
+            return mask;
+        }
+        let computed = Arc::new(
+            self.rows
+                .iter()
+                .map(|row| expression_matches(expression, &row.features))
+                .collect::<Vec<_>>(),
+        );
+        self.matches_by_signature
+            .lock()
+            .expect("candidate match cache poisoned")
+            .entry(signature)
+            .or_insert_with(|| computed.clone())
+            .clone()
+    }
 }
 
 pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use clap::Args;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use logicpearl_discovery::FeatureColumnSelection;
+use logicpearl_discovery::ProgressEvent;
 use std::collections::BTreeMap;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 mod action_build;
@@ -55,6 +58,73 @@ pub(crate) fn to_discovery_decision_mode(arg: DiscoveryDecisionModeArg) -> Disco
     }
 }
 
+pub(super) fn progress_enabled(_json: bool, progress: bool) -> bool {
+    progress
+}
+
+pub(super) enum CliProgress {
+    Spinner(ProgressBar),
+    Lines,
+}
+
+pub(super) fn start_progress(
+    enabled: bool,
+    initial_message: impl Into<String>,
+) -> Option<CliProgress> {
+    if !enabled {
+        return None;
+    }
+    let initial_message = initial_message.into();
+    if std::io::stderr().is_terminal() {
+        let sp = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
+        sp.enable_steady_tick(std::time::Duration::from_millis(80));
+        sp.set_message(initial_message);
+        sp.tick();
+        Some(CliProgress::Spinner(sp))
+    } else {
+        eprintln!("{initial_message}");
+        Some(CliProgress::Lines)
+    }
+}
+
+pub(super) fn progress_callback(
+    progress: Option<&CliProgress>,
+) -> Option<Box<dyn Fn(ProgressEvent) + Send + Sync>> {
+    progress.map(|progress| match progress {
+        CliProgress::Spinner(sp) => {
+            let sp = sp.clone();
+            Box::new(move |event: ProgressEvent| {
+                sp.set_message(event.message);
+                sp.tick();
+            }) as Box<dyn Fn(ProgressEvent) + Send + Sync>
+        }
+        CliProgress::Lines => Box::new(move |event: ProgressEvent| {
+            eprintln!("{}", event.message);
+        }) as Box<dyn Fn(ProgressEvent) + Send + Sync>,
+    })
+}
+
+pub(super) fn set_progress_message(progress: Option<&CliProgress>, message: impl Into<String>) {
+    let Some(progress) = progress else {
+        return;
+    };
+    let message = message.into();
+    match progress {
+        CliProgress::Spinner(sp) => {
+            sp.set_message(message);
+            sp.tick();
+        }
+        CliProgress::Lines => eprintln!("{message}"),
+    }
+}
+
+pub(super) fn finish_progress(progress: Option<CliProgress>) {
+    if let Some(CliProgress::Spinner(sp)) = progress {
+        sp.finish_and_clear();
+    }
+}
+
 #[derive(Debug, Args)]
 #[command(after_help = QUICKSTART_AFTER_HELP)]
 pub(crate) struct QuickstartArgs {
@@ -64,7 +134,7 @@ pub(crate) struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output\n  logicpearl build traces.csv --json --progress --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -167,11 +237,14 @@ pub(crate) struct BuildArgs {
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,
+    /// Emit phase progress to stderr. Useful with --json because stdout remains machine-readable.
+    #[arg(long)]
+    pub progress: bool,
 }
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --exclude-columns source,note --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered"
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --exclude-columns source,note --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --json --progress"
 )]
 pub(crate) struct DiscoverArgs {
     /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
@@ -227,6 +300,9 @@ pub(crate) struct DiscoverArgs {
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,
+    /// Emit phase progress to stderr. Useful with --json because stdout remains machine-readable.
+    #[arg(long)]
+    pub progress: bool,
 }
 
 #[derive(Debug, Args)]

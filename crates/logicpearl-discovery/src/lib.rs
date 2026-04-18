@@ -64,6 +64,33 @@ pub struct BuildOptions {
     pub feature_selection: FeatureColumnSelection,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressEvent {
+    pub phase: String,
+    pub message: String,
+}
+
+impl ProgressEvent {
+    pub fn new(phase: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            phase: phase.into(),
+            message: message.into(),
+        }
+    }
+}
+
+pub type ProgressCallback<'a> = dyn Fn(ProgressEvent) + Send + Sync + 'a;
+
+pub fn report_progress(
+    progress: Option<&ProgressCallback<'_>>,
+    phase: impl Into<String>,
+    message: impl Into<String>,
+) {
+    if let Some(progress) = progress {
+        progress(ProgressEvent::new(phase, message));
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryDecisionMode {
@@ -1239,6 +1266,19 @@ fn validate_feature_dictionary(
 }
 
 pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<BuildResult> {
+    build_pearl_from_csv_with_progress(csv_path, options, None)
+}
+
+pub fn build_pearl_from_csv_with_progress(
+    csv_path: &Path,
+    options: &BuildOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<BuildResult> {
+    report_progress(
+        progress,
+        "load_traces",
+        format!("load_traces: reading {}", csv_path.display()),
+    );
     let loaded = load_decision_traces_auto_with_feature_selection(
         csv_path,
         Some(&options.label_column),
@@ -1261,19 +1301,34 @@ pub fn build_pearl_from_csv(csv_path: &Path, options: &BuildOptions) -> Result<B
         max_rules: options.max_rules,
         feature_selection: options.feature_selection.clone(),
     };
-    build_pearl_from_rows(
+    build_pearl_from_rows_with_progress(
         &loaded.rows,
         csv_path.display().to_string(),
         &resolved_options,
+        progress,
     )
 }
 
 pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<DiscoverResult> {
+    discover_from_csv_with_progress(csv_path, options, None)
+}
+
+pub fn discover_from_csv_with_progress(
+    csv_path: &Path,
+    options: &DiscoverOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<DiscoverResult> {
     if options.target_columns.is_empty() {
         return Err(LogicPearlError::message(
             "discover requires at least one target column",
         ));
     }
+
+    report_progress(
+        progress,
+        "prepare_output",
+        format!("prepare_output: {}", options.output_dir.display()),
+    );
 
     options.output_dir.mkdir_all()?;
     let discover_manifest = discover_cache_manifest(csv_path, options)?;
@@ -1284,6 +1339,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         && discover_report_path.exists()
         && load_cache_manifest(&discover_cache_path)?.as_ref() == Some(&discover_manifest)
     {
+        report_progress(progress, "cache", "cache: reusing full discover output");
         let mut cached: DiscoverResult =
             serde_json::from_str(&std::fs::read_to_string(&discover_report_path)?)?;
         cached.source_csv = csv_path.display().to_string();
@@ -1300,6 +1356,11 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         return Ok(cached);
     }
 
+    report_progress(
+        progress,
+        "load_records",
+        format!("load_records: reading {}", csv_path.display()),
+    );
     let loaded = load_flat_records(csv_path)?;
     let headers = loaded.field_names;
     let records = loaded.records;
@@ -1311,6 +1372,15 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         }
     }
 
+    report_progress(
+        progress,
+        "select_features",
+        format!(
+            "select_features: {} columns, {} targets",
+            headers.len(),
+            options.target_columns.len()
+        ),
+    );
     let feature_columns = options.feature_selection.selected_feature_columns(
         csv_path,
         &headers,
@@ -1319,6 +1389,14 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
 
     let artifacts_dir = options.output_dir.join("artifacts");
     artifacts_dir.mkdir_all()?;
+    report_progress(
+        progress,
+        "infer_targets",
+        format!(
+            "infer_targets: {} target columns",
+            options.target_columns.len()
+        ),
+    );
     let target_domains: HashMap<String, BinaryLabelDomain> = options
         .target_columns
         .iter()
@@ -1328,6 +1406,11 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         })
         .collect::<Result<_>>()?;
 
+    report_progress(
+        progress,
+        "prepare_targets",
+        format!("prepare_targets: {} rows", records.len()),
+    );
     let mut per_target_rows: HashMap<String, Vec<DecisionTraceRow>> = options
         .target_columns
         .iter()
@@ -1389,6 +1472,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         .unwrap_or_default();
 
     for target in &options.target_columns {
+        report_progress(progress, "target", format!("target: building {target}"));
         let target_rows = per_target_rows.remove(target).ok_or_else(|| {
             LogicPearlError::message(format!("missing rows for target {target:?}"))
         })?;
@@ -1409,7 +1493,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
             continue;
         }
         let target_dir = artifacts_dir.join(target);
-        let build = match build_pearl_from_rows(
+        let build = match build_pearl_from_rows_with_progress(
             &target_rows,
             csv_path.display().to_string(),
             &BuildOptions {
@@ -1427,6 +1511,7 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
                 max_rules: None,
                 feature_selection: options.feature_selection.clone(),
             },
+            progress,
         ) {
             Ok(build) => build,
             Err(err) => {
@@ -1481,6 +1566,11 @@ pub fn discover_from_csv(csv_path: &Path, options: &DiscoverOptions) -> Result<D
         },
     };
 
+    report_progress(
+        progress,
+        "write_outputs",
+        "write_outputs: artifact set and report",
+    );
     std::fs::write(
         &discover_report_path,
         serde_json::to_string_pretty(&discover_result_for_report_at(
@@ -1498,7 +1588,16 @@ pub fn build_pearl_from_rows(
     source_name: String,
     options: &BuildOptions,
 ) -> Result<BuildResult> {
-    build_pearl_from_rows_internal(rows, source_name, options, true)
+    build_pearl_from_rows_with_progress(rows, source_name, options, None)
+}
+
+pub fn build_pearl_from_rows_with_progress(
+    rows: &[DecisionTraceRow],
+    source_name: String,
+    options: &BuildOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<BuildResult> {
+    build_pearl_from_rows_internal(rows, source_name, options, true, progress)
 }
 
 pub fn build_pearl_from_rows_without_numeric_interactions(
@@ -1506,14 +1605,22 @@ pub fn build_pearl_from_rows_without_numeric_interactions(
     source_name: String,
     options: &BuildOptions,
 ) -> Result<BuildResult> {
-    build_pearl_from_rows_internal(rows, source_name, options, false)
+    build_pearl_from_rows_internal(rows, source_name, options, false, None)
 }
 
 pub fn learn_gate_from_rows_without_numeric_interactions(
     rows: &[DecisionTraceRow],
     options: &BuildOptions,
 ) -> Result<LearnedGate> {
-    learn_gate_from_rows_internal(rows, options, false)
+    learn_gate_from_rows_internal(rows, options, false, None)
+}
+
+pub fn learn_gate_from_rows_without_numeric_interactions_with_progress(
+    rows: &[DecisionTraceRow],
+    options: &BuildOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<LearnedGate> {
+    learn_gate_from_rows_internal(rows, options, false, progress)
 }
 
 fn build_pearl_from_rows_internal(
@@ -1521,12 +1628,18 @@ fn build_pearl_from_rows_internal(
     source_name: String,
     options: &BuildOptions,
     numeric_interactions: bool,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<BuildResult> {
     if rows.is_empty() {
         return Err(LogicPearlError::message("decision trace CSV is empty"));
     }
 
     options.output_dir.mkdir_all()?;
+    report_progress(
+        progress,
+        "prepare_output",
+        format!("prepare_output: {}", options.output_dir.display()),
+    );
     let build_manifest = build_cache_manifest(rows, &source_name, options)?;
     let build_cache_path = cache_manifest_path(&options.output_dir);
     let build_report_path = options.output_dir.join("build_report.json");
@@ -1535,6 +1648,7 @@ fn build_pearl_from_rows_internal(
         && build_report_path.exists()
         && load_cache_manifest(&build_cache_path)?.as_ref() == Some(&build_manifest)
     {
+        report_progress(progress, "cache", "cache: reusing prior build output");
         let mut cached: BuildResult =
             serde_json::from_str(&std::fs::read_to_string(&build_report_path)?)?;
         cached.source_csv = source_name;
@@ -1551,10 +1665,16 @@ fn build_pearl_from_rows_internal(
         residual_recovery,
         refined_rules_applied,
         pinned_rules_applied,
-    } = learn_gate_from_rows_internal(rows, options, numeric_interactions)?;
+    } = learn_gate_from_rows_internal(rows, options, numeric_interactions, progress)?;
+    report_progress(progress, "write_ir", "write_ir: pearl.ir.json");
     gate.validate()?;
     gate.write_pretty(&pearl_ir_path)?;
 
+    report_progress(
+        progress,
+        "training_parity",
+        format!("training_parity: evaluating {} rows", rows.len()),
+    );
     let mut correct = 0;
     for row in rows {
         let bitmask = evaluate_gate(&gate, &row.features)?;
@@ -1600,6 +1720,7 @@ fn build_pearl_from_rows_internal(
         },
     };
 
+    report_progress(progress, "write_report", "write_report: build_report.json");
     std::fs::write(
         &build_report_path,
         serde_json::to_string_pretty(&build_result_for_report(&build_report))? + "\n",
@@ -1702,16 +1823,27 @@ fn learn_gate_from_rows_internal(
     rows: &[DecisionTraceRow],
     options: &BuildOptions,
     numeric_interactions: bool,
+    progress: Option<&ProgressCallback<'_>>,
 ) -> Result<LearnedGate> {
     if rows.is_empty() {
         return Err(LogicPearlError::message("decision trace CSV is empty"));
     }
 
     let (augmented_rows, derived_features) = if numeric_interactions {
+        report_progress(
+            progress,
+            "prepare_features",
+            "prepare_features: deriving numeric interactions",
+        );
         augment_rows_with_numeric_interactions(rows)?
     } else {
         (rows.to_vec(), Vec::new())
     };
+    report_progress(
+        progress,
+        "load_metadata",
+        "load_metadata: feature governance and dictionary",
+    );
     let feature_governance = options
         .feature_governance
         .as_deref()
@@ -1740,6 +1872,11 @@ fn learn_gate_from_rows_internal(
         .as_ref()
         .map(|path| load_pinned_rule_set(path))
         .transpose()?;
+    report_progress(
+        progress,
+        "learn_rules",
+        format!("learn_rules: {} rows", augmented_rows.len()),
+    );
     let (
         gate,
         exact_selection,
@@ -1759,6 +1896,7 @@ fn learn_gate_from_rows_internal(
         residual_options.as_ref(),
         refinement_options.as_ref(),
         pinned_rules.as_ref(),
+        progress,
     )?;
     gate.validate()?;
     Ok(LearnedGate {

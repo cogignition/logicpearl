@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 use anstream::println;
-use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_build::{
-    attach_generated_file_hashes, build_gate_artifact_from_rows,
+    attach_generated_file_hashes, build_gate_artifact_from_rows_with_progress,
     load_source_manifest_for_provenance, plugin_provenance_from_execution, source_input_provenance,
     trace_input_provenance, BuildProvenanceInputs,
 };
@@ -27,10 +26,10 @@ use super::conflicts::{
 };
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
-    feature_columns_from_decision_rows, generated_feature_dictionary_for_output,
-    generated_feature_dictionary_path, guidance, parse_key_value_entries, run_action_build,
-    should_generate_feature_dictionary, to_discovery_decision_mode,
-    write_feature_dictionary_from_columns, BuildArgs,
+    feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
+    generated_feature_dictionary_path, guidance, parse_key_value_entries, progress_callback,
+    progress_enabled, run_action_build, set_progress_message, should_generate_feature_dictionary,
+    start_progress, to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
     build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -67,6 +66,11 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .map(default_gate_id_from_path)
             .unwrap_or_else(|| "decision_traces".to_string())
     });
+    let spinner = start_progress(
+        progress_enabled(args.json, args.progress),
+        "build: preparing input",
+    );
+    let progress = progress_callback(spinner.as_ref());
 
     let mut input_traces = Vec::new();
     let mut trace_plugin_provenance = None;
@@ -76,6 +80,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         &args.decision_traces,
     ) {
         (Some(manifest_path), None) => {
+            set_progress_message(
+                spinner.as_ref(),
+                format!("trace_plugin: {}", manifest_path.display()),
+            );
             let manifest = PluginManifest::from_path(manifest_path)
                 .into_diagnostic()
                 .wrap_err("failed to load trace plugin manifest")?;
@@ -134,6 +142,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             (rows, plugin_label_column)
         }
         (None, Some(decision_traces)) => {
+            set_progress_message(
+                spinner.as_ref(),
+                format!("load_traces: {}", decision_traces.display()),
+            );
             let loaded = load_decision_traces_auto_with_feature_selection(
                 decision_traces,
                 args.label_column.as_deref(),
@@ -171,6 +183,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     }
 
     if should_generate_feature_dictionary(&args) {
+        set_progress_message(
+            spinner.as_ref(),
+            "feature_dictionary: generating starter metadata",
+        );
         let dictionary_path = generated_feature_dictionary_path(&output_dir);
         write_feature_dictionary_from_columns(
             &dictionary_path,
@@ -225,6 +241,10 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     let build_options_digest = build_options_hash(&build_options_value);
 
     if let Some(manifest_path) = &args.enricher_plugin_manifest {
+        set_progress_message(
+            spinner.as_ref(),
+            format!("enricher_plugin: {}", manifest_path.display()),
+        );
         let manifest = PluginManifest::from_path(manifest_path)
             .into_diagnostic()
             .wrap_err("failed to load enricher plugin manifest")?;
@@ -291,6 +311,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .unwrap_or_else(|| "decision_traces".to_string())
     };
 
+    set_progress_message(spinner.as_ref(), "provenance: assembling build inputs");
     let provenance_inputs = BuildProvenanceInputs {
         artifact_dir: Some(build_options.output_dir.clone()),
         source_references: parse_key_value_entries(&args.source_references, "source-ref")?,
@@ -306,31 +327,25 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         build_options_hash: build_options_digest.clone(),
     };
 
-    let spinner = if !args.json {
-        let sp = ProgressBar::new_spinner();
-        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
-        sp.enable_steady_tick(std::time::Duration::from_millis(80));
-        sp.set_message(format!(
-            "{} pearl from {} rows",
-            "Building".bold().bright_green(),
-            rows.len()
-        ));
-        Some(sp)
-    } else {
-        None
-    };
-    let mut result =
-        build_gate_artifact_from_rows(&rows, source_name, &build_options, provenance_inputs)
-            .into_diagnostic()
-            .wrap_err("failed to build pearl from decision traces")?;
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
-    }
+    set_progress_message(
+        spinner.as_ref(),
+        format!("build: learning pearl from {} rows", rows.len()),
+    );
+    let mut result = build_gate_artifact_from_rows_with_progress(
+        &rows,
+        source_name,
+        &build_options,
+        provenance_inputs,
+        progress.as_deref(),
+    )
+    .into_diagnostic()
+    .wrap_err("failed to build pearl from decision traces")?;
 
     let artifact_dir = PathBuf::from(&result.output_files.artifact_dir);
     let pearl_ir_path = PathBuf::from(&result.output_files.pearl_ir);
     let artifact_name = result.gate_id.clone();
     if args.compile {
+        set_progress_message(spinner.as_ref(), "compile: native runner");
         let native_binary_path = result
             .output_files
             .native_binary
@@ -348,6 +363,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         result.output_files.native_binary = Some(native_binary.display().to_string());
 
         let wasm_output = if is_rust_target_installed("wasm32-unknown-unknown") {
+            set_progress_message(spinner.as_ref(), "compile: wasm module");
             let wasm_output_path = result
                 .output_files
                 .wasm_module
@@ -375,6 +391,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         result.output_files.wasm_module = None;
         result.output_files.wasm_metadata = None;
     }
+    set_progress_message(spinner.as_ref(), "write_outputs: manifest and reports");
     attach_generated_file_hashes(
         &mut result.provenance,
         &artifact_dir,
@@ -421,6 +438,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         generated_feature_dictionary_for_output(&args, &artifact_dir).map(|path| path.as_path()),
         Some(build_options_digest),
     )?;
+    finish_progress(spinner);
 
     if args.json {
         let mut report = serde_json::to_value(build_result_for_report(&result))

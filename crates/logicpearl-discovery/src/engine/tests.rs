@@ -2,8 +2,9 @@
 use super::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
     candidate_rules, compare_candidate_set_score, conjunction_candidate_rules, recover_rare_rules,
-    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, CandidateRule,
-    CandidateSelectionContext, CandidateSetScore, DISCOVERY_SELECTION_BACKEND_ENV,
+    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, training_indices,
+    CandidateMatchCache, CandidateRule, CandidateSelectionContext, CandidateSetScore,
+    DISCOVERY_SELECTION_BACKEND_ENV,
 };
 use crate::{
     discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
@@ -12,6 +13,7 @@ use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, E
 use logicpearl_solver::{check_sat, SolverSettings};
 use serde_json::{Number, Value};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 fn solver_available() -> bool {
     check_sat("(check-sat)\n", &SolverSettings::default()).is_ok()
@@ -196,6 +198,7 @@ fn candidate_rules_skip_feature_refs_for_binary_numeric_features() {
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
         None,
+        None,
     );
     assert!(
         !candidates.iter().any(|candidate| matches!(
@@ -222,6 +225,7 @@ fn candidate_rules_limit_feature_refs_to_ordered_numeric_comparisons() {
         &allowed_indices,
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
+        None,
         None,
     );
     assert!(
@@ -257,6 +261,7 @@ fn high_cardinality_numeric_features_skip_exact_match_candidates() {
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
         None,
+        None,
     );
 
     assert!(
@@ -289,6 +294,7 @@ fn low_cardinality_numeric_features_can_still_emit_exact_match_candidates() {
         &allowed_indices,
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
+        None,
         None,
     );
 
@@ -324,6 +330,7 @@ fn numeric_exact_match_candidates_require_minimum_support() {
         &allowed_indices,
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
+        None,
         None,
     );
 
@@ -373,12 +380,14 @@ fn rare_rule_recovery_adds_uncovered_zero_fp_rule() {
         rows: &rows,
         denied_indices: &denied_indices,
         allowed_indices: &allowed_indices,
-        validation_indices: None,
+        training_indices: training_indices(&rows, &[]),
+        validation_indices: &[],
         feature_governance: &feature_governance,
         decision_mode: DiscoveryDecisionMode::Standard,
         residual_options: None,
+        match_cache: Arc::new(CandidateMatchCache::new(&rows)),
     };
-    let recovered = recover_rare_rules(&selection_context, selected).unwrap();
+    let recovered = recover_rare_rules(&selection_context, selected, None).unwrap();
     assert_eq!(recovered.len(), 2);
     let score = score_candidate_set(&rows, &recovered, None);
     assert_eq!(score.false_negatives, 0);
@@ -411,12 +420,14 @@ fn rare_rule_recovery_skips_rules_that_only_add_false_positives() {
         rows: &rows,
         denied_indices: &denied_indices,
         allowed_indices: &allowed_indices,
-        validation_indices: None,
+        training_indices: training_indices(&rows, &[]),
+        validation_indices: &[],
         feature_governance: &feature_governance,
         decision_mode: DiscoveryDecisionMode::Standard,
         residual_options: None,
+        match_cache: Arc::new(CandidateMatchCache::new(&rows)),
     };
-    let recovered = recover_rare_rules(&selection_context, selected).unwrap();
+    let recovered = recover_rare_rules(&selection_context, selected, None).unwrap();
     assert_eq!(recovered.len(), 1);
     assert_eq!(
         candidate_as_comparison(&recovered[0]).unwrap().feature,
@@ -449,6 +460,7 @@ fn conjunction_candidate_rules_emit_real_multi_condition_rules() {
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
         None,
+        None,
     );
 
     let compounds = conjunction_candidate_rules(
@@ -462,6 +474,7 @@ fn conjunction_candidate_rules_emit_real_multi_condition_rules() {
             max_negative_hits: 0,
             max_rules: 4,
         },
+        None,
     );
 
     assert!(compounds.iter().any(|candidate| {
@@ -613,6 +626,7 @@ fn conjunction_candidate_rules_cover_policy_style_dataset() {
         &BTreeMap::new(),
         DiscoveryDecisionMode::Standard,
         None,
+        None,
     );
 
     let compounds = conjunction_candidate_rules(
@@ -626,6 +640,7 @@ fn conjunction_candidate_rules_cover_policy_style_dataset() {
             max_negative_hits: 0,
             max_rules: 8,
         },
+        None,
     );
 
     let score = score_candidate_set(&rows, &compounds, None);

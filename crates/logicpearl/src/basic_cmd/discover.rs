@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 use anstream::println;
-use indicatif::{ProgressBar, ProgressStyle};
-use logicpearl_discovery::{discover_from_csv, discover_result_for_report, DiscoverOptions};
+use logicpearl_discovery::{
+    discover_from_csv_with_progress, discover_result_for_report, DiscoverOptions,
+};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 
-use super::{feature_column_selection, guidance, to_discovery_decision_mode, DiscoverArgs};
+use super::{
+    feature_column_selection, finish_progress, guidance, progress_callback, progress_enabled,
+    start_progress, to_discovery_decision_mode, DiscoverArgs,
+};
 
 pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
     let mut targets = args.targets;
@@ -35,20 +39,15 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             .unwrap_or_else(|| "artifact_set".to_string())
     });
 
-    let spinner = if !args.json {
-        let sp = ProgressBar::new_spinner();
-        sp.set_style(ProgressStyle::with_template("{spinner:.green} {msg} ({elapsed})").unwrap());
-        sp.enable_steady_tick(std::time::Duration::from_millis(80));
-        sp.set_message(format!(
-            "{} artifacts from {}",
-            "Discovering".bold().bright_green(),
+    let spinner = start_progress(
+        progress_enabled(args.json, args.progress),
+        format!(
+            "discover: building artifacts from {}",
             args.dataset_csv.display()
-        ));
-        Some(sp)
-    } else {
-        None
-    };
-    let result = discover_from_csv(
+        ),
+    );
+    let progress = progress_callback(spinner.as_ref());
+    let result = discover_from_csv_with_progress(
         &args.dataset_csv,
         &DiscoverOptions {
             output_dir,
@@ -62,12 +61,11 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
         },
+        progress.as_deref(),
     )
     .into_diagnostic()
     .wrap_err("could not discover artifacts from the dataset")?;
-    if let Some(sp) = spinner {
-        sp.finish_and_clear();
-    }
+    finish_progress(spinner);
 
     if args.json {
         let report = discover_result_for_report(&result);

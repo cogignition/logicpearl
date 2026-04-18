@@ -6,6 +6,7 @@ All notable user-facing changes should be added here.
 
 ### Added
 - Versioned `logicpearl.observation_schema.v1` contracts for upstream observed-feature availability, plus `logicpearl traces observation-schema` to validate and summarize them before review/build.
+- `logicpearl build` and `logicpearl discover` now accept `--progress`, emitting phase and candidate-generation subphase progress to stderr while keeping `--json` stdout parseable.
 
 ## 0.1.5 - 2026-04-14
 

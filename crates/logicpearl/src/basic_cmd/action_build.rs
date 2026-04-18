@@ -2,10 +2,11 @@
 use anstream::println;
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_build::{
-    action_rule_report, attach_generated_file_hashes, build_provenance, learn_action_policy,
-    load_source_manifest_for_provenance, plugin_provenance_from_execution,
-    prepare_action_traces_with_feature_selection, source_input_provenance, trace_input_provenance,
-    ActionLearningOptions, ActionRuleBudgetReport, ActionRuleBuildReport, BuildProvenanceInputs,
+    action_rule_report, attach_generated_file_hashes, build_provenance,
+    learn_action_policy_with_progress, load_source_manifest_for_provenance,
+    plugin_provenance_from_execution, prepare_action_traces_with_feature_selection,
+    source_input_provenance, trace_input_provenance, ActionLearningOptions, ActionRuleBudgetReport,
+    ActionRuleBuildReport, BuildProvenanceInputs,
 };
 use logicpearl_core::{provenance_safe_path_string, ArtifactKind};
 use logicpearl_discovery::{
@@ -29,8 +30,9 @@ use super::conflicts::{
 };
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
-    generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
-    parse_key_value_entries, should_generate_feature_dictionary, to_discovery_decision_mode,
+    finish_progress, generated_feature_dictionary_for_output, generated_feature_dictionary_path,
+    guidance, parse_key_value_entries, progress_callback, progress_enabled, set_progress_message,
+    should_generate_feature_dictionary, start_progress, to_discovery_decision_mode,
     write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
@@ -84,6 +86,22 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         )
     })?;
     let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
+    let spinner = start_progress(
+        progress_enabled(args.json, args.progress),
+        "action_build: preparing input",
+    );
+    let progress = progress_callback(spinner.as_ref());
+    if let Some(manifest_path) = &args.trace_plugin_manifest {
+        set_progress_message(
+            spinner.as_ref(),
+            format!("trace_plugin: {}", manifest_path.display()),
+        );
+    } else if let Some(traces) = &args.decision_traces {
+        set_progress_message(
+            spinner.as_ref(),
+            format!("load_traces: {}", traces.display()),
+        );
+    }
     let LoadedActionTraceRecords {
         loaded,
         source_name,
@@ -91,6 +109,10 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         default_artifact_name,
         trace_plugin: trace_plugin_provenance,
     } = load_action_trace_records(&args, &action_column)?;
+    set_progress_message(
+        spinner.as_ref(),
+        format!("action_build: prepared {} rows", loaded.records.len()),
+    );
     let input_traces = if let Some(path) = &args.decision_traces {
         vec![trace_input_provenance(path, loaded.records.len()).into_diagnostic()?]
     } else {
@@ -110,6 +132,10 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     let artifact_name = args.gate_id.clone().unwrap_or(default_artifact_name);
 
     if should_generate_feature_dictionary(&args) {
+        set_progress_message(
+            spinner.as_ref(),
+            "feature_dictionary: generating starter metadata",
+        );
         let dictionary_path = generated_feature_dictionary_path(&output_dir);
         write_feature_dictionary_from_columns(
             &dictionary_path,
@@ -143,7 +169,11 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         }
     }
 
-    let learned_action = learn_action_policy(
+    set_progress_message(
+        spinner.as_ref(),
+        "learn_action_policy: selecting action routes",
+    );
+    let learned_action = learn_action_policy_with_progress(
         &action_traces,
         &ActionLearningOptions {
             artifact_name: artifact_name.clone(),
@@ -159,6 +189,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
         },
+        progress.as_deref(),
     )
     .into_diagnostic()
     .wrap_err("failed to learn action policy")?;
@@ -169,6 +200,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     let rule_budget = learned_action.rule_budget;
     let training_parity = learned_action.training_parity;
     let action_policy_path = output_dir.join("pearl.ir.json");
+    set_progress_message(spinner.as_ref(), "write_ir: pearl.ir.json");
     action_policy
         .write_pretty(&action_policy_path)
         .into_diagnostic()
@@ -241,6 +273,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
     let mut wasm_module_file = None;
     let mut wasm_metadata_file = None;
     if args.compile {
+        set_progress_message(spinner.as_ref(), "compile: native runner");
         let native_binary_path = native_artifact_output_path(&output_dir, &artifact_name, None);
         let native_binary = compile_native_runner(
             &action_policy_path,
@@ -255,6 +288,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             .map(|name| name.to_string_lossy().into_owned());
 
         if is_rust_target_installed("wasm32-unknown-unknown") {
+            set_progress_message(spinner.as_ref(), "compile: wasm module");
             let wasm_output = compile_wasm_module(
                 &action_policy_path,
                 &output_dir,
@@ -273,6 +307,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         }
     }
 
+    set_progress_message(spinner.as_ref(), "write_outputs: manifest and reports");
     attach_generated_file_hashes(
         &mut action_report.provenance,
         &output_dir,
@@ -366,6 +401,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         },
     )
     .wrap_err("failed to write action artifact manifest")?;
+    finish_progress(spinner);
 
     if args.json {
         let mut report = serde_json::to_value(&public_action_report)

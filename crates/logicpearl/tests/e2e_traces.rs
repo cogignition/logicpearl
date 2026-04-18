@@ -153,3 +153,42 @@ fn observation_schema_contract_validates_and_is_discoverable() {
         Some("policy_manual_2026_04")
     );
 }
+
+#[test]
+fn build_progress_uses_stderr_without_corrupting_json_stdout() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp directory should exist");
+    let traces = repo_root.join("examples/getting_started/decision_traces.csv");
+    let artifact_dir = temp.path().join("progress_artifact");
+
+    let output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&traces)
+        .arg("--output-dir")
+        .arg(&artifact_dir)
+        .arg("--json")
+        .arg("--progress")
+        .output()
+        .expect("logicpearl build --progress should run");
+    assert!(
+        output.status.success(),
+        "logicpearl build --progress failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should remain valid JSON");
+    assert_eq!(report["gate_id"].as_str(), Some("decision_traces"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("candidate_generation: numeric predicates")
+            || stderr.contains("candidate_generation: atomic features"),
+        "stderr should contain candidate-generation subphase progress, got: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("greedy_selection: pass"),
+        "stderr should contain greedy-selection subphase progress, got: {stderr:?}"
+    );
+}
