@@ -13,8 +13,8 @@ use logicpearl_discovery::{
     learn_gate_from_rows_without_numeric_interactions_with_progress, report_progress,
     BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
     DecisionTraceProvenance, DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection,
-    FileProvenance, LoadedFlatRecords, PluginBuildProvenance, ProgressCallback, SourceManifest,
-    SourceManifestProvenance, TraceInputProvenance,
+    FileProvenance, LoadedFlatRecords, PluginBuildProvenance, ProgressCallback, ProposalPolicy,
+    SourceManifest, SourceManifestProvenance, TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -290,6 +290,7 @@ pub fn learn_action_policy_with_progress(
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
                 max_rules: Some(action_rule_budget),
+                proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: FeatureColumnSelection::default(),
             },
             progress,

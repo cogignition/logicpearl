@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-use logicpearl_discovery::{BuildResult, ExactSelectionBackend};
+use logicpearl_discovery::{
+    BuildResult, ExactSelectionBackend, ProposalCandidateStatus, ProposalPhaseStatus,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,9 +83,26 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
         report_output_path(&output_path, &build_result.output_files.artifact_manifest);
     let pearl_ir = report_output_path(&output_path, &build_result.output_files.pearl_ir);
     let build_report = report_output_path(&output_path, &build_result.output_files.build_report);
+    let proposal_report = report_output_path(
+        &output_path,
+        build_result
+            .output_files
+            .proposal_report
+            .as_deref()
+            .expect("proposal report path should be present"),
+    );
     assert!(artifact_manifest.exists());
     assert!(pearl_ir.exists());
     assert!(build_report.exists());
+    assert!(proposal_report.exists());
+    assert_eq!(
+        build_result.proposal_phase.status,
+        ProposalPhaseStatus::Skipped
+    );
+    assert!(build_result
+        .build_phases
+        .iter()
+        .any(|phase| phase.name == "proposal_phase"));
     let manifest: Value = serde_json::from_str(
         &std::fs::read_to_string(&artifact_manifest).expect("artifact manifest should be readable"),
     )
@@ -166,6 +185,145 @@ fn sample_dataset_builds_artifact_bundle_and_runs_explicit_compiled_binary() {
         String::from_utf8_lossy(&compiled_output.stdout).trim(),
         "0",
         "compiled pearl binary should return the expected bitmask"
+    );
+}
+
+#[test]
+fn proposal_phase_example_runs_with_rule_budget_and_validates_candidates() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let output_dir = tempdir().expect("temp output dir should be created");
+    let output_path = output_dir.path().join("proposal_bundle");
+    let sample_csv = repo_root.join("examples/proposal_phase/traces.csv");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&sample_csv)
+        .arg("--output-dir")
+        .arg(&output_path)
+        .arg("--max-rules")
+        .arg("1")
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build_output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let build_result: BuildResult =
+        serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
+    let proposal_report = report_output_path(
+        &output_path,
+        build_result
+            .output_files
+            .proposal_report
+            .as_deref()
+            .expect("proposal report path should be present"),
+    );
+
+    assert!(proposal_report.exists());
+    assert_eq!(build_result.training_parity, 1.0);
+    assert!(build_result.rules_discovered > 1);
+    assert_eq!(build_result.proposal_phase.status, ProposalPhaseStatus::Ran);
+    assert_eq!(
+        build_result.proposal_phase.acceptance_policy,
+        "auto_adopt_safe"
+    );
+    assert_eq!(
+        build_result.proposal_phase.diagnosis.as_deref(),
+        Some("missing_relationship_feature")
+    );
+    assert_eq!(
+        build_result
+            .proposal_phase
+            .recommended_next_phase
+            .as_deref(),
+        Some("promote_derived_feature_to_observer")
+    );
+    assert_eq!(build_result.proposal_phase.accepted_candidates, 1);
+    assert_eq!(
+        build_result.proposal_phase.accepted_candidate_ids,
+        ["derived_ratio_debt_income_gte_pos_0_700000"]
+    );
+    assert!(
+        build_result
+            .proposal_phase
+            .pre_adoption_training_parity
+            .expect("pre-adoption parity should be reported")
+            < build_result
+                .proposal_phase
+                .post_adoption_training_parity
+                .expect("post-adoption parity should be reported")
+    );
+    assert!(build_result.proposal_phase.validated_candidates > 0);
+    assert!(build_result
+        .proposal_phase
+        .candidates
+        .iter()
+        .any(|candidate| {
+            candidate.status == ProposalCandidateStatus::Validated
+                && candidate.source_stage == "derived_feature_search"
+                && candidate.recommendation.as_deref() == Some("promote_to_observer_feature")
+                && candidate.feature_expression.as_deref() == Some("debt / income")
+                && candidate.validation.deterministic
+                && candidate.validation.passed
+                && candidate.evidence.introduced_mismatches == 0
+        }));
+    for stage_name in [
+        "mismatch_mining",
+        "subgroup_discovery",
+        "derived_feature_search",
+        "interpretable_model_search",
+    ] {
+        assert!(build_result
+            .proposal_phase
+            .stages
+            .iter()
+            .any(|stage| stage.name == stage_name));
+    }
+}
+
+#[test]
+fn proposal_phase_report_only_policy_does_not_modify_emitted_pearl() {
+    let repo_root = repo_root();
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let output_dir = tempdir().expect("temp output dir should be created");
+    let output_path = output_dir.path().join("proposal_report_only_bundle");
+    let sample_csv = repo_root.join("examples/proposal_phase/traces.csv");
+
+    let build_output = Command::new(cli_bin)
+        .arg("build")
+        .arg(&sample_csv)
+        .arg("--output-dir")
+        .arg(&output_path)
+        .arg("--max-rules")
+        .arg("1")
+        .arg("--proposal-policy")
+        .arg("report-only")
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build_output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let build_result: BuildResult =
+        serde_json::from_slice(&build_output.stdout).expect("build output should be valid JSON");
+    assert_eq!(build_result.proposal_phase.status, ProposalPhaseStatus::Ran);
+    assert_eq!(build_result.proposal_phase.acceptance_policy, "report_only");
+    assert_eq!(build_result.proposal_phase.accepted_candidates, 0);
+    assert!(build_result.proposal_phase.validated_candidates > 0);
+    assert_eq!(build_result.rules_discovered, 1);
+    assert!(build_result.training_parity < 1.0);
+    assert_eq!(
+        build_result.proposal_phase.pre_adoption_training_parity,
+        build_result.proposal_phase.post_adoption_training_parity
     );
 }
 

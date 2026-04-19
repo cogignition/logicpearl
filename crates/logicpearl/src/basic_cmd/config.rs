@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use super::BuildArgs;
+use super::{BuildArgs, ProposalPolicyArg};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,8 @@ struct LogicPearlBuildConfig {
     default_action: Option<String>,
     no_match_action: Option<String>,
     action_max_rules: Option<usize>,
+    max_rules: Option<usize>,
+    proposal_policy: Option<ProposalPolicyArg>,
     action_priority: Option<String>,
     #[serde(default)]
     raw_feature_ids: bool,
@@ -120,6 +122,12 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     }
     if args.action_max_rules.is_none() {
         args.action_max_rules = build.action_max_rules;
+    }
+    if args.max_rules.is_none() {
+        args.max_rules = build.max_rules;
+    }
+    if args.proposal_policy.is_none() {
+        args.proposal_policy = build.proposal_policy;
     }
     if args.action_priority.is_none() {
         args.action_priority = build.action_priority;

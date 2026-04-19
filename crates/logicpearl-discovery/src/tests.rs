@@ -7,6 +7,7 @@ use super::{
     merge_discovered_and_pinned_rules, prune_redundant_rules, rule_from_candidate, BuildOptions,
     CandidateRule, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
     FeatureColumnSelection, ObservationFeatureType, ObservationOperator, PinnedRuleSet,
+    ProposalCandidateStatus, ProposalPhaseStatus, ProposalPolicy, ProposalStageStatus,
     ResidualPassOptions, ResidualRecoveryState,
 };
 use logicpearl_ir::{
@@ -386,6 +387,7 @@ fn build_pearl_from_csv_emits_gate_ir_and_report() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -394,12 +396,215 @@ fn build_pearl_from_csv_emits_gate_ir_and_report() {
     assert_eq!(result.rows, 8);
     assert_eq!(result.rules_discovered, 1);
     assert_eq!(result.training_parity, 1.0);
+    assert_eq!(result.proposal_phase.status, ProposalPhaseStatus::Skipped);
+    assert!(result
+        .build_phases
+        .iter()
+        .any(|phase| phase.name == "proposal_phase"));
     assert_eq!(
         result.residual_recovery.state,
         ResidualRecoveryState::Disabled
     );
     assert!(output_dir.join("pearl.ir.json").exists());
     assert!(output_dir.join("build_report.json").exists());
+    assert!(output_dir.join("proposal_report.json").exists());
+}
+
+#[test]
+fn build_pearl_auto_proposes_on_training_mismatch_cluster() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "income,debt,requested_limit,requested_amount,approved\n100000,20000,10000,8000,approved\n80000,30000,12000,9000,approved\n50000,10000,12000,10000,approved\n60000,20000,15000,13000,approved\n40000,30000,10000,7000,denied\n50000,35000,12000,9000,denied\n90000,20000,10000,14000,denied\n120000,20000,15000,18000,denied\n90000,20000,10000,7000,approved\n",
+    )
+    .unwrap();
+    let output_dir = dir.path().join("output");
+
+    let result = build_pearl_from_csv(
+        &csv_path,
+        &BuildOptions {
+            output_dir: PathBuf::from(&output_dir),
+            gate_id: "proposal_gate".to_string(),
+            label_column: "approved".to_string(),
+            positive_label: None,
+            negative_label: None,
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+            max_rules: Some(1),
+            proposal_policy: ProposalPolicy::ReportOnly,
+            feature_selection: FeatureColumnSelection::default(),
+        },
+    )
+    .unwrap();
+
+    assert!(result.training_parity < 1.0);
+    assert_eq!(result.proposal_phase.status, ProposalPhaseStatus::Ran);
+    assert_eq!(
+        result.proposal_phase.trigger.as_deref(),
+        Some("training_mismatch_cluster")
+    );
+    assert_eq!(
+        result.proposal_phase.diagnosis.as_deref(),
+        Some("missing_relationship_feature")
+    );
+    assert_eq!(
+        result.proposal_phase.recommended_next_phase.as_deref(),
+        Some("promote_derived_feature_to_observer")
+    );
+    assert!(result.proposal_phase.stages.iter().any(|stage| {
+        stage.name == "mismatch_mining" && stage.status == ProposalStageStatus::Completed
+    }));
+    assert!(result
+        .proposal_phase
+        .stages
+        .iter()
+        .any(|stage| stage.name == "subgroup_discovery" && stage.candidates_produced > 0));
+    assert!(result
+        .proposal_phase
+        .stages
+        .iter()
+        .any(|stage| { stage.name == "derived_feature_search" && stage.candidates_produced > 0 }));
+    assert!(result.proposal_phase.stages.iter().any(|stage| {
+        stage.name == "interpretable_model_search" && stage.candidates_produced > 0
+    }));
+    assert!(result.proposal_phase.candidates_tested > 0);
+    assert!(result.proposal_phase.candidates.iter().any(|candidate| {
+        candidate.status == ProposalCandidateStatus::Validated
+            && candidate.source_stage == "derived_feature_search"
+    }));
+    assert!(result.proposal_phase.candidates.iter().any(|candidate| {
+        candidate.source_stage == "derived_feature_search"
+            && candidate.validation.deterministic
+            && candidate.validation.validator == "training_replay"
+            && candidate.recommendation.as_deref() == Some("promote_to_observer_feature")
+            && candidate.feature_expression.is_some()
+    }));
+    assert!(result.proposal_phase.candidates.iter().any(|candidate| {
+        candidate.source_stage == "interpretable_model_search"
+            && candidate.validation.deterministic
+            && candidate.evidence.fixed_mismatches > 0
+    }));
+    let proposal_report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("proposal_report.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(proposal_report["status"].as_str(), Some("ran"));
+    assert!(proposal_report["stages"].as_array().is_some_and(|stages| {
+        stages
+            .iter()
+            .any(|stage| stage["name"].as_str() == Some("derived_feature_search"))
+    }));
+}
+
+#[test]
+fn build_pearl_routes_exact_trace_conflicts_before_proposals() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "route,risk,burst,allowed\nadmin,1,5,denied\nadmin,1,5,allowed\npublic,0,1,allowed\npublic,1,1,allowed\n",
+    )
+    .unwrap();
+    let output_dir = dir.path().join("output");
+
+    let result = build_pearl_from_csv(
+        &csv_path,
+        &BuildOptions {
+            output_dir: PathBuf::from(&output_dir),
+            gate_id: "conflict_gate".to_string(),
+            label_column: "allowed".to_string(),
+            positive_label: None,
+            negative_label: None,
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+            max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
+            feature_selection: FeatureColumnSelection::default(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.proposal_phase.status, ProposalPhaseStatus::Ran);
+    assert_eq!(
+        result.proposal_phase.trigger.as_deref(),
+        Some("exact_trace_conflict")
+    );
+    assert_eq!(
+        result.proposal_phase.diagnosis.as_deref(),
+        Some("exact_trace_conflict")
+    );
+    assert_eq!(
+        result.proposal_phase.recommended_next_phase.as_deref(),
+        Some("add_missing_feature_or_adjudicate_labels")
+    );
+    assert_eq!(result.proposal_phase.candidates_tested, 0);
+    assert!(result.proposal_phase.candidates.is_empty());
+    assert_eq!(result.proposal_phase.exact_trace_conflicts.len(), 1);
+    assert_eq!(
+        result.proposal_phase.exact_trace_conflicts[0].row_indexes,
+        vec![0, 1]
+    );
+}
+
+#[test]
+fn build_pearl_validates_safe_proposal_under_rule_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let csv_path = dir.path().join("decision_traces.csv");
+    std::fs::write(
+        &csv_path,
+        "case_id,score,unit,allowed\nlow_block,1,1,denied\nmiddle_pass,2,1,allowed\nhigh_block,3,1,denied\nbaseline_pass,0,1,allowed\nupper_pass,4,1,allowed\n",
+    )
+    .unwrap();
+    let output_dir = dir.path().join("output");
+
+    let result = build_pearl_from_csv(
+        &csv_path,
+        &BuildOptions {
+            output_dir: PathBuf::from(&output_dir),
+            gate_id: "budgeted_proposal_gate".to_string(),
+            label_column: "allowed".to_string(),
+            positive_label: None,
+            negative_label: None,
+            residual_pass: false,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+            max_rules: Some(1),
+            proposal_policy: ProposalPolicy::ReportOnly,
+            feature_selection: FeatureColumnSelection::default(),
+        },
+    )
+    .unwrap();
+
+    assert!(result.training_parity < 1.0);
+    assert_eq!(result.proposal_phase.status, ProposalPhaseStatus::Ran);
+    assert!(result.proposal_phase.validated_candidates > 0);
+    assert!(result.proposal_phase.candidates.iter().any(|candidate| {
+        candidate.status == ProposalCandidateStatus::Validated
+            && candidate.validation.deterministic
+            && candidate.validation.passed
+            && candidate.evidence.fixed_mismatches > 0
+            && candidate.evidence.introduced_mismatches == 0
+    }));
+    assert!(!result.proposal_phase.candidates.iter().any(|candidate| {
+        candidate.status == ProposalCandidateStatus::Validated
+            && candidate
+                .suggested_region
+                .get("feature")
+                .and_then(Value::as_str)
+                == Some("case_id")
+    }));
 }
 
 #[test]
@@ -428,6 +633,7 @@ fn build_pearl_records_rule_evidence_from_trace_metadata() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection {
                 feature_columns: None,
                 exclude_columns: vec![
@@ -490,6 +696,7 @@ fn build_pearl_from_jsonl_emits_gate_ir_and_report() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -695,6 +902,7 @@ fn build_prefers_higher_parity_rule_over_tiny_zero_fp_fragment() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -792,6 +1000,7 @@ fn build_refine_tightens_uniquely_overbroad_rule() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1060,6 +1269,7 @@ fn build_residual_pass_recovers_policy_style_conjunction_rules() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1086,6 +1296,7 @@ fn build_residual_pass_recovers_policy_style_conjunction_rules() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1132,6 +1343,7 @@ fn build_discovers_boolean_feature_predicate() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1178,6 +1390,7 @@ fn build_learns_numeric_feature_relationships() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1242,6 +1455,7 @@ fn build_prefers_zero_false_positive_multi_rule_completion() {
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )
@@ -1368,6 +1582,7 @@ fn build_reuses_cached_output_when_rows_and_options_match() {
         feature_governance: None,
         decision_mode: DiscoveryDecisionMode::Standard,
         max_rules: None,
+        proposal_policy: ProposalPolicy::ReportOnly,
         feature_selection: FeatureColumnSelection::default(),
     };
 
@@ -1620,6 +1835,7 @@ fn build_discovers_ratio_interaction_feature_when_axis_rules_are_insufficient() 
             feature_governance: None,
             decision_mode: DiscoveryDecisionMode::Standard,
             max_rules: None,
+            proposal_policy: ProposalPolicy::ReportOnly,
             feature_selection: FeatureColumnSelection::default(),
         },
     )

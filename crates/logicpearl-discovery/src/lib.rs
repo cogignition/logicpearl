@@ -12,7 +12,6 @@ use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
     RuleTraceEvidence, RuleVerificationStatus,
 };
-use logicpearl_runtime::evaluate_gate;
 use logicpearl_solver::{
     resolve_backend, SolverSettings, SOLVER_BACKEND_ENV, SOLVER_DIR_ENV, SOLVER_TIMEOUT_MS_ENV,
 };
@@ -26,11 +25,17 @@ use std::path::{Path, PathBuf};
 mod canonicalize;
 mod engine;
 mod features;
+mod proposals;
 mod rule_text;
 mod trace_loading;
 
 use engine::{build_gate, load_pinned_rule_set};
 use features::augment_rows_with_numeric_interactions;
+pub use proposals::TrainingMismatchSummary;
+use proposals::{
+    auto_adopt_safe_proposals, build_auto_proposal_phase_report, detect_exact_trace_conflicts,
+    evaluate_training_rows,
+};
 use trace_loading::{infer_binary_label_domain, parse_allowed_label_value, BinaryLabelDomain};
 pub use trace_loading::{
     load_decision_traces, load_decision_traces_auto,
@@ -61,6 +66,7 @@ pub struct BuildOptions {
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
     pub max_rules: Option<usize>,
+    pub proposal_policy: ProposalPolicy,
     pub feature_selection: FeatureColumnSelection,
 }
 
@@ -97,6 +103,23 @@ pub enum DiscoveryDecisionMode {
     #[default]
     Standard,
     Review,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalPolicy {
+    #[default]
+    AutoAdoptSafe,
+    ReportOnly,
+}
+
+impl ProposalPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProposalPolicy::AutoAdoptSafe => "auto_adopt_safe",
+            ProposalPolicy::ReportOnly => "report_only",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -212,9 +235,176 @@ pub struct BuildResult {
     pub residual_recovery: ResidualRecoveryReport,
     #[serde(default)]
     pub cache_hit: bool,
+    #[serde(default)]
+    pub build_phases: Vec<BuildPhaseReport>,
+    #[serde(default)]
+    pub proposal_phase: ProposalPhaseReport,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<BuildProvenance>,
     pub output_files: OutputFiles,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct BuildPhaseReport {
+    pub name: String,
+    pub status: BuildPhaseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub metrics: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildPhaseStatus {
+    Completed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalPhaseStatus {
+    #[default]
+    Skipped,
+    Ran,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalCandidateStatus {
+    Validated,
+    NeedsReview,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalStageStatus {
+    Completed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct ProposalPhaseReport {
+    #[serde(default = "default_proposal_phase_schema_version")]
+    pub schema_version: String,
+    pub status: ProposalPhaseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommended_next_phase: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub acceptance_policy: String,
+    #[serde(default)]
+    pub candidates_tested: usize,
+    #[serde(default)]
+    pub validated_candidates: usize,
+    #[serde(default)]
+    pub accepted_candidates: usize,
+    #[serde(default)]
+    pub rejected_candidates: usize,
+    #[serde(default)]
+    pub accepted_candidate_ids: Vec<String>,
+    #[serde(default)]
+    pub accepted_because: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_adoption_training_parity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_adoption_training_parity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residual_risk: Option<String>,
+    #[serde(default)]
+    pub stages: Vec<ProposalStageReport>,
+    #[serde(default)]
+    pub candidates: Vec<ProposalCandidateReport>,
+    #[serde(default)]
+    pub exact_trace_conflicts: Vec<ProposalExactTraceConflictReport>,
+}
+
+impl Default for ProposalPhaseReport {
+    fn default() -> Self {
+        Self {
+            schema_version: default_proposal_phase_schema_version(),
+            status: ProposalPhaseStatus::Skipped,
+            trigger: None,
+            diagnosis: None,
+            recommended_next_phase: None,
+            reason: "build metrics did not trigger proposal search".to_string(),
+            acceptance_policy: "report_only".to_string(),
+            candidates_tested: 0,
+            validated_candidates: 0,
+            accepted_candidates: 0,
+            rejected_candidates: 0,
+            accepted_candidate_ids: Vec::new(),
+            accepted_because: Vec::new(),
+            pre_adoption_training_parity: None,
+            post_adoption_training_parity: None,
+            residual_risk: None,
+            stages: Vec::new(),
+            candidates: Vec::new(),
+            exact_trace_conflicts: Vec::new(),
+        }
+    }
+}
+
+fn default_proposal_phase_schema_version() -> String {
+    "logicpearl.proposal_phase.v0".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct ProposalCandidateReport {
+    pub proposal_id: String,
+    pub proposal_type: String,
+    pub source_stage: String,
+    pub status: ProposalCandidateStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_expression: Option<String>,
+    pub reason: String,
+    #[serde(default)]
+    pub suggested_region: BTreeMap<String, Value>,
+    pub evidence: ProposalEvidenceReport,
+    pub validation: ProposalValidationReport,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ProposalExactTraceConflictReport {
+    pub feature_hash: String,
+    pub row_indexes: Vec<usize>,
+    pub label_counts: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct ProposalStageReport {
+    pub name: String,
+    pub status: ProposalStageStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub candidates_produced: usize,
+    #[serde(default)]
+    pub metrics: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ProposalEvidenceReport {
+    pub fixed_mismatches: usize,
+    pub introduced_mismatches: usize,
+    pub covered_rows: usize,
+    pub covered_mismatch_rows: Vec<usize>,
+    pub mismatch_summary: TrainingMismatchSummary,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ProposalValidationReport {
+    pub validator: String,
+    pub deterministic: bool,
+    pub passed: bool,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone)]
@@ -569,6 +759,8 @@ pub struct OutputFiles {
     pub pearl_ir: String,
     pub build_report: String,
     #[serde(default)]
+    pub proposal_report: Option<String>,
+    #[serde(default)]
     pub native_binary: Option<String>,
     #[serde(default)]
     pub wasm_module: Option<String>,
@@ -581,6 +773,7 @@ pub fn build_result_for_report(result: &BuildResult) -> BuildResult {
     let artifact_dir = Path::new(&result.output_files.artifact_dir);
     report.source_csv = provenance_safe_path_string(&report.source_csv);
     report.output_files = output_files_for_report(&result.output_files, artifact_dir);
+    report.build_phases = build_phases_for_report(&result.build_phases, artifact_dir);
     report
 }
 
@@ -614,7 +807,30 @@ fn build_result_for_discover_report(result: &BuildResult, output_dir: &Path) -> 
     let mut report = result.clone();
     report.source_csv = provenance_safe_path_string(&report.source_csv);
     report.output_files = output_files_relative_to_report_base(&result.output_files, output_dir);
+    report.build_phases = build_phases_for_report(&result.build_phases, output_dir);
     report
+}
+
+fn build_phases_for_report(phases: &[BuildPhaseReport], base_dir: &Path) -> Vec<BuildPhaseReport> {
+    phases
+        .iter()
+        .map(|phase| {
+            let mut report = phase.clone();
+            report.detail = report
+                .detail
+                .as_deref()
+                .map(|detail| phase_detail_for_report(detail, base_dir));
+            report
+        })
+        .collect()
+}
+
+fn phase_detail_for_report(detail: &str, base_dir: &Path) -> String {
+    let path = Path::new(detail);
+    if path.is_absolute() {
+        return artifact_relative_report_path(detail, base_dir, ".");
+    }
+    detail.to_string()
 }
 
 fn output_files_for_report(output_files: &OutputFiles, artifact_dir: &Path) -> OutputFiles {
@@ -635,6 +851,10 @@ fn output_files_for_report(output_files: &OutputFiles, artifact_dir: &Path) -> O
             artifact_dir,
             "build_report.json",
         ),
+        proposal_report: output_files
+            .proposal_report
+            .as_deref()
+            .map(|path| artifact_relative_report_path(path, artifact_dir, "proposal_report.json")),
         native_binary: output_files
             .native_binary
             .as_deref()
@@ -667,6 +887,10 @@ fn output_files_relative_to_report_base(
             base_dir,
             "build_report.json",
         ),
+        proposal_report: output_files
+            .proposal_report
+            .as_deref()
+            .map(|path| artifact_relative_report_path(path, base_dir, "proposal_report.json")),
         native_binary: output_files
             .native_binary
             .as_deref()
@@ -911,6 +1135,7 @@ fn build_cache_manifest(
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
         max_rules: Option<usize>,
+        proposal_policy: ProposalPolicy,
         feature_selection: &'a FeatureColumnSelection,
         solver_backend_env: Option<String>,
         resolved_solver_backend: Option<String>,
@@ -947,7 +1172,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "7".to_string(),
+        cache_version: "10".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -962,6 +1187,7 @@ fn build_cache_manifest(
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
             max_rules: options.max_rules,
+            proposal_policy: options.proposal_policy,
             feature_selection: &options.feature_selection,
             solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
             resolved_solver_backend: resolved_solver_backend_name(),
@@ -1299,6 +1525,7 @@ pub fn build_pearl_from_csv_with_progress(
         feature_governance: options.feature_governance.clone(),
         decision_mode: options.decision_mode,
         max_rules: options.max_rules,
+        proposal_policy: options.proposal_policy,
         feature_selection: options.feature_selection.clone(),
     };
     build_pearl_from_rows_with_progress(
@@ -1509,6 +1736,7 @@ pub fn discover_from_csv_with_progress(
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
                 max_rules: None,
+                proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: options.feature_selection.clone(),
             },
             progress,
@@ -1608,6 +1836,23 @@ pub fn build_pearl_from_rows_without_numeric_interactions(
     build_pearl_from_rows_internal(rows, source_name, options, false, None)
 }
 
+fn build_phase_report<const N: usize>(
+    name: impl Into<String>,
+    status: BuildPhaseStatus,
+    detail: Option<String>,
+    metrics: [(&str, Value); N],
+) -> BuildPhaseReport {
+    BuildPhaseReport {
+        name: name.into(),
+        status,
+        detail,
+        metrics: metrics
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect(),
+    }
+}
+
 pub fn learn_gate_from_rows_without_numeric_interactions(
     rows: &[DecisionTraceRow],
     options: &BuildOptions,
@@ -1643,6 +1888,7 @@ fn build_pearl_from_rows_internal(
     let build_manifest = build_cache_manifest(rows, &source_name, options)?;
     let build_cache_path = cache_manifest_path(&options.output_dir);
     let build_report_path = options.output_dir.join("build_report.json");
+    let proposal_report_path = options.output_dir.join("proposal_report.json");
     let pearl_ir_path = options.output_dir.join("pearl.ir.json");
     if pearl_ir_path.exists()
         && build_report_path.exists()
@@ -1658,32 +1904,120 @@ fn build_pearl_from_rows_internal(
         return Ok(cached);
     }
 
+    let mut build_phases = vec![build_phase_report(
+        "prepare_output",
+        BuildPhaseStatus::Completed,
+        Some(format!("{}", options.output_dir.display())),
+        [("rows", serde_json::json!(rows.len()))],
+    )];
     let LearnedGate {
-        gate,
+        mut gate,
         exact_selection,
         residual_rules_discovered,
         residual_recovery,
         refined_rules_applied,
         pinned_rules_applied,
     } = learn_gate_from_rows_internal(rows, options, numeric_interactions, progress)?;
-    report_progress(progress, "write_ir", "write_ir: pearl.ir.json");
+    build_phases.push(build_phase_report(
+        "discover_rules",
+        BuildPhaseStatus::Completed,
+        Some("deterministic rule discovery completed".to_string()),
+        [
+            ("rules", serde_json::json!(gate.rules.len())),
+            (
+                "residual_rules",
+                serde_json::json!(residual_rules_discovered),
+            ),
+            ("refined_rules", serde_json::json!(refined_rules_applied)),
+            ("pinned_rules", serde_json::json!(pinned_rules_applied)),
+        ],
+    ));
     gate.validate()?;
-    gate.write_pretty(&pearl_ir_path)?;
 
     report_progress(
         progress,
-        "training_parity",
-        format!("training_parity: evaluating {} rows", rows.len()),
+        "pre_adoption_training_parity",
+        format!(
+            "pre_adoption_training_parity: evaluating {} rows",
+            rows.len()
+        ),
     );
-    let mut correct = 0;
-    for row in rows {
-        let bitmask = evaluate_gate(&gate, &row.features)?;
-        let allowed = bitmask.is_zero();
-        if allowed == row.allowed {
-            correct += 1;
+    let pre_adoption_evaluation = evaluate_training_rows(&gate, rows)?;
+    let pre_adoption_training_parity = pre_adoption_evaluation.correct as f64 / rows.len() as f64;
+    build_phases.push(build_phase_report(
+        "training_parity",
+        BuildPhaseStatus::Completed,
+        Some("evaluated learned gate against training rows before proposal adoption".to_string()),
+        [
+            (
+                "pre_adoption_parity",
+                serde_json::json!(pre_adoption_training_parity),
+            ),
+            (
+                "mismatches",
+                serde_json::json!(pre_adoption_evaluation.mismatches.len()),
+            ),
+        ],
+    ));
+
+    report_progress(
+        progress,
+        "proposal_phase",
+        "proposal_phase: checking automatic triggers",
+    );
+    let exact_trace_conflicts = detect_exact_trace_conflicts(rows);
+    let mut proposal_phase = build_auto_proposal_phase_report(
+        rows,
+        &gate,
+        &pre_adoption_evaluation.mismatches,
+        exact_trace_conflicts,
+    );
+    proposal_phase.acceptance_policy = options.proposal_policy.as_str().to_string();
+    proposal_phase.pre_adoption_training_parity = Some(pre_adoption_training_parity);
+    proposal_phase.post_adoption_training_parity = Some(pre_adoption_training_parity);
+
+    let final_evaluation = match options.proposal_policy {
+        ProposalPolicy::AutoAdoptSafe => {
+            auto_adopt_safe_proposals(&mut gate, rows, &mut proposal_phase)?
         }
-    }
-    let training_parity = correct as f64 / rows.len() as f64;
+        ProposalPolicy::ReportOnly => pre_adoption_evaluation,
+    };
+    let training_parity = final_evaluation.correct as f64 / rows.len() as f64;
+    build_phases.push(build_phase_report(
+        "proposal_phase",
+        match proposal_phase.status {
+            ProposalPhaseStatus::Ran => BuildPhaseStatus::Completed,
+            ProposalPhaseStatus::Skipped => BuildPhaseStatus::Skipped,
+        },
+        Some(proposal_phase.reason.clone()),
+        [
+            (
+                "candidates_tested",
+                serde_json::json!(proposal_phase.candidates_tested),
+            ),
+            (
+                "validated_candidates",
+                serde_json::json!(proposal_phase.validated_candidates),
+            ),
+            (
+                "accepted_candidates",
+                serde_json::json!(proposal_phase.accepted_candidates),
+            ),
+            ("post_adoption_parity", serde_json::json!(training_parity)),
+        ],
+    ));
+    report_progress(progress, "write_ir", "write_ir: pearl.ir.json");
+    gate.validate()?;
+    gate.write_pretty(&pearl_ir_path)?;
+    build_phases.push(build_phase_report(
+        "write_ir",
+        BuildPhaseStatus::Completed,
+        Some("pearl.ir.json".to_string()),
+        [
+            ("rules", serde_json::json!(gate.rules.len())),
+            ("training_parity", serde_json::json!(training_parity)),
+        ],
+    ));
 
     let build_report = BuildResult {
         source_csv: source_name,
@@ -1704,6 +2038,8 @@ fn build_pearl_from_rows_internal(
         exact_selection,
         residual_recovery,
         cache_hit: false,
+        build_phases,
+        proposal_phase,
         provenance: None,
         output_files: OutputFiles {
             artifact_dir: options.output_dir.display().to_string(),
@@ -1714,12 +2050,22 @@ fn build_pearl_from_rows_internal(
                 .to_string(),
             pearl_ir: pearl_ir_path.display().to_string(),
             build_report: build_report_path.display().to_string(),
+            proposal_report: Some(proposal_report_path.display().to_string()),
             native_binary: None,
             wasm_module: None,
             wasm_metadata: None,
         },
     };
 
+    report_progress(
+        progress,
+        "write_report",
+        "write_report: proposal_report.json",
+    );
+    std::fs::write(
+        &proposal_report_path,
+        serde_json::to_string_pretty(&build_report.proposal_phase)? + "\n",
+    )?;
     report_progress(progress, "write_report", "write_report: build_report.json");
     std::fs::write(
         &build_report_path,
@@ -1744,6 +2090,10 @@ fn actual_output_files_from_report(output_files: &OutputFiles, artifact_dir: &Pa
             artifact_dir,
             "build_report.json",
         ),
+        proposal_report: output_files
+            .proposal_report
+            .as_deref()
+            .map(|path| actual_output_path(path, artifact_dir, "proposal_report.json")),
         native_binary: output_files
             .native_binary
             .as_deref()
@@ -1772,6 +2122,10 @@ fn actual_output_files_from_report_base(
         ),
         pearl_ir: actual_output_path(&output_files.pearl_ir, base_dir, "pearl.ir.json"),
         build_report: actual_output_path(&output_files.build_report, base_dir, "build_report.json"),
+        proposal_report: output_files
+            .proposal_report
+            .as_deref()
+            .map(|path| actual_output_path(path, base_dir, "proposal_report.json")),
         native_binary: output_files
             .native_binary
             .as_deref()

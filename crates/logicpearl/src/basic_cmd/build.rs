@@ -7,7 +7,8 @@ use logicpearl_build::{
 };
 use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
-    DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ResidualRecoveryState,
+    DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ProposalPolicy,
+    ResidualRecoveryState,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
@@ -207,7 +208,11 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         feature_dictionary: args.feature_dictionary.clone(),
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
-        max_rules: None,
+        max_rules: args.max_rules,
+        proposal_policy: args
+            .proposal_policy
+            .map(ProposalPolicy::from)
+            .unwrap_or(ProposalPolicy::AutoAdoptSafe),
         feature_selection: feature_selection.clone(),
     };
     let build_options_value = serde_json::json!({
@@ -235,6 +240,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .map(|path| path.display().to_string()),
         "decision_mode": build_options.decision_mode,
         "max_rules": build_options.max_rules,
+        "proposal_policy": build_options.proposal_policy,
         "feature_columns": &build_options.feature_selection.feature_columns,
         "exclude_columns": &build_options.feature_selection.exclude_columns,
     });
@@ -546,6 +552,29 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                 result.pinned_rules_applied
             );
         }
+        match result.proposal_phase.status {
+            logicpearl_discovery::ProposalPhaseStatus::Ran => {
+                println!(
+                    "  {} ran ({}, policy {}, validated {}, accepted {})",
+                    "Proposal phase".bright_black(),
+                    result
+                        .proposal_phase
+                        .trigger
+                        .as_deref()
+                        .unwrap_or("automatic_trigger"),
+                    result.proposal_phase.acceptance_policy,
+                    result.proposal_phase.validated_candidates,
+                    result.proposal_phase.accepted_candidates
+                );
+            }
+            logicpearl_discovery::ProposalPhaseStatus::Skipped => {
+                println!(
+                    "  {} skipped ({})",
+                    "Proposal phase".bright_black(),
+                    result.proposal_phase.reason
+                );
+            }
+        }
         println!(
             "  {} {}",
             "Training parity".bright_black(),
@@ -572,6 +601,9 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             "Build report".bright_black(),
             result.output_files.build_report
         );
+        if let Some(proposal_report) = &result.output_files.proposal_report {
+            println!("  {} {}", "Proposal report".bright_black(), proposal_report);
+        }
         if let Some(feature_dictionary) =
             generated_feature_dictionary_for_output(&args, &artifact_dir)
         {

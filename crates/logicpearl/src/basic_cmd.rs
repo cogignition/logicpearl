@@ -4,6 +4,7 @@ use clap::Args;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use logicpearl_discovery::FeatureColumnSelection;
 use logicpearl_discovery::ProgressEvent;
+use logicpearl_discovery::ProposalPolicy;
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -43,6 +44,22 @@ pub(crate) enum QuickstartTopic {
     Build,
     Pipeline,
     Benchmark,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProposalPolicyArg {
+    AutoAdoptSafe,
+    ReportOnly,
+}
+
+impl From<ProposalPolicyArg> for ProposalPolicy {
+    fn from(value: ProposalPolicyArg) -> Self {
+        match value {
+            ProposalPolicyArg::AutoAdoptSafe => ProposalPolicy::AutoAdoptSafe,
+            ProposalPolicyArg::ReportOnly => ProposalPolicy::ReportOnly,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -184,6 +201,12 @@ pub(crate) struct BuildArgs {
     /// Maximum total rules emitted across non-default action routes. If omitted, LogicPearl scales per-action budgets from trace support.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub action_max_rules: Option<usize>,
+    /// Maximum rules emitted for a binary gate build. Useful for budgeted discovery and proposal-phase diagnostics.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub max_rules: Option<usize>,
+    /// Proposal acceptance policy. Defaults to auto-adopt-safe for binary gate builds.
+    #[arg(long, value_enum, help_heading = "Advanced Discovery")]
+    pub proposal_policy: Option<ProposalPolicyArg>,
     /// Comma-separated high-to-low action priority order. Unlisted actions keep LogicPearl's support-based order after the listed actions.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub action_priority: Option<String>,
