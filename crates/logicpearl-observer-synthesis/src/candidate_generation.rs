@@ -633,39 +633,43 @@ fn signal_window_is_useful(
     signal: GuardrailsSignal,
     profile: &SignalProfile,
 ) -> bool {
-    let vocabulary = profile.cue_vocabulary(signal);
+    let Some(vocabulary) = profile.cue_vocabulary(signal) else {
+        return false;
+    };
     match signal {
         GuardrailsSignal::InstructionOverride => {
-            contains_any_token(window, vocabulary.action_tokens)
-                && contains_any_token(window, vocabulary.target_tokens)
+            contains_any_token(window, &vocabulary.action_tokens)
+                && contains_any_token(window, &vocabulary.target_tokens)
         }
         GuardrailsSignal::SystemPrompt => {
-            contains_any_token(window, vocabulary.action_tokens)
-                && contains_any_token(window, vocabulary.target_tokens)
+            contains_any_token(window, &vocabulary.action_tokens)
+                && contains_any_token(window, &vocabulary.target_tokens)
         }
         GuardrailsSignal::SecretExfiltration => {
-            contains_any_token(window, vocabulary.direct_tokens)
+            contains_any_token(window, &vocabulary.direct_tokens)
         }
         GuardrailsSignal::ToolMisuse => {
-            let has_verb = contains_any_token(window, vocabulary.action_tokens);
-            let has_target = contains_any_token(window, vocabulary.target_tokens);
-            let has_tool = contains_any_token(window, vocabulary.tool_tokens);
+            let has_verb = contains_any_token(window, &vocabulary.action_tokens);
+            let has_target = contains_any_token(window, &vocabulary.target_tokens);
+            let has_tool = contains_any_token(window, &vocabulary.tool_tokens);
             (has_verb && (has_target || has_tool)) || (has_tool && has_target)
         }
         GuardrailsSignal::DataAccessOutsideScope => {
-            contains_any_token(window, vocabulary.scope_tokens)
-                && contains_any_token(window, vocabulary.target_tokens)
+            contains_any_token(window, &vocabulary.scope_tokens)
+                && contains_any_token(window, &vocabulary.target_tokens)
         }
         GuardrailsSignal::IndirectDocumentAuthority => {
-            contains_any_token(window, vocabulary.source_tokens)
-                && contains_any_token(window, vocabulary.action_tokens)
+            contains_any_token(window, &vocabulary.source_tokens)
+                && contains_any_token(window, &vocabulary.action_tokens)
         }
-        GuardrailsSignal::BenignQuestion => contains_any_token(window, vocabulary.direct_tokens),
+        GuardrailsSignal::BenignQuestion => contains_any_token(window, &vocabulary.direct_tokens),
     }
 }
 
-fn contains_any_token(window: &[String], tokens: &[&str]) -> bool {
-    window.iter().any(|token| tokens.contains(&token.as_str()))
+fn contains_any_token(window: &[String], tokens: &[String]) -> bool {
+    window
+        .iter()
+        .any(|token| tokens.iter().any(|candidate| candidate == token))
 }
 
 fn signal_anchor_positions(
@@ -682,24 +686,35 @@ fn signal_anchor_positions(
 }
 
 fn signal_anchor_token(token: &str, signal: GuardrailsSignal, profile: &SignalProfile) -> bool {
-    let vocabulary = profile.cue_vocabulary(signal);
+    let Some(vocabulary) = profile.cue_vocabulary(signal) else {
+        return false;
+    };
     match signal {
         GuardrailsSignal::InstructionOverride => {
-            vocabulary.action_tokens.contains(&token) || vocabulary.target_tokens.contains(&token)
+            contains_token(&vocabulary.action_tokens, token)
+                || contains_token(&vocabulary.target_tokens, token)
         }
         GuardrailsSignal::SystemPrompt => {
-            vocabulary.action_tokens.contains(&token) || vocabulary.target_tokens.contains(&token)
+            contains_token(&vocabulary.action_tokens, token)
+                || contains_token(&vocabulary.target_tokens, token)
         }
-        GuardrailsSignal::SecretExfiltration => vocabulary.direct_tokens.contains(&token),
+        GuardrailsSignal::SecretExfiltration => contains_token(&vocabulary.direct_tokens, token),
         GuardrailsSignal::ToolMisuse => {
-            vocabulary.action_tokens.contains(&token) || vocabulary.target_tokens.contains(&token)
+            contains_token(&vocabulary.action_tokens, token)
+                || contains_token(&vocabulary.target_tokens, token)
         }
         GuardrailsSignal::DataAccessOutsideScope => {
-            vocabulary.scope_tokens.contains(&token) || vocabulary.target_tokens.contains(&token)
+            contains_token(&vocabulary.scope_tokens, token)
+                || contains_token(&vocabulary.target_tokens, token)
         }
         GuardrailsSignal::IndirectDocumentAuthority => {
-            vocabulary.source_tokens.contains(&token) || vocabulary.action_tokens.contains(&token)
+            contains_token(&vocabulary.source_tokens, token)
+                || contains_token(&vocabulary.action_tokens, token)
         }
-        GuardrailsSignal::BenignQuestion => vocabulary.direct_tokens.contains(&token),
+        GuardrailsSignal::BenignQuestion => contains_token(&vocabulary.direct_tokens, token),
     }
+}
+
+fn contains_token(tokens: &[String], token: &str) -> bool {
+    tokens.iter().any(|candidate| candidate == token)
 }

@@ -1,18 +1,110 @@
 // SPDX-License-Identifier: MIT
 use logicpearl_observer::GuardrailsSignal;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct CueVocabulary {
-    pub action_tokens: &'static [&'static str],
-    pub target_tokens: &'static [&'static str],
-    pub tool_tokens: &'static [&'static str],
-    pub scope_tokens: &'static [&'static str],
-    pub source_tokens: &'static [&'static str],
-    pub direct_tokens: &'static [&'static str],
+    pub action_tokens: Vec<String>,
+    pub target_tokens: Vec<String>,
+    pub tool_tokens: Vec<String>,
+    pub scope_tokens: Vec<String>,
+    pub source_tokens: Vec<String>,
+    pub direct_tokens: Vec<String>,
 }
 
 impl CueVocabulary {
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    fn from_static(definition: CueVocabularyDefinition) -> Self {
+        Self {
+            action_tokens: tokens(definition.action_tokens),
+            target_tokens: tokens(definition.target_tokens),
+            tool_tokens: tokens(definition.tool_tokens),
+            scope_tokens: tokens(definition.scope_tokens),
+            source_tokens: tokens(definition.source_tokens),
+            direct_tokens: tokens(definition.direct_tokens),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignalProfileEntry {
+    pub signal: GuardrailsSignal,
+    pub vocabulary: CueVocabulary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignalProfile {
+    pub name: String,
+    pub signals: Vec<SignalProfileEntry>,
+}
+
+impl SignalProfile {
+    pub fn cue_vocabulary(&self, signal: GuardrailsSignal) -> Option<&CueVocabulary> {
+        self.signals
+            .iter()
+            .find_map(|entry| (entry.signal == signal).then_some(&entry.vocabulary))
+    }
+
+    pub fn signal_entry(&self, signal: GuardrailsSignal) -> Option<&SignalProfileEntry> {
+        self.signals.iter().find(|entry| entry.signal == signal)
+    }
+
+    pub fn contains_signal(&self, signal: GuardrailsSignal) -> bool {
+        self.signal_entry(signal).is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SignalProfileDefinition {
+    name: &'static str,
+    signals: &'static [SignalProfileEntryDefinition],
+}
+
+impl SignalProfileDefinition {
+    fn to_profile(self) -> SignalProfile {
+        SignalProfile {
+            name: self.name.to_string(),
+            signals: self
+                .signals
+                .iter()
+                .copied()
+                .map(SignalProfileEntryDefinition::to_profile_entry)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SignalProfileEntryDefinition {
+    signal: GuardrailsSignal,
+    vocabulary: CueVocabularyDefinition,
+}
+
+impl SignalProfileEntryDefinition {
+    fn to_profile_entry(self) -> SignalProfileEntry {
+        SignalProfileEntry {
+            signal: self.signal,
+            vocabulary: CueVocabulary::from_static(self.vocabulary),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CueVocabularyDefinition {
+    action_tokens: &'static [&'static str],
+    target_tokens: &'static [&'static str],
+    tool_tokens: &'static [&'static str],
+    scope_tokens: &'static [&'static str],
+    source_tokens: &'static [&'static str],
+    direct_tokens: &'static [&'static str],
+}
+
+impl CueVocabularyDefinition {
+    const fn empty() -> Self {
         Self {
             action_tokens: &[],
             target_tokens: &[],
@@ -24,70 +116,75 @@ impl CueVocabulary {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SignalProfile {
-    pub name: &'static str,
-    pub instruction_override: CueVocabulary,
-    pub system_prompt: CueVocabulary,
-    pub secret_exfiltration: CueVocabulary,
-    pub tool_misuse: CueVocabulary,
-    pub data_access_outside_scope: CueVocabulary,
-    pub indirect_document_authority: CueVocabulary,
-    pub benign_question: CueVocabulary,
+const BUILT_IN_GUARDRAILS_PROFILE: SignalProfileDefinition = SignalProfileDefinition {
+    name: "guardrails_v1",
+    signals: &BUILT_IN_GUARDRAILS_SIGNALS,
+};
+
+const BUILT_IN_GUARDRAILS_SIGNALS: [SignalProfileEntryDefinition; 7] = [
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::InstructionOverride,
+        vocabulary: CueVocabularyDefinition {
+            action_tokens: &INSTRUCTION_OVERRIDE_VERBS,
+            target_tokens: &INSTRUCTION_OVERRIDE_TARGETS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::SystemPrompt,
+        vocabulary: CueVocabularyDefinition {
+            action_tokens: &SYSTEM_PROMPT_REQUEST_VERBS,
+            target_tokens: &SYSTEM_PROMPT_TARGETS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::SecretExfiltration,
+        vocabulary: CueVocabularyDefinition {
+            direct_tokens: &SECRET_EXFILTRATION_TOKENS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::ToolMisuse,
+        vocabulary: CueVocabularyDefinition {
+            action_tokens: &TOOL_MISUSE_VERBS,
+            target_tokens: &TOOL_MISUSE_TARGETS,
+            tool_tokens: &TOOL_MISUSE_TOOL_TOKENS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::DataAccessOutsideScope,
+        vocabulary: CueVocabularyDefinition {
+            scope_tokens: &DATA_ACCESS_SCOPE_TOKENS,
+            target_tokens: &DATA_ACCESS_TARGET_TOKENS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::IndirectDocumentAuthority,
+        vocabulary: CueVocabularyDefinition {
+            source_tokens: &INDIRECT_AUTHORITY_SOURCES,
+            action_tokens: &INDIRECT_AUTHORITY_VERBS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+    SignalProfileEntryDefinition {
+        signal: GuardrailsSignal::BenignQuestion,
+        vocabulary: CueVocabularyDefinition {
+            direct_tokens: &BENIGN_QUESTION_TOKENS,
+            ..CueVocabularyDefinition::empty()
+        },
+    },
+];
+
+pub fn default_guardrail_signal_profile() -> SignalProfile {
+    BUILT_IN_GUARDRAILS_PROFILE.to_profile()
 }
 
-impl SignalProfile {
-    pub const fn cue_vocabulary(&self, signal: GuardrailsSignal) -> CueVocabulary {
-        match signal {
-            GuardrailsSignal::InstructionOverride => self.instruction_override,
-            GuardrailsSignal::SystemPrompt => self.system_prompt,
-            GuardrailsSignal::SecretExfiltration => self.secret_exfiltration,
-            GuardrailsSignal::ToolMisuse => self.tool_misuse,
-            GuardrailsSignal::DataAccessOutsideScope => self.data_access_outside_scope,
-            GuardrailsSignal::IndirectDocumentAuthority => self.indirect_document_authority,
-            GuardrailsSignal::BenignQuestion => self.benign_question,
-        }
-    }
-}
-
-pub const fn default_guardrail_signal_profile() -> SignalProfile {
-    SignalProfile {
-        name: "guardrails_v1",
-        instruction_override: CueVocabulary {
-            action_tokens: instruction_override_verbs(),
-            target_tokens: instruction_override_targets(),
-            ..CueVocabulary::empty()
-        },
-        system_prompt: CueVocabulary {
-            action_tokens: system_prompt_request_verbs(),
-            target_tokens: system_prompt_targets(),
-            ..CueVocabulary::empty()
-        },
-        secret_exfiltration: CueVocabulary {
-            direct_tokens: secret_exfiltration_tokens(),
-            ..CueVocabulary::empty()
-        },
-        tool_misuse: CueVocabulary {
-            action_tokens: tool_misuse_verbs(),
-            target_tokens: tool_misuse_targets(),
-            tool_tokens: tool_misuse_tool_tokens(),
-            ..CueVocabulary::empty()
-        },
-        data_access_outside_scope: CueVocabulary {
-            scope_tokens: data_access_scope_tokens(),
-            target_tokens: data_access_target_tokens(),
-            ..CueVocabulary::empty()
-        },
-        indirect_document_authority: CueVocabulary {
-            source_tokens: indirect_authority_sources(),
-            action_tokens: indirect_authority_verbs(),
-            ..CueVocabulary::empty()
-        },
-        benign_question: CueVocabulary {
-            direct_tokens: benign_question_tokens(),
-            ..CueVocabulary::empty()
-        },
-    }
+fn tokens(raw: &[&str]) -> Vec<String> {
+    raw.iter().map(|token| (*token).to_string()).collect()
 }
 
 const INSTRUCTION_OVERRIDE_VERBS: [&str; 9] = [
@@ -229,54 +326,26 @@ const BENIGN_QUESTION_TOKENS: [&str; 9] = [
     "how",
 ];
 
-pub(crate) const fn instruction_override_verbs() -> &'static [&'static str] {
-    &INSTRUCTION_OVERRIDE_VERBS
-}
+#[cfg(test)]
+mod tests {
+    use super::{default_guardrail_signal_profile, SignalProfile};
+    use logicpearl_observer::GuardrailsSignal;
 
-pub(crate) const fn instruction_override_targets() -> &'static [&'static str] {
-    &INSTRUCTION_OVERRIDE_TARGETS
-}
+    #[test]
+    fn built_in_guardrails_profile_round_trips_as_data() {
+        let profile = default_guardrail_signal_profile();
 
-pub(crate) const fn system_prompt_request_verbs() -> &'static [&'static str] {
-    &SYSTEM_PROMPT_REQUEST_VERBS
-}
+        let encoded = serde_json::to_string(&profile).expect("profile should serialize as data");
+        let decoded: SignalProfile =
+            serde_json::from_str(&encoded).expect("profile data should deserialize");
 
-pub(crate) const fn system_prompt_targets() -> &'static [&'static str] {
-    &SYSTEM_PROMPT_TARGETS
-}
-
-pub(crate) const fn secret_exfiltration_tokens() -> &'static [&'static str] {
-    &SECRET_EXFILTRATION_TOKENS
-}
-
-pub(crate) const fn tool_misuse_verbs() -> &'static [&'static str] {
-    &TOOL_MISUSE_VERBS
-}
-
-pub(crate) const fn tool_misuse_targets() -> &'static [&'static str] {
-    &TOOL_MISUSE_TARGETS
-}
-
-pub(crate) const fn tool_misuse_tool_tokens() -> &'static [&'static str] {
-    &TOOL_MISUSE_TOOL_TOKENS
-}
-
-pub(crate) const fn data_access_scope_tokens() -> &'static [&'static str] {
-    &DATA_ACCESS_SCOPE_TOKENS
-}
-
-pub(crate) const fn data_access_target_tokens() -> &'static [&'static str] {
-    &DATA_ACCESS_TARGET_TOKENS
-}
-
-pub(crate) const fn indirect_authority_sources() -> &'static [&'static str] {
-    &INDIRECT_AUTHORITY_SOURCES
-}
-
-pub(crate) const fn indirect_authority_verbs() -> &'static [&'static str] {
-    &INDIRECT_AUTHORITY_VERBS
-}
-
-pub(crate) const fn benign_question_tokens() -> &'static [&'static str] {
-    &BENIGN_QUESTION_TOKENS
+        assert_eq!(decoded, profile);
+        assert!(decoded.contains_signal(GuardrailsSignal::InstructionOverride));
+        assert!(decoded
+            .cue_vocabulary(GuardrailsSignal::InstructionOverride)
+            .is_some_and(|vocabulary| vocabulary
+                .action_tokens
+                .iter()
+                .any(|token| token == "ignore")));
+    }
 }

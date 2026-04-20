@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 use crate::bootstrap::infer_bootstrap_examples;
-use crate::selection::{count_phrase_hits, count_selected_hits, solve_phrase_subset};
+use crate::selection::{
+    count_phrase_hits, count_selected_hits, select_phrase_subset, PhraseSelectionMode,
+};
 use crate::{ObserverBootstrapStrategy, ObserverRepairReport};
 use logicpearl_benchmark::SynthesisCase;
 use logicpearl_core::{LogicPearlError, Result};
@@ -66,10 +68,11 @@ pub fn repair_guardrails_artifact(
         )));
     }
 
-    let selection = solve_phrase_subset(
+    let selection = select_phrase_subset(
         &phrases_before,
         &positive_constraints,
         &negative_constraints,
+        PhraseSelectionMode::RequireCoverage,
     )?;
     if !selection.status.is_success() {
         return Err(LogicPearlError::message(

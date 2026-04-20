@@ -26,7 +26,9 @@ pub use candidate_generation::{
 pub use repair::repair_guardrails_artifact;
 pub use scoring::evaluate_guardrails_artifact_signal;
 pub use selection::{count_phrase_hits, count_selected_hits};
-pub use signal_profiles::{default_guardrail_signal_profile, CueVocabulary, SignalProfile};
+pub use signal_profiles::{
+    default_guardrail_signal_profile, CueVocabulary, SignalProfile, SignalProfileEntry,
+};
 pub use synthesis::{synthesize_guardrails_artifact, synthesize_guardrails_artifact_auto};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,8 +138,8 @@ pub struct ObserverAutoSynthesisOptions<'a> {
 #[cfg(test)]
 mod tests {
     use crate::selection::{
-        solve_phrase_subset, solve_phrase_subset_soft, PhraseSelectionBackend,
-        PhraseSelectionStatus, OBSERVER_SELECTION_BACKEND_ENV,
+        select_phrase_subset, with_selection_backend_for_test, PhraseSelectionBackend,
+        PhraseSelectionMode, PhraseSelectionStatus,
     };
 
     use super::{
@@ -148,7 +150,6 @@ mod tests {
     use logicpearl_observer::GuardrailsSignal;
     use logicpearl_solver::{check_sat, SolverSettings};
     use serde_json::{Map, Value};
-    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn instruction_override_candidates_require_action_and_target_tokens() {
@@ -414,8 +415,13 @@ mod tests {
             "system".to_string(),
             "benign".to_string(),
         ];
-        let selection = solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
-            .expect("selection backend should find a compact phrase subset");
+        let selection = select_phrase_subset(
+            &phrases,
+            &[vec![0, 1], vec![0]],
+            &[vec![1]],
+            PhraseSelectionMode::PreferCoverage,
+        )
+        .expect("selection backend should find a compact phrase subset");
 
         assert_eq!(selection.status, PhraseSelectionStatus::Optimal);
         assert_eq!(selection.backend_used, PhraseSelectionBackend::Mip);
@@ -433,13 +439,23 @@ mod tests {
             "system".to_string(),
             "benign".to_string(),
         ];
-        let smt_selection = with_observer_selection_backend("smt", || {
-            solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
-                .expect("smt solver should find a compact phrase subset")
+        let smt_selection = with_selection_backend_for_test("smt", || {
+            select_phrase_subset(
+                &phrases,
+                &[vec![0, 1], vec![0]],
+                &[vec![1]],
+                PhraseSelectionMode::PreferCoverage,
+            )
+            .expect("smt solver should find a compact phrase subset")
         });
-        let mip_selection = with_observer_selection_backend("mip", || {
-            solve_phrase_subset_soft(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
-                .expect("mip backend should find a compact phrase subset")
+        let mip_selection = with_selection_backend_for_test("mip", || {
+            select_phrase_subset(
+                &phrases,
+                &[vec![0, 1], vec![0]],
+                &[vec![1]],
+                PhraseSelectionMode::PreferCoverage,
+            )
+            .expect("mip backend should find a compact phrase subset")
         });
 
         assert_eq!(smt_selection.selected, vec![0]);
@@ -459,38 +475,29 @@ mod tests {
             "system".to_string(),
             "benign".to_string(),
         ];
-        let smt_selection = with_observer_selection_backend("smt", || {
-            solve_phrase_subset(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
-                .expect("smt solver should satisfy hard positive coverage")
+        let smt_selection = with_selection_backend_for_test("smt", || {
+            select_phrase_subset(
+                &phrases,
+                &[vec![0, 1], vec![0]],
+                &[vec![1]],
+                PhraseSelectionMode::RequireCoverage,
+            )
+            .expect("smt solver should satisfy hard positive coverage")
         });
-        let mip_selection = with_observer_selection_backend("mip", || {
-            solve_phrase_subset(&phrases, &[vec![0, 1], vec![0]], &[vec![1]])
-                .expect("mip backend should satisfy hard positive coverage")
+        let mip_selection = with_selection_backend_for_test("mip", || {
+            select_phrase_subset(
+                &phrases,
+                &[vec![0, 1], vec![0]],
+                &[vec![1]],
+                PhraseSelectionMode::RequireCoverage,
+            )
+            .expect("mip backend should satisfy hard positive coverage")
         });
 
         assert_eq!(smt_selection.selected, vec![0]);
         assert_eq!(mip_selection.selected, smt_selection.selected);
         assert_eq!(mip_selection.status, PhraseSelectionStatus::Optimal);
         assert_eq!(mip_selection.backend_used, PhraseSelectionBackend::Mip);
-    }
-
-    fn observer_selection_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn with_observer_selection_backend<T>(backend: &str, test: impl FnOnce() -> T) -> T {
-        let _guard = observer_selection_env_lock()
-            .lock()
-            .expect("env lock should be available");
-        let saved = std::env::var(OBSERVER_SELECTION_BACKEND_ENV).ok();
-        std::env::set_var(OBSERVER_SELECTION_BACKEND_ENV, backend);
-        let result = test();
-        match saved {
-            Some(value) => std::env::set_var(OBSERVER_SELECTION_BACKEND_ENV, value),
-            None => std::env::remove_var(OBSERVER_SELECTION_BACKEND_ENV),
-        }
-        result
     }
 
     fn solver_available() -> bool {

@@ -10,9 +10,15 @@ use logicpearl_solver::{
 use std::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ObserverSelectionBackend {
+enum ObserverSelectionBackend {
     Smt,
     Mip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PhraseSelectionMode {
+    PreferCoverage,
+    RequireCoverage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,12 +68,12 @@ pub(crate) struct PhraseSelectionOutcome {
     pub(crate) status: PhraseSelectionStatus,
 }
 
-pub(crate) struct ObserverSelectionSettings {
-    pub(crate) backend: ObserverSelectionBackend,
+struct ObserverSelectionSettings {
+    backend: ObserverSelectionBackend,
 }
 
 impl ObserverSelectionSettings {
-    pub(crate) fn from_env() -> Result<Self> {
+    fn from_env() -> Result<Self> {
         let backend = env::var(OBSERVER_SELECTION_BACKEND_ENV)
             .ok()
             .map(|raw| parse_observer_selection_backend(&raw))
@@ -77,7 +83,24 @@ impl ObserverSelectionSettings {
     }
 }
 
-pub(crate) const OBSERVER_SELECTION_BACKEND_ENV: &str = "LOGICPEARL_OBSERVER_SELECTION_BACKEND";
+const OBSERVER_SELECTION_BACKEND_ENV: &str = "LOGICPEARL_OBSERVER_SELECTION_BACKEND";
+
+#[cfg(test)]
+pub(crate) fn with_selection_backend_for_test<T>(backend: &str, test: impl FnOnce() -> T) -> T {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let _guard = LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("env lock should be available");
+    let saved = env::var(OBSERVER_SELECTION_BACKEND_ENV).ok();
+    env::set_var(OBSERVER_SELECTION_BACKEND_ENV, backend);
+    let result = test();
+    match saved {
+        Some(value) => env::set_var(OBSERVER_SELECTION_BACKEND_ENV, value),
+        None => env::remove_var(OBSERVER_SELECTION_BACKEND_ENV),
+    }
+    result
+}
 
 fn parse_observer_selection_backend(raw: &str) -> Result<ObserverSelectionBackend> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -100,21 +123,56 @@ pub fn count_selected_hits(selected: &[usize], constraints: &[Vec<usize>]) -> us
         .count()
 }
 
-pub(crate) fn solve_phrase_subset_soft(
+pub(crate) fn select_phrase_subset(
     phrases: &[String],
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
+    mode: PhraseSelectionMode,
 ) -> Result<PhraseSelectionOutcome> {
     let selection_settings = ObserverSelectionSettings::from_env()?;
-    if selection_settings.backend == ObserverSelectionBackend::Mip {
-        return solve_phrase_subset_soft_mip(
+    match selection_settings.backend {
+        ObserverSelectionBackend::Mip => mip_select_phrase_subset(
             phrases.len(),
             positive_constraints,
             negative_constraints,
-        );
+            mode,
+        ),
+        ObserverSelectionBackend::Smt => smt_select_phrase_subset(
+            phrases.len(),
+            positive_constraints,
+            negative_constraints,
+            mode,
+        ),
     }
+}
+
+fn smt_select_phrase_subset(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+    mode: PhraseSelectionMode,
+) -> Result<PhraseSelectionOutcome> {
+    match mode {
+        PhraseSelectionMode::PreferCoverage => smt_select_with_preferred_coverage(
+            phrase_count,
+            positive_constraints,
+            negative_constraints,
+        ),
+        PhraseSelectionMode::RequireCoverage => smt_select_with_required_coverage(
+            phrase_count,
+            positive_constraints,
+            negative_constraints,
+        ),
+    }
+}
+
+fn smt_select_with_preferred_coverage(
+    phrase_count: usize,
+    positive_constraints: &[Vec<usize>],
+    negative_constraints: &[Vec<usize>],
+) -> Result<PhraseSelectionOutcome> {
     let mut smt = String::new();
-    for index in 0..phrases.len() {
+    for index in 0..phrase_count {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
     for (index, matches) in positive_constraints.iter().enumerate() {
@@ -153,14 +211,12 @@ pub(crate) fn solve_phrase_subset_soft(
                 .collect(),
         )
     };
-    let keep_terms = if phrases.is_empty() {
+    let keep_terms = if phrase_count == 0 {
         "0".to_string()
     } else {
         solver_sum(
-            phrases
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
+            (0..phrase_count)
+                .map(|index| format!("(ite keep_{index} 1 0)"))
                 .collect(),
         )
     };
@@ -168,22 +224,18 @@ pub(crate) fn solve_phrase_subset_soft(
         LexObjective::minimize(missed_terms),
         LexObjective::minimize(negative_terms),
         LexObjective::minimize(keep_terms),
-        LexObjective::minimize(keep_index_sum(phrases.len())),
+        LexObjective::minimize(keep_index_sum(phrase_count)),
     ];
-    solve_selected_phrase_indexes(phrases.len(), &smt, &objectives)
+    smt_select_phrase_indexes(phrase_count, &smt, &objectives)
 }
 
-pub(crate) fn solve_phrase_subset(
-    phrases: &[String],
+fn smt_select_with_required_coverage(
+    phrase_count: usize,
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
 ) -> Result<PhraseSelectionOutcome> {
-    let selection_settings = ObserverSelectionSettings::from_env()?;
-    if selection_settings.backend == ObserverSelectionBackend::Mip {
-        return solve_phrase_subset_mip(phrases.len(), positive_constraints, negative_constraints);
-    }
     let mut smt = String::new();
-    for index in 0..phrases.len() {
+    for index in 0..phrase_count {
         smt.push_str(&format!("(declare-fun keep_{index} () Bool)\n"));
     }
     for matches in positive_constraints {
@@ -207,26 +259,24 @@ pub(crate) fn solve_phrase_subset(
                 .collect(),
         )
     };
-    let keep_terms = if phrases.is_empty() {
+    let keep_terms = if phrase_count == 0 {
         "0".to_string()
     } else {
         solver_sum(
-            phrases
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("(ite keep_{index} 1 0)"))
+            (0..phrase_count)
+                .map(|index| format!("(ite keep_{index} 1 0)"))
                 .collect(),
         )
     };
     let objectives = vec![
         LexObjective::minimize(negative_terms),
         LexObjective::minimize(keep_terms),
-        LexObjective::minimize(keep_index_sum(phrases.len())),
+        LexObjective::minimize(keep_index_sum(phrase_count)),
     ];
-    solve_selected_phrase_indexes(phrases.len(), &smt, &objectives)
+    smt_select_phrase_indexes(phrase_count, &smt, &objectives)
 }
 
-fn solve_selected_phrase_indexes(
+fn smt_select_phrase_indexes(
     phrase_count: usize,
     preamble: &str,
     objectives: &[LexObjective],
@@ -298,44 +348,41 @@ enum PhraseSelectionObjective {
     KeepIndexSum,
 }
 
-fn solve_phrase_subset_soft_mip(
+fn mip_select_phrase_subset(
     phrase_count: usize,
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
+    mode: PhraseSelectionMode,
 ) -> Result<PhraseSelectionOutcome> {
-    solve_phrase_subset_mip_internal(
+    let (require_positive_coverage, objectives): (bool, &[PhraseSelectionObjective]) = match mode {
+        PhraseSelectionMode::PreferCoverage => (
+            false,
+            &[
+                PhraseSelectionObjective::MissedPositives,
+                PhraseSelectionObjective::NegativeMatches,
+                PhraseSelectionObjective::KeepCount,
+                PhraseSelectionObjective::KeepIndexSum,
+            ],
+        ),
+        PhraseSelectionMode::RequireCoverage => (
+            true,
+            &[
+                PhraseSelectionObjective::NegativeMatches,
+                PhraseSelectionObjective::KeepCount,
+                PhraseSelectionObjective::KeepIndexSum,
+            ],
+        ),
+    };
+    mip_select_phrase_subset_internal(
         phrase_count,
         positive_constraints,
         negative_constraints,
-        false,
-        &[
-            PhraseSelectionObjective::MissedPositives,
-            PhraseSelectionObjective::NegativeMatches,
-            PhraseSelectionObjective::KeepCount,
-            PhraseSelectionObjective::KeepIndexSum,
-        ],
+        require_positive_coverage,
+        objectives,
     )
 }
 
-fn solve_phrase_subset_mip(
-    phrase_count: usize,
-    positive_constraints: &[Vec<usize>],
-    negative_constraints: &[Vec<usize>],
-) -> Result<PhraseSelectionOutcome> {
-    solve_phrase_subset_mip_internal(
-        phrase_count,
-        positive_constraints,
-        negative_constraints,
-        true,
-        &[
-            PhraseSelectionObjective::NegativeMatches,
-            PhraseSelectionObjective::KeepCount,
-            PhraseSelectionObjective::KeepIndexSum,
-        ],
-    )
-}
-
-fn solve_phrase_subset_mip_internal(
+fn mip_select_phrase_subset_internal(
     phrase_count: usize,
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],
@@ -357,7 +404,7 @@ fn solve_phrase_subset_mip_internal(
     let mut locked = Vec::new();
     let mut selected = Vec::new();
     for objective in objectives {
-        let stage = solve_phrase_subset_mip_stage(
+        let stage = mip_select_phrase_subset_stage(
             phrase_count,
             positive_constraints,
             negative_constraints,
@@ -385,7 +432,7 @@ fn solve_phrase_subset_mip_internal(
     })
 }
 
-fn solve_phrase_subset_mip_stage(
+fn mip_select_phrase_subset_stage(
     phrase_count: usize,
     positive_constraints: &[Vec<usize>],
     negative_constraints: &[Vec<usize>],

@@ -4,7 +4,7 @@ use crate::candidate_generation::{build_candidate_pool, truncate_constraints, Ca
 use crate::scoring::{
     evaluate_guardrails_artifact_signal, is_better_trial, primary_metric, selection_metric_name,
 };
-use crate::selection::{count_selected_hits, solve_phrase_subset_soft};
+use crate::selection::{count_selected_hits, select_phrase_subset, PhraseSelectionMode};
 use crate::signal_profiles::default_guardrail_signal_profile;
 use crate::{
     ObserverAutoSelectionReport, ObserverAutoSynthesisOptions, ObserverBootstrapMode,
@@ -43,8 +43,12 @@ fn synthesize_from_candidate_pool(
     let positive_constraints = truncate_constraints(&pool.positive_constraints, candidate_count);
     let negative_constraints = truncate_constraints(&pool.negative_constraints, candidate_count);
     let selection_started = Instant::now();
-    let selection =
-        solve_phrase_subset_soft(candidates, &positive_constraints, &negative_constraints)?;
+    let selection = select_phrase_subset(
+        candidates,
+        &positive_constraints,
+        &negative_constraints,
+        PhraseSelectionMode::PreferCoverage,
+    )?;
     let selection_duration_ms = selection_started.elapsed().as_millis() as u64;
     if !selection.status.is_success() || selection.selected.is_empty() {
         return Err(LogicPearlError::message(

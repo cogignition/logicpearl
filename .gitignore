@@ -35,3 +35,6 @@ corpora/
 
 # Legacy workspace material stays out of the public repo source
 legacy/
+
+# Local Pearlkeeper memory/state
+.pearlkeeper/
