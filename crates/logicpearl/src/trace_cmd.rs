@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_discovery::{
     load_decision_traces_auto, load_observation_schema, FeatureGovernanceConfig,
@@ -30,6 +30,24 @@ pub(crate) enum TraceFormatArg {
     Csv,
     Jsonl,
     Json,
+}
+
+const TRACES_AFTER_HELP: &str = "\
+Examples:
+  logicpearl traces generate examples/getting_started/synthetic_access_policy.tracegen.json --output /tmp/synthetic_traces.jsonl
+  logicpearl traces audit /tmp/synthetic_traces.jsonl --spec examples/getting_started/synthetic_access_policy.tracegen.json
+  logicpearl traces audit examples/getting_started/decision_traces.csv --label-column allowed --json
+  logicpearl traces observation-schema observation_schema.json --json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = TRACES_AFTER_HELP)]
+pub(crate) enum TraceCommand {
+    /// Generate labeled synthetic decision traces from a declarative spec.
+    Generate(TraceGenerateArgs),
+    /// Audit feature-label skew in a trace dataset and flag nuisance leakage.
+    Audit(TraceAuditArgs),
+    /// Validate and summarize an upstream observation schema contract.
+    ObservationSchema(TraceObservationSchemaArgs),
 }
 
 #[derive(Debug, Args)]

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use clap::Args;
+use clap::{Args, Subcommand};
 use logicpearl_benchmark::sanitize_identifier;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,23 @@ use wasm_compile::generate_wasm_runner_source;
 pub(crate) use wasm_compile::{compile_wasm_module, is_rust_target_installed};
 #[cfg(test)]
 use wasm_metadata::{write_wasm_metadata, write_wasm_metadata_for_pearl};
+
+const ARTIFACT_AFTER_HELP: &str = "\
+Examples:
+  logicpearl artifact inspect output/artifact.json --json
+  logicpearl artifact digest output
+  logicpearl artifact verify output/artifact.json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = ARTIFACT_AFTER_HELP)]
+pub(crate) enum ArtifactCommand {
+    /// Inspect the normalized artifact manifest.
+    Inspect(ArtifactInspectArgs),
+    /// Print the artifact and bundle digests.
+    Digest(ArtifactDigestArgs),
+    /// Validate the manifest, hashes, and referenced files.
+    Verify(ArtifactVerifyArgs),
+}
 
 #[derive(Debug, Args)]
 pub(crate) struct ArtifactInspectArgs {

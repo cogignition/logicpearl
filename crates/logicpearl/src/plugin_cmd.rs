@@ -1,8 +1,27 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use std::collections::BTreeMap;
+
+const PLUGIN_AFTER_HELP: &str = "\
+Plugin trust:
+  plugin run and plugin validate with a smoke input execute the manifest entrypoint as local code.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
+Examples:
+  logicpearl plugin validate examples/plugins/python_observer/manifest.json
+  logicpearl plugin run examples/plugins/python_observer/manifest.json --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl plugin run examples/plugins/python_trace_source/manifest.json --input-string examples/getting_started/decision_traces.csv --option label_column=allowed --json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = PLUGIN_AFTER_HELP)]
+pub(crate) enum PluginCommand {
+    /// Check that a plugin manifest is valid. Optionally run a smoke request too.
+    Validate(PluginValidateArgs),
+    /// Run a plugin manifest against a JSON input or an explicit payload.
+    Run(PluginRunArgs),
+}
 
 #[derive(Debug, Args)]
 #[command(

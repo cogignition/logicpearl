@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use logicpearl_observer::guardrails_signal_phrases;
 use logicpearl_observer_synthesis::{evaluate_guardrails_artifact_signal, ObserverSynthesisReport};
 use std::io::{BufRead, Write};
@@ -42,6 +42,39 @@ pub(crate) enum ObserverTargetGoalArg {
     CustomerSafe,
     Balanced,
     ReviewQueue,
+}
+
+const OBSERVER_AFTER_HELP: &str = "\
+Plugin trust:
+  --plugin-manifest executes a local program declared by that plugin manifest.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
+Examples:
+  logicpearl observer list
+  logicpearl observer detect --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl observer run --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --input examples/plugins/python_observer/raw_input.json --json
+  logicpearl observer scaffold --profile guardrails-v1 --output /tmp/guardrails_observer.json
+  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.synthesized.json
+  logicpearl observer synthesize --artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --benchmark-cases /tmp/squad_alert_observed.jsonl --signal instruction-override --bootstrap observed-feature --output /tmp/guardrails_observer.synthesized.json
+  logicpearl observer repair --artifact /tmp/guardrails_observer.json --benchmark-cases /tmp/squad_alert_full_dev.jsonl --signal secret-exfiltration --output /tmp/guardrails_observer.repaired.json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = OBSERVER_AFTER_HELP)]
+pub(crate) enum ObserverCommand {
+    /// List the built-in native observer profiles.
+    List(ObserverListArgs),
+    /// Check that an observer profile artifact or plugin manifest is valid.
+    Validate(ObserverValidateArgs),
+    /// Run an observer on raw input and emit normalized features.
+    Run(ObserverRunArgs),
+    /// Check whether an input shape maps to a built-in observer profile.
+    Detect(ObserverDetectArgs),
+    /// Scaffold a native observer artifact from a built-in profile.
+    Scaffold(ObserverScaffoldArgs),
+    /// Use the current signal family as seed positives, mine candidate phrases, and let LogicPearl choose a compact subset.
+    Synthesize(ObserverSynthesizeArgs),
+    /// Prune ambiguous cue phrases while preserving current positive coverage.
+    Repair(ObserverRepairArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1269,6 +1302,7 @@ pub(crate) fn resolve_synthesis_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use logicpearl_observer_synthesis::ObserverTargetGoal;
 
     fn synthesis_row(id: &str, route: &str) -> SynthesisCaseRow {
         SynthesisCaseRow {
@@ -1315,5 +1349,21 @@ mod tests {
     fn synthesis_requires_explicit_observer_seed() {
         let err = resolve_synthesis_artifact(None, None).expect_err("seed should be required");
         assert!(format!("{err:?}").contains("observer synthesize needs an explicit observer seed"));
+    }
+
+    #[test]
+    fn target_goal_args_map_to_synthesis_goals() {
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::ParityFirst),
+            ObserverTargetGoal::ParityFirst
+        ));
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::ProtectiveGate),
+            ObserverTargetGoal::ProtectiveGate
+        ));
+        assert!(matches!(
+            to_observer_target_goal(ObserverTargetGoalArg::CustomerSafe),
+            ObserverTargetGoal::CustomerSafe
+        ));
     }
 }

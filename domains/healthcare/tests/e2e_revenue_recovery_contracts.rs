@@ -1,31 +1,72 @@
 // SPDX-License-Identifier: MIT
 use serde::Deserialize;
 use serde_json::Value;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use tempfile::tempdir;
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
-        .expect("logicpearl crate should live under workspace/crates/logicpearl")
+        .expect("healthcare domain package should live under logicpearl/domains")
         .to_path_buf()
 }
 
 fn fixture_root() -> PathBuf {
-    repo_root().join("fixtures/contracts/revenue_recovery")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("contracts/revenue_recovery")
 }
 
-fn run_cli_output(cli_bin: &str, args: &[String]) -> std::process::Output {
+fn logicpearl_cli_bin() -> &'static Path {
+    static CLI_BIN: OnceLock<PathBuf> = OnceLock::new();
+    CLI_BIN.get_or_init(|| {
+        if let Ok(path) = env::var("LOGICPEARL_BIN") {
+            return PathBuf::from(path);
+        }
+
+        let public_repo = repo_root();
+        let manifest_path = public_repo.join("Cargo.toml");
+        let output = Command::new("cargo")
+            .args([
+                "build",
+                "--manifest-path",
+                manifest_path
+                    .to_str()
+                    .expect("public Cargo.toml path should be UTF-8"),
+                "-p",
+                "logicpearl",
+                "--bin",
+                "logicpearl",
+            ])
+            .current_dir(&public_repo)
+            .output()
+            .expect("cargo build should run");
+        assert!(
+            output.status.success(),
+            "failed to build public logicpearl CLI:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let mut bin = public_repo.join("target/debug/logicpearl");
+        if !env::consts::EXE_EXTENSION.is_empty() {
+            bin.set_extension(env::consts::EXE_EXTENSION);
+        }
+        bin
+    })
+}
+
+fn run_cli_output(cli_bin: &Path, args: &[String]) -> std::process::Output {
     Command::new(cli_bin)
         .args(args)
         .output()
         .expect("logicpearl command should run")
 }
 
-fn run_cli_json(cli_bin: &str, args: &[String]) -> Value {
+fn run_cli_json(cli_bin: &Path, args: &[String]) -> Value {
     let output = run_cli_output(cli_bin, args);
     assert!(
         output.status.success(),
@@ -110,7 +151,7 @@ fn parse_run_output(output: &std::process::Output) -> u64 {
 
 #[test]
 fn revenue_contract_artifacts_preserve_expected_runtime_behavior() {
-    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let cli_bin = logicpearl_cli_bin();
     let root = fixture_root();
     let manifest = load_manifest();
 
@@ -271,7 +312,7 @@ fn revenue_contract_artifacts_preserve_expected_runtime_behavior() {
 
 #[test]
 fn revenue_contract_artifacts_report_expected_semantic_diffs() {
-    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let cli_bin = logicpearl_cli_bin();
     let root = fixture_root();
     let manifest = load_manifest();
 

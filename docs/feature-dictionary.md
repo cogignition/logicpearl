@@ -11,7 +11,7 @@ Use a feature dictionary when feature names are stable machine IDs, generated ID
 Common cases:
 - generated policy requirements such as `requirement__req-003__satisfied`
 - observer outputs such as `contains_xss_signature`
-- payer, plan, region, or contract features that need source anchors
+- plan, region, entitlement, or contract features that need source anchors
 - CSV columns where a short label is enough for humans
 
 You do not need a dictionary for simple datasets where the feature IDs are already readable.

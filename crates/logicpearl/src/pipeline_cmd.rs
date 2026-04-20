@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use logicpearl_pipeline::{
     OverridePipelineDefinition, PipelineDefinition, OVERRIDE_PIPELINE_SCHEMA_VERSION,
 };
@@ -10,6 +10,31 @@ use std::path::Path;
 enum LoadedPipeline {
     Staged(PipelineDefinition),
     Override(OverridePipelineDefinition),
+}
+
+const PIPELINE_AFTER_HELP: &str = "\
+Plugin trust:
+  Plugin-backed pipelines execute local programs declared by plugin manifests.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
+Examples:
+  logicpearl pipeline validate examples/pipelines/authz/pipeline.json
+  logicpearl pipeline inspect examples/pipelines/observer_membership_verify/pipeline.json
+  logicpearl pipeline run examples/pipelines/authz/pipeline.json examples/pipelines/authz/input.json
+  cat examples/pipelines/authz/input.json | logicpearl pipeline run examples/pipelines/authz/pipeline.json -
+  logicpearl pipeline trace examples/pipelines/observer_membership_verify/pipeline.json examples/pipelines/observer_membership_verify/input.json --json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = PIPELINE_AFTER_HELP)]
+pub(crate) enum PipelineCommand {
+    /// Check that a pipeline and everything it references are valid.
+    Validate(PipelineValidateArgs),
+    /// Inspect a pipeline and summarize its stages.
+    Inspect(PipelineInspectArgs),
+    /// Run a pipeline on one input file.
+    Run(PipelineRunArgs),
+    /// Run a pipeline and show every stage in the trace.
+    Trace(PipelineTraceArgs),
 }
 
 #[derive(Debug, Args)]

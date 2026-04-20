@@ -1,7 +1,7 @@
 ## Revenue Recovery Contract Fixtures
 
-This fixture lane is a small frozen conformance contract derived from the
-public `healthcare_demo` revenue recovery workflow.
+This fixture lane is a small frozen private conformance contract derived from
+the healthcare revenue recovery workflow.
 
 Purpose:
 - protect `logicpearl` solver and runtime changes against regressions that
@@ -26,5 +26,5 @@ What is intentionally excluded:
 - UI bundles
 - generated website exports
 
-The expected outputs here should be treated as a contract for the public
-LogicPearl runtime and CLI surfaces, not as a benchmark lane.
+The expected outputs here should be treated as a private domain regression
+contract, not as part of the generic public LogicPearl runtime or CLI surface.

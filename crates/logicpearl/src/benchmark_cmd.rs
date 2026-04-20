@@ -5,7 +5,7 @@ use crate::observer_cmd::{
     resolve_observer_for_cases, ObserverProfileArg,
 };
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use logicpearl_benchmark::{
     adapt_csic_http_2010_dataset, adapt_modsecurity_owasp_2025_dataset, adapt_mt_agentrisk_dataset,
@@ -81,6 +81,47 @@ pub(crate) fn to_benchmark_adapter_profile(
         BenchmarkAdapterProfileArg::NoetiToxicQa => BenchmarkAdapterProfile::NoetiToxicQa,
         BenchmarkAdapterProfileArg::MtAgentrisk => BenchmarkAdapterProfile::MtAgentRisk,
     }
+}
+
+const BENCHMARK_AFTER_HELP: &str = "\
+Plugin trust:
+  Benchmark runs over plugin-backed pipelines execute local programs declared by plugin manifests.
+  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.
+
+Examples:
+  logicpearl benchmark list-profiles
+  logicpearl benchmark detect-profile \"$LOGICPEARL_DATASETS/squad/train-v2.0.json\" --json
+  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile alert --output /tmp/alert_attack.jsonl
+  logicpearl benchmark split-cases /tmp/guardrail_dev.jsonl --train-output /tmp/guardrail_train.jsonl --dev-output /tmp/guardrail_dev_holdout.jsonl --train-fraction 0.8 --json
+  logicpearl benchmark adapt \"$LOGICPEARL_DATASETS/alert/ALERT_Adv.jsonl\" --profile auto --output /tmp/alert_attack.jsonl
+  logicpearl benchmark observe /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --output /tmp/guardrail_dev_observed.jsonl
+  logicpearl benchmark learn /tmp/guardrail_dev.jsonl --observer-artifact benchmarks/guardrails/observers/guardrails_v1.seed.json --config benchmarks/guardrails/prep/trace_projection.guardrails_v1.json --output-dir /tmp/guardrail_prep --json
+  logicpearl benchmark score-artifacts /tmp/guardrail_train_prep/discovered/artifact_set.json /tmp/guardrail_dev_holdout_traces/multi_target.csv --json
+  logicpearl benchmark run benchmarks/guardrails/examples/agent_guardrail/agent_guardrail.pipeline.json benchmarks/guardrails/examples/agent_guardrail/dev_cases.jsonl --json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = BENCHMARK_AFTER_HELP)]
+pub(crate) enum BenchmarkCommand {
+    /// List the built-in benchmark adapter profiles.
+    ListProfiles(BenchmarkListProfilesArgs),
+    /// Detect which built-in benchmark adapter profile fits a raw dataset.
+    DetectProfile(BenchmarkDetectProfileArgs),
+    /// Convert a raw benchmark dataset into LogicPearl benchmark-case JSONL using a built-in adapter profile.
+    Adapt(BenchmarkAdaptArgs),
+    /// Deterministically split benchmark cases into train and dev sets.
+    SplitCases(BenchmarkSplitCasesArgs),
+    /// Observe benchmark cases, emit traces, and discover artifacts in one run.
+    Learn(BenchmarkLearnArgs),
+    /// Merge multiple benchmark-case JSONL files into one dataset.
+    MergeCases(BenchmarkMergeCasesArgs),
+    /// Run an observer over benchmark cases and emit observed feature rows.
+    Observe(BenchmarkObserveArgs),
+    /// Project observed benchmark rows into discovery-ready trace CSVs.
+    EmitTraces(BenchmarkEmitTracesArgs),
+    /// Score a discovered artifact set against a held-out multi-target trace CSV.
+    ScoreArtifacts(BenchmarkScoreArtifactsArgs),
+    /// Run a benchmark dataset through a pipeline and compute metrics.
+    Run(BenchmarkRunArgs),
 }
 
 #[derive(Debug, Args)]

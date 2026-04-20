@@ -37,6 +37,15 @@ pub(crate) use quickstart::run_quickstart;
 pub(crate) use run::run_eval;
 pub(crate) use verify::run_verify;
 
+const QUICKSTART_AFTER_HELP: &str = "\
+Examples:
+  logicpearl quickstart
+  logicpearl quickstart traces
+  logicpearl quickstart garden
+  logicpearl quickstart build
+  logicpearl quickstart pipeline
+  logicpearl quickstart benchmark";
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum QuickstartTopic {
     Traces,

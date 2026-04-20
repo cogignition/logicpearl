@@ -1,13 +1,32 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use anstream::println;
-use clap::Args;
+use clap::{Args, Subcommand};
 use logicpearl_conformance::{
     build_artifact_manifest, compare_runtime_parity, validate_artifact_manifest,
     write_artifact_manifest, DecisionTraceRow as ConformanceDecisionTraceRow,
 };
 use logicpearl_verify::{load_formal_spec, verify_gate_against_formal_spec};
 use std::collections::BTreeMap;
+
+const CONFORMANCE_AFTER_HELP: &str = "\
+Examples:
+  logicpearl conformance validate-artifacts output/artifact_manifest.json
+  logicpearl conformance runtime-parity examples/getting_started/output examples/getting_started/decision_traces.csv --label-column allowed --json
+  logicpearl conformance spec-verify examples/getting_started/output examples/getting_started/access_policy.spec.json --json";
+
+#[derive(Debug, Subcommand)]
+#[command(after_help = CONFORMANCE_AFTER_HELP)]
+pub(crate) enum ConformanceCommand {
+    /// Write a generic artifact manifest from grouped file paths.
+    WriteManifest(ConformanceWriteManifestArgs),
+    /// Validate whether a saved artifact manifest is still fresh.
+    ValidateArtifacts(ConformanceValidateArtifactsArgs),
+    /// Compare a pearl's runtime behavior against labeled decision traces.
+    RuntimeParity(ConformanceRuntimeParityArgs),
+    /// Prove a pearl is complete and non-spurious relative to a formal deny spec.
+    SpecVerify(ConformanceSpecVerifyArgs),
+}
 
 #[derive(Debug, Args)]
 #[command(

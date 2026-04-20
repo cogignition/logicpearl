@@ -131,8 +131,8 @@ The tables below break that model into concrete terms.
 |---|---|
 | **Drift Detection** | Per-rule accuracy monitoring over a sliding window. When a rule's precision or recall drops below baseline, generates an alert identifying which rule, which metric, and how much it degraded. |
 | **Semantic Obfuscation** | A compiled artifact may omit human-readable labels and retain only numeric indices and thresholds. The logic is preserved but the surface intent is stripped. |
-| **Route Status** | The workflow routing decision emitted around the pearl result, such as `ready_for_clinical_review`, `missing_required_documentation`, or `needs_human_review`. This is not the same thing as approve/deny. |
-| **Review Packet** | The organized output package for a human reviewer: case summary, guided-question outcomes, matched evidence, missing documentation, and audit notes. |
+| **Route Status** | The workflow routing decision emitted around the pearl result, such as `ready`, `missing_required_input`, or `needs_manual_review`. This is not the same thing as approve/deny. |
+| **Review Packet** | The organized output package for a human reviewer: summary, question outcomes, matched evidence, missing inputs, and audit notes. |
 
 ## OPA/Rego Integration
 

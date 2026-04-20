@@ -9,6 +9,12 @@ use logicpearl_ir::{
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+const DIFF_AFTER_HELP: &str = "\
+Examples:
+  logicpearl diff old_output new_output
+  logicpearl diff old_output/artifact.json new_output/artifact.json --json
+  logicpearl diff old_output/pearl.ir.json new_output/pearl.ir.json";
+
 #[derive(Debug, Args)]
 #[command(after_help = DIFF_AFTER_HELP)]
 pub(crate) struct DiffArgs {
