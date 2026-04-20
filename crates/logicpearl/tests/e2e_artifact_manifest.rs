@@ -193,10 +193,26 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
 
     let pipeline_dir = temp.path().join("pipeline");
     fs::create_dir_all(&pipeline_dir).expect("pipeline dir should be created");
+    let pipeline_input_map = pipeline_dir.join("input-map.json");
+    fs::write(
+        &pipeline_input_map,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "features": {
+                "action": "$.request.action",
+                "resource_archived": "$.request.resource_archived",
+                "user_role": "$.user.role",
+                "failed_attempts": "$.user.failed_attempts"
+            }
+        }))
+        .expect("input map should serialize"),
+    )
+    .expect("input map should be written");
     run_cli(&[
         "compose".to_string(),
         "--pipeline-id".to_string(),
         "starter_authz".to_string(),
+        "--input-map".to_string(),
+        pipeline_input_map.display().to_string(),
         "--output".to_string(),
         pipeline_dir.join("pipeline.json").display().to_string(),
         root.join("fixtures/ir/valid/auth-demo-v1.json")
@@ -218,6 +234,25 @@ fn artifact_manifests_validate_and_artifact_commands_work() {
         "--json".to_string(),
     ]);
     assert_eq!(pipeline_verify["ok"], true);
+}
+
+#[test]
+fn compose_requires_input_map_unless_scaffolding() {
+    let root = repo_root();
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let output = temp.path().join("pipeline.json");
+    let message = run_cli_failure(&[
+        "compose".to_string(),
+        "--pipeline-id".to_string(),
+        "starter_authz".to_string(),
+        "--output".to_string(),
+        output.display().to_string(),
+        root.join("fixtures/ir/valid/auth-demo-v1.json")
+            .display()
+            .to_string(),
+    ]);
+    assert!(message.contains("compose needs an explicit input map"));
+    assert!(message.contains("--scaffold"));
 }
 
 #[test]

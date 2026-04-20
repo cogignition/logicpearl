@@ -358,15 +358,21 @@ pub(crate) struct RunArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Example:\n  logicpearl compose --pipeline-id starter_authz --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json"
+    after_help = "Examples:\n  logicpearl compose --pipeline-id starter_authz --input-map examples/pipelines/input-map.json --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json\n  logicpearl compose --pipeline-id starter_authz --scaffold --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json"
 )]
 pub(crate) struct ComposeArgs {
-    /// Stable pipeline identifier for the emitted starter artifact.
+    /// Stable pipeline identifier for the emitted pipeline artifact.
     #[arg(long)]
     pub pipeline_id: String,
     /// Output path for the generated pipeline.json.
     #[arg(long)]
     pub output: PathBuf,
+    /// JSON/YAML map from pearl feature ids to root input paths or literal values.
+    #[arg(long, conflicts_with = "scaffold")]
+    pub input_map: Option<PathBuf>,
+    /// Emit a draft scaffold with $.TODO_* placeholders instead of a runnable pipeline.
+    #[arg(long)]
+    pub scaffold: bool,
     /// Pearl artifacts to compose into a starter pipeline.
     pub artifacts: Vec<PathBuf>,
 }

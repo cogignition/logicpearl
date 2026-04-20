@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use anstream::println;
 use logicpearl_core::ArtifactKind;
-use logicpearl_pipeline::compose_pipeline;
+use logicpearl_pipeline::{compose_pipeline, scaffold_pipeline, ComposeInputMap};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
@@ -30,10 +30,33 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
             .into_diagnostic()
             .wrap_err("failed to create compose output directory")?;
     }
+    if args.input_map.is_none() && !args.scaffold {
+        return Err(guidance(
+            "compose needs an explicit input map",
+            "Pass --input-map <json-or-yaml> for a runnable pipeline, or --scaffold to emit a draft with $.TODO_* placeholders.",
+        ));
+    }
+
     let packaged_artifacts = package_compose_artifacts(&args.artifacts, base_dir)?;
-    let plan = compose_pipeline(args.pipeline_id, &packaged_artifacts, base_dir)
-        .into_diagnostic()
-        .wrap_err("failed to compose starter pipeline")?;
+    let compose_mode = if args.scaffold { "scaffold" } else { "compose" };
+    let plan = if args.scaffold {
+        scaffold_pipeline(args.pipeline_id, &packaged_artifacts, base_dir)
+            .into_diagnostic()
+            .wrap_err("failed to scaffold starter pipeline")?
+    } else {
+        let input_map_path = args.input_map.as_ref().expect("input map required above");
+        let input_map = ComposeInputMap::from_path(input_map_path)
+            .into_diagnostic()
+            .wrap_err_with(|| {
+                format!(
+                    "failed to read compose input map {}",
+                    input_map_path.display()
+                )
+            })?;
+        compose_pipeline(args.pipeline_id, &packaged_artifacts, base_dir, &input_map)
+            .into_diagnostic()
+            .wrap_err("failed to compose runnable pipeline")?
+    };
     plan.pipeline
         .write_pretty(&args.output)
         .into_diagnostic()
@@ -51,6 +74,11 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
             wasm_metadata_path: None,
             build_options_hash: Some(build_options_hash(&serde_json::json!({
                 "pipeline_id": plan.pipeline.pipeline_id,
+                "mode": compose_mode,
+                "input_map": args
+                    .input_map
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
                 "artifacts": args
                     .artifacts
                     .iter()
@@ -72,7 +100,13 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
 
     println!(
         "{} {}",
-        "Composed".bold().bright_green(),
+        if args.scaffold {
+            "Scaffolded"
+        } else {
+            "Composed"
+        }
+        .bold()
+        .bright_green(),
         args.output.display()
     );
     for note in &plan.notes {
