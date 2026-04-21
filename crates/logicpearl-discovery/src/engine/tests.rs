@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 use super::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
-    candidate_rules, compare_candidate_set_score, conjunction_candidate_rules, recover_rare_rules,
-    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, training_indices,
-    CandidateMatchCache, CandidateRule, CandidateSelectionContext, CandidateSetScore,
-    DISCOVERY_SELECTION_BACKEND_ENV,
+    candidate_rules, compare_candidate_set_score, compare_candidate_set_score_with_policy,
+    conjunction_candidate_rules, recover_rare_rules, rule_from_candidate, score_candidate_set,
+    select_candidate_rules_exact, training_indices, CandidateMatchCache, CandidateRule,
+    CandidateSelectionContext, CandidateSetScore, DISCOVERY_SELECTION_BACKEND_ENV,
 };
 use crate::{
     discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
+    SelectionPolicy,
 };
 use logicpearl_ir::{ComparisonExpression, ComparisonOperator, ComparisonValue, Expression};
 use logicpearl_solver::{check_sat, SolverSettings};
@@ -53,11 +54,16 @@ fn exact_selection_prefers_minimal_general_rule_over_equal_singletons() {
         numeric_candidate("score", ComparisonOperator::Lte, 2.0),
     ];
 
-    let selected =
-        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
-            .unwrap()
-            .0
-            .unwrap();
+    let selected = select_candidate_rules_exact(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &candidates,
+        SelectionPolicy::Balanced,
+    )
+    .unwrap()
+    .0
+    .unwrap();
     assert_eq!(selected.len(), 1);
     let comparison = candidate_as_comparison(&selected[0]).unwrap();
     assert_eq!(comparison.op, ComparisonOperator::Lte);
@@ -84,16 +90,28 @@ fn mip_exact_selection_matches_smt_choice_beyond_bruteforce_limit() {
     candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
 
     let smt_selection = with_discovery_selection_backend("smt", || {
-        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
-            .expect("smt exact selection should find a solution")
-            .0
-            .expect("smt exact selection should return a rule set")
+        select_candidate_rules_exact(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &candidates,
+            SelectionPolicy::Balanced,
+        )
+        .expect("smt exact selection should find a solution")
+        .0
+        .expect("smt exact selection should return a rule set")
     });
     let mip_selection = with_discovery_selection_backend("mip", || {
-        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
-            .expect("mip exact selection should find a solution")
-            .0
-            .expect("mip exact selection should return a rule set")
+        select_candidate_rules_exact(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &candidates,
+            SelectionPolicy::Balanced,
+        )
+        .expect("mip exact selection should find a solution")
+        .0
+        .expect("mip exact selection should return a rule set")
     });
 
     assert_eq!(smt_selection.len(), 1);
@@ -126,8 +144,14 @@ fn invalid_discovery_selection_backend_is_rejected() {
     candidates.push(numeric_candidate("score", ComparisonOperator::Lte, 17.0));
 
     let err = with_discovery_selection_backend("not-a-backend", || {
-        select_candidate_rules_exact(&rows, &denied_indices, &allowed_indices, &candidates)
-            .expect_err("invalid discovery selection backend should fail loudly")
+        select_candidate_rules_exact(
+            &rows,
+            &denied_indices,
+            &allowed_indices,
+            &candidates,
+            SelectionPolicy::Balanced,
+        )
+        .expect_err("invalid discovery selection backend should fail loudly")
     });
 
     assert!(
@@ -163,6 +187,91 @@ fn candidate_set_score_prefers_fewer_false_positives_after_equal_total_error() {
         compare_candidate_set_score(&better, &worse),
         std::cmp::Ordering::Less
     );
+}
+
+#[test]
+fn recall_biased_candidate_set_score_prefers_target_hitting_plan_within_cap() {
+    let recall_biased = SelectionPolicy::RecallBiased {
+        deny_recall_target: 0.75,
+        max_false_positive_rate: 0.25,
+    };
+    let better = CandidateSetScore {
+        total_errors: 4,
+        false_positives: 1,
+        false_negatives: 1,
+        validation_total_errors: 1,
+        validation_false_positives: 0,
+        validation_false_negatives: 1,
+        rule_count: 2,
+        complexity_penalty: 0,
+    };
+    let worse = CandidateSetScore {
+        total_errors: 2,
+        false_positives: 0,
+        false_negatives: 2,
+        validation_total_errors: 0,
+        validation_false_positives: 0,
+        validation_false_negatives: 0,
+        rule_count: 1,
+        complexity_penalty: 0,
+    };
+    assert_eq!(
+        compare_candidate_set_score_with_policy(&better, &worse, recall_biased, 4, 4),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn recall_biased_exact_selection_uses_cap_limited_max_recall_when_target_is_infeasible() {
+    let rows = vec![
+        dual_signal_row(1.0, 0.0, false),
+        dual_signal_row(1.0, 0.0, false),
+        dual_signal_row(0.0, 1.0, false),
+        dual_signal_row(0.0, 0.0, true),
+        dual_signal_row(1.0, 0.0, true),
+        dual_signal_row(0.0, 1.0, true),
+    ];
+    let denied_indices = vec![0usize, 1usize, 2usize];
+    let allowed_indices = vec![3usize, 4usize, 5usize];
+    let candidates = vec![
+        candidate_with_metrics(
+            "signal_a",
+            ComparisonOperator::Eq,
+            ComparisonValue::Literal(Value::Number(Number::from(1))),
+            2,
+            1,
+        ),
+        candidate_with_metrics(
+            "signal_b",
+            ComparisonOperator::Eq,
+            ComparisonValue::Literal(Value::Number(Number::from(1))),
+            1,
+            1,
+        ),
+    ];
+
+    let (selected, report) = select_candidate_rules_exact(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &candidates,
+        SelectionPolicy::RecallBiased {
+            deny_recall_target: 1.0,
+            max_false_positive_rate: 0.34,
+        },
+    )
+    .expect("exact selection should complete");
+    let selected = selected.expect("exact selection should return a rule set");
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(
+        candidate_as_comparison(&selected[0]).unwrap().feature,
+        "signal_a"
+    );
+    assert!(report
+        .detail
+        .as_deref()
+        .is_some_and(|detail| detail.contains("not feasible")));
 }
 
 #[test]
@@ -382,8 +491,11 @@ fn rare_rule_recovery_adds_uncovered_zero_fp_rule() {
         allowed_indices: &allowed_indices,
         training_indices: training_indices(&rows, &[]),
         validation_indices: &[],
+        training_denied_count: denied_indices.len(),
+        training_allowed_count: allowed_indices.len(),
         feature_governance: &feature_governance,
         decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy: SelectionPolicy::Balanced,
         residual_options: None,
         match_cache: Arc::new(CandidateMatchCache::new(&rows)),
     };
@@ -422,8 +534,11 @@ fn rare_rule_recovery_skips_rules_that_only_add_false_positives() {
         allowed_indices: &allowed_indices,
         training_indices: training_indices(&rows, &[]),
         validation_indices: &[],
+        training_denied_count: denied_indices.len(),
+        training_allowed_count: allowed_indices.len(),
         feature_governance: &feature_governance,
         decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy: SelectionPolicy::Balanced,
         residual_options: None,
         match_cache: Arc::new(CandidateMatchCache::new(&rows)),
     };
@@ -835,6 +950,17 @@ fn triad_row(score: f64, rare_flag: f64, noisy_flag: f64, allowed: bool) -> Deci
         "noisy_flag".to_string(),
         Value::Number(Number::from_f64(noisy_flag).unwrap()),
     );
+    DecisionTraceRow {
+        features,
+        allowed,
+        trace_provenance: None,
+    }
+}
+
+fn dual_signal_row(signal_a: f64, signal_b: f64, allowed: bool) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert("signal_a".to_string(), Value::from(signal_a));
+    features.insert("signal_b".to_string(), Value::from(signal_b));
     DecisionTraceRow {
         features,
         allowed,

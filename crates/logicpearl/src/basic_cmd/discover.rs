@@ -8,7 +8,7 @@ use owo_colors::OwoColorize;
 
 use super::{
     feature_column_selection, finish_progress, guidance, progress_callback, progress_enabled,
-    start_progress, to_discovery_decision_mode, DiscoverArgs,
+    selection_policy_from_args, start_progress, to_discovery_decision_mode, DiscoverArgs,
 };
 
 pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
@@ -25,6 +25,12 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
         ));
     }
     let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
+    let selection_policy = selection_policy_from_args(
+        args.selection_policy,
+        args.deny_recall_target,
+        args.max_false_positive_rate,
+    )
+    .map_err(|message| guidance(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.dataset_csv
@@ -60,6 +66,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
             feature_dictionary: args.feature_dictionary.clone(),
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
+            selection_policy,
         },
         progress.as_deref(),
     )

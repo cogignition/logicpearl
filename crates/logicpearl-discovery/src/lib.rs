@@ -65,6 +65,7 @@ pub struct BuildOptions {
     pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
+    pub selection_policy: SelectionPolicy,
     pub max_rules: Option<usize>,
     pub proposal_policy: ProposalPolicy,
     pub feature_selection: FeatureColumnSelection,
@@ -120,6 +121,122 @@ impl ProposalPolicy {
             ProposalPolicy::ReportOnly => "report_only",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Default)]
+#[serde(tag = "policy", rename_all = "snake_case")]
+pub enum SelectionPolicy {
+    #[default]
+    Balanced,
+    RecallBiased {
+        deny_recall_target: f64,
+        max_false_positive_rate: f64,
+    },
+}
+
+impl SelectionPolicy {
+    pub fn validate(self) -> Result<Self> {
+        match self {
+            Self::Balanced => Ok(self),
+            Self::RecallBiased {
+                deny_recall_target,
+                max_false_positive_rate,
+            } => {
+                validate_fraction("deny recall target", deny_recall_target)?;
+                validate_fraction("max false-positive rate", max_false_positive_rate)?;
+                Ok(self)
+            }
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::RecallBiased { .. } => "recall_biased",
+        }
+    }
+
+    pub fn deny_recall_target(self) -> Option<f64> {
+        match self {
+            Self::Balanced => None,
+            Self::RecallBiased {
+                deny_recall_target, ..
+            } => Some(deny_recall_target),
+        }
+    }
+
+    pub fn max_false_positive_rate(self) -> Option<f64> {
+        match self {
+            Self::Balanced => None,
+            Self::RecallBiased {
+                max_false_positive_rate,
+                ..
+            } => Some(max_false_positive_rate),
+        }
+    }
+
+    pub fn required_denied_hits(self, denied_count: usize) -> usize {
+        match self {
+            Self::Balanced => 0,
+            Self::RecallBiased {
+                deny_recall_target, ..
+            } => ceil_ratio_count(deny_recall_target, denied_count),
+        }
+    }
+
+    pub fn max_allowed_false_positives(self, allowed_count: usize) -> usize {
+        match self {
+            Self::Balanced => usize::MAX,
+            Self::RecallBiased {
+                max_false_positive_rate,
+                ..
+            } => floor_ratio_count(max_false_positive_rate, allowed_count),
+        }
+    }
+
+    pub fn constraints_satisfied(
+        self,
+        false_negatives: usize,
+        false_positives: usize,
+        denied_count: usize,
+        allowed_count: usize,
+    ) -> bool {
+        match self {
+            Self::Balanced => true,
+            Self::RecallBiased { .. } => {
+                let denied_hits = denied_count.saturating_sub(false_negatives);
+                denied_hits >= self.required_denied_hits(denied_count)
+                    && false_positives <= self.max_allowed_false_positives(allowed_count)
+            }
+        }
+    }
+}
+
+fn validate_fraction(label: &str, value: f64) -> Result<()> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        return Ok(());
+    }
+    Err(LogicPearlError::message(format!(
+        "{label} must be a finite value between 0.0 and 1.0"
+    )))
+}
+
+fn ceil_ratio_count(ratio: f64, total: usize) -> usize {
+    if total == 0 {
+        return 0;
+    }
+    ((ratio * total as f64) - 1e-9)
+        .ceil()
+        .clamp(0.0, total as f64) as usize
+}
+
+fn floor_ratio_count(ratio: f64, total: usize) -> usize {
+    if total == 0 {
+        return 0;
+    }
+    ((ratio * total as f64) + 1e-9)
+        .floor()
+        .clamp(0.0, total as f64) as usize
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -229,6 +346,8 @@ pub struct BuildResult {
     pub pinned_rules_applied: usize,
     pub selected_features: Vec<String>,
     pub training_parity: f64,
+    #[serde(default)]
+    pub selection_policy: SelectionPolicyReport,
     #[serde(default)]
     pub exact_selection: ExactSelectionReport,
     #[serde(default)]
@@ -417,7 +536,7 @@ pub struct LearnedGate {
     pub pinned_rules_applied: usize,
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExactSelectionBackend {
     BruteForce,
@@ -439,6 +558,41 @@ pub struct ExactSelectionReport {
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct SelectionPolicyReport {
+    #[serde(default)]
+    pub configured: SelectionPolicy,
+    #[serde(default)]
+    pub denied_examples: usize,
+    #[serde(default)]
+    pub allowed_examples: usize,
+    #[serde(default)]
+    pub false_negatives: usize,
+    #[serde(default)]
+    pub false_positives: usize,
+    #[serde(default)]
+    pub denied_recall: f64,
+    #[serde(default)]
+    pub false_positive_rate: f64,
+    #[serde(default)]
+    pub constraints_satisfied: bool,
+}
+
+impl Default for SelectionPolicyReport {
+    fn default() -> Self {
+        Self {
+            configured: SelectionPolicy::Balanced,
+            denied_examples: 0,
+            allowed_examples: 0,
+            false_negatives: 0,
+            false_positives: 0,
+            denied_recall: 0.0,
+            false_positive_rate: 0.0,
+            constraints_satisfied: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
@@ -713,6 +867,7 @@ pub struct DiscoverOptions {
     pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
+    pub selection_policy: SelectionPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
@@ -1155,6 +1310,7 @@ fn build_cache_manifest(
         feature_dictionary_fingerprint: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        selection_policy: SelectionPolicy,
         max_rules: Option<usize>,
         proposal_policy: ProposalPolicy,
         feature_selection: &'a FeatureColumnSelection,
@@ -1193,7 +1349,7 @@ fn build_cache_manifest(
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "10".to_string(),
+        cache_version: "11".to_string(),
         operation: "build".to_string(),
         input_fingerprint: cache_fingerprint(&rows_fingerprint)?,
         options_fingerprint: cache_fingerprint(&BuildFingerprintOptions {
@@ -1207,6 +1363,7 @@ fn build_cache_manifest(
             feature_dictionary_fingerprint,
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            selection_policy: options.selection_policy,
             max_rules: options.max_rules,
             proposal_policy: options.proposal_policy,
             feature_selection: &options.feature_selection,
@@ -1233,6 +1390,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         feature_dictionary_fingerprint: Option<String>,
         feature_governance_fingerprint: Option<String>,
         decision_mode: DiscoveryDecisionMode,
+        selection_policy: SelectionPolicy,
         feature_selection: &'a FeatureColumnSelection,
         solver_backend_env: Option<String>,
         resolved_solver_backend: Option<String>,
@@ -1258,7 +1416,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
         .transpose()?;
 
     Ok(CacheManifest {
-        cache_version: "5".to_string(),
+        cache_version: "6".to_string(),
         operation: "discover".to_string(),
         input_fingerprint: fingerprint_file(csv_path)?,
         options_fingerprint: cache_fingerprint(&DiscoverFingerprintOptions {
@@ -1270,6 +1428,7 @@ fn discover_cache_manifest(csv_path: &Path, options: &DiscoverOptions) -> Result
             feature_dictionary_fingerprint,
             feature_governance_fingerprint,
             decision_mode: options.decision_mode,
+            selection_policy: options.selection_policy,
             feature_selection: &options.feature_selection,
             solver_backend_env: std::env::var(SOLVER_BACKEND_ENV).ok(),
             resolved_solver_backend: resolved_solver_backend_name(),
@@ -1545,6 +1704,7 @@ pub fn build_pearl_from_csv_with_progress(
         feature_dictionary: options.feature_dictionary.clone(),
         feature_governance: options.feature_governance.clone(),
         decision_mode: options.decision_mode,
+        selection_policy: options.selection_policy,
         max_rules: options.max_rules,
         proposal_policy: options.proposal_policy,
         feature_selection: options.feature_selection.clone(),
@@ -1756,6 +1916,7 @@ pub fn discover_from_csv_with_progress(
                 feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
+                selection_policy: options.selection_policy,
                 max_rules: None,
                 proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: options.feature_selection.clone(),
@@ -2004,6 +2165,8 @@ fn build_pearl_from_rows_internal(
         ProposalPolicy::ReportOnly => pre_adoption_evaluation,
     };
     let training_parity = final_evaluation.correct as f64 / rows.len() as f64;
+    let selection_policy =
+        selection_policy_report(rows, &final_evaluation.mismatches, options.selection_policy);
     build_phases.push(build_phase_report(
         "proposal_phase",
         match proposal_phase.status {
@@ -2025,6 +2188,50 @@ fn build_pearl_from_rows_internal(
                 serde_json::json!(proposal_phase.accepted_candidates),
             ),
             ("post_adoption_parity", serde_json::json!(training_parity)),
+        ],
+    ));
+    build_phases.push(build_phase_report(
+        "selection_policy",
+        if selection_policy.constraints_satisfied {
+            BuildPhaseStatus::Completed
+        } else {
+            BuildPhaseStatus::Skipped
+        },
+        Some(match options.selection_policy {
+            SelectionPolicy::Balanced => {
+                "balanced selection policy minimizes total replay error".to_string()
+            }
+            SelectionPolicy::RecallBiased {
+                deny_recall_target,
+                max_false_positive_rate,
+            } => format!(
+                "recall-biased selection targeted denied recall >= {:.1}% with false-positive rate <= {:.1}%",
+                deny_recall_target * 100.0,
+                max_false_positive_rate * 100.0
+            ),
+        }),
+        [
+            ("policy", serde_json::json!(options.selection_policy.name())),
+            (
+                "denied_recall",
+                serde_json::json!(selection_policy.denied_recall),
+            ),
+            (
+                "false_positive_rate",
+                serde_json::json!(selection_policy.false_positive_rate),
+            ),
+            (
+                "constraints_satisfied",
+                serde_json::json!(selection_policy.constraints_satisfied),
+            ),
+            (
+                "deny_recall_target",
+                serde_json::json!(options.selection_policy.deny_recall_target()),
+            ),
+            (
+                "max_false_positive_rate",
+                serde_json::json!(options.selection_policy.max_false_positive_rate()),
+            ),
         ],
     ));
     report_progress(progress, "write_ir", "write_ir: pearl.ir.json");
@@ -2056,6 +2263,7 @@ fn build_pearl_from_rows_internal(
             .map(|feature| feature.id.clone())
             .collect(),
         training_parity,
+        selection_policy,
         exact_selection,
         residual_recovery,
         cache_hit: false,
@@ -2194,6 +2402,49 @@ fn actual_output_path(raw_path: &str, artifact_dir: &Path, fallback: &str) -> St
     }
 }
 
+fn selection_policy_report(
+    rows: &[DecisionTraceRow],
+    mismatches: &[proposals::TrainingMismatch],
+    configured: SelectionPolicy,
+) -> SelectionPolicyReport {
+    let denied_examples = rows.iter().filter(|row| !row.allowed).count();
+    let allowed_examples = rows.iter().filter(|row| row.allowed).count();
+    let false_negatives = mismatches
+        .iter()
+        .filter(|mismatch| !mismatch.expected_allowed && mismatch.predicted_allowed)
+        .count();
+    let false_positives = mismatches
+        .iter()
+        .filter(|mismatch| mismatch.expected_allowed && !mismatch.predicted_allowed)
+        .count();
+    let denied_recall = if denied_examples == 0 {
+        1.0
+    } else {
+        (denied_examples.saturating_sub(false_negatives)) as f64 / denied_examples as f64
+    };
+    let false_positive_rate = if allowed_examples == 0 {
+        0.0
+    } else {
+        false_positives as f64 / allowed_examples as f64
+    };
+
+    SelectionPolicyReport {
+        configured,
+        denied_examples,
+        allowed_examples,
+        false_negatives,
+        false_positives,
+        denied_recall,
+        false_positive_rate,
+        constraints_satisfied: configured.constraints_satisfied(
+            false_negatives,
+            false_positives,
+            denied_examples,
+            allowed_examples,
+        ),
+    }
+}
+
 fn learn_gate_from_rows_internal(
     rows: &[DecisionTraceRow],
     options: &BuildOptions,
@@ -2232,6 +2483,7 @@ fn learn_gate_from_rows_internal(
         .transpose()?
         .unwrap_or_default();
     validate_feature_dictionary(&feature_dictionary, rows, &derived_features)?;
+    let selection_policy = options.selection_policy.validate()?;
     let residual_options = options.residual_pass.then(|| {
         let mut residual_options = DEFAULT_RESIDUAL_PASS_OPTIONS.clone();
         if let Some(max_rules) = options.max_rules {
@@ -2267,6 +2519,7 @@ fn learn_gate_from_rows_internal(
         &feature_dictionary.features,
         &options.gate_id,
         options.decision_mode,
+        selection_policy,
         options.max_rules,
         residual_options.as_ref(),
         refinement_options.as_ref(),

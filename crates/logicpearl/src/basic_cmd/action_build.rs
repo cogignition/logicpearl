@@ -31,9 +31,9 @@ use super::conflicts::{
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     finish_progress, generated_feature_dictionary_for_output, generated_feature_dictionary_path,
-    guidance, parse_key_value_entries, progress_callback, progress_enabled, set_progress_message,
-    should_generate_feature_dictionary, start_progress, to_discovery_decision_mode,
-    write_feature_dictionary_from_columns, BuildArgs,
+    guidance, parse_key_value_entries, progress_callback, progress_enabled,
+    selection_policy_from_args, set_progress_message, should_generate_feature_dictionary,
+    start_progress, to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
     build_deployable_bundle_descriptor, build_options_hash, compile_native_runner,
@@ -73,6 +73,26 @@ struct LoadedActionTraceRecords {
 }
 
 pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
+    let selection_policy = selection_policy_from_args(
+        args.selection_policy,
+        args.deny_recall_target,
+        args.max_false_positive_rate,
+    )
+    .map_err(|message| {
+        guidance(
+            message,
+            "Action builds only support the default balanced selection policy.",
+        )
+    })?;
+    if !matches!(
+        selection_policy,
+        logicpearl_discovery::SelectionPolicy::Balanced
+    ) {
+        return Err(guidance(
+            "action-column builds do not support recall-biased selection yet",
+            "Remove the recall-biased selection flags for multi-action builds.",
+        ));
+    }
     if args.enricher_plugin_manifest.is_some() {
         return Err(guidance(
             "action-column builds do not support enricher plugins yet",

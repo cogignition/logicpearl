@@ -9,7 +9,7 @@ use logicpearl_build::{
 use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
     DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ProposalPolicy,
-    ResidualRecoveryState,
+    ResidualRecoveryState, SelectionPolicy,
 };
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_plugin::{
@@ -30,8 +30,9 @@ use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
     generated_feature_dictionary_path, guidance, parse_key_value_entries, progress_callback,
-    progress_enabled, run_action_build, set_progress_message, should_generate_feature_dictionary,
-    start_progress, to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
+    progress_enabled, run_action_build, selection_policy_from_args, set_progress_message,
+    should_generate_feature_dictionary, start_progress, to_discovery_decision_mode,
+    write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
     build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -54,6 +55,12 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     }
     let plugin_policy = plugin_execution_policy(&args.plugin_execution);
     let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
+    let selection_policy = selection_policy_from_args(
+        args.selection_policy,
+        args.deny_recall_target,
+        args.max_false_positive_rate,
+    )
+    .map_err(|message| guidance(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
@@ -211,6 +218,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         feature_dictionary: args.feature_dictionary.clone(),
         feature_governance: args.feature_governance.clone(),
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
+        selection_policy,
         max_rules: args.max_rules,
         proposal_policy: args
             .proposal_policy
@@ -242,6 +250,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .as_ref()
             .map(|path| path.display().to_string()),
         "decision_mode": build_options.decision_mode,
+        "selection_policy": build_options.selection_policy,
         "max_rules": build_options.max_rules,
         "proposal_policy": build_options.proposal_policy,
         "feature_columns": &build_options.feature_selection.feature_columns,
@@ -598,6 +607,23 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             "Training parity".bright_black(),
             format!("{:.1}%", result.training_parity * 100.0).bold()
         );
+        if !matches!(
+            result.selection_policy.configured,
+            SelectionPolicy::Balanced
+        ) {
+            println!(
+                "  {} {} recall {:.1}% / false positives {:.1}%{}",
+                "Selection policy".bright_black(),
+                result.selection_policy.configured.name(),
+                result.selection_policy.denied_recall * 100.0,
+                result.selection_policy.false_positive_rate * 100.0,
+                if result.selection_policy.constraints_satisfied {
+                    "".to_string()
+                } else {
+                    " (target not met under cap)".to_string()
+                }
+            );
+        }
         print_conflict_summary(conflict_summary.as_ref(), conflicts_requested);
         println!(
             "  {} {}",

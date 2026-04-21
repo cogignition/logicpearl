@@ -291,6 +291,7 @@ pub fn learn_action_policy_with_progress(
                 feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
+                selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
                 max_rules: Some(action_rule_budget),
                 proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: FeatureColumnSelection::default(),

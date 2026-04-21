@@ -23,7 +23,7 @@ mod validation;
 use super::{
     decision_trace_row_hash, report_progress, rule_trace_evidence, CandidateRule, DecisionTraceRow,
     DiscoveryDecisionMode, ExactSelectionReport, PinnedRuleSet, ProgressCallback,
-    ResidualPassOptions, ResidualRecoveryReport, ResidualRecoveryState,
+    ResidualPassOptions, ResidualRecoveryReport, ResidualRecoveryState, SelectionPolicy,
     UniqueCoverageRefinementOptions,
 };
 #[cfg(test)]
@@ -40,11 +40,12 @@ use candidates::{
 pub(super) use residual_recovery::{discover_residual_rules, refine_rules_unique_coverage};
 pub(super) use rule_hygiene::{dedupe_rules_by_signature, merge_discovered_and_pinned_rules};
 use rule_limit::limit_rules_by_training_coverage;
-use scoring::{
-    compare_candidate_set_score, score_candidate_set_cached, score_candidate_subset_cached,
-};
 #[cfg(test)]
-use scoring::{score_candidate_set, CandidateSetScore};
+use scoring::{compare_candidate_set_score, score_candidate_set, CandidateSetScore};
+use scoring::{
+    compare_candidate_set_score_with_policy, score_candidate_set_cached,
+    score_candidate_subset_cached,
+};
 pub(crate) use selection::DISCOVERY_SELECTION_BACKEND_ENV;
 use selection::{current_solver_backend, exact_selection_shortlist, select_candidate_rules_exact};
 use validation::discovery_validation_split;
@@ -69,14 +70,23 @@ struct CandidatePlanScore {
 }
 
 #[derive(Debug, Clone)]
+struct CandidateChoice {
+    candidate: CandidateRule,
+    score: CandidatePlanScore,
+}
+
+#[derive(Debug, Clone)]
 struct CandidateSelectionContext<'a> {
     rows: &'a [DecisionTraceRow],
     denied_indices: &'a [usize],
     allowed_indices: &'a [usize],
     training_indices: Vec<usize>,
     validation_indices: &'a [usize],
+    training_denied_count: usize,
+    training_allowed_count: usize,
     feature_governance: &'a BTreeMap<String, FeatureGovernance>,
     decision_mode: DiscoveryDecisionMode,
+    selection_policy: SelectionPolicy,
     residual_options: Option<&'a ResidualPassOptions>,
     match_cache: Arc<CandidateMatchCache<'a>>,
 }
@@ -90,6 +100,7 @@ pub(super) fn build_gate(
     feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     gate_id: &str,
     decision_mode: DiscoveryDecisionMode,
+    selection_policy: SelectionPolicy,
     max_rules: Option<usize>,
     residual_options: Option<&ResidualPassOptions>,
     refinement_options: Option<&UniqueCoverageRefinementOptions>,
@@ -113,6 +124,7 @@ pub(super) fn build_gate(
         feature_governance,
         feature_semantics,
         decision_mode,
+        selection_policy,
         residual_options,
         progress,
     )?;
@@ -407,6 +419,7 @@ pub(super) fn discover_rules(
     feature_governance: &BTreeMap<String, FeatureGovernance>,
     feature_semantics: &BTreeMap<String, logicpearl_ir::FeatureSemantics>,
     decision_mode: DiscoveryDecisionMode,
+    selection_policy: SelectionPolicy,
     residual_options: Option<&ResidualPassOptions>,
     progress: Option<&ProgressCallback<'_>>,
 ) -> Result<(Vec<RuleDefinition>, ExactSelectionReport)> {
@@ -472,8 +485,11 @@ pub(super) fn discover_rules(
         allowed_indices: &train_allowed_indices,
         training_indices,
         validation_indices: validation_indices_slice,
+        training_denied_count: train_denied_indices.len(),
+        training_allowed_count: train_allowed_indices.len(),
         feature_governance,
         decision_mode,
+        selection_policy,
         residual_options,
         match_cache,
     };
@@ -506,6 +522,7 @@ pub(super) fn discover_rules(
         &train_denied_indices,
         &train_allowed_indices,
         &shortlist,
+        selection_policy,
     )?;
     let selected_candidates = match exact_plan {
         Some(exact_plan) if !exact_plan.is_empty() => {
@@ -521,7 +538,14 @@ pub(super) fn discover_rules(
                 selection_context.validation_indices,
                 &selection_context.match_cache,
             );
-            if compare_candidate_set_score(&exact_score, &greedy_score) == Ordering::Less {
+            if compare_candidate_set_score_with_policy(
+                &exact_score,
+                &greedy_score,
+                selection_policy,
+                train_denied_indices.len(),
+                train_allowed_indices.len(),
+            ) == Ordering::Less
+            {
                 exact_selection.adopted = true;
                 exact_plan
             } else {
@@ -614,6 +638,7 @@ fn recover_rare_rules(
             &uncovered_denied,
             selection_context.allowed_indices,
             &rescue_shortlist,
+            selection_context.selection_policy,
         )?;
         let Some(rescue_plan) = rescue_plan else {
             break;
@@ -638,8 +663,13 @@ fn recover_rare_rules(
             selection_context.validation_indices,
             &selection_context.match_cache,
         );
-        let improved = compare_candidate_set_score(&combined_score, &current_score)
-            == Ordering::Less
+        let improved = compare_candidate_set_score_with_policy(
+            &combined_score,
+            &current_score,
+            selection_context.selection_policy,
+            selection_context.training_denied_count,
+            selection_context.training_allowed_count,
+        ) == Ordering::Less
             || (combined_score.false_negatives < current_score.false_negatives
                 && combined_score.false_positives <= current_score.false_positives);
         if !improved {
@@ -671,6 +701,82 @@ fn training_indices(rows: &[DecisionTraceRow], validation_indices: &[usize]) -> 
         .collect()
 }
 
+fn current_plan_score(
+    selection_context: &CandidateSelectionContext<'_>,
+    rules: &[CandidateRule],
+) -> CandidatePlanScore {
+    let training_score = score_candidate_subset_cached(
+        rules,
+        &selection_context.training_indices,
+        &selection_context.match_cache,
+    );
+    let validation_score = score_candidate_subset_cached(
+        rules,
+        selection_context.validation_indices,
+        &selection_context.match_cache,
+    );
+    let uncovered_denied = selection_context
+        .denied_indices
+        .iter()
+        .filter(|index| {
+            !rules.iter().any(|candidate| {
+                selection_context
+                    .match_cache
+                    .matches_candidate(**index, candidate)
+            })
+        })
+        .count();
+    CandidatePlanScore {
+        training_total_errors: training_score.total_errors,
+        training_false_positives: training_score.false_positives,
+        validation_total_errors: validation_score.total_errors,
+        validation_false_positives: validation_score.false_positives,
+        uncovered_denied,
+        rule_count: rules.len(),
+    }
+}
+
+fn plan_respects_false_positive_cap(
+    selection_context: &CandidateSelectionContext<'_>,
+    score: &CandidatePlanScore,
+) -> bool {
+    score.training_false_positives
+        <= selection_context
+            .selection_policy
+            .max_allowed_false_positives(selection_context.training_allowed_count)
+}
+
+fn plan_meets_recall_target(
+    selection_context: &CandidateSelectionContext<'_>,
+    score: &CandidatePlanScore,
+) -> bool {
+    selection_context
+        .training_denied_count
+        .saturating_sub(score.uncovered_denied)
+        >= selection_context
+            .selection_policy
+            .required_denied_hits(selection_context.training_denied_count)
+}
+
+fn should_stop_greedy_selection(
+    selection_context: &CandidateSelectionContext<'_>,
+    discovered: &[CandidateRule],
+) -> bool {
+    if discovered.is_empty() {
+        return false;
+    }
+    match selection_context.selection_policy {
+        SelectionPolicy::Balanced => discovered
+            .iter()
+            .any(|candidate| candidate.false_positives > 0),
+        SelectionPolicy::RecallBiased { .. } => {
+            let score = current_plan_score(selection_context, discovered);
+            plan_respects_false_positive_cap(selection_context, &score)
+                && plan_meets_recall_target(selection_context, &score)
+        }
+    }
+}
+
 fn discover_rules_greedy(
     selection_context: &CandidateSelectionContext<'_>,
     progress: Option<&ProgressCallback<'_>>,
@@ -690,9 +796,23 @@ fn discover_rules_greedy(
                 discovered.len()
             ),
         );
-        let candidate = select_candidate_rule(&remaining_denied, selection_context, progress, pass)
-            .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
-        if candidate.denied_coverage == 0 {
+        if should_stop_greedy_selection(selection_context, &discovered) {
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!("greedy_selection: pass {pass}; selection policy target reached"),
+            );
+            break;
+        }
+        let choice = select_candidate_rule(
+            &remaining_denied,
+            &discovered,
+            selection_context,
+            progress,
+            pass,
+        )
+        .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
+        if choice.candidate.denied_coverage == 0 {
             report_progress(
                 progress,
                 "greedy_selection",
@@ -700,22 +820,36 @@ fn discover_rules_greedy(
             );
             break;
         }
+        if matches!(
+            selection_context.selection_policy,
+            SelectionPolicy::RecallBiased { .. }
+        ) && !plan_respects_false_positive_cap(selection_context, &choice.score)
+        {
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!(
+                    "greedy_selection: pass {pass}; stopping because the next plan would exceed the false-positive cap"
+                ),
+            );
+            break;
+        }
 
-        let has_false_positives = candidate.false_positives > 0;
+        let has_false_positives = choice.candidate.false_positives > 0;
         report_progress(
             progress,
             "greedy_selection",
             format!(
                 "greedy_selection: pass {pass}; selected candidate denied_coverage={} false_positives={}",
-                candidate.denied_coverage,
-                candidate.false_positives
+                choice.candidate.denied_coverage,
+                choice.candidate.false_positives
             ),
         );
-        discovered.push(candidate.clone());
+        discovered.push(choice.candidate.clone());
         remaining_denied.retain(|index| {
             !selection_context
                 .match_cache
-                .matches_candidate(*index, &candidate)
+                .matches_candidate(*index, &choice.candidate)
         });
         report_progress(
             progress,
@@ -726,7 +860,11 @@ fn discover_rules_greedy(
                 total_denied
             ),
         );
-        if has_false_positives {
+        if matches!(
+            selection_context.selection_policy,
+            SelectionPolicy::Balanced
+        ) && has_false_positives
+        {
             report_progress(
                 progress,
                 "greedy_selection",
@@ -745,10 +883,11 @@ fn discover_rules_greedy(
 
 fn select_candidate_rule(
     denied_indices: &[usize],
+    seed_rules: &[CandidateRule],
     selection_context: &CandidateSelectionContext<'_>,
     progress: Option<&ProgressCallback<'_>>,
     pass: usize,
-) -> Option<CandidateRule> {
+) -> Option<CandidateChoice> {
     report_progress(
         progress,
         "greedy_selection",
@@ -779,15 +918,20 @@ fn select_candidate_rule(
     );
 
     let scored_candidates =
-        score_lookahead_candidates(selection_context, candidates, progress, pass);
+        score_lookahead_candidates(seed_rules, selection_context, candidates, progress, pass);
 
-    let mut best: Option<(CandidateRule, CandidatePlanScore)> = None;
+    let mut best: Option<CandidateChoice> = None;
     for (index, candidate, score) in scored_candidates {
         let better = match &best {
             None => true,
-            Some((current_candidate, current_score)) => {
-                compare_candidate_plan(&candidate, &score, current_candidate, current_score)
-                    == Ordering::Less
+            Some(current) => {
+                compare_candidate_plan(
+                    selection_context,
+                    &candidate,
+                    &score,
+                    &current.candidate,
+                    &current.score,
+                ) == Ordering::Less
             }
         };
         if better {
@@ -803,13 +947,14 @@ fn select_candidate_rule(
                     score.rule_count
                 ),
             );
-            best = Some((candidate, score));
+            best = Some(CandidateChoice { candidate, score });
         }
     }
-    best.map(|(candidate, _score)| candidate)
+    best
 }
 
 fn score_lookahead_candidates(
+    seed_rules: &[CandidateRule],
     selection_context: &CandidateSelectionContext<'_>,
     candidates: Vec<CandidateRule>,
     progress: Option<&ProgressCallback<'_>>,
@@ -836,6 +981,7 @@ fn score_lookahead_candidates(
                     ),
                 );
                 let score = simulate_candidate_plan(
+                    seed_rules,
                     selection_context,
                     &candidate,
                     progress,
@@ -861,6 +1007,7 @@ fn score_lookahead_candidates(
             .map(|(index, candidate)| {
                 scope.spawn(move || {
                     let score = simulate_candidate_plan(
+                        seed_rules,
                         selection_context,
                         &candidate,
                         None,
@@ -881,25 +1028,33 @@ fn score_lookahead_candidates(
 }
 
 fn simulate_candidate_plan(
+    seed_rules: &[CandidateRule],
     selection_context: &CandidateSelectionContext<'_>,
     first_candidate: &CandidateRule,
     progress: Option<&ProgressCallback<'_>>,
     pass: usize,
     lookahead_index: usize,
 ) -> CandidatePlanScore {
-    let mut rules = vec![first_candidate.clone()];
+    let mut rules = seed_rules.to_vec();
+    rules.push(first_candidate.clone());
     let mut remaining_denied: Vec<usize> = selection_context
         .denied_indices
         .iter()
         .copied()
         .filter(|index| {
-            !selection_context
-                .match_cache
-                .matches_candidate(*index, first_candidate)
+            !rules.iter().any(|candidate| {
+                selection_context
+                    .match_cache
+                    .matches_candidate(*index, candidate)
+            })
         })
         .collect();
 
-    if first_candidate.false_positives == 0 {
+    if !matches!(
+        selection_context.selection_policy,
+        SelectionPolicy::Balanced
+    ) || first_candidate.false_positives == 0
+    {
         while !remaining_denied.is_empty() {
             let simulated_step = rules.len() + 1;
             report_progress(
@@ -931,60 +1086,126 @@ fn simulate_candidate_plan(
             });
             let has_false_positives = next.false_positives > 0;
             rules.push(next);
-            if has_false_positives {
+            if matches!(
+                selection_context.selection_policy,
+                SelectionPolicy::Balanced
+            ) && has_false_positives
+            {
                 break;
+            }
+            if matches!(
+                selection_context.selection_policy,
+                SelectionPolicy::RecallBiased { .. }
+            ) {
+                let score = current_plan_score(selection_context, &rules);
+                if !plan_respects_false_positive_cap(selection_context, &score)
+                    || plan_meets_recall_target(selection_context, &score)
+                {
+                    break;
+                }
             }
         }
     }
 
-    let training_score = score_candidate_subset_cached(
-        &rules,
-        &selection_context.training_indices,
-        &selection_context.match_cache,
-    );
-    let validation_score = score_candidate_subset_cached(
-        &rules,
-        selection_context.validation_indices,
-        &selection_context.match_cache,
-    );
-
-    CandidatePlanScore {
-        training_total_errors: training_score.total_errors,
-        training_false_positives: training_score.false_positives,
-        validation_total_errors: validation_score.total_errors,
-        validation_false_positives: validation_score.false_positives,
-        uncovered_denied: remaining_denied.len(),
-        rule_count: rules.len(),
-    }
+    let mut score = current_plan_score(selection_context, &rules);
+    score.uncovered_denied = remaining_denied.len();
+    score
 }
 
 fn compare_candidate_plan(
+    selection_context: &CandidateSelectionContext<'_>,
     candidate: &CandidateRule,
     score: &CandidatePlanScore,
     current_candidate: &CandidateRule,
     current_score: &CandidatePlanScore,
 ) -> Ordering {
-    score
-        .training_total_errors
-        .cmp(&current_score.training_total_errors)
-        .then_with(|| {
-            score
-                .validation_total_errors
-                .cmp(&current_score.validation_total_errors)
-        })
-        .then_with(|| {
-            score
-                .training_false_positives
-                .cmp(&current_score.training_false_positives)
-        })
-        .then_with(|| {
-            score
-                .validation_false_positives
-                .cmp(&current_score.validation_false_positives)
-        })
-        .then_with(|| score.uncovered_denied.cmp(&current_score.uncovered_denied))
-        .then_with(|| score.rule_count.cmp(&current_score.rule_count))
-        .then_with(|| compare_candidate_priority(candidate, current_candidate))
+    match selection_context.selection_policy {
+        SelectionPolicy::Balanced => score
+            .training_total_errors
+            .cmp(&current_score.training_total_errors)
+            .then_with(|| {
+                score
+                    .validation_total_errors
+                    .cmp(&current_score.validation_total_errors)
+            })
+            .then_with(|| {
+                score
+                    .training_false_positives
+                    .cmp(&current_score.training_false_positives)
+            })
+            .then_with(|| {
+                score
+                    .validation_false_positives
+                    .cmp(&current_score.validation_false_positives)
+            })
+            .then_with(|| score.uncovered_denied.cmp(&current_score.uncovered_denied))
+            .then_with(|| score.rule_count.cmp(&current_score.rule_count))
+            .then_with(|| compare_candidate_priority(candidate, current_candidate)),
+        SelectionPolicy::RecallBiased { .. } => {
+            let score_under_cap = plan_respects_false_positive_cap(selection_context, score);
+            let current_under_cap =
+                plan_respects_false_positive_cap(selection_context, current_score);
+            current_under_cap
+                .cmp(&score_under_cap)
+                .then_with(|| {
+                    if score_under_cap && current_under_cap {
+                        let score_hits_target = plan_meets_recall_target(selection_context, score);
+                        let current_hits_target =
+                            plan_meets_recall_target(selection_context, current_score);
+                        current_hits_target.cmp(&score_hits_target).then_with(|| {
+                            if score_hits_target && current_hits_target {
+                                score
+                                    .training_false_positives
+                                    .cmp(&current_score.training_false_positives)
+                                    .then_with(|| {
+                                        score
+                                            .validation_false_positives
+                                            .cmp(&current_score.validation_false_positives)
+                                    })
+                                    .then_with(|| {
+                                        score
+                                            .validation_total_errors
+                                            .cmp(&current_score.validation_total_errors)
+                                    })
+                                    .then_with(|| score.rule_count.cmp(&current_score.rule_count))
+                                    .then_with(|| {
+                                        score.uncovered_denied.cmp(&current_score.uncovered_denied)
+                                    })
+                            } else {
+                                score
+                                    .uncovered_denied
+                                    .cmp(&current_score.uncovered_denied)
+                                    .then_with(|| {
+                                        score
+                                            .training_false_positives
+                                            .cmp(&current_score.training_false_positives)
+                                    })
+                                    .then_with(|| {
+                                        score
+                                            .validation_total_errors
+                                            .cmp(&current_score.validation_total_errors)
+                                    })
+                                    .then_with(|| score.rule_count.cmp(&current_score.rule_count))
+                            }
+                        })
+                    } else {
+                        score
+                            .training_false_positives
+                            .cmp(&current_score.training_false_positives)
+                            .then_with(|| {
+                                score.uncovered_denied.cmp(&current_score.uncovered_denied)
+                            })
+                            .then_with(|| {
+                                score
+                                    .validation_total_errors
+                                    .cmp(&current_score.validation_total_errors)
+                            })
+                            .then_with(|| score.rule_count.cmp(&current_score.rule_count))
+                    }
+                })
+                .then_with(|| compare_candidate_priority(candidate, current_candidate))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use super::candidates::{
 };
 #[cfg(test)]
 use super::DecisionTraceRow;
-use super::{CandidateRule, DiscoveryDecisionMode};
+use super::{CandidateRule, DiscoveryDecisionMode, SelectionPolicy};
 use std::cmp::Ordering;
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -45,6 +45,73 @@ pub(super) fn compare_candidate_set_score(
             left.validation_false_negatives
                 .cmp(&right.validation_false_negatives)
         })
+}
+
+pub(super) fn compare_candidate_set_score_with_policy(
+    left: &CandidateSetScore,
+    right: &CandidateSetScore,
+    selection_policy: SelectionPolicy,
+    denied_count: usize,
+    allowed_count: usize,
+) -> Ordering {
+    match selection_policy {
+        SelectionPolicy::Balanced => compare_candidate_set_score(left, right),
+        SelectionPolicy::RecallBiased { .. } => {
+            let left_under_cap =
+                left.false_positives <= selection_policy.max_allowed_false_positives(allowed_count);
+            let right_under_cap = right.false_positives
+                <= selection_policy.max_allowed_false_positives(allowed_count);
+            right_under_cap.cmp(&left_under_cap).then_with(|| {
+                if left_under_cap && right_under_cap {
+                    let left_hits_target = denied_count.saturating_sub(left.false_negatives)
+                        >= selection_policy.required_denied_hits(denied_count);
+                    let right_hits_target = denied_count.saturating_sub(right.false_negatives)
+                        >= selection_policy.required_denied_hits(denied_count);
+                    right_hits_target.cmp(&left_hits_target).then_with(|| {
+                        if left_hits_target && right_hits_target {
+                            left.false_positives
+                                .cmp(&right.false_positives)
+                                .then_with(|| {
+                                    left.validation_false_positives
+                                        .cmp(&right.validation_false_positives)
+                                })
+                                .then_with(|| {
+                                    left.validation_total_errors
+                                        .cmp(&right.validation_total_errors)
+                                })
+                                .then_with(|| left.rule_count.cmp(&right.rule_count))
+                                .then_with(|| {
+                                    left.complexity_penalty.cmp(&right.complexity_penalty)
+                                })
+                                .then_with(|| left.false_negatives.cmp(&right.false_negatives))
+                        } else {
+                            left.false_negatives
+                                .cmp(&right.false_negatives)
+                                .then_with(|| left.false_positives.cmp(&right.false_positives))
+                                .then_with(|| {
+                                    left.validation_total_errors
+                                        .cmp(&right.validation_total_errors)
+                                })
+                                .then_with(|| left.rule_count.cmp(&right.rule_count))
+                                .then_with(|| {
+                                    left.complexity_penalty.cmp(&right.complexity_penalty)
+                                })
+                        }
+                    })
+                } else {
+                    left.false_positives
+                        .cmp(&right.false_positives)
+                        .then_with(|| left.false_negatives.cmp(&right.false_negatives))
+                        .then_with(|| {
+                            left.validation_total_errors
+                                .cmp(&right.validation_total_errors)
+                        })
+                        .then_with(|| left.rule_count.cmp(&right.rule_count))
+                        .then_with(|| left.complexity_penalty.cmp(&right.complexity_penalty))
+                }
+            })
+        }
+    }
 }
 
 #[cfg(test)]

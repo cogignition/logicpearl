@@ -5,6 +5,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use logicpearl_discovery::FeatureColumnSelection;
 use logicpearl_discovery::ProgressEvent;
 use logicpearl_discovery::ProposalPolicy;
+use logicpearl_discovery::SelectionPolicy;
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -77,10 +78,49 @@ pub(crate) enum DiscoveryDecisionModeArg {
     Review,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SelectionPolicyArg {
+    Balanced,
+    RecallBiased,
+}
+
 pub(crate) fn to_discovery_decision_mode(arg: DiscoveryDecisionModeArg) -> DiscoveryDecisionMode {
     match arg {
         DiscoveryDecisionModeArg::Standard => DiscoveryDecisionMode::Standard,
         DiscoveryDecisionModeArg::Review => DiscoveryDecisionMode::Review,
+    }
+}
+
+pub(crate) fn selection_policy_from_args(
+    policy: Option<SelectionPolicyArg>,
+    deny_recall_target: Option<f64>,
+    max_false_positive_rate: Option<f64>,
+) -> Result<SelectionPolicy, String> {
+    match policy.unwrap_or(SelectionPolicyArg::Balanced) {
+        SelectionPolicyArg::Balanced => {
+            if deny_recall_target.is_some() || max_false_positive_rate.is_some() {
+                return Err(
+                    "use --selection-policy recall-biased when setting recall/false-positive targets"
+                        .to_string(),
+                );
+            }
+            Ok(SelectionPolicy::Balanced)
+        }
+        SelectionPolicyArg::RecallBiased => {
+            let deny_recall_target = deny_recall_target.ok_or_else(|| {
+                "--selection-policy recall-biased requires --deny-recall-target".to_string()
+            })?;
+            let max_false_positive_rate = max_false_positive_rate.ok_or_else(|| {
+                "--selection-policy recall-biased requires --max-false-positive-rate".to_string()
+            })?;
+            SelectionPolicy::RecallBiased {
+                deny_recall_target,
+                max_false_positive_rate,
+            }
+            .validate()
+            .map_err(|err| err.to_string())
+        }
     }
 }
 
@@ -160,7 +200,7 @@ pub(crate) struct QuickstartArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output\n  logicpearl build traces.csv --json --progress --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output\n  logicpearl build traces.csv --selection-policy recall-biased --deny-recall-target 0.70 --max-false-positive-rate 0.05 --output-dir /tmp/output\n  logicpearl build traces.csv --json --progress --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -216,6 +256,15 @@ pub(crate) struct BuildArgs {
     /// Proposal acceptance policy. Defaults to auto-adopt-safe for binary gate builds.
     #[arg(long, value_enum, help_heading = "Advanced Discovery")]
     pub proposal_policy: Option<ProposalPolicyArg>,
+    /// Rule selection policy. `recall-biased` requires --deny-recall-target and --max-false-positive-rate.
+    #[arg(long, value_enum, help_heading = "Advanced Discovery")]
+    pub selection_policy: Option<SelectionPolicyArg>,
+    /// Minimum denied-example recall target for `recall-biased` selection.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub deny_recall_target: Option<f64>,
+    /// Maximum allowed-example false-positive rate for `recall-biased` selection.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub max_false_positive_rate: Option<f64>,
     /// Comma-separated high-to-low action priority order. Unlisted actions keep LogicPearl's support-based order after the listed actions.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub action_priority: Option<String>,
@@ -276,7 +325,7 @@ pub(crate) struct BuildArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --exclude-columns source,note --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --json --progress"
+    after_help = "Examples:\n  logicpearl discover traces.csv --targets target_a,target_b --output-dir discovered\n  logicpearl discover traces.jsonl --targets target_a,target_b --residual-pass --refine\n  logicpearl discover traces.json --targets target_a --feature-dictionary feature_dictionary.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --exclude-columns source,note --output-dir discovered\n  logicpearl discover traces.json --targets target_a --pinned-rules rules.json --output-dir discovered\n  logicpearl discover traces.csv --targets target_a --selection-policy recall-biased --deny-recall-target 0.70 --max-false-positive-rate 0.05 --output-dir discovered\n  logicpearl discover traces.csv --targets target_a,target_b --json --progress"
 )]
 pub(crate) struct DiscoverArgs {
     /// Dataset of labeled traces in CSV, JSONL/NDJSON, or JSON form.
@@ -329,6 +378,15 @@ pub(crate) struct DiscoverArgs {
     /// Discovery policy for this target family. Use `review` for broad, stable suspicion targets.
     #[arg(long, value_enum, default_value_t = DiscoveryDecisionModeArg::Standard, help_heading = "Advanced Discovery")]
     pub discovery_mode: DiscoveryDecisionModeArg,
+    /// Rule selection policy. `recall-biased` requires --deny-recall-target and --max-false-positive-rate.
+    #[arg(long, value_enum, help_heading = "Advanced Discovery")]
+    pub selection_policy: Option<SelectionPolicyArg>,
+    /// Minimum denied-example recall target for `recall-biased` selection.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub deny_recall_target: Option<f64>,
+    /// Maximum allowed-example false-positive rate for `recall-biased` selection.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub max_false_positive_rate: Option<f64>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,

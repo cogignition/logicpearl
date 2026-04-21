@@ -602,6 +602,7 @@ pub(crate) fn run_benchmark_learn(args: BenchmarkLearnArgs) -> Result<()> {
                     feature_dictionary: None,
                     feature_governance: None,
                     decision_mode: logicpearl_discovery::DiscoveryDecisionMode::Standard,
+                    selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
                 },
             )
             .into_diagnostic()

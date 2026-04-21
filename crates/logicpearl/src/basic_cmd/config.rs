@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use super::{BuildArgs, ProposalPolicyArg};
+use super::{BuildArgs, ProposalPolicyArg, SelectionPolicyArg};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,6 +28,9 @@ struct LogicPearlBuildConfig {
     action_max_rules: Option<usize>,
     max_rules: Option<usize>,
     proposal_policy: Option<ProposalPolicyArg>,
+    selection_policy: Option<SelectionPolicyArg>,
+    deny_recall_target: Option<f64>,
+    max_false_positive_rate: Option<f64>,
     action_priority: Option<String>,
     #[serde(default)]
     raw_feature_ids: bool,
@@ -128,6 +131,15 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     }
     if args.proposal_policy.is_none() {
         args.proposal_policy = build.proposal_policy;
+    }
+    if args.selection_policy.is_none() {
+        args.selection_policy = build.selection_policy;
+    }
+    if args.deny_recall_target.is_none() {
+        args.deny_recall_target = build.deny_recall_target;
+    }
+    if args.max_false_positive_rate.is_none() {
+        args.max_false_positive_rate = build.max_false_positive_rate;
     }
     if args.action_priority.is_none() {
         args.action_priority = build.action_priority;
