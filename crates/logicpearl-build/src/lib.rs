@@ -13,7 +13,8 @@ use logicpearl_discovery::{
     learn_gate_from_rows_without_numeric_interactions_with_progress, report_progress,
     BuildCommandProvenance, BuildInputProvenance, BuildOptions, BuildProvenance, BuildResult,
     DecisionTraceProvenance, DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection,
-    FileProvenance, LoadedFlatRecords, PluginBuildProvenance, ProgressCallback, ProposalPolicy,
+    FileProvenance, LoadedFlatRecords, ObservationFeatureType, ObservationRunProvenance,
+    ObservationSchema, ObservedFeature, PluginBuildProvenance, ProgressCallback, ProposalPolicy,
     SourceManifest, SourceManifestProvenance, TraceInputProvenance,
 };
 use logicpearl_ir::{
@@ -28,7 +29,7 @@ use logicpearl_runtime::{
     LOGICPEARL_ENGINE_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -96,6 +97,7 @@ pub struct BuildProvenanceInputs {
     pub input_traces: Vec<TraceInputProvenance>,
     pub trace_plugin: Option<PluginBuildProvenance>,
     pub enricher_plugin: Option<PluginBuildProvenance>,
+    pub observation_runs: Vec<ObservationRunProvenance>,
     pub feature_dictionary_path: Option<PathBuf>,
     pub source_manifest: Option<SourceManifestProvenance>,
     pub build_options: Value,
@@ -455,6 +457,7 @@ pub fn build_provenance(inputs: BuildProvenanceInputs) -> Result<BuildProvenance
         input_traces: inputs.input_traces,
         feature_dictionary,
         plugins,
+        observation_runs: inputs.observation_runs,
         source_manifest: inputs.source_manifest,
         environment: build_environment_summary(),
         generated_files: BTreeMap::new(),
@@ -561,6 +564,24 @@ pub fn plugin_provenance_from_execution(
         capabilities: Some(serde_json::to_value(&run.capabilities)?),
         access: Some(serde_json::to_value(&run.access)?),
         stdio: Some(serde_json::to_value(&run.stdio)?),
+    })
+}
+
+pub fn observation_run_provenance_from_rows(
+    stage: &str,
+    plugin_run_id: Option<&str>,
+    candidate_rows: &[DecisionTraceRow],
+    accepted_rows: &[DecisionTraceRow],
+) -> Result<ObservationRunProvenance> {
+    Ok(ObservationRunProvenance {
+        schema_version: "logicpearl.observation_run_provenance.v1".to_string(),
+        stage: stage.to_string(),
+        plugin_run_id: plugin_run_id.map(ToOwned::to_owned),
+        observation_schema_hash: observation_schema_hash(candidate_rows)?,
+        candidate_rows_hash: decision_trace_rows_hash(candidate_rows)?,
+        accepted_rows_hash: decision_trace_rows_hash(accepted_rows)?,
+        rows_emitted: candidate_rows.len(),
+        rows_accepted: accepted_rows.len(),
     })
 }
 
@@ -1253,6 +1274,78 @@ fn hash_file_for_provenance(path: &Path) -> Result<String> {
         }
     }
     Ok(sha256_prefixed(&bytes))
+}
+
+fn observation_schema_hash(rows: &[DecisionTraceRow]) -> Result<Option<String>> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let mut feature_values = BTreeMap::<String, Vec<&Value>>::new();
+    for row in rows {
+        for (feature_id, value) in &row.features {
+            feature_values
+                .entry(feature_id.clone())
+                .or_default()
+                .push(value);
+        }
+    }
+
+    let schema = ObservationSchema {
+        schema_version: logicpearl_discovery::OBSERVATION_SCHEMA_VERSION.to_string(),
+        features: feature_values
+            .into_iter()
+            .map(|(feature_id, values)| ObservedFeature {
+                feature_id,
+                feature_type: infer_observation_feature_type(&values),
+                label: None,
+                description: None,
+                source_id: None,
+                source_anchor: None,
+                required: None,
+                nullable: None,
+                operators: Vec::new(),
+                values: None,
+            })
+            .collect(),
+    };
+
+    Ok(Some(artifact_hash(&canonicalize_json_value(
+        &serde_json::to_value(&schema).map_err(LogicPearlError::from)?,
+    ))))
+}
+
+fn decision_trace_rows_hash(rows: &[DecisionTraceRow]) -> Result<String> {
+    let value = serde_json::to_value(rows).map_err(LogicPearlError::from)?;
+    Ok(artifact_hash(&canonicalize_json_value(&value)))
+}
+
+fn canonicalize_json_value(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json_value).collect()),
+        Value::Object(object) => {
+            let mut canonical = Map::new();
+            for (key, item) in object.iter().collect::<BTreeMap<_, _>>() {
+                canonical.insert(key.clone(), canonicalize_json_value(item));
+            }
+            Value::Object(canonical)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn infer_observation_feature_type(values: &[&Value]) -> ObservationFeatureType {
+    if values.iter().all(|value| value.is_boolean()) {
+        ObservationFeatureType::Boolean
+    } else if values
+        .iter()
+        .all(|value| value.as_i64().is_some() || value.as_u64().is_some())
+    {
+        ObservationFeatureType::Integer
+    } else if values.iter().all(|value| value.is_number()) {
+        ObservationFeatureType::Number
+    } else {
+        ObservationFeatureType::String
+    }
 }
 
 fn sha256_file_hex(path: &Path) -> Result<String> {

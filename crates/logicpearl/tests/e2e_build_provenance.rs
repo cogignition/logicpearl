@@ -507,6 +507,19 @@ fn plugin_build_records_boundary_hashes_without_secret_values() {
         .as_str()
         .is_some_and(|value| value.starts_with("<redacted:sha256:")));
 
+    let observation = &provenance["observation_runs"][0];
+    assert_eq!(
+        observation["schema_version"].as_str(),
+        Some("logicpearl.observation_run_provenance.v1")
+    );
+    assert_eq!(observation["stage"].as_str(), Some("trace_source"));
+    assert_eq!(observation["plugin_run_id"], plugin["plugin_run_id"]);
+    assert_sha256(&observation["observation_schema_hash"]);
+    assert_sha256(&observation["candidate_rows_hash"]);
+    assert_sha256(&observation["accepted_rows_hash"]);
+    assert_eq!(observation["rows_emitted"].as_u64(), Some(12));
+    assert_eq!(observation["rows_accepted"].as_u64(), Some(12));
+
     let persisted = load_json(artifact_dir.join("build_report.json"));
     assert_no_local_path_leaks(&persisted, temp.path());
     assert_eq!(persisted, report);

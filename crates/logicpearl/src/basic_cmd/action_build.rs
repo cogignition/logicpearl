@@ -259,6 +259,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
                 input_traces,
                 trace_plugin: trace_plugin_provenance,
                 enricher_plugin: None,
+                observation_runs: Vec::new(),
                 feature_dictionary_path: args.feature_dictionary.clone(),
                 source_manifest: source_manifest_provenance,
                 build_options: build_options_value,

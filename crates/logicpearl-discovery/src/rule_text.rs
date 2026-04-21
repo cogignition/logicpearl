@@ -604,24 +604,24 @@ mod tests {
     }
 
     #[test]
-    fn annotated_missing_requirement_generates_readable_rule_text() {
+    fn annotated_missing_checklist_item_generates_readable_rule_text() {
         let expression: Expression = serde_json::from_value(json!({
-            "feature": "requirement__req-abc__satisfied",
+            "feature": "checklist__item_alpha__complete",
             "op": "<=",
             "value": 0.0
         }))
         .unwrap();
         let mut feature_semantics = BTreeMap::new();
         feature_semantics.insert(
-            "requirement__req-abc__satisfied".to_string(),
+            "checklist__item_alpha__complete".to_string(),
             serde_json::from_value::<FeatureSemantics>(json!({
-                "label": "Failed conservative therapy",
+                "label": "Required document uploaded",
                 "states": {
                     "missing": {
                         "when": {"op": "<=", "value": 0.0},
-                        "label": "Failed conservative therapy is missing",
-                        "message": "This rule fires when the packet does not support failed conservative therapy.",
-                        "counterfactual_hint": "Add evidence showing failed conservative therapy."
+                        "label": "Required document is missing",
+                        "message": "This rule fires when the submission does not include the required document.",
+                        "counterfactual_hint": "Add the required document."
                     }
                 }
             }))
@@ -632,16 +632,16 @@ mod tests {
         let generated = generate_rule_text(&expression, &context);
         assert_eq!(
             generated.label.as_deref(),
-            Some("Failed conservative therapy is missing")
+            Some("Required document is missing")
         );
-        assert!(!generated.label.unwrap().contains("req-abc"));
+        assert!(!generated.label.unwrap().contains("item_alpha"));
         assert_eq!(
             generated.message.as_deref(),
-            Some("This rule fires when the packet does not support failed conservative therapy.")
+            Some("This rule fires when the submission does not include the required document.")
         );
         assert_eq!(
             generated.counterfactual_hint.as_deref(),
-            Some("Add evidence showing failed conservative therapy.")
+            Some("Add the required document.")
         );
     }
 }

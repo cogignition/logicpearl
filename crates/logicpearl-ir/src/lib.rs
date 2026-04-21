@@ -1462,16 +1462,16 @@ mod tests {
         );
         gate.input_schema.features[0].semantics = Some(
             serde_json::from_value(json!({
-                "label": "Failed conservative therapy",
+                "label": "Required document uploaded",
                 "kind": "evidence",
-                "source_id": "req-003",
+                "source_id": "doc-003",
                 "source_anchor": "page-1",
                 "states": {
                     "missing": {
                         "when": {"op": "<=", "value": 0.0},
-                        "label": "Failed conservative therapy is missing",
-                        "message": "This rule fires when the packet does not support failed conservative therapy.",
-                        "counterfactual_hint": "Add evidence showing failed conservative therapy."
+                        "label": "Required document is missing",
+                        "message": "This rule fires when the submission does not include the required document.",
+                        "counterfactual_hint": "Add the required document."
                     }
                 }
             }))
@@ -1487,7 +1487,7 @@ mod tests {
             .expect("semantics should survive serialization");
         assert_eq!(
             semantics.label.as_deref(),
-            Some("Failed conservative therapy")
+            Some("Required document uploaded")
         );
         assert!(semantics.states.contains_key("missing"));
     }

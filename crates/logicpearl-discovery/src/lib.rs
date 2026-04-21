@@ -482,6 +482,8 @@ pub struct BuildProvenance {
     pub feature_dictionary: Option<FileProvenance>,
     #[serde(default)]
     pub plugins: Vec<PluginBuildProvenance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observation_runs: Vec<ObservationRunProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_manifest: Option<SourceManifestProvenance>,
     #[serde(default)]
@@ -678,6 +680,25 @@ pub struct PluginBuildProvenance {
 
 fn default_plugin_run_provenance_schema_version() -> String {
     "logicpearl.plugin_run_provenance.v1".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct ObservationRunProvenance {
+    #[serde(default = "default_observation_run_provenance_schema_version")]
+    pub schema_version: String,
+    pub stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_schema_hash: Option<String>,
+    pub candidate_rows_hash: String,
+    pub accepted_rows_hash: String,
+    pub rows_emitted: usize,
+    pub rows_accepted: usize,
+}
+
+fn default_observation_run_provenance_schema_version() -> String {
+    "logicpearl.observation_run_provenance.v1".to_string()
 }
 
 #[derive(Debug, Clone)]

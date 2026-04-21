@@ -2,8 +2,9 @@
 use anstream::println;
 use logicpearl_build::{
     attach_generated_file_hashes, build_gate_artifact_from_rows_with_progress,
-    load_source_manifest_for_provenance, plugin_provenance_from_execution, source_input_provenance,
-    trace_input_provenance, BuildProvenanceInputs,
+    load_source_manifest_for_provenance, observation_run_provenance_from_rows,
+    plugin_provenance_from_execution, source_input_provenance, trace_input_provenance,
+    BuildProvenanceInputs,
 };
 use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
@@ -76,6 +77,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     let mut input_traces = Vec::new();
     let mut trace_plugin_provenance = None;
     let mut enricher_plugin_provenance = None;
+    let mut trace_plugin_candidate_rows = None::<Vec<DecisionTraceRow>>;
     let (mut rows, resolved_label_column) = match (
         &args.trace_plugin_manifest,
         &args.decision_traces,
@@ -140,6 +142,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             let rows: Vec<DecisionTraceRow> = serde_json::from_value(traces_value)
                 .into_diagnostic()
                 .wrap_err("trace plugin decision_traces payload was invalid")?;
+            trace_plugin_candidate_rows = Some(rows.clone());
             (rows, plugin_label_column)
         }
         (None, Some(decision_traces)) => {
@@ -318,6 +321,20 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     };
 
     set_progress_message(spinner.as_ref(), "provenance: assembling build inputs");
+    let observation_runs = if let (Some(plugin), Some(candidate_rows)) = (
+        trace_plugin_provenance.as_ref(),
+        trace_plugin_candidate_rows.as_ref(),
+    ) {
+        vec![observation_run_provenance_from_rows(
+            "trace_source",
+            plugin.plugin_run_id.as_deref(),
+            candidate_rows,
+            &rows,
+        )
+        .into_diagnostic()?]
+    } else {
+        Vec::new()
+    };
     let provenance_inputs = BuildProvenanceInputs {
         artifact_dir: Some(build_options.output_dir.clone()),
         source_references: parse_key_value_entries(&args.source_references, "source-ref")?,
@@ -326,6 +343,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         input_traces,
         trace_plugin: trace_plugin_provenance,
         enricher_plugin: enricher_plugin_provenance,
+        observation_runs,
         feature_dictionary_path: args.feature_dictionary.clone(),
         source_manifest: load_source_manifest_for_provenance(args.source_manifest.as_deref())
             .into_diagnostic()?,

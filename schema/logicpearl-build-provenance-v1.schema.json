@@ -194,6 +194,12 @@
         "additionalProperties": true
       }
     },
+    "observation_runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation_run_provenance"
+      }
+    },
     "source_manifest": {
       "allOf": [
         { "$ref": "#/$defs/file_provenance" },
@@ -296,6 +302,46 @@
             },
             "additionalProperties": true
           }
+        }
+      },
+      "additionalProperties": true
+    },
+    "observation_run_provenance": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "stage",
+        "candidate_rows_hash",
+        "accepted_rows_hash",
+        "rows_emitted",
+        "rows_accepted"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "logicpearl.observation_run_provenance.v1"
+        },
+        "stage": {
+          "$ref": "#/$defs/plugin_stage"
+        },
+        "plugin_run_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "observation_schema_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "candidate_rows_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "accepted_rows_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rows_emitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows_accepted": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": true
