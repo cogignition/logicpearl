@@ -52,6 +52,9 @@ pub struct ActionLearningOptions {
     pub no_match_action: Option<String>,
     pub action_priority: Option<String>,
     pub action_max_rules: Option<usize>,
+    /// Maximum atoms per discovered conjunction. Propagates into every
+    /// per-action gate build underneath; `None` keeps logicpearl's default.
+    pub max_conditions: Option<usize>,
     pub output_dir: PathBuf,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
@@ -293,6 +296,7 @@ pub fn learn_action_policy_with_progress(
                 decision_mode: options.decision_mode,
                 selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
                 max_rules: Some(action_rule_budget),
+                max_conditions: options.max_conditions,
                 proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: FeatureColumnSelection::default(),
             },

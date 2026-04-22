@@ -67,6 +67,11 @@ pub struct BuildOptions {
     pub decision_mode: DiscoveryDecisionMode,
     pub selection_policy: SelectionPolicy,
     pub max_rules: Option<usize>,
+    /// Override for the residual-pass Z3 synthesis `max_conditions` — the
+    /// maximum number of atoms that may be conjoined into a single
+    /// discovered rule. `None` keeps the historical default (3). Raising
+    /// this unlocks deeper conjunctions but grows the Z3 search space.
+    pub max_conditions: Option<usize>,
     pub proposal_policy: ProposalPolicy,
     pub feature_selection: FeatureColumnSelection,
 }
@@ -1706,6 +1711,7 @@ pub fn build_pearl_from_csv_with_progress(
         decision_mode: options.decision_mode,
         selection_policy: options.selection_policy,
         max_rules: options.max_rules,
+        max_conditions: options.max_conditions,
         proposal_policy: options.proposal_policy,
         feature_selection: options.feature_selection.clone(),
     };
@@ -1918,6 +1924,7 @@ pub fn discover_from_csv_with_progress(
                 decision_mode: options.decision_mode,
                 selection_policy: options.selection_policy,
                 max_rules: None,
+                max_conditions: None,
                 proposal_policy: ProposalPolicy::ReportOnly,
                 feature_selection: options.feature_selection.clone(),
             },
@@ -2488,6 +2495,12 @@ fn learn_gate_from_rows_internal(
         let mut residual_options = DEFAULT_RESIDUAL_PASS_OPTIONS.clone();
         if let Some(max_rules) = options.max_rules {
             residual_options.max_rules = max_rules;
+        }
+        if let Some(max_conditions) = options.max_conditions {
+            // Floor at 1 since a conjunction of 0 atoms is meaningless, and
+            // keep min_conditions ≤ max_conditions so the Z3 encoding stays
+            // satisfiable.
+            residual_options.max_conditions = max_conditions.max(1);
         }
         residual_options
     });

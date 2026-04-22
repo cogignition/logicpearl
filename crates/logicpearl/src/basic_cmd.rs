@@ -253,6 +253,9 @@ pub(crate) struct BuildArgs {
     /// Maximum rules emitted for a binary gate build. Useful for budgeted discovery and proposal-phase diagnostics.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub max_rules: Option<usize>,
+    /// Maximum atoms per discovered boolean conjunction (default 3). Raising to 4 or 5 lets rules express deeper feature interactions at the cost of a larger Z3 search per synthesis call.
+    #[arg(long, help_heading = "Advanced Discovery")]
+    pub max_conditions: Option<usize>,
     /// Proposal acceptance policy. Defaults to auto-adopt-safe for binary gate builds.
     #[arg(long, value_enum, help_heading = "Advanced Discovery")]
     pub proposal_policy: Option<ProposalPolicyArg>,

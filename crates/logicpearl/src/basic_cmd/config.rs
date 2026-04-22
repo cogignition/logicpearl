@@ -27,6 +27,7 @@ struct LogicPearlBuildConfig {
     no_match_action: Option<String>,
     action_max_rules: Option<usize>,
     max_rules: Option<usize>,
+    max_conditions: Option<usize>,
     proposal_policy: Option<ProposalPolicyArg>,
     selection_policy: Option<SelectionPolicyArg>,
     deny_recall_target: Option<f64>,
@@ -128,6 +129,9 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     }
     if args.max_rules.is_none() {
         args.max_rules = build.max_rules;
+    }
+    if args.max_conditions.is_none() {
+        args.max_conditions = build.max_conditions;
     }
     if args.proposal_policy.is_none() {
         args.proposal_policy = build.proposal_policy;

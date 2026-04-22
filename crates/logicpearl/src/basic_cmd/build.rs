@@ -220,6 +220,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         decision_mode: to_discovery_decision_mode(args.discovery_mode),
         selection_policy,
         max_rules: args.max_rules,
+        max_conditions: args.max_conditions,
         proposal_policy: args
             .proposal_policy
             .map(ProposalPolicy::from)
@@ -252,6 +253,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         "decision_mode": build_options.decision_mode,
         "selection_policy": build_options.selection_policy,
         "max_rules": build_options.max_rules,
+        "max_conditions": build_options.max_conditions,
         "proposal_policy": build_options.proposal_policy,
         "feature_columns": &build_options.feature_selection.feature_columns,
         "exclude_columns": &build_options.feature_selection.exclude_columns,
