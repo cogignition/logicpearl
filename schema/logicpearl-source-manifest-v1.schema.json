@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://logicpearl.dev/schema/logicpearl-source-manifest-v1.schema.json",
+  "$id": "https://logicpearl.com/schema/logicpearl-source-manifest-v1.schema.json",
   "title": "LogicPearl Source Manifest v1",
   "type": "object",
   "required": ["schema_version", "sources"],

@@ -99,6 +99,30 @@ impl LexObjective {
     }
 }
 
+/// Render an SMT-LIB sum expression from a sequence of terms.
+pub fn solver_sum<I, S>(terms: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let terms = terms.into_iter().map(Into::into).collect::<Vec<_>>();
+    match terms.len() {
+        0 => "0".to_string(),
+        1 => terms.into_iter().next().expect("single term should exist"),
+        _ => format!("(+ {})", terms.join(" ")),
+    }
+}
+
+/// Sum `ite` guards for a family of solver booleans named like `prefix_0`.
+pub fn keep_bool_sum(prefix: &str, count: usize) -> String {
+    solver_sum((0..count).map(|index| format!("(ite {prefix}_{index} 1 0)")))
+}
+
+/// Sum one-based indexes for a family of solver booleans named like `prefix_0`.
+pub fn keep_bool_index_sum(prefix: &str, count: usize) -> String {
+    solver_sum((0..count).map(|index| format!("(ite {prefix}_{index} {} 0)", index + 1)))
+}
+
 /// Run an SMT script and return whether the formula is satisfiable.
 pub fn check_sat(script: &str, settings: &SolverSettings) -> Result<SatResult> {
     let output = run_solver_script(script, settings, false)?;
@@ -500,7 +524,8 @@ fn stdout_tail(stdout: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_sat, check_sat_with_values, solve_keep_bools, SatStatus, SolverMode, SolverSettings,
+        check_sat, check_sat_with_values, keep_bool_index_sum, keep_bool_sum, solve_keep_bools,
+        solver_sum, SatStatus, SolverMode, SolverSettings,
     };
     use crate::SolverBackend;
 
@@ -566,5 +591,26 @@ mod tests {
                 default_result.report.backend_used
             );
         }
+    }
+
+    #[test]
+    fn solver_sum_renders_empty_single_and_many_terms() {
+        assert_eq!(solver_sum(Vec::<String>::new()), "0");
+        assert_eq!(solver_sum(["x"]), "x");
+        assert_eq!(solver_sum(["x", "y", "z"]), "(+ x y z)");
+    }
+
+    #[test]
+    fn keep_bool_helpers_render_expected_forms() {
+        assert_eq!(keep_bool_sum("keep", 0), "0");
+        assert_eq!(
+            keep_bool_sum("keep", 2),
+            "(+ (ite keep_0 1 0) (ite keep_1 1 0))"
+        );
+        assert_eq!(keep_bool_index_sum("keep", 0), "0");
+        assert_eq!(
+            keep_bool_index_sum("keep", 2),
+            "(+ (ite keep_0 1 0) (ite keep_1 2 0))"
+        );
     }
 }

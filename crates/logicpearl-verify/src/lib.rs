@@ -12,8 +12,9 @@ use logicpearl_ir::{
     DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
 };
 use logicpearl_solver::{
-    check_sat, check_sat_with_values, solve_keep_bools_lexicographic, LexObjective, SatStatus,
-    SolverBackend, SolverSettings,
+    check_sat, check_sat_with_values, keep_bool_index_sum, keep_bool_sum,
+    solve_keep_bools_lexicographic, solver_sum, LexObjective, SatStatus, SolverBackend,
+    SolverSettings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -663,16 +664,16 @@ fn solve_best_conjunction(
     }
     smt.push_str(&format!(
         "(assert (<= {} {}))\n",
-        keep_sum(feature_names.len()),
+        keep_bool_sum("keep", feature_names.len()),
         options.max_conditions
     ));
     smt.push_str(&format!(
         "(assert (>= {} 1))\n",
-        keep_sum(feature_names.len())
+        keep_bool_sum("keep", feature_names.len())
     ));
     smt.push_str(&format!(
         "(assert (>= {} {}))\n",
-        keep_sum(feature_names.len()),
+        keep_bool_sum("keep", feature_names.len()),
         options.min_conditions
     ));
 
@@ -700,8 +701,8 @@ fn solve_best_conjunction(
     let objectives = vec![
         LexObjective::maximize(hit_sum("pos", uncovered_positive_indexes.len(), true)),
         LexObjective::minimize(hit_sum("neg", negatives.len(), true)),
-        LexObjective::minimize(keep_sum(feature_names.len())),
-        LexObjective::minimize(keep_index_sum(feature_names.len())),
+        LexObjective::minimize(keep_bool_sum("keep", feature_names.len())),
+        LexObjective::minimize(keep_bool_index_sum("keep", feature_names.len())),
     ];
 
     let selected_indexes = solve_selected_feature_indexes(feature_names.len(), &smt, &objectives)?;
@@ -751,41 +752,13 @@ fn example_match_expression(features: &BTreeMap<String, bool>, feature_names: &[
 }
 
 fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| {
-                if when_true {
-                    format!("(ite {prefix}_{index} 1 0)")
-                } else {
-                    format!("(ite {prefix}_{index} 0 1)")
-                }
-            })
-            .collect(),
-    )
-}
-
-fn keep_sum(count: usize) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| format!("(ite keep_{index} 1 0)"))
-            .collect(),
-    )
-}
-
-fn keep_index_sum(count: usize) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
-            .collect(),
-    )
-}
-
-fn solver_sum(terms: Vec<String>) -> String {
-    match terms.len() {
-        0 => "0".to_string(),
-        1 => terms.into_iter().next().expect("single term should exist"),
-        _ => format!("(+ {})", terms.join(" ")),
-    }
+    solver_sum((0..count).map(|index| {
+        if when_true {
+            format!("(ite {prefix}_{index} 1 0)")
+        } else {
+            format!("(ite {prefix}_{index} 0 1)")
+        }
+    }))
 }
 
 fn conjunction_matches(

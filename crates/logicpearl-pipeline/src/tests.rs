@@ -516,7 +516,7 @@ pipeline_id: shorthand_demo
 base: fixtures/ir/valid/auth-demo-v1.json
 refinements:
   - id: membership_case
-    pearl: fixtures/ir/valid/membership-demo-v1.json
+    artifact: fixtures/ir/valid/membership-demo-v1.json
     action: override_if_fires
 "#,
     )
@@ -534,6 +534,27 @@ refinements:
         pipeline.refinements[0].action,
         Some(OverrideRefinementAction::OverrideIfFires)
     );
+}
+
+#[test]
+fn override_pipeline_rejects_old_pearl_alias() {
+    let err = parse_document::<OverridePipelineDefinition>(
+        r#"schema_version: logicpearl.override_pipeline.v1
+pipeline_id: shorthand_demo
+base:
+  id: statute
+  pearl: fixtures/ir/valid/auth-demo-v1.json
+refinements:
+  - id: membership_case
+    artifact: fixtures/ir/valid/membership-demo-v1.json
+    action: override_if_fires
+"#,
+    )
+    .expect_err("old pearl alias should be rejected");
+
+    assert!(err
+        .to_string()
+        .contains("data did not match any variant of untagged enum OverridePearlInput"));
 }
 
 #[test]

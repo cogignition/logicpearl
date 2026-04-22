@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://logicpearl.dev/schema/logicpearl-override-pipeline-result-v1.schema.json",
+  "$id": "https://logicpearl.com/schema/logicpearl-override-pipeline-result-v1.schema.json",
   "title": "LogicPearl Override Pipeline Result v1",
   "type": "object",
   "additionalProperties": true,

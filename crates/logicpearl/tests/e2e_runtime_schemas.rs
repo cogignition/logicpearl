@@ -226,7 +226,7 @@ fn cli_runtime_json_outputs_validate_against_committed_schemas() {
 pipeline_id: override_demo
 base:
   id: statute
-  pearl: artifacts/auth-demo-v1.json
+  artifact: artifacts/auth-demo-v1.json
   input:
     action: $.action
     resource_archived: $.resource_archived
@@ -234,7 +234,7 @@ base:
     failed_attempts: $.failed_attempts
 refinements:
   - id: membership_case
-    pearl: artifacts/membership-demo-v1.json
+    artifact: artifacts/membership-demo-v1.json
     action: override_if_fires
     input:
       age: $.age

@@ -64,8 +64,6 @@ struct OverridePearlFields {
     #[serde(default)]
     artifact: Option<String>,
     #[serde(default)]
-    pearl: Option<String>,
-    #[serde(default)]
     input: Option<HashMap<String, Value>>,
 }
 
@@ -76,8 +74,6 @@ struct OverrideRefinementFields {
     id: Option<String>,
     #[serde(default)]
     artifact: Option<String>,
-    #[serde(default)]
-    pearl: Option<String>,
     #[serde(default)]
     input: Option<HashMap<String, Value>>,
     #[serde(default)]
@@ -99,7 +95,7 @@ impl<'de> Deserialize<'de> for OverridePipelinePearl {
             }),
             OverridePearlInput::Object(fields) => Ok(Self {
                 id: fields.id,
-                artifact: override_artifact_field(fields.artifact, fields.pearl)?,
+                artifact: override_artifact_field(fields.artifact)?,
                 input: fields.input,
             }),
         }
@@ -114,7 +110,7 @@ impl<'de> Deserialize<'de> for OverridePipelineRefinement {
         let fields = OverrideRefinementFields::deserialize(deserializer)?;
         Ok(Self {
             id: fields.id,
-            artifact: override_artifact_field(fields.artifact, fields.pearl)?,
+            artifact: override_artifact_field(fields.artifact)?,
             input: fields.input,
             action: fields.action,
             effect: fields.effect,
@@ -122,16 +118,11 @@ impl<'de> Deserialize<'de> for OverridePipelineRefinement {
     }
 }
 
-fn override_artifact_field<E>(
-    artifact: Option<String>,
-    pearl: Option<String>,
-) -> std::result::Result<String, E>
+fn override_artifact_field<E>(artifact: Option<String>) -> std::result::Result<String, E>
 where
     E: serde::de::Error,
 {
-    artifact
-        .or(pearl)
-        .ok_or_else(|| serde::de::Error::missing_field("artifact"))
+    artifact.ok_or_else(|| serde::de::Error::missing_field("artifact"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

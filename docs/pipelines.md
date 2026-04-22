@@ -94,21 +94,21 @@ pipeline_id: statute_with_case_law
 
 base:
   id: statute
-  pearl: artifacts/statute_exemptions
+  artifact: artifacts/statute_exemptions
   input:
     applicant_age: $.applicant.age
     filing_status: $.filing.status
 
 refinements:
   - id: klamath
-    pearl: artifacts/klamath_refinement
+    artifact: artifacts/klamath_refinement
     action: override_if_fires
     input:
       applicant_age: $.applicant.age
       tribal_status: $.applicant.tribal_status
 
   - id: hanson
-    pearl: artifacts/hanson_refinement
+    artifact: artifacts/hanson_refinement
     action: override_if_fires
     input:
       filing_status: $.filing.status
@@ -125,7 +125,7 @@ logicpearl pipeline trace pipeline.yaml input.json --json
 
 Override pipeline rules:
 
-- `base` can be a pearl path string or an object with `id`, `pearl`, and `input`.
+- `base` can be an artifact path string or an object with `id`, `artifact`, and `input`.
 - Each refinement must set `action: override_if_fires`.
 - The default conflict mode is `first_match`.
 - All refinements are evaluated for attribution, but only the first fired
@@ -133,14 +133,14 @@ Override pipeline rules:
 - If no refinement fires, the base result passes through unchanged.
 - `input` maps runtime fields from the original pipeline input with `$.path`
   references. A top-level `input` map can be used as the default for every
-  pearl, and a pearl-level `input` map overrides it.
-- `pearl` and `artifact` are accepted as path keys. Docs prefer `pearl` for
-  readability, while inspect JSON normalizes the field to `artifact`.
+  referenced artifact, and a stage-level `input` map overrides it.
+- Override-pipeline object forms use `artifact` as the path key. The old
+  `pearl` alias is not accepted.
 
 `logicpearl pipeline run --json` returns
 `logicpearl.override_pipeline_result.v1` for override pipelines. The selected
-pearl's runtime result is exposed as `output`, and the response also includes
-`base`, `refinements`, `stages`, `selected`, and `selection` for per-pearl
+artifact's runtime result is exposed as `output`, and the response also includes
+`base`, `refinements`, `stages`, `selected`, and `selection` for per-artifact
 attribution.
 
 ## Stage References

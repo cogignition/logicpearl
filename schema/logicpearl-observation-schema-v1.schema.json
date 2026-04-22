@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://logicpearl.dev/schema/logicpearl-observation-schema-v1.schema.json",
+  "$id": "https://logicpearl.com/schema/logicpearl-observation-schema-v1.schema.json",
   "title": "LogicPearl Observation Schema v1",
   "description": "Feature availability contract emitted by upstream observers or extraction plugins before review/build. It is metadata for discovery and review; it does not define policy logic.",
   "type": "object",

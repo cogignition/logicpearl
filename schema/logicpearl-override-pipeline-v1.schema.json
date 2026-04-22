@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://logicpearl.dev/schema/logicpearl-override-pipeline-v1.schema.json",
+  "$id": "https://logicpearl.com/schema/logicpearl-override-pipeline-v1.schema.json",
   "title": "LogicPearl Override Pipeline v1",
   "type": "object",
   "additionalProperties": false,
@@ -58,20 +58,9 @@
     "pearl": {
       "type": "object",
       "additionalProperties": false,
-      "oneOf": [
-        {
-          "required": ["artifact"]
-        },
-        {
-          "required": ["pearl"]
-        }
-      ],
+      "required": ["artifact"],
       "properties": {
         "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "pearl": {
           "type": "string",
           "minLength": 1
         },
@@ -87,21 +76,9 @@
     "refinement": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["action"],
-      "oneOf": [
-        {
-          "required": ["artifact"]
-        },
-        {
-          "required": ["pearl"]
-        }
-      ],
+      "required": ["action", "artifact"],
       "properties": {
         "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "pearl": {
           "type": "string",
           "minLength": 1
         },

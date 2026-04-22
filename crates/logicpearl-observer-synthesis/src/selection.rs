@@ -5,7 +5,8 @@ use good_lp::{
 };
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_solver::{
-    solve_keep_bools_lexicographic, LexObjective, SatStatus, SolverBackend, SolverSettings,
+    keep_bool_index_sum, solve_keep_bools_lexicographic, solver_sum, LexObjective, SatStatus,
+    SolverBackend, SolverSettings,
 };
 use std::env;
 
@@ -196,8 +197,7 @@ fn smt_select_with_preferred_coverage(
             positive_constraints
                 .iter()
                 .enumerate()
-                .map(|(index, _)| format!("(ite pos_{index} 0 1)"))
-                .collect(),
+                .map(|(index, _)| format!("(ite pos_{index} 0 1)")),
         )
     };
     let negative_terms = if negative_constraints.is_empty() {
@@ -207,24 +207,19 @@ fn smt_select_with_preferred_coverage(
             negative_constraints
                 .iter()
                 .enumerate()
-                .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect(),
+                .map(|(index, _)| format!("(ite neg_{index} 1 0)")),
         )
     };
     let keep_terms = if phrase_count == 0 {
         "0".to_string()
     } else {
-        solver_sum(
-            (0..phrase_count)
-                .map(|index| format!("(ite keep_{index} 1 0)"))
-                .collect(),
-        )
+        solver_sum((0..phrase_count).map(|index| format!("(ite keep_{index} 1 0)")))
     };
     let objectives = vec![
         LexObjective::minimize(missed_terms),
         LexObjective::minimize(negative_terms),
         LexObjective::minimize(keep_terms),
-        LexObjective::minimize(keep_index_sum(phrase_count)),
+        LexObjective::minimize(keep_bool_index_sum("keep", phrase_count)),
     ];
     smt_select_phrase_indexes(phrase_count, &smt, &objectives)
 }
@@ -255,23 +250,18 @@ fn smt_select_with_required_coverage(
             negative_constraints
                 .iter()
                 .enumerate()
-                .map(|(index, _)| format!("(ite neg_{index} 1 0)"))
-                .collect(),
+                .map(|(index, _)| format!("(ite neg_{index} 1 0)")),
         )
     };
     let keep_terms = if phrase_count == 0 {
         "0".to_string()
     } else {
-        solver_sum(
-            (0..phrase_count)
-                .map(|index| format!("(ite keep_{index} 1 0)"))
-                .collect(),
-        )
+        solver_sum((0..phrase_count).map(|index| format!("(ite keep_{index} 1 0)")))
     };
     let objectives = vec![
         LexObjective::minimize(negative_terms),
         LexObjective::minimize(keep_terms),
-        LexObjective::minimize(keep_index_sum(phrase_count)),
+        LexObjective::minimize(keep_bool_index_sum("keep", phrase_count)),
     ];
     smt_select_phrase_indexes(phrase_count, &smt, &objectives)
 }
@@ -321,22 +311,6 @@ fn phrase_selection_status_from_sat(status: SatStatus) -> PhraseSelectionStatus 
         SatStatus::Sat => PhraseSelectionStatus::Sat,
         SatStatus::Unsat => PhraseSelectionStatus::Unsat,
         SatStatus::Unknown => PhraseSelectionStatus::Unknown,
-    }
-}
-
-fn keep_index_sum(count: usize) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
-            .collect(),
-    )
-}
-
-fn solver_sum(terms: Vec<String>) -> String {
-    match terms.len() {
-        0 => "0".to_string(),
-        1 => terms.into_iter().next().expect("single term should exist"),
-        _ => format!("(+ {})", terms.join(" ")),
     }
 }
 

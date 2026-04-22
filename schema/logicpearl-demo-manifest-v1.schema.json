@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://logicpearl.dev/schema/logicpearl-demo-manifest-v1.schema.json",
+  "$id": "https://logicpearl.com/schema/logicpearl-demo-manifest-v1.schema.json",
   "title": "LogicPearl Demo Manifest v1",
   "type": "object",
   "required": [

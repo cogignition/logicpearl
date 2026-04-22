@@ -5,7 +5,8 @@ use good_lp::{
 };
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_solver::{
-    resolve_backend, solve_keep_bools_lexicographic, LexObjective, SatStatus, SolverSettings,
+    keep_bool_index_sum, keep_bool_sum, resolve_backend, solve_keep_bools_lexicographic,
+    solver_sum, LexObjective, SatStatus, SolverSettings,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -624,56 +625,22 @@ fn match_expression_for(matches: &[usize]) -> String {
 }
 
 fn hit_sum(prefix: &str, count: usize, when_true: bool) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| {
-                if when_true {
-                    format!("(ite {prefix}_{index} 1 0)")
-                } else {
-                    format!("(ite {prefix}_{index} 0 1)")
-                }
-            })
-            .collect(),
-    )
-}
-
-fn keep_sum(count: usize) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| format!("(ite keep_{index} 1 0)"))
-            .collect(),
-    )
-}
-
-fn keep_index_sum(count: usize) -> String {
-    solver_sum(
-        (0..count)
-            .map(|index| format!("(ite keep_{index} {} 0)", index + 1))
-            .collect(),
-    )
+    solver_sum((0..count).map(|index| {
+        if when_true {
+            format!("(ite {prefix}_{index} 1 0)")
+        } else {
+            format!("(ite {prefix}_{index} 0 1)")
+        }
+    }))
 }
 
 fn weighted_keep_sum(candidates: &[CandidateRule]) -> String {
-    solver_sum(
-        candidates
-            .iter()
-            .enumerate()
-            .map(|(index, candidate)| {
-                format!(
-                    "(ite keep_{index} {} 0)",
-                    candidate_total_penalty(candidate)
-                )
-            })
-            .collect(),
-    )
-}
-
-fn solver_sum(terms: Vec<String>) -> String {
-    match terms.len() {
-        0 => "0".to_string(),
-        1 => terms.into_iter().next().expect("single term should exist"),
-        _ => format!("(+ {})", terms.join(" ")),
-    }
+    solver_sum(candidates.iter().enumerate().map(|(index, candidate)| {
+        format!(
+            "(ite keep_{index} {} 0)",
+            candidate_total_penalty(candidate)
+        )
+    }))
 }
 
 fn solve_selected_rule_indexes(
@@ -726,9 +693,9 @@ fn rule_selection_objective_smt(
             hit_sum("allow_hit", allowed_count, true)
         ),
         RuleSelectionObjective::AllowedHits => hit_sum("allow_hit", allowed_count, true),
-        RuleSelectionObjective::KeepCount => keep_sum(candidates.len()),
+        RuleSelectionObjective::KeepCount => keep_bool_sum("keep", candidates.len()),
         RuleSelectionObjective::ComplexityWeight => weighted_keep_sum(candidates),
-        RuleSelectionObjective::KeepIndexSum => keep_index_sum(candidates.len()),
+        RuleSelectionObjective::KeepIndexSum => keep_bool_index_sum("keep", candidates.len()),
     }
 }
 
