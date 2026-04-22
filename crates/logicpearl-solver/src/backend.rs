@@ -122,7 +122,7 @@ fn preferred_backends(mode: SolverMode) -> [SolverBackend; 2] {
     }
 }
 
-fn resolve_backend_binary(backend: SolverBackend) -> Option<PathBuf> {
+pub(crate) fn resolve_backend_binary(backend: SolverBackend) -> Option<PathBuf> {
     let solver_dir = env_override(SOLVER_DIR_ENV).map(PathBuf::from);
     let current_exe = env::current_exe().ok();
     resolve_backend_binary_with_sources(

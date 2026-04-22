@@ -8,6 +8,7 @@
 
 mod backend;
 mod parse;
+mod pool;
 
 pub use backend::{
     is_backend_available, resolve_backend, SolverBackend, SolverMode, SolverSettings,
@@ -270,6 +271,16 @@ fn run_solver_script_with_backend(
     timeout_ms: Option<u64>,
     needs_model: bool,
 ) -> Result<RawSolverOutput> {
+    if backend_used == SolverBackend::Z3 {
+        // Route Z3 through a thread-local persistent worker — avoids the
+        // per-query spawn that races pipe FDs between concurrent workers
+        // and deadlocks discovery at 15k+ traces.
+        let normalized_script = normalize_script_for_backend(script, backend_used);
+        return pool::run_z3_script_pooled(&normalized_script, timeout_ms);
+    }
+
+    // CVC5 path: retain the spawn-per-query model. CVC5 isn't used under
+    // concurrency today so the pipe race doesn't trigger for it.
     let normalized_script = normalize_script_for_backend(script, backend_used);
     let mut temp_script = NamedTempFile::with_suffix(".smt2").map_err(|err| {
         LogicPearlError::message(format!("failed to create temp solver script: {err}"))
