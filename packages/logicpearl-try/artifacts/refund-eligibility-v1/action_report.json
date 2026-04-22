@@ -1,0 +1,168 @@
+{
+  "source": "./packages/logicpearl-try/scripts/refund-traces.csv",
+  "artifact_name": "refund_eligibility_v1",
+  "action_column": "next_action",
+  "default_action": "approve",
+  "rows": 5760,
+  "actions": [
+    "approve",
+    "deny",
+    "route_to_finance",
+    "route_to_review"
+  ],
+  "rule_budget": {
+    "mode": "support_scaled",
+    "total_budget": 712,
+    "priority_order": [
+      "route_to_review",
+      "deny",
+      "route_to_finance"
+    ],
+    "per_action": {
+      "deny": 256,
+      "route_to_finance": 256,
+      "route_to_review": 200
+    }
+  },
+  "rules": [
+    {
+      "id": "rule_000",
+      "bit": 0,
+      "action": "route_to_review",
+      "priority": 0,
+      "label": "Days since purchase at or below 360.0 and Previous refunds in last 90 days above 3.0 and Refund reason category equals defective"
+    },
+    {
+      "id": "rule_001",
+      "bit": 1,
+      "action": "deny",
+      "priority": 1,
+      "label": "Days since purchase above 29.0 and Refund reason category equals changed_mind"
+    },
+    {
+      "id": "rule_002",
+      "bit": 2,
+      "action": "deny",
+      "priority": 2,
+      "label": "Days since purchase at or above 366.0 and Refund reason category equals defective"
+    },
+    {
+      "id": "rule_003",
+      "bit": 3,
+      "action": "deny",
+      "priority": 3,
+      "label": "Item is digital at or above 1.0 and Item has been used / consumed at or above 1.0 and Refund reason category equals changed_mind"
+    },
+    {
+      "id": "rule_004",
+      "bit": 4,
+      "action": "route_to_finance",
+      "priority": 4,
+      "label": "Refund reason category equals billing_error"
+    }
+  ],
+  "training_parity": 0.9472222222222222,
+  "provenance": {
+    "schema_version": "logicpearl.build_provenance.v1",
+    "engine_version": "0.1.5",
+    "engine_commit": "1335b276975c1a6d2681feb69c4968c1f8372906",
+    "build_command": {
+      "program": "./target/release/logicpearl",
+      "args": [
+        "build",
+        "./packages/logicpearl-try/scripts/refund-traces.csv",
+        "--feature-dictionary",
+        "./packages/logicpearl-try/scripts/refund-feature-dictionary.json",
+        "--action-column",
+        "next_action",
+        "--default-action",
+        "approve",
+        "--output-dir",
+        "./packages/logicpearl-try/artifacts/refund-eligibility-v1",
+        "--gate-id",
+        "refund_eligibility_v1",
+        "--compile"
+      ],
+      "redacted": true
+    },
+    "build_options": {
+      "action_column": "next_action",
+      "action_max_rules": null,
+      "action_priority": null,
+      "actions": [
+        "approve",
+        "deny",
+        "route_to_finance",
+        "route_to_review"
+      ],
+      "artifact_name": "refund_eligibility_v1",
+      "decision_mode": "standard",
+      "default_action": "approve",
+      "exclude_columns": [],
+      "feature_columns": null,
+      "feature_dictionary": "<redacted:sha256:5d12cb8f356f9932d7f41e263b3eeb7d9aebe9865430c86f22368d51b2e32b5a>",
+      "feature_governance": "<redacted:sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b>",
+      "no_match_action": null,
+      "pinned_rules": "<redacted:sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b>",
+      "priority_order": [
+        "route_to_review",
+        "deny",
+        "route_to_finance"
+      ],
+      "refine": false,
+      "rule_budget": {
+        "mode": "support_scaled",
+        "per_action": {
+          "deny": 256,
+          "route_to_finance": 256,
+          "route_to_review": 200
+        },
+        "priority_order": [
+          "route_to_review",
+          "deny",
+          "route_to_finance"
+        ],
+        "total_budget": 712
+      },
+      "source_manifest": "<redacted:sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b>"
+    },
+    "build_options_hash": "sha256:1911f99a666389141abe9b848bc60cc7d4dcbe2f87b847a140f68c24a553ac38",
+    "input_traces": [
+      {
+        "path": "./packages/logicpearl-try/scripts/refund-traces.csv",
+        "hash": "sha256:fcc705ee434eb297c5e2e996424b0fb3f222a6b6315f9d4d5a6f3d534fd08c15",
+        "row_count": 5760
+      }
+    ],
+    "feature_dictionary": {
+      "path": "./packages/logicpearl-try/scripts/refund-feature-dictionary.json",
+      "hash": "sha256:558a0d494cd5593d655bc56fa2907770fb92e9c8b71d8fac375078746360dfa5"
+    },
+    "plugins": [],
+    "environment": {
+      "arch": "aarch64",
+      "ci": false,
+      "family": "unix",
+      "os": "macos"
+    },
+    "generated_files": {
+      "pearl.ir.json": "sha256:6713173a3fd1715ff0ec8002407ee1c0ce64f0950bc1779a3320468890fb996b",
+      "pearl.wasm": "sha256:48bd82461c68174f8734c99872eb09a5c751b0d0f9af6cfb31c27ae44b331edc",
+      "pearl.wasm.meta.json": "sha256:3843896a3605b1df09900cb4121501856b27167a1624816e90f04e5d16fc68c3",
+      "refund_eligibility_v1.pearl": "sha256:590d5c3ceba74044a47636dbacd32c6febf03dd5ca1401865f877b2036551895"
+    },
+    "generated_file_notes": [
+      "build_report and artifact.json are omitted to avoid self-referential hashes; artifact manifests carry bundle file hashes for verification."
+    ],
+    "redactions": [
+      "build_command",
+      "build_options"
+    ],
+    "decision_trace_source": {
+      "kind": "decision_traces_path",
+      "value": "./packages/logicpearl-try/scripts/refund-traces.csv",
+      "hash": "sha256:fcc705ee434eb297c5e2e996424b0fb3f222a6b6315f9d4d5a6f3d534fd08c15"
+    },
+    "source_references": {}
+  }
+}

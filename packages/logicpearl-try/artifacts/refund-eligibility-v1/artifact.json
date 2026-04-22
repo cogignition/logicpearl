@@ -1,0 +1,75 @@
+{
+  "schema_version": "logicpearl.artifact_manifest.v1",
+  "artifact_id": "refund_eligibility_v1",
+  "artifact_kind": "action",
+  "engine_version": "0.1.5",
+  "ir_version": "1.0",
+  "created_at": "2026-04-22T17:21:30.684416Z",
+  "artifact_hash": "sha256:6713173a3fd1715ff0ec8002407ee1c0ce64f0950bc1779a3320468890fb996b",
+  "files": {
+    "ir": "pearl.ir.json",
+    "build_report": "action_report.json",
+    "wasm": "pearl.wasm",
+    "wasm_metadata": "pearl.wasm.meta.json",
+    "native": "refund_eligibility_v1.pearl"
+  },
+  "input_schema_hash": "sha256:51f689f87c20f9bc9074a53e42d08f0b592f3123edbe15d82385749ffcd931e9",
+  "build_options_hash": "sha256:1911f99a666389141abe9b848bc60cc7d4dcbe2f87b847a140f68c24a553ac38",
+  "file_hashes": {
+    "build_report": "sha256:ca6fbe7ebbe163d796e254fce57306d9623e42a157c9cabf64d93e461e672892",
+    "ir": "sha256:6713173a3fd1715ff0ec8002407ee1c0ce64f0950bc1779a3320468890fb996b",
+    "native": "sha256:590d5c3ceba74044a47636dbacd32c6febf03dd5ca1401865f877b2036551895",
+    "wasm": "sha256:48bd82461c68174f8734c99872eb09a5c751b0d0f9af6cfb31c27ae44b331edc",
+    "wasm_metadata": "sha256:3843896a3605b1df09900cb4121501856b27167a1624816e90f04e5d16fc68c3"
+  },
+  "bundle_hash": "sha256:22715a0e363052414201cd7776f0abc2fb85ab390c3f113dd298a4e45d623aab",
+  "action_column": "next_action",
+  "action_priority": [
+    "route_to_review",
+    "deny",
+    "route_to_finance"
+  ],
+  "action_rule_budget": {
+    "mode": "support_scaled",
+    "per_action": {
+      "deny": 256,
+      "route_to_finance": 256,
+      "route_to_review": 200
+    },
+    "priority_order": [
+      "route_to_review",
+      "deny",
+      "route_to_finance"
+    ],
+    "total_budget": 712
+  },
+  "actions": [
+    "approve",
+    "deny",
+    "route_to_finance",
+    "route_to_review"
+  ],
+  "bundle": {
+    "bundle_kind": "direct_pearl_bundle",
+    "cli_entrypoint": "artifact.json",
+    "deployables": [
+      {
+        "kind": "native_binary",
+        "path": "refund_eligibility_v1.pearl"
+      },
+      {
+        "kind": "wasm_module",
+        "path": "pearl.wasm"
+      }
+    ],
+    "metadata_files": [
+      {
+        "companion_to": "pearl.wasm",
+        "kind": "wasm_metadata",
+        "path": "pearl.wasm.meta.json"
+      }
+    ],
+    "primary_runtime": "native_binary"
+  },
+  "default_action": "approve"
+}

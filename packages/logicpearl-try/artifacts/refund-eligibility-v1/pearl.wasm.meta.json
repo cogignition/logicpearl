@@ -1,0 +1,254 @@
+{
+  "artifact_version": "1.0",
+  "engine_version": "0.1.5",
+  "artifact_hash": "sha256:6713173a3fd1715ff0ec8002407ee1c0ce64f0950bc1779a3320468890fb996b",
+  "decision_kind": "action",
+  "gate_id": "refund_eligibility_v1",
+  "action_policy_id": "refund_eligibility_v1",
+  "default_action": "approve",
+  "actions": [
+    "approve",
+    "deny",
+    "route_to_finance",
+    "route_to_review"
+  ],
+  "entrypoint": "logicpearl_eval_bitmask_slots_f64",
+  "status_entrypoint": "logicpearl_eval_status_slots_f64",
+  "allow_entrypoint": "logicpearl_eval_allow_slots_f64",
+  "feature_count": 8,
+  "missing_value": "NaN",
+  "features": [
+    {
+      "id": "customer_tenure_months",
+      "index": 0,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "days_since_purchase",
+      "index": 1,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "is_enterprise_customer",
+      "index": 2,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "item_is_digital",
+      "index": 3,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "item_used",
+      "index": 4,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "order_amount_usd",
+      "index": 5,
+      "type": "float",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "previous_refunds_90d",
+      "index": 6,
+      "type": "int",
+      "encoding": {
+        "kind": "numeric"
+      }
+    },
+    {
+      "id": "reason_category",
+      "index": 7,
+      "type": "string",
+      "encoding": {
+        "kind": "string_code"
+      }
+    }
+  ],
+  "derived_features": [],
+  "string_codes": {
+    "billing_error": 2,
+    "changed_mind": 1,
+    "defective": 0
+  },
+  "rules": [
+    {
+      "id": "rule_000",
+      "bit": 0,
+      "action": "route_to_review",
+      "priority": 0,
+      "label": "Days since purchase at or below 360.0 and Previous refunds in last 90 days above 3.0 and Refund reason category equals defective",
+      "message": "Days since purchase at or below 360.0 and Previous refunds in last 90 days above 3.0 and Refund reason category equals defective.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase above 360.0; Keep Previous refunds in last 90 days at or below 3.0; Change Refund reason category away from defective",
+      "features": [
+        {
+          "feature_id": "days_since_purchase",
+          "feature_label": "Days since purchase",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "previous_refunds_90d",
+          "feature_label": "Previous refunds in last 90 days",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "reason_category",
+          "feature_label": "Refund reason category",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    },
+    {
+      "id": "rule_001",
+      "bit": 1,
+      "action": "deny",
+      "priority": 1,
+      "label": "Days since purchase above 29.0 and Refund reason category equals changed_mind",
+      "message": "Days since purchase above 29.0 and Refund reason category equals changed_mind.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase at or below 29.0; Change Refund reason category away from changed_mind",
+      "features": [
+        {
+          "feature_id": "days_since_purchase",
+          "feature_label": "Days since purchase",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "reason_category",
+          "feature_label": "Refund reason category",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    },
+    {
+      "id": "rule_002",
+      "bit": 2,
+      "action": "deny",
+      "priority": 2,
+      "label": "Days since purchase at or above 366.0 and Refund reason category equals defective",
+      "message": "Days since purchase at or above 366.0 and Refund reason category equals defective.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase below 366.0; Change Refund reason category away from defective",
+      "features": [
+        {
+          "feature_id": "days_since_purchase",
+          "feature_label": "Days since purchase",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "reason_category",
+          "feature_label": "Refund reason category",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    },
+    {
+      "id": "rule_003",
+      "bit": 3,
+      "action": "deny",
+      "priority": 3,
+      "label": "Item is digital at or above 1.0 and Item has been used / consumed at or above 1.0 and Refund reason category equals changed_mind",
+      "message": "Item is digital at or above 1.0 and Item has been used / consumed at or above 1.0 and Refund reason category equals changed_mind.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Item is digital below 1.0; Keep Item has been used / consumed below 1.0; Change Refund reason category away from changed_mind",
+      "features": [
+        {
+          "feature_id": "item_is_digital",
+          "feature_label": "Item is digital",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "item_used",
+          "feature_label": "Item has been used / consumed",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        },
+        {
+          "feature_id": "reason_category",
+          "feature_label": "Refund reason category",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    },
+    {
+      "id": "rule_004",
+      "bit": 4,
+      "action": "route_to_finance",
+      "priority": 4,
+      "label": "Refund reason category equals billing_error",
+      "message": "Refund reason category equals billing_error.",
+      "severity": null,
+      "counterfactual_hint": "Change Refund reason category away from billing_error",
+      "features": [
+        {
+          "feature_id": "reason_category",
+          "feature_label": "Refund reason category",
+          "source_id": null,
+          "source_anchor": null,
+          "state_label": null,
+          "state_message": null,
+          "counterfactual_hint": null
+        }
+      ]
+    }
+  ],
+  "feature_extraction_prompt_template": "You are extracting a structured feature vector from a customer's refund request.\n\nReturn a JSON object with EXACTLY these 8 keys:\n  - customer_tenure_months: integer (months the customer has had an account; if unknown, 0)\n  - days_since_purchase: integer (days between purchase and today; if unknown, 0)\n  - is_enterprise_customer: 0 or 1 (1 if they mention enterprise/business account)\n  - item_is_digital: 0 or 1 (1 if they describe a download, license, subscription, or software)\n  - item_used: 0 or 1 (1 if they say they used, consumed, played, or downloaded it)\n  - order_amount_usd: number (order total in USD; if unknown, 0)\n  - previous_refunds_90d: integer (prior refunds in last 90 days; if unknown, 0)\n  - reason_category: one of \"defective\", \"changed_mind\", \"wrong_item\", \"duplicate_charge\", \"billing_error\"\n\nInfer reasonable defaults only when the text is silent. Do not invent specific numbers.\nIf a numeric field is not stated, use 0.\nIf the reason is unclear, pick the closest of the 5 categories (most often \"changed_mind\").\n"
+}

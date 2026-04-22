@@ -1,0 +1,40 @@
+{
+  "name": "@logicpearl/mcp",
+  "version": "0.1.0",
+  "description": "LogicPearl MCP server. Give Claude Desktop, Cursor, and other MCP hosts a deterministic rule-evaluation tool.",
+  "keywords": ["logicpearl", "mcp", "model-context-protocol", "rules", "wasm", "agent", "claude", "cursor", "deterministic"],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "logicpearl-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "artifacts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@logicpearl/browser": "^0.1.4",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "mri": "^1.2.0",
+    "picocolors": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LogicPearlHQ/logicpearl.git",
+    "directory": "packages/logicpearl-mcp"
+  },
+  "homepage": "https://logicpearl.com/developers/mcp"
+}

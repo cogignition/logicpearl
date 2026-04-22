@@ -1,0 +1,38 @@
+{
+  "feature_dictionary_version": "1.0",
+  "features": {
+    "days_since_purchase": {
+      "label": "Days since purchase",
+      "kind": "numeric"
+    },
+    "order_amount_usd": {
+      "label": "Order amount (USD)",
+      "kind": "numeric"
+    },
+    "customer_tenure_months": {
+      "label": "Customer tenure (months)",
+      "kind": "numeric"
+    },
+    "previous_refunds_90d": {
+      "label": "Previous refunds in last 90 days",
+      "kind": "numeric"
+    },
+    "reason_category": {
+      "label": "Refund reason category",
+      "kind": "categorical"
+    },
+    "item_is_digital": {
+      "label": "Item is digital",
+      "kind": "boolean"
+    },
+    "item_used": {
+      "label": "Item has been used / consumed",
+      "kind": "boolean"
+    },
+    "is_enterprise_customer": {
+      "label": "Enterprise customer",
+      "kind": "boolean"
+    }
+  },
+  "feature_extraction_prompt_template": "You are extracting features for a refund-eligibility decision.\nGiven free-form user text describing a refund request, extract these fields:\n\n- days_since_purchase (int): days between the user's purchase and today.\n- order_amount_usd (float): amount paid in USD. Default 0 if not stated.\n- customer_tenure_months (int): how long the customer has been a customer.\n  Default 0 if not stated.\n- previous_refunds_90d (int): refunds this customer got in the last 90 days.\n  Default 0 if not stated.\n- reason_category (string): one of 'defective', 'changed_mind', 'wrong_item',\n  'duplicate_charge', 'billing_error'. Pick the closest match.\n- item_is_digital (bool): true for digital goods (downloads, subscriptions,\n  streaming). False for physical items.\n- item_used (bool): true if the customer has used, consumed, or opened the item.\n- is_enterprise_customer (bool): true only if explicitly mentioned; otherwise false.\n\nReturn a JSON object with exactly these 8 fields. Do not add commentary."
+}

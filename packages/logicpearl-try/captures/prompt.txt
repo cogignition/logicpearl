@@ -1,0 +1,7 @@
+A customer has submitted a refund request. Based on the refund policy above, decide whether to approve or deny, and explain your reasoning in 2-3 sentences. The decision must be one of: APPROVE, DENY, ROUTE_TO_REVIEW, or ROUTE_TO_FINANCE.
+
+Customer's refund request (structured data):
+
+{{REQUEST_JSON}}
+
+Respond with your decision and reasoning.

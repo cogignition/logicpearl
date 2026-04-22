@@ -1,0 +1,423 @@
+{
+  "ir_version": "1.0",
+  "action_policy_id": "refund_eligibility_v1",
+  "action_policy_type": "priority_rules",
+  "action_column": "next_action",
+  "default_action": "approve",
+  "actions": [
+    "approve",
+    "deny",
+    "route_to_finance",
+    "route_to_review"
+  ],
+  "input_schema": {
+    "features": [
+      {
+        "id": "customer_tenure_months",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Customer tenure (months)",
+          "kind": "numeric"
+        }
+      },
+      {
+        "id": "days_since_purchase",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Days since purchase",
+          "kind": "numeric"
+        }
+      },
+      {
+        "id": "is_enterprise_customer",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Enterprise customer",
+          "kind": "boolean"
+        }
+      },
+      {
+        "id": "item_is_digital",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Item is digital",
+          "kind": "boolean"
+        }
+      },
+      {
+        "id": "item_used",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Item has been used / consumed",
+          "kind": "boolean"
+        }
+      },
+      {
+        "id": "order_amount_usd",
+        "type": "float",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Order amount (USD)",
+          "kind": "numeric"
+        }
+      },
+      {
+        "id": "previous_refunds_90d",
+        "type": "int",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Previous refunds in last 90 days",
+          "kind": "numeric"
+        }
+      },
+      {
+        "id": "reason_category",
+        "type": "string",
+        "description": null,
+        "values": null,
+        "min": null,
+        "max": null,
+        "editable": null,
+        "semantics": {
+          "label": "Refund reason category",
+          "kind": "categorical"
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rule_000",
+      "bit": 0,
+      "action": "route_to_review",
+      "priority": 0,
+      "when": {
+        "all": [
+          {
+            "feature": "days_since_purchase",
+            "op": "<=",
+            "value": 360.0
+          },
+          {
+            "feature": "previous_refunds_90d",
+            "op": ">",
+            "value": 3.0
+          },
+          {
+            "feature": "reason_category",
+            "op": "==",
+            "value": "defective"
+          }
+        ]
+      },
+      "label": "Days since purchase at or below 360.0 and Previous refunds in last 90 days above 3.0 and Refund reason category equals defective",
+      "message": "Days since purchase at or below 360.0 and Previous refunds in last 90 days above 3.0 and Refund reason category equals defective.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase above 360.0; Keep Previous refunds in last 90 days at or below 3.0; Change Refund reason category away from defective",
+      "verification_status": "pipeline_unverified",
+      "evidence": {
+        "schema_version": "logicpearl.rule_evidence.v1",
+        "support": {
+          "denied_trace_count": 320,
+          "allowed_trace_count": 0,
+          "example_traces": [
+            {
+              "trace_row_hash": "sha256:019a6b82a30d14c2fce17a751a5f5aaa2ca14926029824bfe9050191c50ffb38"
+            },
+            {
+              "trace_row_hash": "sha256:02a506dc282eeabda233ccb020817219d37ce22fa5716eba4b9b29745a3e8d5e"
+            },
+            {
+              "trace_row_hash": "sha256:032fe47c78965f52821dd824a97802f38a03852f5e238244866cef82b7a0b07c"
+            },
+            {
+              "trace_row_hash": "sha256:037047fc5ebeac70ee1853322c78c0e930090737597972ad31777047881e7974"
+            },
+            {
+              "trace_row_hash": "sha256:039f50e46b269bd724c5d1bb0e0ae3edf09405f7292b3fc2c005ecee34cc776e"
+            },
+            {
+              "trace_row_hash": "sha256:03c1d6a2d8d7029b602bf6cd9b2b928fc7b5a63abe7556b21963688cea36563e"
+            },
+            {
+              "trace_row_hash": "sha256:04327fd2192d72955da33e194143e57728f7a4875dec25d14575912c2906f82d"
+            },
+            {
+              "trace_row_hash": "sha256:0618ce8290519f4e9276b18d70e9f6878a7e7c3b55ea7a84fd1ec4a90591c19e"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule_001",
+      "bit": 1,
+      "action": "deny",
+      "priority": 1,
+      "when": {
+        "all": [
+          {
+            "feature": "days_since_purchase",
+            "op": ">",
+            "value": 29.0
+          },
+          {
+            "feature": "reason_category",
+            "op": "==",
+            "value": "changed_mind"
+          }
+        ]
+      },
+      "label": "Days since purchase above 29.0 and Refund reason category equals changed_mind",
+      "message": "Days since purchase above 29.0 and Refund reason category equals changed_mind.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase at or below 29.0; Change Refund reason category away from changed_mind",
+      "verification_status": "pipeline_unverified",
+      "evidence": {
+        "schema_version": "logicpearl.rule_evidence.v1",
+        "support": {
+          "denied_trace_count": 768,
+          "allowed_trace_count": 0,
+          "example_traces": [
+            {
+              "trace_row_hash": "sha256:0041eb42b5c8a2d3eab06b3013b23f63ddad64c2d46db705b506a0dd095cde23"
+            },
+            {
+              "trace_row_hash": "sha256:00f786d325f33383c0b557e5ee6ad061501e224419e87006bb1cd6764f1937db"
+            },
+            {
+              "trace_row_hash": "sha256:013fae0dee42531067f83eed472c24437b7e9aff406d09d62cbe9fc48b8ad8ef"
+            },
+            {
+              "trace_row_hash": "sha256:019a1f0eaca6d112394dfd7cf9a42136ec0ada9577695a4e8bc90a19242bf166"
+            },
+            {
+              "trace_row_hash": "sha256:01e1a099b54a6d1b760ce45658d4b2d169f6507a62eadf239d146c5ecd81ed2d"
+            },
+            {
+              "trace_row_hash": "sha256:01e222d304f34c22c0188471a109b715b537cb18dfee8f0fddde93c9da3a3af9"
+            },
+            {
+              "trace_row_hash": "sha256:0206ac077b38c4a4b11572a9d4ce95dcf6a4a970eda2db315d8a469f9cd8d72f"
+            },
+            {
+              "trace_row_hash": "sha256:02710409df1f795b57b678fa3ecc6747711b6bb331df0c9095a05164afb56125"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule_002",
+      "bit": 2,
+      "action": "deny",
+      "priority": 2,
+      "when": {
+        "all": [
+          {
+            "feature": "days_since_purchase",
+            "op": ">=",
+            "value": 366.0
+          },
+          {
+            "feature": "reason_category",
+            "op": "==",
+            "value": "defective"
+          }
+        ]
+      },
+      "label": "Days since purchase at or above 366.0 and Refund reason category equals defective",
+      "message": "Days since purchase at or above 366.0 and Refund reason category equals defective.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Days since purchase below 366.0; Change Refund reason category away from defective",
+      "verification_status": "pipeline_unverified",
+      "evidence": {
+        "schema_version": "logicpearl.rule_evidence.v1",
+        "support": {
+          "denied_trace_count": 192,
+          "allowed_trace_count": 0,
+          "example_traces": [
+            {
+              "trace_row_hash": "sha256:01acb6e45f0aca4358ad31e407b9390851a225259792405961057d4280eac8ad"
+            },
+            {
+              "trace_row_hash": "sha256:03a7dbdcb128d99611f61d2e9cab0ac9ce926fbfba735417d6c5c9d440b2835c"
+            },
+            {
+              "trace_row_hash": "sha256:0423592542db5bd4026a8809126228d15e014e02c8ee7ed11e60c1cd218a0697"
+            },
+            {
+              "trace_row_hash": "sha256:05054eb0c43ae38d826f08cca7f25953d5908a27d483c0b1cf4e0dad056c4630"
+            },
+            {
+              "trace_row_hash": "sha256:08cce2995a345df9c70144eab6deb7ca7cbc9bde102a1eb65a790f1a78959661"
+            },
+            {
+              "trace_row_hash": "sha256:0f00a77cd71e639436f8ad76ebdea79f2a1e4db791745c4e1e2447a84e803273"
+            },
+            {
+              "trace_row_hash": "sha256:120f107304d483aedb0690f87e3790bb70386ecbe6307ef4602c3eca1198bdc8"
+            },
+            {
+              "trace_row_hash": "sha256:14007205f9f76b9be2993e9b3898d513c403ead5f9010db2f74da61ee25f4c56"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule_003",
+      "bit": 3,
+      "action": "deny",
+      "priority": 3,
+      "when": {
+        "all": [
+          {
+            "feature": "item_is_digital",
+            "op": ">=",
+            "value": 1.0
+          },
+          {
+            "feature": "item_used",
+            "op": ">=",
+            "value": 1.0
+          },
+          {
+            "feature": "reason_category",
+            "op": "==",
+            "value": "changed_mind"
+          }
+        ]
+      },
+      "label": "Item is digital at or above 1.0 and Item has been used / consumed at or above 1.0 and Refund reason category equals changed_mind",
+      "message": "Item is digital at or above 1.0 and Item has been used / consumed at or above 1.0 and Refund reason category equals changed_mind.",
+      "severity": null,
+      "counterfactual_hint": "Break at least one condition: Keep Item is digital below 1.0; Keep Item has been used / consumed below 1.0; Change Refund reason category away from changed_mind",
+      "verification_status": "pipeline_unverified",
+      "evidence": {
+        "schema_version": "logicpearl.rule_evidence.v1",
+        "support": {
+          "denied_trace_count": 288,
+          "allowed_trace_count": 0,
+          "example_traces": [
+            {
+              "trace_row_hash": "sha256:0004bbc09e10853764e0ae1c090e97922edd9bfdb1bb3f48b456c4bb76b9f201"
+            },
+            {
+              "trace_row_hash": "sha256:01e1a099b54a6d1b760ce45658d4b2d169f6507a62eadf239d146c5ecd81ed2d"
+            },
+            {
+              "trace_row_hash": "sha256:02be4ba36f15718d1f4bfa53d26fc37051d5709c7edafebba34e7e02b1853282"
+            },
+            {
+              "trace_row_hash": "sha256:03c883f6e264bd016f0eb3d6902ddb9ef9f42c32f37fa81ad7e9e8ab00b622b7"
+            },
+            {
+              "trace_row_hash": "sha256:046b2829daa5a7b773784fd118fa85e0e09844f96eea613e566ce305412aad12"
+            },
+            {
+              "trace_row_hash": "sha256:0551e86732743d20bddc1daea89ecd9a2e7a82322a435e21ecf78cf3f1014ddf"
+            },
+            {
+              "trace_row_hash": "sha256:056cdd69d1408a39b22e223eb5869c6e3f8049bdf6ada5e3791911c26de5ebc9"
+            },
+            {
+              "trace_row_hash": "sha256:06dd14c09420784f2478ad47e46c40895eec8768c8c01fe50364860a9e203054"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "rule_004",
+      "bit": 4,
+      "action": "route_to_finance",
+      "priority": 4,
+      "when": {
+        "feature": "reason_category",
+        "op": "==",
+        "value": "billing_error"
+      },
+      "label": "Refund reason category equals billing_error",
+      "message": "Refund reason category equals billing_error.",
+      "severity": null,
+      "counterfactual_hint": "Change Refund reason category away from billing_error",
+      "verification_status": "pipeline_unverified",
+      "evidence": {
+        "schema_version": "logicpearl.rule_evidence.v1",
+        "support": {
+          "denied_trace_count": 1152,
+          "allowed_trace_count": 0,
+          "example_traces": [
+            {
+              "trace_row_hash": "sha256:009cf4a89fbc8a0032d5515cca1edf5ee0251131fc9f848a41bc8d9e5cd23097"
+            },
+            {
+              "trace_row_hash": "sha256:00b71bf4d9e6f3a60e5c819a7e6c7f900cb89280283373cf6e20c3cecb5da5df"
+            },
+            {
+              "trace_row_hash": "sha256:01650f0f90f7e155f622ef500c48c96581544b68734a62382dd784aa597e7aaf"
+            },
+            {
+              "trace_row_hash": "sha256:0182e8c3cae96a0fa89543bed70c805074d29619d4915833d96c797d391d5d0e"
+            },
+            {
+              "trace_row_hash": "sha256:01947e1538db81922a85b0a441f6eac377f47a7404be05d1aa375fece64627d3"
+            },
+            {
+              "trace_row_hash": "sha256:01df8342dbe3116303f9638935ae63d279bbd871c02d1b1ab4949fc8ce392730"
+            },
+            {
+              "trace_row_hash": "sha256:01ef92be94db3a7c9c0cb17f8287c7043f1a8814db7e09c28e366941234b852a"
+            },
+            {
+              "trace_row_hash": "sha256:01f56f81be6e02594fc043eeae2137fc1ee3fa1cb3a85939b43b74edc094af86"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "evaluation": {
+    "selection": "first_match"
+  },
+  "verification": {
+    "domain_constraints": null,
+    "correctness_scope": "training parity against 5760 action traces",
+    "verification_summary": null
+  },
+  "provenance": null
+}

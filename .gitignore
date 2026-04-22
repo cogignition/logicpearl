@@ -38,3 +38,7 @@ legacy/
 
 # Local Pearlkeeper memory/state
 .pearlkeeper/
+
+# Node
+node_modules/
+packages/*/dist/
