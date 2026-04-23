@@ -55,6 +55,11 @@ pub struct ActionLearningOptions {
     /// Maximum atoms per discovered conjunction. Propagates into every
     /// per-action gate build underneath; `None` keeps logicpearl's default.
     pub max_conditions: Option<usize>,
+    /// Strategy baked into the emitted IR's `evaluation.selection`. The
+    /// runtime evaluator reads this to decide between first-match and
+    /// weighted-vote semantics. `None` keeps the historical first-match
+    /// default so existing callers don't shift behaviour silently.
+    pub action_selection: Option<ActionSelectionStrategy>,
     pub output_dir: PathBuf,
     pub refine: bool,
     pub pinned_rules: Option<PathBuf>,
@@ -365,7 +370,10 @@ pub fn learn_action_policy_with_progress(
         input_schema,
         rules: action_rules,
         evaluation: ActionEvaluationConfig {
-            selection: ActionSelectionStrategy::FirstMatch,
+            selection: options
+                .action_selection
+                .clone()
+                .unwrap_or(ActionSelectionStrategy::FirstMatch),
         },
         verification: Some(VerificationConfig {
             domain_constraints: None,

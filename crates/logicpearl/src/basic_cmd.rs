@@ -78,6 +78,24 @@ pub(crate) enum DiscoveryDecisionModeArg {
     Review,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActionSelectionArg {
+    FirstMatch,
+    WeightedVote,
+}
+
+impl From<ActionSelectionArg> for logicpearl_ir::ActionSelectionStrategy {
+    fn from(value: ActionSelectionArg) -> Self {
+        match value {
+            ActionSelectionArg::FirstMatch => logicpearl_ir::ActionSelectionStrategy::FirstMatch,
+            ActionSelectionArg::WeightedVote => {
+                logicpearl_ir::ActionSelectionStrategy::WeightedVote
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SelectionPolicyArg {
@@ -256,6 +274,9 @@ pub(crate) struct BuildArgs {
     /// Maximum atoms per discovered boolean conjunction (default 3). Raising to 4 or 5 lets rules express deeper feature interactions at the cost of a larger Z3 search per synthesis call.
     #[arg(long, help_heading = "Advanced Discovery")]
     pub max_conditions: Option<usize>,
+    /// How the runtime evaluator chooses among matched action rules. `first-match` (the default) returns the priority-earliest rule's action; `weighted-vote` tallies matched rules by training support so a single outlier rule can't dominate when multiple rules agree on a different action.
+    #[arg(long, value_enum, help_heading = "Advanced Discovery")]
+    pub action_selection: Option<ActionSelectionArg>,
     /// Proposal acceptance policy. Defaults to auto-adopt-safe for binary gate builds.
     #[arg(long, value_enum, help_heading = "Advanced Discovery")]
     pub proposal_policy: Option<ProposalPolicyArg>,

@@ -203,6 +203,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             action_priority: args.action_priority.clone(),
             action_max_rules: args.action_max_rules,
             max_conditions: args.max_conditions,
+            action_selection: args.action_selection.map(Into::into),
             output_dir: output_dir.clone(),
             refine: args.refine,
             pinned_rules: args.pinned_rules.clone(),
@@ -237,6 +238,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "priority_order": &priority_order,
         "action_max_rules": args.action_max_rules,
         "max_conditions": args.max_conditions,
+        "action_selection": args.action_selection,
         "rule_budget": &rule_budget,
         "refine": args.refine,
         "pinned_rules": args

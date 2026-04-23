@@ -277,7 +277,14 @@ pub struct ActionEvaluationConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionSelectionStrategy {
+    /// Priority-ordered first rule that matches wins. The default.
     FirstMatch,
+    /// Every matched rule casts a vote weighted by its training support
+    /// (``rule.evidence.support.denied_trace_count``). The action with
+    /// the largest total weight wins; ties are broken by priority.
+    /// Rules without evidence contribute a vote of 1 so pinned or
+    /// hand-authored rules still participate.
+    WeightedVote,
 }
 
 /// Optional verification metadata attached to a gate artifact.

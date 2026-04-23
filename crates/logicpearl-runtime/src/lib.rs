@@ -10,9 +10,9 @@
 pub use logicpearl_core::{artifact_hash, sha256_prefixed};
 use logicpearl_core::{LogicPearlError, Result, RuleMask};
 use logicpearl_ir::{
-    derived_feature_evaluation_order, ComparisonExpression, ComparisonOperator, ComparisonValue,
-    DerivedFeatureOperator, Expression, FeatureDefinition, InputSchema, LogicPearlActionIr,
-    LogicPearlGateIr,
+    derived_feature_evaluation_order, ActionSelectionStrategy, ComparisonExpression,
+    ComparisonOperator, ComparisonValue, DerivedFeatureOperator, Expression, FeatureDefinition,
+    InputSchema, LogicPearlActionIr, LogicPearlGateIr,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
@@ -199,8 +199,9 @@ pub fn evaluate_action_policy(
 
     let mut matched_rules = Vec::new();
     let mut candidate_actions = Vec::new();
+    let mut weighted_votes: HashMap<String, u64> = HashMap::new();
     let mut bitmask = RuleMask::zero();
-    for rule in rules {
+    for rule in &rules {
         if !evaluate_expression(&rule.predicate, &features)? {
             continue;
         }
@@ -211,6 +212,17 @@ pub fn evaluate_action_policy(
         {
             candidate_actions.push(rule.action.clone());
         }
+        // Weighted-vote strategy needs a per-rule weight. We use
+        // `denied_trace_count` — the number of training rows that both
+        // fired this rule AND carried this action as the correct label.
+        // Rules without evidence (e.g. pinned rules) contribute a weight
+        // of 1 so they still participate.
+        let weight = rule
+            .evidence
+            .as_ref()
+            .map(|e| e.support.denied_trace_count.max(1) as u64)
+            .unwrap_or(1);
+        *weighted_votes.entry(rule.action.clone()).or_insert(0) += weight;
         matched_rules.push(ActionRuleMatch {
             id: rule.id.clone(),
             bit: rule.bit,
@@ -225,12 +237,33 @@ pub fn evaluate_action_policy(
     }
 
     let no_match = candidate_actions.is_empty();
-    let action = candidate_actions.first().cloned().unwrap_or_else(|| {
+    let action = if no_match {
         policy
             .no_match_action
             .clone()
             .unwrap_or_else(|| policy.default_action.clone())
-    });
+    } else {
+        match policy.evaluation.selection {
+            ActionSelectionStrategy::FirstMatch => candidate_actions[0].clone(),
+            ActionSelectionStrategy::WeightedVote => {
+                // Winner is the action with the largest total weighted
+                // vote. Ties break by priority order — whichever action
+                // shows up first in `candidate_actions` (which mirrors
+                // rules iterated in priority order) wins the tie.
+                candidate_actions
+                    .iter()
+                    .max_by_key(|a| {
+                        (
+                            *weighted_votes.get(*a).unwrap_or(&0),
+                            usize::MAX
+                                - candidate_actions.iter().position(|x| x == *a).unwrap_or(0),
+                        )
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| candidate_actions[0].clone())
+            }
+        }
+    };
     let defaulted = no_match;
     let selected_rules = matched_rules
         .iter()
@@ -815,6 +848,101 @@ mod tests {
         assert!(no_match.no_match);
         assert!(no_match.selected_rules.is_empty());
         assert!(no_match.candidate_actions.is_empty());
+    }
+
+    #[test]
+    fn weighted_vote_picks_action_with_largest_summed_support() {
+        // Two rules match the same input:
+        //   rule A: action=water, support=3 (low-support, first by priority)
+        //   rule B: action=fertilize, support=40 (high-support, second by priority)
+        // First-match would pick water; weighted-vote should pick fertilize.
+        let policy = LogicPearlActionIr {
+            ir_version: "1.0".to_string(),
+            action_policy_id: "vote_test".to_string(),
+            action_policy_type: "priority_rules".to_string(),
+            action_column: "next_action".to_string(),
+            default_action: "do_nothing".to_string(),
+            no_match_action: None,
+            actions: vec![
+                "do_nothing".to_string(),
+                "water".to_string(),
+                "fertilize".to_string(),
+            ],
+            input_schema: InputSchema {
+                features: vec![FeatureDefinition {
+                    id: "x".to_string(),
+                    feature_type: FeatureType::Int,
+                    description: None,
+                    values: None,
+                    min: None,
+                    max: None,
+                    editable: None,
+                    semantics: None,
+                    governance: None,
+                    derived: None,
+                }],
+            },
+            rules: vec![
+                ActionRuleDefinition {
+                    id: "rule_000".to_string(),
+                    bit: 0,
+                    action: "water".to_string(),
+                    priority: 0,
+                    predicate: Expression::Comparison(ComparisonExpression {
+                        feature: "x".to_string(),
+                        op: ComparisonOperator::Eq,
+                        value: ComparisonValue::Literal(json!(1)),
+                    }),
+                    label: None,
+                    message: None,
+                    severity: None,
+                    counterfactual_hint: None,
+                    verification_status: None,
+                    evidence: Some(logicpearl_ir::RuleEvidence {
+                        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+                        support: logicpearl_ir::RuleSupportEvidence {
+                            denied_trace_count: 3,
+                            allowed_trace_count: 0,
+                            example_traces: vec![],
+                        },
+                    }),
+                },
+                ActionRuleDefinition {
+                    id: "rule_001".to_string(),
+                    bit: 1,
+                    action: "fertilize".to_string(),
+                    priority: 1,
+                    predicate: Expression::Comparison(ComparisonExpression {
+                        feature: "x".to_string(),
+                        op: ComparisonOperator::Eq,
+                        value: ComparisonValue::Literal(json!(1)),
+                    }),
+                    label: None,
+                    message: None,
+                    severity: None,
+                    counterfactual_hint: None,
+                    verification_status: None,
+                    evidence: Some(logicpearl_ir::RuleEvidence {
+                        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+                        support: logicpearl_ir::RuleSupportEvidence {
+                            denied_trace_count: 40,
+                            allowed_trace_count: 0,
+                            example_traces: vec![],
+                        },
+                    }),
+                },
+            ],
+            evaluation: ActionEvaluationConfig {
+                selection: ActionSelectionStrategy::WeightedVote,
+            },
+            verification: None,
+            provenance: None,
+        };
+        policy.validate().expect("policy validates");
+        let features = HashMap::from([("x".to_string(), json!(1))]);
+        let result = evaluate_action_policy(&policy, &features).expect("eval");
+        assert_eq!(result.action, "fertilize", "higher-support rule should win");
+        assert_eq!(result.candidate_actions, vec!["water", "fertilize"]);
     }
 
     #[test]
