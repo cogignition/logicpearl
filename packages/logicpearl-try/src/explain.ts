@@ -123,17 +123,36 @@ export function renderExplain(result: RunResult, captures: CaptureFile): string 
   parts.push('');
   parts.push(hr());
   parts.push('');
+  // Tally LLM verdicts to surface the agree/disagree contrast.
+  const verdictPattern = /(APPROVE|DENY|ROUTE_TO_REVIEW|ROUTE_TO_FINANCE)/;
+  const llmVerdicts = captures.runs.map((r) => {
+    const m = verdictPattern.exec(r.response);
+    return m ? m[1] : 'unclear';
+  });
+  const agreed = llmVerdicts.filter((v) => v === result.verdict).length;
+  const disagreed = captures.runs.length - agreed;
+
   parts.push(pc.bold('What just happened:'));
   parts.push('');
   parts.push(pc.dim('  The LLM took ') + pc.bold(`~${avgMs} ms`) + pc.dim(' per run (5 runs, total ~') +
-    pc.bold(`${Math.round(totalMs)} ms`) + pc.dim('), and its prose varies every time.'));
-  parts.push(pc.dim('  LogicPearl took ') + pc.bold(`${result.latencyMs} ms`) + pc.dim(' once, and returns the exact same bitmask every run.'));
-  parts.push(pc.dim('  Same input → same verdict, with a signed artifact hash you can replay years later.'));
+    pc.bold(`${Math.round(totalMs)} ms`) + pc.dim(').'));
+  parts.push(pc.dim('  LogicPearl took ') + pc.bold(`${result.latencyMs} ms`) + pc.dim(' once, and returns the same bitmask every run.'));
   parts.push('');
-  parts.push(pc.dim('  When the LLM agrees with the engine (as it does here on a clear case), you still pay:'));
-  parts.push(pc.dim('    • ') + pc.bold('~10,000× the latency'));
-  parts.push(pc.dim('    • ') + pc.bold('~$0.005 per call') + pc.dim(' (LogicPearl is free after compile)'));
-  parts.push(pc.dim('    • no replayable trace') + pc.dim(' — you can re-run the same prompt tomorrow and get different prose'));
+  if (disagreed === captures.runs.length) {
+    parts.push(pc.dim('  Of 5 LLM runs, ') + pc.bold(pc.red(`all ${disagreed} disagreed`)) + pc.dim(' with the compiled artifact.'));
+    parts.push(pc.dim('  The LLM read the policy prose and applied it one way; the artifact enforces'));
+    parts.push(pc.dim('  the compiled policy another way. Both are "reasonable." One is deterministic.'));
+  } else if (disagreed > 0) {
+    parts.push(pc.dim('  Of 5 LLM runs, ') + pc.bold(pc.red(`${disagreed} disagreed`)) + pc.dim(` with the artifact; ${agreed} agreed.`));
+    parts.push(pc.dim('  Same input. Same policy. Different verdicts. No way to replay the exact decision later.'));
+  } else {
+    parts.push(pc.dim('  All 5 LLM runs agreed with the artifact on this case — but the prose varies'));
+    parts.push(pc.dim('  every time, and you paid latency + tokens for an answer you could have cached.'));
+  }
+  parts.push('');
+  parts.push(pc.dim('  Pick your policy of record:'));
+  parts.push(pc.dim('    • ') + pc.bold('Artifact: ') + pc.dim(`signed, diff-able, `) + pc.bold(`~${Math.round(avgMs / Math.max(result.latencyMs, 0.01))}× faster`) + pc.dim(`, $0 per call, byte-identical every run.`));
+  parts.push(pc.dim('    • ') + pc.bold('LLM: ') + pc.dim('reads prose, handles novelty, but ') + pc.bold(`can disagree with itself and with you`) + pc.dim('.'));
   parts.push('');
   parts.push(hr());
   parts.push('');

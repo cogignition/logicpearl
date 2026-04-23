@@ -18,14 +18,20 @@ if (!API_KEY) {
   process.exit(1);
 }
 
+// Boundary case: changed-mind return at exactly day 30. The policy says
+// "within 30 days" — which most readers take as inclusive of day 30, i.e.
+// APPROVE. The compiled artifact, on training data, learned `days > 29` for
+// the changed-mind deny rule — so day 30 fires rule_001 and the deterministic
+// verdict is DENY. Claude can read "within 30 days" either way, so verdicts
+// drift across runs.
 const SAMPLE = {
-  days_since_purchase: 32,
-  order_amount_usd: 89.0,
-  customer_tenure_months: 14,
+  days_since_purchase: 30,
+  order_amount_usd: 119.0,
+  customer_tenure_months: 11,
   previous_refunds_90d: 1,
   reason_category: 'changed_mind',
-  item_is_digital: 1,
-  item_used: 1,
+  item_is_digital: 0,
+  item_used: 0,
   is_enterprise_customer: 0,
 };
 

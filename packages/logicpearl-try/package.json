@@ -10,8 +10,11 @@
   },
   "files": [
     "dist",
-    "artifacts",
-    "captures",
+    "artifacts/**/*.json",
+    "artifacts/**/*.wasm",
+    "captures/*.json",
+    "captures/*.md",
+    "captures/*.txt",
     "README.md"
   ],
   "scripts": {

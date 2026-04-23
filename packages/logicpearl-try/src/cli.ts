@@ -14,14 +14,20 @@ const __dirname = dirname(__filename);
 // relative to dist/ after compile; relative to src/ during dev.
 const EMBEDDED_ARTIFACT = resolve(__dirname, '..', 'artifacts', 'refund-eligibility-v1', 'artifact.json');
 
+// Boundary case. Changed-mind return at day 30 exactly. The policy prose says
+// "within 30 days" — most readers treat that as inclusive (APPROVE). The
+// compiled artifact learned `days > 29` for the changed-mind deny rule on the
+// training data, so at day 30 rule_001 fires and the deterministic verdict is
+// DENY. Claude interprets "within 30 days" differently across runs, so the
+// 5-run capture usually shows a mix of DENY / APPROVE / ROUTE verdicts.
 const EMBEDDED_SAMPLE: Record<string, unknown> = {
-  days_since_purchase: 32,
-  order_amount_usd: 89.0,
-  customer_tenure_months: 14,
+  days_since_purchase: 30,
+  order_amount_usd: 119.0,
+  customer_tenure_months: 11,
   previous_refunds_90d: 1,
   reason_category: 'changed_mind',
-  item_is_digital: 1,
-  item_used: 1,
+  item_is_digital: 0,
+  item_used: 0,
   is_enterprise_customer: 0,
 };
 

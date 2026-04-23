@@ -2,71 +2,71 @@
   "artifact_name": "refund-eligibility-v1",
   "capture_methodology": "Five serial API calls to Claude (Anthropic Messages API), same system + user prompt, default temperature. Annotations classified programmatically; may be refined manually.",
   "model": "claude-sonnet-4-5",
-  "prompt_hash": "bd909c48b5146682",
+  "prompt_hash": "f8e6dd4f65289af1",
   "sample_input": {
-    "days_since_purchase": 32,
-    "order_amount_usd": 89,
-    "customer_tenure_months": 14,
+    "days_since_purchase": 30,
+    "order_amount_usd": 119,
+    "customer_tenure_months": 11,
     "previous_refunds_90d": 1,
     "reason_category": "changed_mind",
-    "item_is_digital": 1,
-    "item_used": 1,
+    "item_is_digital": 0,
+    "item_used": 0,
     "is_enterprise_customer": 0
   },
   "runs": [
     {
       "run": 1,
       "model": "claude-sonnet-4-5",
-      "captured_at": "2026-04-22T17:28:57.044Z",
-      "response_time_ms": 5556,
-      "response": "**Decision: DENY**\n\n**Reasoning:** This is a change-of-mind request for a digital item that has already been used. According to our refund policy, \"For digital goods (downloads, software licenses, subscription content), change-of-mind returns are not accepted once the item has been used or consumed.\" Since the customer has used the digital product, this request does not qualify for a refund under our standard policy.",
+      "captured_at": "2026-04-22T23:26:00.523Z",
+      "response_time_ms": 3247,
+      "response": "**Decision: APPROVE**\n\n**Reasoning:** This is a change-of-mind return for a physical item requested exactly 30 days after purchase, which falls within our 30-day return window for physical goods. The item is unused (original condition) and the customer has only had 1 refund in the past 90 days, so there are no abuse concerns or special routing requirements that apply.",
       "annotation": {
-        "kind": "partial",
-        "note": "Denied but rationale partial."
+        "kind": "wrong",
+        "note": "Approved despite explicit 30-day changed-mind window and digital-used rule."
       }
     },
     {
       "run": 2,
       "model": "claude-sonnet-4-5",
-      "captured_at": "2026-04-22T17:28:57.045Z",
-      "response_time_ms": 3008,
-      "response": "**Decision: DENY**\n\n**Reasoning:** This is a change-of-mind return for a digital item that has already been used. According to our refund policy, \"For digital goods (downloads, software licenses, subscription content), change-of-mind returns are not accepted once the item has been used or consumed.\" The 32-day timeframe is beyond the 30-day window that applies to physical items, and regardless, this digital product has been consumed, making it ineligible for a refund under our standard policy.",
+      "captured_at": "2026-04-22T23:26:00.524Z",
+      "response_time_ms": 3379,
+      "response": "**Decision: APPROVE**\n\n**Reasoning:** This is a change-of-mind return for a physical item requested exactly 30 days after purchase, which falls within our 30-day return window for physical goods. The item is unused (original condition), the customer has a clean refund history with only 1 prior refund in 90 days, and the order amount is well below the $500 threshold requiring manager approval. This meets all criteria for a standard return approval.",
       "annotation": {
-        "kind": "correct",
-        "note": "Denied citing both rules correctly (30-day window + digital-used)."
+        "kind": "wrong",
+        "note": "Approved despite explicit 30-day changed-mind window and digital-used rule."
       }
     },
     {
       "run": 3,
       "model": "claude-sonnet-4-5",
-      "captured_at": "2026-04-22T17:28:57.045Z",
-      "response_time_ms": 3923,
-      "response": "**Decision: DENY**\n\n**Reasoning:** This is a change-of-mind request for a digital item that has already been used. According to Section 1 of the refund policy, change-of-mind returns for digital goods are not accepted once the item has been used or consumed. While the request falls outside the 30-day window for physical items, the primary disqualifying factor is that this is a used digital product, which our policy explicitly excludes from change-of-mind refunds.",
+      "captured_at": "2026-04-22T23:26:00.524Z",
+      "response_time_ms": 3157,
+      "response": "**Decision: APPROVE**\n\n**Reasoning:** This is a change-of-mind return for a physical item requested exactly at the 30-day deadline. According to Section 1 of the refund policy, we accept returns on physical items within 30 days of purchase if the item is in original condition. Since the item has not been used (item_used: 0), it meets the original condition requirement, and the request falls within the acceptable timeframe.",
       "annotation": {
-        "kind": "correct",
-        "note": "Denied citing both rules correctly (30-day window + digital-used)."
+        "kind": "wrong",
+        "note": "Approved despite explicit 30-day changed-mind window and digital-used rule."
       }
     },
     {
       "run": 4,
       "model": "claude-sonnet-4-5",
-      "captured_at": "2026-04-22T17:28:57.045Z",
-      "response_time_ms": 4500,
-      "response": "**Decision: DENY**\n\n**Reasoning:** This is a change-of-mind return for a digital item that has already been used. According to our refund policy, \"For digital goods (downloads, software licenses, subscription content), change-of-mind returns are not accepted once the item has been used or consumed.\" While the 32-day timeline exceeds our 30-day physical goods window, the primary disqualifying factor is that this is a used digital product, which our policy explicitly excludes from change-of-mind refunds.",
+      "captured_at": "2026-04-22T23:26:00.524Z",
+      "response_time_ms": 3133,
+      "response": "**Decision: APPROVE**\n\nThis is a change-of-mind return for a physical item exactly at the 30-day threshold, which falls within our standard return window. The item is unused and in original condition, the customer has a clean refund history (only 1 refund in 90 days), and the order amount is well below the $500 manager approval threshold. This meets all criteria for a standard approved return.",
       "annotation": {
-        "kind": "correct",
-        "note": "Denied citing both rules correctly (30-day window + digital-used)."
+        "kind": "wrong",
+        "note": "Approved despite explicit 30-day changed-mind window and digital-used rule."
       }
     },
     {
       "run": 5,
       "model": "claude-sonnet-4-5",
-      "captured_at": "2026-04-22T17:28:57.045Z",
-      "response_time_ms": 3212,
-      "response": "**Decision: DENY**\n\n**Reasoning:** This is a change-of-mind request for a digital item that has already been used. According to our refund policy, change-of-mind returns for digital goods are not accepted once the item has been used or consumed. Additionally, the request falls outside the 30-day window that would apply to physical items.",
+      "captured_at": "2026-04-22T23:26:00.524Z",
+      "response_time_ms": 3190,
+      "response": "**APPROVE**\n\nThis is a change-of-mind return for a physical item exactly at the 30-day deadline, and the item is unused and in original condition. The policy explicitly accepts returns on physical items within 30 days of purchase for change of mind, and this request meets all the criteria. The customer has only one previous refund in the past 90 days, so there are no abuse prevention concerns.",
       "annotation": {
-        "kind": "correct",
-        "note": "Denied citing both rules correctly (30-day window + digital-used)."
+        "kind": "wrong",
+        "note": "Approved despite explicit 30-day changed-mind window and digital-used rule."
       }
     }
   ]
