@@ -1,6 +1,6 @@
 {
   "name": "@logicpearl/try",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Kick the tires on LogicPearl. One command, one deterministic verdict, zero setup. See how a compiled rule artifact compares to an LLM.",
   "keywords": ["logicpearl", "rules", "wasm", "agent", "mcp", "deterministic", "llm"],
   "license": "MIT",

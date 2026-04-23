@@ -25,6 +25,20 @@ export function renderDefault(result: RunResult, opts: RenderOptions = {}): stri
     'artifact';
   const gateId = artifact.metadata.gate_id ?? 'unknown';
 
+  // Orient a first-time reader in 3 lines before any data.
+  const preamble = opts.usingEmbedded
+    ? [
+        pc.bold(pc.cyan('LogicPearl')) + pc.dim(' — a deterministic rule engine for agents and services.'),
+        pc.dim('Same input always produces the same verdict, with a signed rule trace.'),
+        pc.dim('This runs the bundled ') + pc.bold('sample refund policy') + pc.dim(' as a demo.') +
+          pc.dim(' Your own policies compile to the same artifact shape.'),
+        '',
+      ]
+    : [
+        pc.bold(pc.cyan('LogicPearl')) + pc.dim(' — evaluating your artifact.'),
+        '',
+      ];
+
   const headerBox = box('LogicPearl · try  v' + VERSION, [
     '',
     `${pc.dim('Artifact')}   ${pc.bold(name)}`,
@@ -36,9 +50,12 @@ export function renderDefault(result: RunResult, opts: RenderOptions = {}): stri
   ]);
 
   const parts = [
+    ...preamble,
     headerBox,
     '',
-    pc.dim('Input:'),
+    pc.dim(opts.usingEmbedded
+      ? 'Sample input (a real customer request, shipped with the package):'
+      : 'Input:'),
     formatFacts(facts),
     '',
     hr(),
