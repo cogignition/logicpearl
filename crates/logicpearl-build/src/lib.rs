@@ -359,7 +359,7 @@ pub fn learn_action_policy_with_progress(
         }
     }
 
-    let action_policy = LogicPearlActionIr {
+    let mut action_policy = LogicPearlActionIr {
         ir_version: "1.0".to_string(),
         action_policy_id: options.artifact_name.clone(),
         action_policy_type: "priority_rules".to_string(),
@@ -386,6 +386,37 @@ pub fn learn_action_policy_with_progress(
         provenance: None,
     };
     action_policy.validate()?;
+
+    // Vote-aware selection: per-action greedy is priority-aware — later
+    // rules were chosen as residual coverage over earlier ones, assuming
+    // first-match will fire the earlier one. Under weighted-vote those
+    // later rules also vote, and their combined votes can drag verdicts
+    // off the correct action. We rebuild the plan forward from empty,
+    // adding rules one at a time in order of weighted-vote training-
+    // parity improvement, then do a single backward pass to drop any
+    // residual rule that no longer pays its way. Only runs when the IR
+    // declares weighted-vote evaluation.
+    if matches!(
+        action_policy.evaluation.selection,
+        ActionSelectionStrategy::WeightedVote
+    ) {
+        let report =
+            vote_aware_rule_selection(&mut action_policy, traces, progress).unwrap_or_default();
+        report_progress(
+            progress,
+            "weighted_vote_select",
+            format!(
+                "weighted_vote_select: start {} rules @ {:.1}% → final {} rules @ {:.1}% (+{} / -{})",
+                report.initial_rule_count,
+                report.initial_parity * 100.0,
+                report.final_rule_count,
+                report.final_parity * 100.0,
+                report.added,
+                report.removed,
+            ),
+        );
+    }
+
     let training_parity = compute_action_training_parity(
         &action_policy,
         &traces.features_by_row,
@@ -865,6 +896,180 @@ fn compute_action_training_parity(
         }
     }
     Ok(correct as f64 / action_by_row.len() as f64)
+}
+
+/// Result of rebuilding a policy's rule plan under weighted-vote
+/// semantics. Used for progress telemetry.
+#[derive(Debug, Default, Clone, Copy)]
+struct VoteAwareSelectionReport {
+    initial_rule_count: usize,
+    final_rule_count: usize,
+    initial_parity: f64,
+    final_parity: f64,
+    added: usize,
+    removed: usize,
+}
+
+/// Voting-aware rule selector.
+///
+/// Per-action greedy selects rules under the assumption that first-match
+/// will fire the highest-priority matching rule. Under weighted-vote
+/// evaluation all matched rules vote, so a rule's value depends on what
+/// the rest of the plan says — not just whether it covers uncovered
+/// denied traces. That makes the per-action plan a poor starting point
+/// when evaluation is vote-based.
+///
+/// This selector uses the per-action plan's rules as a *candidate pool*
+/// and rebuilds the plan against the weighted-vote training-parity
+/// metric directly:
+///
+/// 1. Forward pass: start with an empty rule set. Repeatedly pick the
+///    candidate whose addition most improves training parity. Stop when
+///    no candidate helps.
+/// 2. Backward pass: over the resulting plan, remove any rule whose
+///    removal now *improves* parity (addition order doesn't catch
+///    rules that became redundant after later additions).
+///
+/// Both passes score under the policy's own `evaluate_action_policy`
+/// with the voting strategy the IR declares, so the parity number this
+/// optimizes against is the same one the runtime will observe. Runs in
+/// O(|pool| × |pool| × |rows|) in the worst case — tolerable at our
+/// working sizes (≤ ~200 rules, ≤ 5 000 rows, a few seconds per stage).
+fn vote_aware_rule_selection(
+    policy: &mut LogicPearlActionIr,
+    traces: &PreparedActionTraces,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<VoteAwareSelectionReport> {
+    let candidate_pool = std::mem::take(&mut policy.rules);
+    let initial_rule_count = candidate_pool.len();
+    let initial_parity = if candidate_pool.is_empty() {
+        0.0
+    } else {
+        policy.rules = candidate_pool.clone();
+        policy.rules.sort_by_key(|r| r.priority);
+        let p =
+            compute_action_training_parity(policy, &traces.features_by_row, &traces.action_by_row)?;
+        policy.rules.clear();
+        p
+    };
+    let mut current_parity =
+        compute_action_training_parity(policy, &traces.features_by_row, &traces.action_by_row)?; // empty-plan parity — whatever the default action earns on its own
+
+    report_progress(
+        progress,
+        "weighted_vote_select",
+        format!(
+            "weighted_vote_select: pool of {} rules, empty-plan parity {:.1}% (initial plan was {:.1}%)",
+            initial_rule_count,
+            current_parity * 100.0,
+            initial_parity * 100.0,
+        ),
+    );
+
+    // Track which pool members are currently in the plan by their id.
+    let mut in_plan: BTreeSet<String> = BTreeSet::new();
+    let mut added = 0usize;
+    let mut removed = 0usize;
+
+    // Forward pass — greedy add.
+    loop {
+        let mut best: Option<(usize, f64)> = None;
+        for (pool_idx, rule) in candidate_pool.iter().enumerate() {
+            if in_plan.contains(&rule.id) {
+                continue;
+            }
+            policy.rules.push(rule.clone());
+            policy.rules.sort_by_key(|r| r.priority);
+            let p = compute_action_training_parity(
+                policy,
+                &traces.features_by_row,
+                &traces.action_by_row,
+            )?;
+            policy.rules.retain(|r| r.id != rule.id);
+
+            if p > current_parity + f64::EPSILON {
+                match best {
+                    Some((_, bp)) if bp >= p => {}
+                    _ => best = Some((pool_idx, p)),
+                }
+            }
+        }
+
+        match best {
+            Some((pool_idx, p)) => {
+                let rule = &candidate_pool[pool_idx];
+                in_plan.insert(rule.id.clone());
+                policy.rules.push(rule.clone());
+                policy.rules.sort_by_key(|r| r.priority);
+                current_parity = p;
+                added += 1;
+                report_progress(
+                    progress,
+                    "weighted_vote_select",
+                    format!(
+                        "weighted_vote_select: + {} → parity {:.1}% ({} rules)",
+                        rule.id,
+                        current_parity * 100.0,
+                        policy.rules.len()
+                    ),
+                );
+            }
+            None => break,
+        }
+    }
+
+    // Backward pass — catch rules that became redundant or harmful
+    // after later additions. Same structure as forward but with remove
+    // moves.
+    loop {
+        if policy.rules.is_empty() {
+            break;
+        }
+        let mut best: Option<(usize, f64)> = None;
+        for idx in 0..policy.rules.len() {
+            let saved = policy.rules.remove(idx);
+            let p = compute_action_training_parity(
+                policy,
+                &traces.features_by_row,
+                &traces.action_by_row,
+            )?;
+            policy.rules.insert(idx, saved);
+            if p > current_parity + f64::EPSILON {
+                match best {
+                    Some((_, bp)) if bp >= p => {}
+                    _ => best = Some((idx, p)),
+                }
+            }
+        }
+        match best {
+            Some((idx, p)) => {
+                let dropped = policy.rules.remove(idx);
+                in_plan.remove(&dropped.id);
+                current_parity = p;
+                removed += 1;
+                report_progress(
+                    progress,
+                    "weighted_vote_select",
+                    format!(
+                        "weighted_vote_select: - {} → parity {:.1}% ({} rules)",
+                        dropped.id,
+                        current_parity * 100.0,
+                        policy.rules.len()
+                    ),
+                );
+            }
+            None => break,
+        }
+    }
+
+    Ok(VoteAwareSelectionReport {
+        initial_rule_count,
+        final_rule_count: policy.rules.len(),
+        initial_parity,
+        final_parity: current_parity,
+        added,
+        removed,
+    })
 }
 
 fn sanitize_identifier(value: &str) -> String {
