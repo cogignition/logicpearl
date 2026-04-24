@@ -65,7 +65,9 @@ async function runCaptured(opts: ExplainOptions): Promise<void> {
         {
           captures: data.runs,
           logicpearl_verdict: {
+            decision_kind: opts.result.decisionKind,
             verdict: opts.result.verdict,
+            action: opts.result.action,
             fired_rules: opts.result.firedRules.map((r) => r.id),
             latency_ms: opts.result.latencyMs,
             bitmask: opts.result.bitmask,
@@ -111,11 +113,11 @@ export function renderExplain(result: RunResult, captures: CaptureFile): string 
   parts.push('');
   parts.push(
     `  ${pc.bold('LogicPearl verdict:')}  ${formatVerdict(result.verdict)}  ` +
-      pc.dim(`(${result.latencyMs} ms · ${result.firedRules.length} of ${(result.artifact.metadata.rules ?? []).length} rules fired)`),
+      pc.dim(`(${result.latencyMs} ms · ${result.firedRules.length} of ${(result.artifact.metadata.rules ?? []).length} decision-driving rules)`),
   );
   if (result.firedRules.length > 0) {
     parts.push('');
-    parts.push('  ' + pc.dim('Fired rules:'));
+    parts.push('  ' + pc.dim(result.decisionKind === 'action' ? 'Selected rules:' : 'Fired rules:'));
     for (const r of result.firedRules) {
       parts.push('    ' + pc.red('•') + ' ' + r.id + pc.dim(' — ' + (r.label ?? '')));
     }

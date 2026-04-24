@@ -20,13 +20,13 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "node --test tests/*.test.mjs"
+    "test": "tsc && node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "@logicpearl/browser": "^0.1.4",
+    "@logicpearl/browser": "workspace:^",
     "mri": "^1.2.0",
     "picocolors": "^1.0.0"
   },

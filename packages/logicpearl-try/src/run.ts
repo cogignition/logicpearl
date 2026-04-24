@@ -1,55 +1,58 @@
 import { loadArtifact } from '@logicpearl/browser';
+import type {
+  BrowserActionEvaluation,
+  BrowserEvaluation,
+  BrowserGateEvaluation,
+  BrowserRuleMetadata,
+  LogicPearlBrowserArtifact,
+} from '@logicpearl/browser';
 import { readFile, stat } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export interface Artifact {
-  manifest: {
-    artifact_name?: string;
-    default_action?: string;
-    actions?: string[];
-  };
-  metadata: {
-    features: Array<{
-      id: string;
-      index: number;
-      type?: string;
-      encoding?: { kind?: string } | string;
-    }>;
-    rules?: Array<{
-      id: string;
-      bit: number;
-      label?: string;
-      message?: string;
-      counterfactual_hint?: string;
-      action?: string;
-    }>;
-    gate_id?: string;
-    string_codes?: Record<string, number>;
-    feature_extraction_prompt_template?: string;
-  };
+type ArtifactManifest = {
+  artifact_name?: string;
+  artifact_id?: string;
+  default_action?: string;
+  actions?: string[];
+};
+
+type ArtifactMetadata = {
+  decision_kind?: 'gate' | 'action';
+  features: Array<{
+    id: string;
+    index: number;
+    type?: string;
+    encoding?: { kind?: string } | string;
+  }>;
+  rules?: BrowserRule[];
+  gate_id?: string;
+  action_policy_id?: string;
+  string_codes?: Record<string, number>;
+  feature_extraction_prompt_template?: string;
+};
+
+export interface BrowserRule extends BrowserRuleMetadata {
+  id: string;
+  bit: number;
+  label?: string;
+  message?: string;
+  counterfactual_hint?: string;
+  action?: string;
+}
+
+export interface Artifact extends LogicPearlBrowserArtifact {
+  manifest: ArtifactManifest;
+  metadata: ArtifactMetadata;
   featureCount: number;
-  evaluate: (input: Record<string, unknown>) => {
-    allow: boolean;
-    bitmask?: bigint;
-    firedRules: Array<{
-      id: string;
-      bit: number;
-      label?: string;
-      message?: string;
-      counterfactual_hint?: string;
-      action?: string;
-    }>;
-    primaryReason: unknown;
-    counterfactualHints: string[];
-  };
-  rules: () => Array<unknown>;
+  rules: () => BrowserRule[];
   inspect: () => {
-    gateId: string;
-    artifactName: string;
+    decisionKind?: 'gate' | 'action';
+    gateId?: string;
+    actionPolicyId?: string | null;
     featureCount: number;
     ruleCount: number;
-    artifactVersion: string;
+    artifactId?: string;
   };
 }
 
@@ -61,15 +64,14 @@ export interface RunOptions {
 export interface RunResult {
   artifact: Artifact;
   facts: Record<string, unknown>;
+  decisionKind: 'gate' | 'action';
   verdict: string;
-  allow: boolean;
-  firedRules: Array<{
-    id: string;
-    label?: string;
-    message?: string;
-    counterfactual_hint?: string;
-    action?: string;
-  }>;
+  allow: boolean | null;
+  action: string | null;
+  defaultAction: string | null;
+  defaulted: boolean;
+  firedRules: BrowserRule[];
+  matchedRules: BrowserRule[];
   latencyMs: number;
   bitmask: string;
 }
@@ -79,8 +81,8 @@ async function localFetch(url: string): Promise<Response> {
   if (url.startsWith('http://') || url.startsWith('https://')) {
     return fetch(url);
   }
-  const path = url.startsWith('file://') ? new URL(url).pathname : url;
-  const buf = await readFile(resolve(path));
+  const path = url.startsWith('file://') ? fileURLToPath(url) : resolve(url);
+  const buf = await readFile(path);
   return {
     ok: true,
     status: 200,
@@ -115,23 +117,33 @@ export async function runEvaluate(opts: RunOptions): Promise<RunResult> {
   const t0 = performance.now();
   const result = artifact.evaluate(opts.facts);
   const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
-
-  const defaultAction = (artifact.manifest.default_action || 'approve').toUpperCase();
-  const firedAction = result.firedRules[0]?.action?.toUpperCase();
-  const verdict = result.allow ? defaultAction : firedAction || 'DENY';
+  const firedRules = selectDecisionRules(result);
+  const matchedRules = selectMatchedRules(result);
+  const verdict = isActionEvaluation(result)
+    ? result.action.toUpperCase()
+    : result.allow
+      ? (artifact.manifest.default_action ?? 'approve').toUpperCase()
+      : firedRules[0]?.action?.toUpperCase() || 'DENY';
 
   const rules = artifact.metadata.rules ?? [];
   const bits = rules.map((r) =>
-    result.firedRules.find((f) => f.bit === r.bit) ? '1' : '0',
+    matchedRules.find((f) => f.bit === r.bit) ? '1' : '0',
   );
   const bitmask = '0b' + (bits.length > 0 ? bits.reverse().join('') : '0');
 
   return {
     artifact,
     facts: opts.facts,
+    decisionKind: result.decisionKind,
     verdict,
-    allow: result.allow,
-    firedRules: result.firedRules,
+    allow: isActionEvaluation(result) ? null : result.allow,
+    action: isActionEvaluation(result) ? result.action : null,
+    defaultAction: isActionEvaluation(result)
+      ? result.defaultAction
+      : artifact.manifest.default_action ?? null,
+    defaulted: result.defaulted,
+    firedRules,
+    matchedRules,
     latencyMs,
     bitmask,
   };
@@ -144,4 +156,22 @@ export async function fileExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isActionEvaluation(
+  result: BrowserEvaluation,
+): result is BrowserActionEvaluation {
+  return result.decisionKind === 'action';
+}
+
+function selectDecisionRules(result: BrowserEvaluation): BrowserRule[] {
+  return isActionEvaluation(result)
+    ? (result.selectedRules as BrowserRule[])
+    : (result.firedRules as BrowserRule[]);
+}
+
+function selectMatchedRules(result: BrowserEvaluation): BrowserRule[] {
+  return isActionEvaluation(result)
+    ? (result.matchedRules as BrowserRule[])
+    : (result.firedRules as BrowserRule[]);
 }

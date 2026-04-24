@@ -54,7 +54,9 @@ export async function runFromText(opts: FromTextOptions): Promise<void> {
 interface PipelineRun {
   extracted: Record<string, unknown>;
   extractionMs: number;
+  decisionKind: 'gate' | 'action';
   verdict: string;
+  action: string | null;
   firedRules: string[];
   evalMs: number;
   response: string;
@@ -99,7 +101,10 @@ async function runOnce(
     console.log();
     console.log(`  ${pc.bold('Verdict:')}  ${formatVerdict(result.verdict)}`);
     if (result.firedRules.length > 0) {
-      console.log('  ' + pc.dim('Fired rules:'));
+      console.log(
+        '  ' +
+          pc.dim(result.decisionKind === 'action' ? 'Selected rules:' : 'Fired rules:'),
+      );
       for (const r of result.firedRules) {
         console.log('    ' + pc.red('•') + ' ' + r.id + pc.dim(' — ' + (r.label ?? '')));
       }
@@ -145,9 +150,14 @@ async function runOnce(
               elapsed_ms: step1.elapsedMs,
             },
             step2_evaluation: {
+              decision_kind: result.decisionKind,
               verdict: result.verdict,
               allow: result.allow,
+              action: result.action,
+              default_action: result.defaultAction,
+              defaulted: result.defaulted,
               fired_rules: result.firedRules.map((r) => r.id),
+              matched_rules: result.matchedRules.map((r) => r.id),
               latency_ms: result.latencyMs,
             },
             step3_verbalization: {
@@ -191,7 +201,9 @@ async function runProveIt(
     runs.push({
       extracted: step1.features,
       extractionMs: step1.elapsedMs,
+      decisionKind: result.decisionKind,
       verdict: result.verdict,
+      action: result.action,
       firedRules: result.firedRules.map((r) => r.id),
       evalMs: result.latencyMs,
       response: step3.response,
@@ -284,8 +296,9 @@ async function verbalizeVerdict(
   const userPrompt =
     `Customer said: "${userText}"\n\n` +
     `Feature vector: ${JSON.stringify(features)}\n\n` +
+    `Decision kind: ${result.decisionKind}\n` +
     `Verdict: ${result.verdict}\n` +
-    `Fired rules: ${JSON.stringify(result.firedRules.map((r) => r.label))}\n\n` +
+    `Decision-driving rules: ${JSON.stringify(result.firedRules.map((r) => r.label ?? r.id))}\n\n` +
     'Respond directly to the customer.';
   const t0 = Date.now();
   const response = useClaude

@@ -15,15 +15,22 @@ export interface RenderOptions {
 }
 
 export function renderDefault(result: RunResult, opts: RenderOptions = {}): string {
-  const { artifact, facts, verdict, allow, firedRules, latencyMs } = result;
+  const { artifact, facts, verdict, decisionKind, allow, firedRules, latencyMs, defaulted } = result;
   const ruleCount = artifact.metadata.rules?.length ?? 0;
   const wasmSize = approximateWasmKb(artifact);
   const name =
     artifact.manifest.artifact_name ??
     (artifact.manifest as Record<string, unknown>).artifact_id as string | undefined ??
+    artifact.metadata.action_policy_id ??
     artifact.metadata.gate_id ??
     'artifact';
-  const gateId = artifact.metadata.gate_id ?? 'unknown';
+  const policyId = artifact.metadata.action_policy_id ?? artifact.metadata.gate_id ?? 'unknown';
+  const kindLabel = decisionKind === 'action' ? 'Policy' : 'Gate';
+  const outcomeLabel = decisionKind === 'action'
+    ? (defaulted ? 'Outcome: default action selected.' : 'Selected rules:')
+    : allow
+      ? 'Outcome: all gates pass.'
+      : 'Fired rules:';
 
   // Orient a first-time reader in 3 lines before any data.
   const preamble = opts.usingEmbedded
@@ -42,7 +49,7 @@ export function renderDefault(result: RunResult, opts: RenderOptions = {}): stri
   const headerBox = box('LogicPearl · try  v' + VERSION, [
     '',
     `${pc.dim('Artifact')}   ${pc.bold(name)}`,
-    `${pc.dim('Gate')}       ${pc.cyan(gateId)}`,
+    `${pc.dim(kindLabel)}     ${pc.cyan(policyId)}`,
     `${pc.dim('Features')}   ${artifact.featureCount}`,
     `${pc.dim('Rules')}      ${ruleCount}`,
     `${pc.dim('Size')}       ${wasmSize}`,
@@ -60,11 +67,15 @@ export function renderDefault(result: RunResult, opts: RenderOptions = {}): stri
     '',
     hr(),
     `${pc.bold('Verdict:')}  ${formatVerdict(verdict)}` +
-      `  ${pc.dim('(' + latencyMs + ' ms · ' + firedRules.length + ' of ' + ruleCount + ' rules fired)')}`,
+      `  ${pc.dim('(' + latencyMs + ' ms · ' + firedRules.length + ' of ' + ruleCount + ' decision-driving rules)')}`,
     hr(),
     '',
-    pc.bold(allow ? pc.green('Outcome: all gates pass.') : pc.dim('Fired rules:')),
-    allow ? '' : formatFiredRules(firedRules),
+    pc.bold(
+      decisionKind === 'gate' && allow
+        ? pc.green(outcomeLabel)
+        : pc.dim(outcomeLabel),
+    ),
+    decisionKind === 'gate' && allow ? '' : formatFiredRules(firedRules),
     '',
     pc.dim('Same input → same verdict, every run, every deployment.'),
     '',
@@ -96,7 +107,8 @@ export function renderDefault(result: RunResult, opts: RenderOptions = {}): stri
 
 interface DescribePayload {
   artifact_name: string;
-  gate_id: string;
+  decision_kind: 'gate' | 'action';
+  policy_id: string;
   feature_count: number;
   features: Array<{
     id: string;
@@ -120,7 +132,8 @@ export function renderDescribe(
 ): DescribePayload | string {
   const payload: DescribePayload = {
     artifact_name: artifact.manifest.artifact_name ?? 'artifact',
-    gate_id: artifact.metadata.gate_id ?? 'unknown',
+    decision_kind: artifact.metadata.decision_kind ?? 'gate',
+    policy_id: artifact.metadata.action_policy_id ?? artifact.metadata.gate_id ?? 'unknown',
     feature_count: artifact.featureCount,
     features: artifact.metadata.features.map((f) => {
       const encoding =
@@ -149,7 +162,7 @@ export function renderDescribe(
   if (opts.json) return payload;
 
   const out: string[] = [];
-  out.push(pc.bold(pc.cyan(payload.artifact_name)) + '  ' + pc.dim('(' + payload.gate_id + ')'));
+  out.push(pc.bold(pc.cyan(payload.artifact_name)) + '  ' + pc.dim('(' + payload.policy_id + ')'));
   out.push('');
   out.push(pc.bold(`Features  (${payload.feature_count})`));
   for (const f of payload.features) {
@@ -174,12 +187,25 @@ export function renderDescribe(
 export function renderJson(result: RunResult): unknown {
   return {
     artifact: result.artifact.manifest.artifact_name,
-    gate_id: result.artifact.metadata.gate_id,
+    decision_kind: result.decisionKind,
+    gate_id: result.decisionKind === 'gate' ? result.artifact.metadata.gate_id : null,
+    action_policy_id:
+      result.decisionKind === 'action' ? result.artifact.metadata.action_policy_id : null,
     verdict: result.verdict,
     allow: result.allow,
+    action: result.action,
+    default_action: result.defaultAction,
+    defaulted: result.defaulted,
     bitmask: result.bitmask,
     fired_rule_count: result.firedRules.length,
     fired_rules: result.firedRules.map((r) => ({
+      id: r.id,
+      label: r.label,
+      action: r.action,
+      counterfactual_hint: r.counterfactual_hint,
+    })),
+    matched_rule_count: result.matchedRules.length,
+    matched_rules: result.matchedRules.map((r) => ({
       id: r.id,
       label: r.label,
       action: r.action,

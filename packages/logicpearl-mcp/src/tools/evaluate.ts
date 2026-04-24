@@ -1,4 +1,9 @@
-import { loadFromPathOrUrl } from '../load.js';
+import {
+  drivingRules,
+  isActionEvaluation,
+  loadFromPathOrUrl,
+  matchedRules,
+} from '../load.js';
 
 export const EVALUATE_TOOL = {
   name: 'logicpearl_evaluate',
@@ -40,21 +45,37 @@ export async function runEvaluateTool(
   const t0 = performance.now();
   const result = artifact.evaluate(args.facts);
   const latencyMs = Math.round((performance.now() - t0) * 1000) / 1000;
+  const selectedRules = drivingRules(result);
+  const allMatchedRules = matchedRules(result);
 
-  const defaultAction = (artifact.manifest.default_action ?? 'approve').toString().toUpperCase();
-  const firedAction = result.firedRules[0]?.action?.toUpperCase();
-  const verdict = result.allow ? defaultAction : firedAction || 'DENY';
+  const verdict = isActionEvaluation(result)
+    ? result.action.toUpperCase()
+    : result.allow
+      ? (artifact.manifest.default_action ?? 'approve').toString().toUpperCase()
+      : selectedRules[0]?.action?.toUpperCase() || 'DENY';
 
   const rules = (artifact.metadata.rules ?? []) as Array<Record<string, unknown>>;
   const bits = rules.map((r) =>
-    result.firedRules.find((f) => f.bit === (r.bit as number)) ? '1' : '0',
+    allMatchedRules.find((f) => f.bit === (r.bit as number)) ? '1' : '0',
   );
   const bitmask = '0b' + (bits.length > 0 ? bits.reverse().join('') : '0');
 
   return {
+    decision_kind: result.decisionKind,
     verdict,
-    allow: result.allow,
-    fired_rules: result.firedRules.map((r) => ({
+    allow: isActionEvaluation(result) ? null : result.allow,
+    action: isActionEvaluation(result) ? result.action : null,
+    default_action: isActionEvaluation(result)
+      ? result.defaultAction
+      : artifact.manifest.default_action ?? null,
+    defaulted: result.defaulted,
+    fired_rules: selectedRules.map((r) => ({
+      id: r.id,
+      action: r.action,
+      label: r.label,
+      counterfactual_hint: r.counterfactual_hint,
+    })),
+    matched_rules: allMatchedRules.map((r) => ({
       id: r.id,
       action: r.action,
       label: r.label,
@@ -64,7 +85,12 @@ export async function runEvaluateTool(
     bitmask,
     latency_ms: latencyMs,
     artifact: {
-      name: artifact.manifest.artifact_name ?? artifact.manifest.artifact_id ?? artifact.metadata.gate_id ?? 'unknown',
+      name:
+        artifact.manifest.artifact_name ??
+        artifact.manifest.artifact_id ??
+        artifact.metadata.action_policy_id ??
+        artifact.metadata.gate_id ??
+        'unknown',
       ref: artifactRef,
     },
   };

@@ -163,7 +163,9 @@ export async function liveExplain(opts: ExplainOptions): Promise<void> {
         {
           captures: capture.runs,
           logicpearl_verdict: {
+            decision_kind: opts.result.decisionKind,
             verdict: opts.result.verdict,
+            action: opts.result.action,
             fired_rules: opts.result.firedRules.map((r) => r.id),
             latency_ms: opts.result.latencyMs,
           },

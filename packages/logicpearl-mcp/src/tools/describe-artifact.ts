@@ -34,7 +34,12 @@ export async function runDescribeArtifactTool(
   const stringCodes = artifact.metadata.string_codes ?? {};
 
   return {
-    name: artifact.manifest.artifact_name ?? artifact.manifest.artifact_id ?? artifact.metadata.gate_id ?? 'unknown',
+    name:
+      artifact.manifest.artifact_name ??
+      artifact.manifest.artifact_id ??
+      artifact.metadata.action_policy_id ??
+      artifact.metadata.gate_id ??
+      'unknown',
     ref: artifactRef,
     default_action: artifact.manifest.default_action,
     actions: artifact.manifest.actions,
