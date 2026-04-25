@@ -469,6 +469,22 @@ fn read_json_file(path: &Path) -> Result<Value> {
 }
 
 fn artifact_identity_from_value(value: &Value) -> (ArtifactKind, String, String, Option<String>) {
+    if value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_some_and(|schema| schema == "logicpearl.fanout_pipeline.v1")
+    {
+        return (
+            ArtifactKind::Pipeline,
+            value
+                .get("pipeline_id")
+                .and_then(Value::as_str)
+                .unwrap_or("logicpearl_fanout")
+                .to_string(),
+            "logicpearl.fanout_pipeline.v1".to_string(),
+            None,
+        );
+    }
     if value.get("pipeline_version").is_some() {
         return (
             ArtifactKind::Pipeline,

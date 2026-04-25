@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logicpearl.com/schema/logicpearl-fanout-result-v1.schema.json",
+  "title": "LogicPearl Fan-out Result v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "engine_version",
+    "artifact_id",
+    "artifact_hash",
+    "decision_kind",
+    "pipeline_id",
+    "ok",
+    "applicable_actions",
+    "verdicts",
+    "output",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "logicpearl.fanout_result.v1"
+    },
+    "engine_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "decision_kind": {
+      "type": "string",
+      "const": "fanout"
+    },
+    "pipeline_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "applicable_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/action_verdict"
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action_verdict"
+      }
+    }
+  },
+  "$defs": {
+    "action_verdict": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "action",
+        "applies",
+        "artifact_id",
+        "artifact_hash",
+        "bitmask",
+        "matched_rules",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applies": {
+          "type": "boolean"
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "bitmask": true,
+        "matched_rules": true,
+        "result": true
+      }
+    }
+  }
+}

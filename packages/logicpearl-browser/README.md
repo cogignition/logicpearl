@@ -40,6 +40,11 @@ console.log(wireResult.artifact_hash);
 bitmask. `evaluateJson()` returns the snake_case `logicpearl.*_result.v1`
 shape for schema validation and cross-language handoff.
 
+For fan-out pipeline bundles, `evaluate()` returns `applicableActions` plus a
+per-action `verdicts` object. `evaluateJson()` returns
+`logicpearl.fanout_result.v1`, including the same applicable-action list,
+per-action gate verdicts, and nested gate-shaped results.
+
 ## Distribution
 
 The package source lives in this repository while npm publication is being prepared. During local integration work, reference `packages/logicpearl-browser` as a workspace or file dependency.
@@ -80,9 +85,10 @@ This v1 package supports:
 - Wasm evaluation
 - rule decoding from wasm metadata
 - binary gate and action-policy bundles
+- fan-out pipeline bundles
 
 It does **not** support:
-- full string-of-pearls pipeline orchestration
+- general plugin-backed pipeline orchestration
 - observer/plugin execution
 - automatic pipeline route evaluation
 

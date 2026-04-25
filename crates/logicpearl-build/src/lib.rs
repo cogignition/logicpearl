@@ -19,7 +19,7 @@ use logicpearl_discovery::{
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
-    VerificationConfig,
+    LogicPearlGateIr, VerificationConfig,
 };
 use logicpearl_plugin::{
     PluginEntrypointMetadata, PluginExecutionResult, PluginManifest, PluginResponse,
@@ -40,6 +40,15 @@ pub struct PreparedActionTraces {
     pub feature_columns: Vec<String>,
     pub actions: Vec<String>,
     pub action_by_row: Vec<String>,
+    pub features_by_row: Vec<HashMap<String, Value>>,
+    pub trace_provenance_by_row: Vec<DecisionTraceProvenance>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedFanoutTraces {
+    pub feature_columns: Vec<String>,
+    pub actions: Vec<String>,
+    pub applicable_by_row: Vec<BTreeSet<String>>,
     pub features_by_row: Vec<HashMap<String, Value>>,
     pub trace_provenance_by_row: Vec<DecisionTraceProvenance>,
 }
@@ -75,6 +84,38 @@ pub struct ActionLearningResult {
     pub no_match_action: Option<String>,
     pub priority_order: Vec<String>,
     pub rule_budget: ActionRuleBudgetReport,
+    pub training_parity: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FanoutLearningOptions {
+    pub artifact_name: String,
+    pub fanout_column: String,
+    pub actions: Option<Vec<String>>,
+    pub max_rules_per_action: Option<usize>,
+    pub max_conditions: Option<usize>,
+    pub output_dir: PathBuf,
+    pub refine: bool,
+    pub pinned_rules: Option<PathBuf>,
+    pub feature_dictionary: Option<PathBuf>,
+    pub feature_governance: Option<PathBuf>,
+    pub decision_mode: DiscoveryDecisionMode,
+}
+
+#[derive(Debug, Clone)]
+pub struct FanoutLearningResult {
+    pub gates: Vec<FanoutGateLearningResult>,
+    pub actions: Vec<String>,
+    pub training_exact_set_match: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FanoutGateLearningResult {
+    pub action: String,
+    pub gate: LogicPearlGateIr,
+    pub support: usize,
+    pub positive_recall: f64,
+    pub precision: f64,
     pub training_parity: f64,
 }
 
@@ -209,6 +250,183 @@ pub fn prepare_action_traces_with_feature_selection(
         action_by_row,
         features_by_row,
         trace_provenance_by_row,
+    })
+}
+
+pub fn prepare_fanout_traces_with_feature_selection(
+    loaded: &LoadedFlatRecords,
+    fanout_column: &str,
+    feature_selection: &FeatureColumnSelection,
+    explicit_actions: Option<&[String]>,
+) -> Result<PreparedFanoutTraces> {
+    if !loaded.field_names.iter().any(|name| name == fanout_column) {
+        return Err(LogicPearlError::message(format!(
+            "fan-out trace input is missing fan-out column {fanout_column:?}"
+        )));
+    }
+    let feature_columns = feature_selection.selected_feature_columns(
+        Path::new("fan-out traces"),
+        &loaded.field_names,
+        &[fanout_column.to_string()],
+    )?;
+
+    let mut actions = explicit_actions
+        .map(|actions| {
+            actions
+                .iter()
+                .map(|action| action.trim().to_string())
+                .filter(|action| !action.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut applicable_by_row = Vec::<BTreeSet<String>>::new();
+    let mut features_by_row = Vec::<HashMap<String, Value>>::new();
+    let mut trace_provenance_by_row = Vec::<DecisionTraceProvenance>::new();
+
+    for (index, record) in loaded.records.iter().enumerate() {
+        let raw_applicable = record.get(fanout_column).ok_or_else(|| {
+            LogicPearlError::message(format!(
+                "row {} is missing fan-out column {fanout_column:?}",
+                index + 1
+            ))
+        })?;
+        let applicable = applicable_actions_value_to_set(raw_applicable)?;
+        for action in &applicable {
+            if !actions.iter().any(|known| known == action) {
+                actions.push(action.clone());
+            }
+        }
+        let mut features = HashMap::new();
+        for feature in &feature_columns {
+            let value = record.get(feature).ok_or_else(|| {
+                LogicPearlError::message(format!(
+                    "row {} is missing feature {feature:?}",
+                    index + 1
+                ))
+            })?;
+            features.insert(feature.clone(), value.clone());
+        }
+        let trace_provenance = action_trace_provenance_from_record(
+            record,
+            &features,
+            &applicable.iter().cloned().collect::<Vec<_>>().join(","),
+        );
+        applicable_by_row.push(applicable);
+        features_by_row.push(features);
+        trace_provenance_by_row.push(trace_provenance);
+    }
+
+    let mut seen = BTreeSet::new();
+    actions.retain(|action| seen.insert(action.clone()));
+    if actions.is_empty() {
+        return Err(LogicPearlError::message(
+            "fan-out traces need at least one applicable action",
+        ));
+    }
+
+    Ok(PreparedFanoutTraces {
+        feature_columns,
+        actions,
+        applicable_by_row,
+        features_by_row,
+        trace_provenance_by_row,
+    })
+}
+
+pub fn learn_fanout_policy_with_progress(
+    traces: &PreparedFanoutTraces,
+    options: &FanoutLearningOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<FanoutLearningResult> {
+    let actions = options
+        .actions
+        .clone()
+        .unwrap_or_else(|| traces.actions.clone())
+        .into_iter()
+        .map(|action| action.trim().to_string())
+        .filter(|action| !action.is_empty())
+        .collect::<Vec<_>>();
+    if actions.is_empty() {
+        return Err(LogicPearlError::message(
+            "fan-out learning needs at least one action",
+        ));
+    }
+
+    let mut gates = Vec::new();
+    for action in &actions {
+        report_progress(
+            progress,
+            "fanout_gate",
+            format!("fanout_gate: learning applicability for {action}"),
+        );
+        let mut target_rows = 0usize;
+        let route_rows = traces
+            .applicable_by_row
+            .iter()
+            .zip(traces.features_by_row.iter())
+            .enumerate()
+            .map(|(index, (applicable, features))| {
+                let is_target_action = applicable.contains(action);
+                if is_target_action {
+                    target_rows += 1;
+                }
+                DecisionTraceRow {
+                    features: features.clone(),
+                    allowed: !is_target_action,
+                    trace_provenance: traces.trace_provenance_by_row.get(index).cloned(),
+                }
+            })
+            .collect::<Vec<_>>();
+        if target_rows == 0 {
+            return Err(LogicPearlError::message(format!(
+                "fan-out action {action:?} has no positive training rows"
+            )));
+        }
+        let route_name = sanitize_identifier(action);
+        let route_gate_id = format!("{}_{}", options.artifact_name, route_name);
+        let learned = learn_gate_from_rows_without_numeric_interactions_with_progress(
+            &route_rows,
+            &BuildOptions {
+                output_dir: options.output_dir.clone(),
+                gate_id: route_gate_id,
+                label_column: options.fanout_column.clone(),
+                positive_label: None,
+                negative_label: Some(action.clone()),
+                residual_pass: true,
+                refine: options.refine,
+                pinned_rules: options.pinned_rules.clone(),
+                feature_dictionary: options.feature_dictionary.clone(),
+                feature_governance: options.feature_governance.clone(),
+                decision_mode: options.decision_mode,
+                selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
+                max_rules: options.max_rules_per_action,
+                max_conditions: options.max_conditions,
+                proposal_policy: ProposalPolicy::ReportOnly,
+                feature_selection: FeatureColumnSelection::default(),
+            },
+            progress,
+        )
+        .map_err(|err| {
+            LogicPearlError::message(format!(
+                "failed to learn fan-out gate for action {action:?}: {err}"
+            ))
+        })?;
+        let metrics = fanout_gate_training_metrics(&learned.gate, traces, action)?;
+        gates.push(FanoutGateLearningResult {
+            action: action.clone(),
+            gate: learned.gate,
+            support: target_rows,
+            positive_recall: metrics.positive_recall,
+            precision: metrics.precision,
+            training_parity: metrics.training_parity,
+        });
+    }
+
+    let training_exact_set_match = compute_fanout_exact_set_match(&gates, traces)?;
+    Ok(FanoutLearningResult {
+        gates,
+        actions,
+        training_exact_set_match,
     })
 }
 
@@ -687,6 +905,124 @@ fn action_value_to_string(value: &Value) -> Result<String> {
             "action labels must be scalar, got {other}"
         ))),
     }
+}
+
+fn applicable_actions_value_to_set(value: &Value) -> Result<BTreeSet<String>> {
+    let mut actions = BTreeSet::new();
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                let action = action_value_to_string(item)?;
+                if !action.is_empty() {
+                    actions.insert(action);
+                }
+            }
+        }
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(actions);
+            }
+            if trimmed.starts_with('[') {
+                let parsed: Value = serde_json::from_str(trimmed).map_err(|err| {
+                    LogicPearlError::message(format!(
+                        "fan-out action list string is not valid JSON array: {err}"
+                    ))
+                })?;
+                return applicable_actions_value_to_set(&parsed);
+            }
+            for item in trimmed.split([',', ';', '|']) {
+                let action = item.trim();
+                if !action.is_empty() {
+                    actions.insert(action.to_string());
+                }
+            }
+        }
+        Value::Number(_) | Value::Bool(_) | Value::Null => {
+            let action = action_value_to_string(value)?;
+            if !action.is_empty() {
+                actions.insert(action);
+            }
+        }
+        other => {
+            return Err(LogicPearlError::message(format!(
+                "fan-out action lists must be scalar strings or arrays, got {other}"
+            )));
+        }
+    }
+    Ok(actions)
+}
+
+struct FanoutGateTrainingMetrics {
+    positive_recall: f64,
+    precision: f64,
+    training_parity: f64,
+}
+
+fn fanout_gate_training_metrics(
+    gate: &LogicPearlGateIr,
+    traces: &PreparedFanoutTraces,
+    action: &str,
+) -> Result<FanoutGateTrainingMetrics> {
+    let mut true_positive = 0usize;
+    let mut false_positive = 0usize;
+    let mut false_negative = 0usize;
+    let mut correct = 0usize;
+    for (features, applicable) in traces.features_by_row.iter().zip(&traces.applicable_by_row) {
+        let predicted = !evaluate_gate(gate, features)?.is_zero();
+        let expected = applicable.contains(action);
+        match (predicted, expected) {
+            (true, true) => true_positive += 1,
+            (true, false) => false_positive += 1,
+            (false, true) => false_negative += 1,
+            (false, false) => {}
+        }
+        if predicted == expected {
+            correct += 1;
+        }
+    }
+    let positive_recall = if true_positive + false_negative == 0 {
+        0.0
+    } else {
+        true_positive as f64 / (true_positive + false_negative) as f64
+    };
+    let precision = if true_positive + false_positive == 0 {
+        0.0
+    } else {
+        true_positive as f64 / (true_positive + false_positive) as f64
+    };
+    let training_parity = if traces.features_by_row.is_empty() {
+        0.0
+    } else {
+        correct as f64 / traces.features_by_row.len() as f64
+    };
+    Ok(FanoutGateTrainingMetrics {
+        positive_recall,
+        precision,
+        training_parity,
+    })
+}
+
+fn compute_fanout_exact_set_match(
+    gates: &[FanoutGateLearningResult],
+    traces: &PreparedFanoutTraces,
+) -> Result<f64> {
+    if traces.features_by_row.is_empty() {
+        return Ok(0.0);
+    }
+    let mut exact = 0usize;
+    for (features, expected) in traces.features_by_row.iter().zip(&traces.applicable_by_row) {
+        let mut predicted = BTreeSet::new();
+        for gate in gates {
+            if !evaluate_gate(&gate.gate, features)?.is_zero() {
+                predicted.insert(gate.action.clone());
+            }
+        }
+        if &predicted == expected {
+            exact += 1;
+        }
+    }
+    Ok(exact as f64 / traces.features_by_row.len() as f64)
 }
 
 fn resolve_default_action(explicit: Option<&str>, actions: &[String]) -> Result<String> {

@@ -8,12 +8,18 @@
 //! runtime result for audit.
 
 mod compose;
+mod fanout_pipeline;
 mod json_path;
 mod override_pipeline;
 mod path;
 mod staged;
 
 pub use compose::{compose_pipeline, scaffold_pipeline, ComposeInputMap, ComposePlan};
+pub use fanout_pipeline::{
+    build_fanout_pipeline, FanoutActionGate, FanoutActionVerdict, FanoutPipelineDefinition,
+    FanoutPipelineExecution, PreparedFanoutPipeline, ValidatedFanoutActionGate,
+    ValidatedFanoutPipeline, FANOUT_PIPELINE_SCHEMA_VERSION, FANOUT_RESULT_SCHEMA_VERSION,
+};
 pub use override_pipeline::{
     OverrideConflictMode, OverrideConflictPolicy, OverrideEffect, OverridePearlExecution,
     OverridePearlRole, OverridePipelineDefinition, OverridePipelineExecution,

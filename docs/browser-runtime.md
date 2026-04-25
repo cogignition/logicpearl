@@ -34,6 +34,22 @@ canonical `files.wasm` and `files.wasm_metadata` entries. It does not fall back
 to legacy file aliases or infer a conventional directory layout when
 `artifact.json` is absent.
 
+Fan-out pipeline artifacts use the same loading path. Build them with a column
+that contains a scalar action, comma-separated actions, or an array of actions:
+
+```bash
+logicpearl build traces.csv \
+  --fanout-column applicable_actions \
+  --fanout-actions water,treat_pests,move_to_more_sun \
+  --output-dir /tmp/browser-fanout \
+  --compile
+```
+
+When `wasm32-unknown-unknown` is installed, `--compile` emits a fan-out Wasm
+module and metadata. The module exposes one gate evaluator per action;
+application code should still call `loadArtifact()` or
+`loadArtifactFromBundle()` rather than raw exports.
+
 ## Load And Evaluate
 
 ```js
@@ -68,6 +84,12 @@ For action policies, this includes the selected `action`, the configured
 `default_action`, `no_match`, and `no_match_action` when the artifact declares a
 separate no-match fallback.
 
+For fan-out pipelines, `evaluateJson()` returns
+`logicpearl.fanout_result.v1` with `applicable_actions`, a `verdicts` object
+keyed by action, and a `stages` array preserving action-gate order. Each verdict
+contains the action gate's bitmask, matched rules, artifact identity, and nested
+gate result.
+
 ## Supported Scope
 
 The browser package currently supports:
@@ -77,6 +99,7 @@ The browser package currently supports:
 - rule decoding from wasm metadata
 - gate bundles
 - action-policy bundles
+- fan-out pipeline bundles
 - versioned runtime JSON helpers
 
 It does not support:
@@ -84,7 +107,7 @@ It does not support:
 - plugin execution
 - filesystem access
 - shelling out to local processes
-- full pipeline orchestration
+- general plugin-backed pipeline orchestration
 - observer synthesis or benchmark workflows
 
 Keep those concerns server-side. If an integration needs plugins, files, secrets, or server-only adapters, use the CLI or Rust engine on the server and expose only the normalized result needed by the browser.

@@ -28,6 +28,12 @@ const actionResultSchema = JSON.parse(
     'utf8'
   )
 );
+const fanoutResultSchema = JSON.parse(
+  readFileSync(
+    new URL('../../../schema/logicpearl-fanout-result-v1.schema.json', import.meta.url),
+    'utf8'
+  )
+);
 
 function validateAgainstSchema(schema, instance) {
   const errors = validateSchemaNode(schema, instance, schema, '$');
@@ -224,6 +230,42 @@ const sampleActionMetadata = {
       priority: 1,
       label: 'Leaves are pale',
       counterfactual_hint: 'Reduce paleness',
+    },
+  ],
+};
+
+const sampleFanoutMetadata = {
+  artifact_version: '1.0',
+  engine_version: '0.1.5',
+  artifact_hash: 'sha256:0bc569d4a84c229cd0ae13d94f8878b0f8e90728881be9a12e4a1c947f74d3fd',
+  decision_kind: 'fanout',
+  pipeline_id: 'garden_fanout',
+  actions: [
+    {
+      action: 'water',
+      id: 'water',
+      artifact_id: 'garden_fanout_water',
+      artifact_hash: 'sha256:05e08f69c35e2cce7f544f53619ff0424b6b2a1c597c86ac55f630d9927b2740',
+      entrypoint: 'logicpearl_eval_bitmask_slots_f64_water',
+      status_entrypoint: 'logicpearl_eval_status_slots_f64_water',
+      allow_entrypoint: 'logicpearl_eval_allow_slots_f64_water',
+      feature_count: 1,
+      features: [{ id: 'soil_moisture_pct', index: 0, encoding: 'numeric' }],
+      string_codes: {},
+      rules: [{ id: 'water_rule', bit: 0, label: 'Soil is dry' }],
+    },
+    {
+      action: 'treat_pests',
+      id: 'treat_pests',
+      artifact_id: 'garden_fanout_treat_pests',
+      artifact_hash: 'sha256:3dbcbf7462a72997f0758ba073cb2f962a9663058d217d3a7dfdc213a4bd94d4',
+      entrypoint: 'logicpearl_eval_bitmask_slots_f64_treat_pests',
+      status_entrypoint: 'logicpearl_eval_status_slots_f64_treat_pests',
+      allow_entrypoint: 'logicpearl_eval_allow_slots_f64_treat_pests',
+      feature_count: 1,
+      features: [{ id: 'pest_score', index: 0, encoding: 'numeric' }],
+      string_codes: {},
+      rules: [{ id: 'pest_rule', bit: 1, label: 'Pests are present' }],
     },
   ],
 };
@@ -495,6 +537,121 @@ test('evaluateJson returns action runtime JSON v1 shape', async () => {
       counterfactual_hint: 'Increase moisture',
     },
   ]);
+});
+
+test('loadArtifactFromBundle evaluates fan-out wasm metadata', async () => {
+  const memory = new WebAssembly.Memory({ initial: 1 });
+  const captured = {};
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: {
+        ...sampleManifest,
+        artifact_id: 'garden_fanout',
+        artifact_kind: 'pipeline',
+      },
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleFanoutMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory,
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_status_slots_f64_water() {
+            return 0;
+          },
+          logicpearl_eval_bitmask_slots_f64_water(ptr, len) {
+            captured.water = Array.from(new Float64Array(memory.buffer, ptr, len));
+            return 1n;
+          },
+          logicpearl_eval_status_slots_f64_treat_pests() {
+            return 0;
+          },
+          logicpearl_eval_bitmask_slots_f64_treat_pests(ptr, len) {
+            captured.treat_pests = Array.from(new Float64Array(memory.buffer, ptr, len));
+            return 2n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluate({
+    soil_moisture_pct: 0.12,
+    pest_score: 0.9,
+  });
+
+  assert.equal(result.decisionKind, 'fanout');
+  assert.equal(result.schemaVersion, 'logicpearl.fanout_result.v1');
+  assert.equal(result.pipelineId, 'garden_fanout');
+  assert.deepEqual(result.applicableActions, ['water', 'treat_pests']);
+  assert.deepEqual(captured, { water: [0.12], treat_pests: [0.9] });
+  assert.equal(result.verdicts.water.applies, true);
+  assert.equal(result.verdicts.water.result.allow, false);
+  assert.deepEqual(
+    result.verdicts.treat_pests.matchedRules.map((rule) => rule.id),
+    ['pest_rule']
+  );
+  assert.deepEqual(
+    artifact.rules().map((rule) => rule.id),
+    ['water_rule', 'pest_rule']
+  );
+});
+
+test('evaluateJson returns fan-out runtime JSON v1 shape', async () => {
+  const artifact = await loadArtifactFromBundle(
+    {
+      manifest: {
+        ...sampleManifest,
+        artifact_id: 'garden_fanout',
+        artifact_kind: 'pipeline',
+      },
+      wasmModule: new ArrayBuffer(8),
+      wasmMetadata: sampleFanoutMetadata,
+    },
+    {
+      instantiateWasm: async () => ({
+        exports: {
+          memory: new WebAssembly.Memory({ initial: 1 }),
+          logicpearl_alloc() {
+            return 0;
+          },
+          logicpearl_dealloc() {},
+          logicpearl_eval_status_slots_f64_water() {
+            return 0;
+          },
+          logicpearl_eval_bitmask_slots_f64_water() {
+            return 1n;
+          },
+          logicpearl_eval_status_slots_f64_treat_pests() {
+            return 0;
+          },
+          logicpearl_eval_bitmask_slots_f64_treat_pests() {
+            return 0n;
+          },
+        },
+      }),
+    }
+  );
+
+  const result = artifact.evaluateJson({
+    soil_moisture_pct: 0.12,
+    pest_score: 0,
+  });
+
+  validateAgainstSchema(fanoutResultSchema, result);
+  assert.equal(result.schema_version, 'logicpearl.fanout_result.v1');
+  assert.equal(result.decision_kind, 'fanout');
+  assert.equal(result.pipeline_id, 'garden_fanout');
+  assert.deepEqual(result.applicable_actions, ['water']);
+  assert.equal(result.verdicts.water.applies, true);
+  assert.equal(result.verdicts.treat_pests.applies, false);
+  assert.equal(result.verdicts.water.bitmask, '1');
+  assert.equal(result.verdicts.treat_pests.bitmask, '0');
+  assert.deepEqual(result.stages.map((stage) => stage.action), ['water', 'treat_pests']);
 });
 
 test('evaluateJson returns no_match_action when no action rules fire', async () => {

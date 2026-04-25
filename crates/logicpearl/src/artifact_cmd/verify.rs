@@ -5,7 +5,9 @@ use logicpearl_core::{
     ArtifactManifestV1, LoadedArtifactBundle, ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
-use logicpearl_pipeline::PipelineDefinition;
+use logicpearl_pipeline::{
+    FanoutPipelineDefinition, PipelineDefinition, FANOUT_PIPELINE_SCHEMA_VERSION,
+};
 use logicpearl_runtime::artifact_hash;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
@@ -275,6 +277,10 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         }
     }
 
+    if context.manifest.artifact_kind == ArtifactKind::Pipeline {
+        verify_fanout_wasm_metadata_if_present(&context, &ir_path, &mut checks)?;
+    }
+
     push_check(
         &mut checks,
         "build_options_hash_format",
@@ -303,6 +309,155 @@ fn verify_artifact(path: &Path) -> Result<ArtifactVerificationReport> {
         artifact_kind: Some(context.manifest.artifact_kind),
         checks,
     })
+}
+
+fn verify_fanout_wasm_metadata_if_present(
+    context: &LoadedArtifactBundle,
+    ir_path: &Path,
+    checks: &mut Vec<ArtifactVerificationCheck>,
+) -> Result<()> {
+    let ir_value = read_json_file(ir_path)?;
+    if ir_value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_none_or(|schema| schema != FANOUT_PIPELINE_SCHEMA_VERSION)
+    {
+        return Ok(());
+    }
+    let Some(metadata_member) = context.manifest.files.wasm_metadata.as_ref() else {
+        return Ok(());
+    };
+    let metadata_path = resolve_manifest_member_path(&context.base_dir, metadata_member)?;
+    if !metadata_path.exists() {
+        return Ok(());
+    }
+    let metadata = read_json_file(&metadata_path)?;
+    let pipeline_base = if ir_path.is_absolute() {
+        ir_path.parent().unwrap_or(&context.base_dir)
+    } else {
+        &context.base_dir
+    };
+    let pipeline = FanoutPipelineDefinition::from_path(ir_path)
+        .into_diagnostic()
+        .wrap_err("could not parse fan-out pipeline definition")?;
+    push_check(
+        checks,
+        "wasm_metadata.decision_kind",
+        metadata.get("decision_kind").and_then(Value::as_str) == Some("fanout"),
+        (metadata.get("decision_kind").and_then(Value::as_str) != Some("fanout"))
+            .then(|| "expected fanout".to_string()),
+    );
+    push_check(
+        checks,
+        "wasm_metadata.pipeline_id",
+        metadata.get("pipeline_id").and_then(Value::as_str) == Some(pipeline.pipeline_id.as_str()),
+        (metadata.get("pipeline_id").and_then(Value::as_str)
+            != Some(pipeline.pipeline_id.as_str()))
+        .then(|| format!("expected {}", pipeline.pipeline_id)),
+    );
+    push_check(
+        checks,
+        "wasm_metadata.artifact_hash",
+        metadata.get("artifact_hash").and_then(Value::as_str)
+            == Some(context.manifest.artifact_hash.as_str()),
+        (metadata.get("artifact_hash").and_then(Value::as_str)
+            != Some(context.manifest.artifact_hash.as_str()))
+        .then(|| format!("expected {}", context.manifest.artifact_hash)),
+    );
+    let action_metadata = metadata
+        .get("actions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    push_check(
+        checks,
+        "wasm_metadata.actions_count",
+        action_metadata.len() == pipeline.actions.len(),
+        (action_metadata.len() != pipeline.actions.len()).then(|| {
+            format!(
+                "expected {} action metadata entries, found {}",
+                pipeline.actions.len(),
+                action_metadata.len()
+            )
+        }),
+    );
+    let metadata_by_action = action_metadata
+        .iter()
+        .filter_map(|value| {
+            value
+                .get("action")
+                .and_then(Value::as_str)
+                .map(|action| (action.to_string(), value))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (index, action) in pipeline.actions.iter().enumerate() {
+        let id = action
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("action_{index:03}"));
+        let Some(metadata_action) = metadata_by_action.get(&action.action) else {
+            push_check(
+                checks,
+                format!("wasm_metadata.action.{}", action.action),
+                false,
+                Some("missing action metadata".to_string()),
+            );
+            continue;
+        };
+        push_check(
+            checks,
+            format!("wasm_metadata.action.{}.id", action.action),
+            metadata_action.get("id").and_then(Value::as_str) == Some(id.as_str()),
+            (metadata_action.get("id").and_then(Value::as_str) != Some(id.as_str()))
+                .then(|| format!("expected {id}")),
+        );
+        for field in ["entrypoint", "status_entrypoint", "allow_entrypoint"] {
+            push_check(
+                checks,
+                format!("wasm_metadata.action.{}.{}", action.action, field),
+                metadata_action
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty()),
+                Some("missing or empty entrypoint".to_string()).filter(|_| {
+                    metadata_action
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .is_none_or(|value| value.is_empty())
+                }),
+            );
+        }
+        let artifact_path = resolve_manifest_member_path(pipeline_base, &action.artifact)?;
+        let bundle = load_artifact_bundle(&artifact_path)
+            .into_diagnostic()
+            .wrap_err("failed to load fan-out action artifact")?;
+        let gate = LogicPearlGateIr::from_path(bundle.ir_path().into_diagnostic()?)
+            .into_diagnostic()
+            .wrap_err("failed to parse fan-out action gate IR")?;
+        let gate_hash = artifact_hash(&gate);
+        push_check(
+            checks,
+            format!("wasm_metadata.action.{}.artifact_id", action.action),
+            metadata_action.get("artifact_id").and_then(Value::as_str)
+                == Some(gate.gate_id.as_str()),
+            (metadata_action.get("artifact_id").and_then(Value::as_str)
+                != Some(gate.gate_id.as_str()))
+            .then(|| format!("expected {}", gate.gate_id)),
+        );
+        push_check(
+            checks,
+            format!("wasm_metadata.action.{}.artifact_hash", action.action),
+            metadata_action.get("artifact_hash").and_then(Value::as_str)
+                == Some(gate_hash.as_str()),
+            (metadata_action.get("artifact_hash").and_then(Value::as_str)
+                != Some(gate_hash.as_str()))
+            .then(|| format!("expected {gate_hash}")),
+        );
+    }
+    Ok(())
 }
 
 fn push_check(
@@ -362,24 +517,46 @@ fn validate_manifest_kind_and_ir(
             }
         }
         ArtifactKind::Pipeline => {
-            let pipeline = PipelineDefinition::from_path(ir_path)
-                .into_diagnostic()
-                .wrap_err("could not parse pipeline definition")?;
             let pipeline_base = if ir_path.is_absolute() {
                 ir_path.parent().unwrap_or(base_dir)
             } else {
                 base_dir
             };
-            pipeline
-                .validate(pipeline_base)
-                .into_diagnostic()
-                .wrap_err("pipeline definition did not validate")?;
-            if pipeline.pipeline_id != manifest.artifact_id {
-                return Err(miette::miette!(
-                    "manifest artifact_id {} does not match pipeline_id {}",
-                    manifest.artifact_id,
-                    pipeline.pipeline_id
-                ));
+            let value = read_json_file(ir_path)?;
+            if value
+                .get("schema_version")
+                .and_then(Value::as_str)
+                .is_some_and(|schema| schema == FANOUT_PIPELINE_SCHEMA_VERSION)
+            {
+                let pipeline = FanoutPipelineDefinition::from_path(ir_path)
+                    .into_diagnostic()
+                    .wrap_err("could not parse fan-out pipeline definition")?;
+                pipeline
+                    .validate(pipeline_base)
+                    .into_diagnostic()
+                    .wrap_err("fan-out pipeline definition did not validate")?;
+                if pipeline.pipeline_id != manifest.artifact_id {
+                    return Err(miette::miette!(
+                        "manifest artifact_id {} does not match pipeline_id {}",
+                        manifest.artifact_id,
+                        pipeline.pipeline_id
+                    ));
+                }
+            } else {
+                let pipeline = PipelineDefinition::from_path(ir_path)
+                    .into_diagnostic()
+                    .wrap_err("could not parse pipeline definition")?;
+                pipeline
+                    .validate(pipeline_base)
+                    .into_diagnostic()
+                    .wrap_err("pipeline definition did not validate")?;
+                if pipeline.pipeline_id != manifest.artifact_id {
+                    return Err(miette::miette!(
+                        "manifest artifact_id {} does not match pipeline_id {}",
+                        manifest.artifact_id,
+                        pipeline.pipeline_id
+                    ));
+                }
             }
         }
     }

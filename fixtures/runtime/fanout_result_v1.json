@@ -1,0 +1,50 @@
+{
+  "schema_version": "logicpearl.fanout_result.v1",
+  "engine_version": "0.1.5",
+  "artifact_id": "garden_fanout",
+  "artifact_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "decision_kind": "fanout",
+  "pipeline_id": "garden_fanout",
+  "ok": true,
+  "applicable_actions": ["water"],
+  "verdicts": {
+    "water": {
+      "id": "water",
+      "action": "water",
+      "applies": true,
+      "artifact_id": "garden_fanout_water",
+      "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "bitmask": 1,
+      "matched_rules": [],
+      "result": {
+        "schema_version": "logicpearl.gate_result.v1",
+        "engine_version": "0.1.5",
+        "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "artifact_id": "garden_fanout_water",
+        "policy_id": "garden_fanout_water",
+        "gate_id": "garden_fanout_water",
+        "decision_kind": "gate",
+        "allow": false,
+        "bitmask": 1,
+        "defaulted": false,
+        "matched_rules": []
+      }
+    }
+  },
+  "output": {
+    "applicable_actions": ["water"],
+    "verdicts": {}
+  },
+  "stages": [
+    {
+      "id": "water",
+      "action": "water",
+      "applies": true,
+      "artifact_id": "garden_fanout_water",
+      "artifact_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "bitmask": 1,
+      "matched_rules": [],
+      "result": {}
+    }
+  ]
+}

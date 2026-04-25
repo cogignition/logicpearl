@@ -26,7 +26,10 @@ use logicpearl_core::{
     load_artifact_bundle, ArtifactKind, LoadedArtifactBundle, LogicPearlError, Result,
 };
 use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
-use logicpearl_pipeline::{PipelineDefinition, PipelineExecution, PreparedPipeline};
+use logicpearl_pipeline::{
+    FanoutPipelineDefinition, FanoutPipelineExecution, PipelineDefinition, PipelineExecution,
+    PreparedFanoutPipeline, PreparedPipeline, FANOUT_PIPELINE_SCHEMA_VERSION,
+};
 use logicpearl_plugin::PluginExecutionPolicy;
 use logicpearl_runtime::{
     evaluate_action_policy, evaluate_gate_with_explanation, parse_input_payload,
@@ -76,6 +79,7 @@ pub enum EngineSingleExecution {
     Artifact(ArtifactExecution),
     ActionArtifact(ActionArtifactExecution),
     Pipeline(PipelineExecution),
+    Fanout(FanoutPipelineExecution),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +88,7 @@ pub enum EngineBatchExecution {
     Artifact(ArtifactBatchExecution),
     ActionArtifact(ActionArtifactBatchExecution),
     Pipeline(Vec<PipelineExecution>),
+    Fanout(Vec<FanoutPipelineExecution>),
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +103,7 @@ enum PreparedExecution {
     Artifact(PreparedArtifact),
     ActionArtifact(PreparedActionArtifact),
     Pipeline(PreparedPipeline),
+    Fanout(PreparedFanoutPipeline),
 }
 
 #[derive(Debug, Clone)]
@@ -148,14 +154,11 @@ impl LogicPearlEngine {
             )));
         }
         let resolved_path = bundle.ir_path()?;
-        let pipeline = PipelineDefinition::from_path(&resolved_path)?;
-        let base_dir = resolved_path.parent().unwrap_or_else(|| Path::new("."));
-        let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
-        Ok(Self {
-            kind: EngineKind::Pipeline,
-            source_path: resolved_path,
-            prepared: PreparedExecution::Pipeline(prepared),
-        })
+        let base_dir = resolved_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        prepare_pipeline_execution(resolved_path, &base_dir, plugin_policy)
     }
 
     pub fn kind(&self) -> EngineKind {
@@ -186,14 +189,11 @@ impl LogicPearlEngine {
                 })
             }
             ArtifactKind::Pipeline => {
-                let pipeline = PipelineDefinition::from_path(&ir_path)?;
-                let base_dir = ir_path.parent().unwrap_or_else(|| Path::new("."));
-                let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
-                Ok(Self {
-                    kind: EngineKind::Pipeline,
-                    source_path: ir_path,
-                    prepared: PreparedExecution::Pipeline(prepared),
-                })
+                let base_dir = ir_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf();
+                prepare_pipeline_execution(ir_path, &base_dir, plugin_policy)
             }
         }
     }
@@ -218,6 +218,9 @@ impl LogicPearlEngine {
             ),
             PreparedExecution::Pipeline(pipeline) => {
                 Ok(EngineSingleExecution::Pipeline(pipeline.run(input)?))
+            }
+            PreparedExecution::Fanout(pipeline) => {
+                Ok(EngineSingleExecution::Fanout(pipeline.run(input)?))
             }
         }
     }
@@ -245,6 +248,12 @@ impl LogicPearlEngine {
             PreparedExecution::Pipeline(pipeline) => {
                 Ok(EngineBatchExecution::Pipeline(pipeline.run_batch(inputs)?))
             }
+            PreparedExecution::Fanout(pipeline) => Ok(EngineBatchExecution::Fanout(
+                inputs
+                    .iter()
+                    .map(|input| pipeline.run(input))
+                    .collect::<Result<Vec<_>>>()?,
+            )),
         }
     }
 
@@ -265,6 +274,39 @@ impl LogicPearlEngine {
 pub enum EngineExecutionEnvelope {
     Single(Box<EngineSingleExecution>),
     Batch(EngineBatchExecution),
+}
+
+fn prepare_pipeline_execution(
+    ir_path: PathBuf,
+    base_dir: &Path,
+    plugin_policy: PluginExecutionPolicy,
+) -> Result<LogicPearlEngine> {
+    if is_fanout_pipeline_path(&ir_path)? {
+        let pipeline = FanoutPipelineDefinition::from_path(&ir_path)?;
+        let prepared = pipeline.prepare(base_dir)?;
+        Ok(LogicPearlEngine {
+            kind: EngineKind::Pipeline,
+            source_path: ir_path,
+            prepared: PreparedExecution::Fanout(prepared),
+        })
+    } else {
+        let pipeline = PipelineDefinition::from_path(&ir_path)?;
+        let prepared = pipeline.prepare_with_plugin_policy(base_dir, plugin_policy)?;
+        Ok(LogicPearlEngine {
+            kind: EngineKind::Pipeline,
+            source_path: ir_path,
+            prepared: PreparedExecution::Pipeline(prepared),
+        })
+    }
+}
+
+fn is_fanout_pipeline_path(path: &Path) -> Result<bool> {
+    let content = std::fs::read_to_string(path)?;
+    let value: Value = serde_json::from_str(&content)?;
+    Ok(value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_some_and(|schema| schema == FANOUT_PIPELINE_SCHEMA_VERSION))
 }
 
 fn evaluate_artifact_single(gate: &LogicPearlGateIr, input: &Value) -> Result<ArtifactEvaluation> {

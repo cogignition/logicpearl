@@ -20,17 +20,27 @@ pub(crate) use manifest::{
     build_options_hash, native_artifact_output_path, pearl_artifact_id, persist_build_report,
     refresh_artifact_manifest_deployables, resolve_artifact_input, resolve_manifest_member_path,
     wasm_artifact_output_path, write_artifact_manifest_v1, write_named_artifact_manifest,
-    ArtifactBundleDescriptor, ArtifactManifestWriteOptions, ResolvedArtifactInput,
+    ArtifactBundleDescriptor, ArtifactDeployable, ArtifactManifestWriteOptions, ArtifactSidecar,
+    ResolvedArtifactInput,
 };
 use manifest::{hash_file_canonical_if_json, read_json_file};
-pub(crate) use native_compile::{compile_native_runner, run_embedded_native_runner_if_present};
+#[cfg(test)]
+use native_compile::parse_embedded_native_payload;
+pub(crate) use native_compile::{
+    compile_native_fanout_runner, compile_native_runner, run_embedded_native_runner_if_present,
+};
 use pearl::CompilablePearl;
 pub(crate) use verify::{run_artifact_digest, run_artifact_inspect, run_artifact_verify};
+pub(crate) use wasm_compile::{
+    compile_wasm_fanout_module, compile_wasm_module, is_rust_target_installed,
+};
 #[cfg(test)]
-use wasm_compile::generate_wasm_runner_source;
-pub(crate) use wasm_compile::{compile_wasm_module, is_rust_target_installed};
+use wasm_compile::{generate_wasm_fanout_runner_source, generate_wasm_runner_source};
 #[cfg(test)]
-use wasm_metadata::{write_wasm_metadata, write_wasm_metadata_for_pearl};
+use wasm_metadata::{
+    write_wasm_metadata, write_wasm_metadata_for_fanout, write_wasm_metadata_for_pearl,
+    FanoutWasmGateMetadata,
+};
 
 const ARTIFACT_AFTER_HELP: &str = "\
 Examples:

@@ -236,6 +236,21 @@ logicpearl build traces.csv \
   --output-dir /tmp/actions
 ```
 
+Fan-out example for traces where multiple actions can apply to the same row:
+
+```bash
+logicpearl build traces.csv \
+  --fanout-column applicable_actions \
+  --fanout-actions water,treat_pests,move_to_more_sun \
+  --output-dir /tmp/fanout \
+  --compile
+```
+
+Fan-out builds learn one binary gate per action and assemble them into a typed
+pipeline artifact. Runtime JSON uses `logicpearl.fanout_result.v1` with
+`applicable_actions`, per-action `verdicts`, and gate-shaped matched-rule
+explanations for each action.
+
 When no learned rule should return a different operational action than the
 business default:
 

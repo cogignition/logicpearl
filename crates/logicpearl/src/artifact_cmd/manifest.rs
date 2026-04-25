@@ -75,6 +75,10 @@ pub(crate) fn resolve_artifact_input(path: &Path) -> Result<ResolvedArtifactInpu
 }
 
 pub(crate) fn pearl_artifact_id(pearl_ir: &Path) -> Result<String> {
+    let value = read_json_file(pearl_ir)?;
+    if let Some(pipeline_id) = value.get("pipeline_id").and_then(Value::as_str) {
+        return Ok(pipeline_id.to_string());
+    }
     Ok(CompilablePearl::from_path(pearl_ir)?
         .artifact_id()
         .to_string())
@@ -250,9 +254,6 @@ pub(crate) fn refresh_artifact_manifest_deployables(
         return Ok(());
     }
     let context = load_artifact_manifest_context(artifact_dir)?;
-    if context.manifest.artifact_kind == ArtifactKind::Pipeline {
-        return Ok(());
-    }
     let native_path = native_path.map(Path::to_path_buf).or_else(|| {
         context
             .manifest
@@ -298,7 +299,25 @@ pub(crate) fn refresh_artifact_manifest_deployables(
         .as_ref()
         .and_then(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned());
-    let bundle = build_deployable_bundle_descriptor(native_file, wasm_file, wasm_metadata_file);
+    let mut bundle = build_deployable_bundle_descriptor(
+        native_file.clone(),
+        wasm_file.clone(),
+        wasm_metadata_file,
+    );
+    if context.manifest.artifact_kind == ArtifactKind::Pipeline {
+        bundle.bundle_kind = context
+            .manifest
+            .extensions
+            .get("pipeline_type")
+            .and_then(Value::as_str)
+            .map(|kind| format!("{kind}_pipeline_bundle"))
+            .unwrap_or_else(|| "pipeline_bundle".to_string());
+        bundle.primary_runtime = native_file
+            .as_ref()
+            .map(|_| "native_binary".to_string())
+            .or_else(|| wasm_file.as_ref().map(|_| "wasm_module".to_string()))
+            .or_else(|| Some("pipeline.json".to_string()));
+    }
 
     write_artifact_manifest_v1(
         artifact_dir,
@@ -385,9 +404,12 @@ fn artifact_ir_version(value: &Value, artifact_kind: ArtifactKind) -> Result<Str
             .ok_or_else(|| miette::miette!("artifact IR is missing ir_version")),
         ArtifactKind::Pipeline => value
             .get("pipeline_version")
+            .or_else(|| value.get("schema_version"))
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
-            .ok_or_else(|| miette::miette!("pipeline artifact is missing pipeline_version")),
+            .ok_or_else(|| {
+                miette::miette!("pipeline artifact is missing pipeline_version or schema_version")
+            }),
     }
 }
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 use super::{
-    generate_wasm_runner_source, relative_manifest_file, resolve_manifest_member_path,
-    unique_generated_crate_name, write_wasm_metadata, write_wasm_metadata_for_pearl,
-    CompilablePearl,
+    generate_wasm_fanout_runner_source, generate_wasm_runner_source, parse_embedded_native_payload,
+    relative_manifest_file, resolve_manifest_member_path, unique_generated_crate_name,
+    write_wasm_metadata, write_wasm_metadata_for_fanout, write_wasm_metadata_for_pearl,
+    CompilablePearl, FanoutWasmGateMetadata,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
@@ -238,6 +239,88 @@ fn action_wasm_metadata_declares_policy_selection_metadata() {
         metadata["rules"][0]["features"][0]["feature_label"],
         "Enabled flag"
     );
+}
+
+#[test]
+fn embedded_native_payload_accepts_legacy_raw_pearl_json() {
+    let gate = gate_with_rule_count(1);
+    let payload = parse_embedded_native_payload(
+        &serde_json::to_string(&gate).expect("gate should serialize"),
+    )
+    .expect("legacy raw pearl payload should parse");
+
+    match payload {
+        super::native_compile::EmbeddedNativePayload::Pearl(value) => {
+            assert_eq!(value["gate_id"], "test_gate");
+        }
+        super::native_compile::EmbeddedNativePayload::Fanout(_) => {
+            panic!("legacy gate payload should parse as pearl")
+        }
+    }
+}
+
+#[test]
+fn generated_fanout_wasm_declares_per_action_entrypoints() {
+    let source = generate_wasm_fanout_runner_source(&[
+        ("water", gate_with_rule_count(1)),
+        ("treat_pests", gate_with_rule_count(1)),
+    ]);
+
+    assert!(source.contains("pub extern \"C\" fn logicpearl_alloc"));
+    assert!(source.contains("pub extern \"C\" fn logicpearl_eval_bitmask_slots_f64_action_0"));
+    assert!(source.contains("pub extern \"C\" fn logicpearl_eval_status_slots_f64_action_0"));
+    assert!(source.contains("pub extern \"C\" fn logicpearl_eval_bitmask_slots_f64_action_1"));
+    assert!(source.contains("pub extern \"C\" fn logicpearl_eval_status_slots_f64_action_1"));
+}
+
+#[test]
+fn fanout_wasm_metadata_declares_action_gate_metadata() {
+    let water_gate = gate_with_rule_count(1);
+    let pest_gate = gate_with_rule_count(1);
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let path = temp_dir.path().join("fanout.wasm.meta.json");
+
+    write_wasm_metadata_for_fanout(
+        &path,
+        "garden_fanout",
+        "sha256:pipeline".to_string(),
+        &[
+            FanoutWasmGateMetadata {
+                action: "water",
+                id: "water",
+                gate: &water_gate,
+                entrypoint: "logicpearl_eval_bitmask_slots_f64_water".to_string(),
+                status_entrypoint: "logicpearl_eval_status_slots_f64_water".to_string(),
+                allow_entrypoint: "logicpearl_eval_allow_slots_f64_water".to_string(),
+            },
+            FanoutWasmGateMetadata {
+                action: "treat_pests",
+                id: "treat_pests",
+                gate: &pest_gate,
+                entrypoint: "logicpearl_eval_bitmask_slots_f64_treat_pests".to_string(),
+                status_entrypoint: "logicpearl_eval_status_slots_f64_treat_pests".to_string(),
+                allow_entrypoint: "logicpearl_eval_allow_slots_f64_treat_pests".to_string(),
+            },
+        ],
+    )
+    .expect("write fan-out wasm metadata");
+
+    let metadata: Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read fanout wasm metadata"))
+            .expect("parse fanout wasm metadata");
+    assert_eq!(metadata["decision_kind"], "fanout");
+    assert_eq!(metadata["pipeline_id"], "garden_fanout");
+    assert_eq!(metadata["actions"][0]["action"], "water");
+    assert_eq!(
+        metadata["actions"][0]["entrypoint"],
+        "logicpearl_eval_bitmask_slots_f64_water"
+    );
+    assert_eq!(metadata["actions"][0]["artifact_id"], "test_gate");
+    assert_eq!(
+        metadata["actions"][0]["rules"][0]["features"][0]["feature_id"],
+        "enabled"
+    );
+    assert_eq!(metadata["actions"][1]["action"], "treat_pests");
 }
 
 fn enabled_semantics() -> FeatureSemantics {

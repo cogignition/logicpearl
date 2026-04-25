@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 use super::pearl::{CompilablePearl, WasmRuleView};
-#[cfg(test)]
-use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_ir::{
     derived_feature_evaluation_order, DerivedFeatureOperator, Expression, FeatureType, InputSchema,
+    LogicPearlGateIr,
 };
 use logicpearl_runtime::{explain_rule_features, RuleFeatureExplanation};
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -38,6 +37,44 @@ struct WasmArtifactMetadata {
     derived_features: Vec<WasmDerivedFeatureDescriptor>,
     string_codes: BTreeMap<String, u32>,
     rules: Vec<WasmRuleMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FanoutWasmArtifactMetadata {
+    artifact_version: String,
+    engine_version: String,
+    artifact_hash: String,
+    decision_kind: String,
+    pipeline_id: String,
+    actions: Vec<FanoutWasmActionMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FanoutWasmActionMetadata {
+    action: String,
+    id: String,
+    artifact_id: String,
+    artifact_hash: String,
+    entrypoint: String,
+    status_entrypoint: String,
+    allow_entrypoint: String,
+    feature_count: usize,
+    missing_value: String,
+    features: Vec<WasmFeatureDescriptor>,
+    #[serde(default)]
+    derived_features: Vec<WasmDerivedFeatureDescriptor>,
+    string_codes: BTreeMap<String, u32>,
+    rules: Vec<WasmRuleMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FanoutWasmGateMetadata<'a> {
+    pub(super) action: &'a str,
+    pub(super) id: &'a str,
+    pub(super) gate: &'a LogicPearlGateIr,
+    pub(super) entrypoint: String,
+    pub(super) status_entrypoint: String,
+    pub(super) allow_entrypoint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,16 +138,7 @@ pub(super) fn write_wasm_metadata(path: &Path, gate: &LogicPearlGateIr) -> Resul
 pub(super) fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl) -> Result<()> {
     let wasm_rules = pearl.wasm_rules();
     let input_schema = pearl.input_schema();
-    let derived_features = derived_feature_evaluation_order(&input_schema.features)
-        .into_diagnostic()
-        .wrap_err("failed to order derived features for wasm metadata")?;
     let string_codes = build_string_codes(input_schema, &wasm_rules);
-    let input_features = pearl
-        .input_schema()
-        .features
-        .iter()
-        .filter(|feature| feature.derived.is_none())
-        .collect::<Vec<_>>();
     let metadata = WasmArtifactMetadata {
         artifact_version: "1.0".to_string(),
         engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
@@ -128,51 +156,12 @@ pub(super) fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl
         entrypoint: "logicpearl_eval_bitmask_slots_f64".to_string(),
         status_entrypoint: "logicpearl_eval_status_slots_f64".to_string(),
         allow_entrypoint: "logicpearl_eval_allow_slots_f64".to_string(),
-        feature_count: input_features.len(),
+        feature_count: input_feature_count(input_schema),
         missing_value: "NaN".to_string(),
-        features: input_features
-            .iter()
-            .enumerate()
-            .map(|(index, feature)| WasmFeatureDescriptor {
-                id: feature.id.clone(),
-                index,
-                feature_type: feature.feature_type.clone(),
-                encoding: match feature.feature_type {
-                    FeatureType::Bool => WasmFeatureEncoding::Boolean,
-                    FeatureType::Int | FeatureType::Float => WasmFeatureEncoding::Numeric,
-                    FeatureType::String | FeatureType::Enum => WasmFeatureEncoding::StringCode,
-                },
-            })
-            .collect(),
-        derived_features: derived_features
-            .iter()
-            .map(|feature| {
-                let derived = feature.derived.as_ref().expect(
-                    "derived feature evaluation order should contain only derived features",
-                );
-                WasmDerivedFeatureDescriptor {
-                    id: feature.id.clone(),
-                    op: derived.op.clone(),
-                    left_feature: derived.left_feature.clone(),
-                    right_feature: derived.right_feature.clone(),
-                }
-            })
-            .collect(),
+        features: feature_descriptors(input_schema),
+        derived_features: derived_feature_descriptors(input_schema)?,
         string_codes,
-        rules: wasm_rules
-            .iter()
-            .map(|rule| WasmRuleMetadata {
-                id: rule.id.to_string(),
-                bit: rule.bit,
-                action: rule.action.map(ToOwned::to_owned),
-                priority: rule.priority,
-                label: rule.label.cloned(),
-                message: rule.message.cloned(),
-                severity: rule.severity.cloned(),
-                counterfactual_hint: rule.counterfactual_hint.cloned(),
-                features: explain_rule_features(input_schema, rule.expression),
-            })
-            .collect(),
+        rules: rule_metadata(input_schema, &wasm_rules),
     };
     fs::write(
         path,
@@ -181,6 +170,120 @@ pub(super) fn write_wasm_metadata_for_pearl(path: &Path, pearl: &CompilablePearl
     .into_diagnostic()
     .wrap_err("failed to write wasm metadata")?;
     Ok(())
+}
+
+pub(super) fn write_wasm_metadata_for_fanout(
+    path: &Path,
+    pipeline_id: &str,
+    artifact_hash: String,
+    actions: &[FanoutWasmGateMetadata<'_>],
+) -> Result<()> {
+    let metadata = FanoutWasmArtifactMetadata {
+        artifact_version: "1.0".to_string(),
+        engine_version: logicpearl_runtime::LOGICPEARL_ENGINE_VERSION.to_string(),
+        artifact_hash,
+        decision_kind: "fanout".to_string(),
+        pipeline_id: pipeline_id.to_string(),
+        actions: actions
+            .iter()
+            .map(|action| {
+                let pearl = CompilablePearl::Gate(action.gate.clone());
+                let wasm_rules = pearl.wasm_rules();
+                let input_schema = pearl.input_schema();
+                Ok(FanoutWasmActionMetadata {
+                    action: action.action.to_string(),
+                    id: action.id.to_string(),
+                    artifact_id: action.gate.gate_id.clone(),
+                    artifact_hash: logicpearl_runtime::artifact_hash(action.gate),
+                    entrypoint: action.entrypoint.clone(),
+                    status_entrypoint: action.status_entrypoint.clone(),
+                    allow_entrypoint: action.allow_entrypoint.clone(),
+                    feature_count: input_feature_count(input_schema),
+                    missing_value: "NaN".to_string(),
+                    features: feature_descriptors(input_schema),
+                    derived_features: derived_feature_descriptors(input_schema)?,
+                    string_codes: build_string_codes(input_schema, &wasm_rules),
+                    rules: rule_metadata(input_schema, &wasm_rules),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+    };
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&metadata).into_diagnostic()? + "\n",
+    )
+    .into_diagnostic()
+    .wrap_err("failed to write fan-out wasm metadata")?;
+    Ok(())
+}
+
+fn input_feature_count(input_schema: &InputSchema) -> usize {
+    input_schema
+        .features
+        .iter()
+        .filter(|feature| feature.derived.is_none())
+        .count()
+}
+
+fn feature_descriptors(input_schema: &InputSchema) -> Vec<WasmFeatureDescriptor> {
+    input_schema
+        .features
+        .iter()
+        .filter(|feature| feature.derived.is_none())
+        .enumerate()
+        .map(|(index, feature)| WasmFeatureDescriptor {
+            id: feature.id.clone(),
+            index,
+            feature_type: feature.feature_type.clone(),
+            encoding: match feature.feature_type {
+                FeatureType::Bool => WasmFeatureEncoding::Boolean,
+                FeatureType::Int | FeatureType::Float => WasmFeatureEncoding::Numeric,
+                FeatureType::String | FeatureType::Enum => WasmFeatureEncoding::StringCode,
+            },
+        })
+        .collect()
+}
+
+fn derived_feature_descriptors(
+    input_schema: &InputSchema,
+) -> Result<Vec<WasmDerivedFeatureDescriptor>> {
+    Ok(derived_feature_evaluation_order(&input_schema.features)
+        .into_diagnostic()
+        .wrap_err("failed to order derived features for wasm metadata")?
+        .iter()
+        .map(|feature| {
+            let derived = feature
+                .derived
+                .as_ref()
+                .expect("derived feature evaluation order should contain only derived features");
+            WasmDerivedFeatureDescriptor {
+                id: feature.id.clone(),
+                op: derived.op.clone(),
+                left_feature: derived.left_feature.clone(),
+                right_feature: derived.right_feature.clone(),
+            }
+        })
+        .collect())
+}
+
+fn rule_metadata(
+    input_schema: &InputSchema,
+    wasm_rules: &[WasmRuleView<'_>],
+) -> Vec<WasmRuleMetadata> {
+    wasm_rules
+        .iter()
+        .map(|rule| WasmRuleMetadata {
+            id: rule.id.to_string(),
+            bit: rule.bit,
+            action: rule.action.map(ToOwned::to_owned),
+            priority: rule.priority,
+            label: rule.label.cloned(),
+            message: rule.message.cloned(),
+            severity: rule.severity.cloned(),
+            counterfactual_hint: rule.counterfactual_hint.cloned(),
+            features: explain_rule_features(input_schema, rule.expression),
+        })
+        .collect()
 }
 
 pub(super) fn build_string_codes(

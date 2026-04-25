@@ -30,9 +30,9 @@ use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
     generated_feature_dictionary_path, guidance, parse_key_value_entries, progress_callback,
-    progress_enabled, run_action_build, selection_policy_from_args, set_progress_message,
-    should_generate_feature_dictionary, start_progress, to_discovery_decision_mode,
-    write_feature_dictionary_from_columns, BuildArgs,
+    progress_enabled, run_action_build, run_fanout_build, selection_policy_from_args,
+    set_progress_message, should_generate_feature_dictionary, start_progress,
+    to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
 };
 use crate::{
     build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -42,6 +42,9 @@ use crate::{
 
 pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     apply_build_config(&mut args)?;
+    if args.fanout_column.is_some() {
+        return run_fanout_build(args);
+    }
     if args.action_column.is_some() {
         return run_action_build(args);
     }

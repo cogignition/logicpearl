@@ -3,13 +3,15 @@ use super::*;
 use anstream::println;
 use clap::{Args, Subcommand};
 use logicpearl_pipeline::{
-    OverridePipelineDefinition, PipelineDefinition, OVERRIDE_PIPELINE_SCHEMA_VERSION,
+    FanoutPipelineDefinition, OverridePipelineDefinition, PipelineDefinition,
+    FANOUT_PIPELINE_SCHEMA_VERSION, OVERRIDE_PIPELINE_SCHEMA_VERSION,
 };
 use std::path::Path;
 
 enum LoadedPipeline {
     Staged(PipelineDefinition),
     Override(OverridePipelineDefinition),
+    Fanout(FanoutPipelineDefinition),
 }
 
 const PIPELINE_AFTER_HELP: &str = "\
@@ -165,6 +167,33 @@ pub(crate) fn run_pipeline_validate(args: PipelineValidateArgs) -> Result<()> {
                 }
             }
         }
+        LoadedPipeline::Fanout(pipeline) => {
+            let validated = pipeline
+                .validate(base_dir)
+                .into_diagnostic()
+                .wrap_err("fan-out pipeline validation failed")?;
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&validated).into_diagnostic()?
+                );
+            } else {
+                println!(
+                    "{} {}",
+                    "Fan-out Pipeline".bold().bright_cyan(),
+                    format!("manifest is valid ({})", validated.pipeline_id).bright_black()
+                );
+                println!("  {} {}", "Actions".bright_black(), validated.actions.len());
+                for action in &validated.actions {
+                    println!(
+                        "  {} {} -> {}",
+                        "-".bright_black(),
+                        action.action.bold(),
+                        action.id
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -244,6 +273,27 @@ pub(crate) fn run_pipeline_inspect(args: PipelineInspectArgs) -> Result<()> {
                 }
             }
         }
+        LoadedPipeline::Fanout(pipeline) => {
+            let validated = pipeline
+                .inspect(base_dir)
+                .into_diagnostic()
+                .wrap_err("fan-out pipeline inspection failed")?;
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&validated).into_diagnostic()?
+                );
+            } else {
+                println!(
+                    "{} {}",
+                    "Fan-out Pipeline".bold().bright_blue(),
+                    validated.pipeline_id.bold()
+                );
+                for action in &validated.actions {
+                    println!("  {} {}", "Action".bright_black(), action.action);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -256,11 +306,13 @@ pub(crate) fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         .unwrap_or_else(|| std::path::Path::new("."));
     let input = read_json_input_argument(args.input_json.as_ref(), "pipeline input")?;
     let policy = plugin_execution_policy(&args.plugin_execution);
-    if matches!(pipeline, LoadedPipeline::Override(_))
-        && policy != logicpearl_plugin::PluginExecutionPolicy::default()
+    if matches!(
+        pipeline,
+        LoadedPipeline::Override(_) | LoadedPipeline::Fanout(_)
+    ) && policy != logicpearl_plugin::PluginExecutionPolicy::default()
     {
         return Err(miette::miette!(
-            "override pipelines do not execute plugin stages; plugin execution flags are not used"
+            "typed pipelines do not execute plugin stages; plugin execution flags are not used"
         ));
     }
     let execution = match pipeline {
@@ -276,6 +328,13 @@ pub(crate) fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
                 .run(base_dir, &input)
                 .into_diagnostic()
                 .wrap_err("override pipeline execution failed")?,
+        )
+        .into_diagnostic()?,
+        LoadedPipeline::Fanout(pipeline) => serde_json::to_value(
+            pipeline
+                .run(base_dir, &input)
+                .into_diagnostic()
+                .wrap_err("fan-out pipeline execution failed")?,
         )
         .into_diagnostic()?,
     };
@@ -315,11 +374,13 @@ pub(crate) fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
     .into_diagnostic()
     .wrap_err("pipeline input JSON is not valid JSON")?;
     let policy = plugin_execution_policy(&args.plugin_execution);
-    if matches!(pipeline, LoadedPipeline::Override(_))
-        && policy != logicpearl_plugin::PluginExecutionPolicy::default()
+    if matches!(
+        pipeline,
+        LoadedPipeline::Override(_) | LoadedPipeline::Fanout(_)
+    ) && policy != logicpearl_plugin::PluginExecutionPolicy::default()
     {
         return Err(miette::miette!(
-            "override pipelines do not execute plugin stages; plugin execution flags are not used"
+            "typed pipelines do not execute plugin stages; plugin execution flags are not used"
         ));
     }
     let execution = match pipeline {
@@ -335,6 +396,13 @@ pub(crate) fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
                 .run(base_dir, &input)
                 .into_diagnostic()
                 .wrap_err("override pipeline trace execution failed")?,
+        )
+        .into_diagnostic()?,
+        LoadedPipeline::Fanout(pipeline) => serde_json::to_value(
+            pipeline
+                .run(base_dir, &input)
+                .into_diagnostic()
+                .wrap_err("fan-out pipeline trace execution failed")?,
         )
         .into_diagnostic()?,
     };
@@ -387,22 +455,26 @@ pub(crate) fn run_pipeline_trace(args: PipelineTraceArgs) -> Result<()> {
 }
 
 fn load_pipeline(path: &Path) -> Result<LoadedPipeline> {
-    if is_override_pipeline(path)? {
-        Ok(LoadedPipeline::Override(
+    match pipeline_schema_version(path)?.as_deref() {
+        Some(OVERRIDE_PIPELINE_SCHEMA_VERSION) => Ok(LoadedPipeline::Override(
             OverridePipelineDefinition::from_path(path)
                 .into_diagnostic()
                 .wrap_err("could not load override pipeline artifact")?,
-        ))
-    } else {
-        Ok(LoadedPipeline::Staged(
+        )),
+        Some(FANOUT_PIPELINE_SCHEMA_VERSION) => Ok(LoadedPipeline::Fanout(
+            FanoutPipelineDefinition::from_path(path)
+                .into_diagnostic()
+                .wrap_err("could not load fan-out pipeline artifact")?,
+        )),
+        _ => Ok(LoadedPipeline::Staged(
             PipelineDefinition::from_path(path)
                 .into_diagnostic()
                 .wrap_err("could not load pipeline artifact")?,
-        ))
+        )),
     }
 }
 
-fn is_override_pipeline(path: &Path) -> Result<bool> {
+fn pipeline_schema_version(path: &Path) -> Result<Option<String>> {
     let content = fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err("failed to read pipeline artifact")?;
@@ -413,5 +485,5 @@ fn is_override_pipeline(path: &Path) -> Result<bool> {
     Ok(value
         .get("schema_version")
         .and_then(Value::as_str)
-        .is_some_and(|schema| schema == OVERRIDE_PIPELINE_SCHEMA_VERSION))
+        .map(ToOwned::to_owned))
 }

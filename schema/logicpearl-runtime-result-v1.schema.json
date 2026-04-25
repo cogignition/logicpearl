@@ -16,6 +16,9 @@
       "$ref": "https://logicpearl.com/schema/logicpearl-override-pipeline-result-v1.schema.json"
     },
     {
+      "$ref": "https://logicpearl.com/schema/logicpearl-fanout-result-v1.schema.json"
+    },
+    {
       "$ref": "https://logicpearl.com/schema/logicpearl-artifact-error-v1.schema.json"
     }
   ]

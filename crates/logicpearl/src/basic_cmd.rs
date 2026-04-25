@@ -17,6 +17,7 @@ mod compose;
 mod config;
 mod conflicts;
 mod discover;
+mod fanout_build;
 mod feature_dictionary;
 mod inspect;
 mod quickstart;
@@ -28,6 +29,7 @@ pub(crate) use build::run_build;
 pub(crate) use compile::run_compile;
 pub(crate) use compose::run_compose;
 pub(crate) use discover::run_discover;
+use fanout_build::run_fanout_build;
 use feature_dictionary::{
     feature_columns_from_decision_rows, generated_feature_dictionary_for_output,
     generated_feature_dictionary_path, should_generate_feature_dictionary,
@@ -236,6 +238,17 @@ pub(crate) struct BuildArgs {
     /// Column containing a multi-action label such as water, fertilize, repot, or do_nothing.
     #[arg(long)]
     pub action_column: Option<String>,
+    /// Column containing a multi-label list of applicable actions. Builds one applicability gate per action and packages them as a fan-out pipeline.
+    #[arg(long, conflicts_with = "action_column")]
+    pub fanout_column: Option<String>,
+    /// Comma-separated actions to build fan-out gates for. Defaults to actions observed in --fanout-column.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "ACTIONS",
+        requires = "fanout_column"
+    )]
+    pub fanout_actions: Vec<String>,
     /// Comma-separated allow-list of input columns to learn as features.
     #[arg(
         long,

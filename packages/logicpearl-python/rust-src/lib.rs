@@ -150,6 +150,7 @@ fn single_runtime_result_value(execution: EngineSingleExecution) -> Result<Value
         EngineSingleExecution::Artifact(output) => serde_json::to_value(output.evaluation),
         EngineSingleExecution::ActionArtifact(output) => serde_json::to_value(output.evaluation),
         EngineSingleExecution::Pipeline(output) => serde_json::to_value(output),
+        EngineSingleExecution::Fanout(output) => serde_json::to_value(output),
     }?;
     Ok(value)
 }
@@ -159,6 +160,7 @@ fn batch_runtime_result_value(execution: EngineBatchExecution) -> Result<Value, 
         EngineBatchExecution::Artifact(output) => serde_json::to_value(output.evaluations),
         EngineBatchExecution::ActionArtifact(output) => serde_json::to_value(output.evaluations),
         EngineBatchExecution::Pipeline(output) => serde_json::to_value(output),
+        EngineBatchExecution::Fanout(output) => serde_json::to_value(output),
     }?;
     Ok(value)
 }

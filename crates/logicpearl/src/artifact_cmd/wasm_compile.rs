@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 use super::pearl::{CompilablePearl, WasmRuleView};
 use super::wasm_metadata::{
-    build_string_codes, string_key, wasm_metadata_path_for_module, write_wasm_metadata_for_pearl,
+    build_string_codes, string_key, wasm_metadata_path_for_module, write_wasm_metadata_for_fanout,
+    write_wasm_metadata_for_pearl, FanoutWasmGateMetadata,
 };
 use super::{
     cleanup_generated_build_dir, generated_build_root, unique_generated_crate_name,
     wasm_artifact_output_path, workspace_root,
 };
 use logicpearl_benchmark::sanitize_identifier;
+use logicpearl_core::load_artifact_bundle;
 #[cfg(test)]
 use logicpearl_ir::LogicPearlGateIr;
 use logicpearl_ir::{
@@ -15,6 +17,7 @@ use logicpearl_ir::{
     DerivedFeatureDefinition, DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType,
     InputSchema,
 };
+use logicpearl_pipeline::FanoutPipelineDefinition;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -122,14 +125,264 @@ pub(crate) fn compile_wasm_module(
     })
 }
 
+pub(crate) fn compile_wasm_fanout_module(
+    pipeline_ir: &Path,
+    artifact_dir: &Path,
+    artifact_id: &str,
+    name: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<WasmArtifactOutput> {
+    let pipeline_name = name.unwrap_or_else(|| artifact_id.to_string());
+    let output_path =
+        output.unwrap_or_else(|| wasm_artifact_output_path(artifact_dir, &pipeline_name));
+    let metadata_path = wasm_metadata_path_for_module(&output_path);
+    let pipeline = FanoutPipelineDefinition::from_path(pipeline_ir)
+        .into_diagnostic()
+        .wrap_err("failed to load fan-out pipeline for wasm compilation")?;
+    pipeline
+        .validate(artifact_dir)
+        .into_diagnostic()
+        .wrap_err("fan-out pipeline is not valid for wasm compilation")?;
+    let gates = load_fanout_compile_gates(&pipeline, artifact_dir)?;
+    for gate in &gates {
+        if let Some(rule) = gate
+            .pearl
+            .wasm_rules()
+            .into_iter()
+            .find(|rule| rule.bit >= 64)
+        {
+            return Err(miette::miette!(
+                "wasm compilation currently supports only rule bits 0-63; fan-out action `{}` artifact `{}` includes rule `{}` at bit {}\n\nHint: Use the native compile target for wider fan-out artifacts, or keep wasm-targeted gates at 64 rules or fewer for now.",
+                gate.action,
+                gate.pearl.artifact_id(),
+                rule.id,
+                rule.bit
+            ));
+        }
+    }
+
+    let workspace_root = workspace_root();
+    let generated_root = generated_build_root(&workspace_root);
+    let crate_name = unique_generated_crate_name(&format!(
+        "logicpearl_compiled_{}_fanout_wasm",
+        sanitize_identifier(&pipeline_name)
+    ));
+    let build_dir = generated_root.join(&crate_name);
+    let src_dir = build_dir.join("src");
+    fs::create_dir_all(&src_dir)
+        .into_diagnostic()
+        .wrap_err("failed to create generated fan-out wasm compile directory")?;
+    let cargo_toml = format!(
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n\n[profile.release]\nopt-level = \"z\"\nlto = true\ncodegen-units = 1\npanic = \"abort\"\nstrip = \"symbols\"\n"
+    );
+    fs::write(build_dir.join("Cargo.toml"), cargo_toml)
+        .into_diagnostic()
+        .wrap_err("failed to write generated fan-out wasm Cargo.toml")?;
+
+    let lib_rs = generate_wasm_runner_source_for_fanout(&gates)
+        .into_diagnostic()
+        .wrap_err("failed to generate fan-out wasm runner source")?;
+    fs::write(src_dir.join("lib.rs"), lib_rs)
+        .into_diagnostic()
+        .wrap_err("failed to write generated fan-out wasm runner source")?;
+    let metadata_inputs = gates
+        .iter()
+        .map(|gate| FanoutWasmGateMetadata {
+            action: &gate.action,
+            id: &gate.id,
+            gate: match &gate.pearl {
+                CompilablePearl::Gate(gate) => gate,
+                CompilablePearl::Action(_) => unreachable!("fan-out gates must be gates"),
+            },
+            entrypoint: gate.bitmask_entrypoint.clone(),
+            status_entrypoint: gate.status_entrypoint.clone(),
+            allow_entrypoint: gate.allow_entrypoint.clone(),
+        })
+        .collect::<Vec<_>>();
+    write_wasm_metadata_for_fanout(
+        &metadata_path,
+        &pipeline.pipeline_id,
+        logicpearl_runtime::artifact_hash(&pipeline),
+        &metadata_inputs,
+    )?;
+
+    let status = std::process::Command::new("cargo")
+        .arg("build")
+        .arg("--offline")
+        .arg("--release")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown")
+        .arg("--manifest-path")
+        .arg(build_dir.join("Cargo.toml"))
+        .status()
+        .into_diagnostic()
+        .wrap_err(
+            "failed to invoke cargo for fan-out wasm compilation; install Rust/Cargo and make sure `cargo` is on PATH",
+        )?;
+    if !status.success() {
+        return Err(miette::miette!(
+            "fan-out wasm compilation failed with status {status}\n\nHint: `logicpearl compile --target wasm32-unknown-unknown` runs `cargo build --offline --release --target wasm32-unknown-unknown`. Install Rust/Cargo, make sure required crates are present in Cargo's local cache, then install the target with `rustup target add wasm32-unknown-unknown`."
+        ));
+    }
+
+    let built_module = build_dir
+        .join("target")
+        .join("wasm32-unknown-unknown")
+        .join("release")
+        .join(format!("{crate_name}.wasm"));
+    fs::create_dir_all(output_path.parent().unwrap_or_else(|| Path::new(".")))
+        .into_diagnostic()
+        .wrap_err("failed to create output directory")?;
+    fs::copy(&built_module, &output_path)
+        .into_diagnostic()
+        .wrap_err("failed to copy compiled fan-out wasm module")?;
+    cleanup_generated_build_dir(&build_dir);
+    Ok(WasmArtifactOutput {
+        module_path: output_path,
+        metadata_path,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct FanoutCompileGate {
+    action: String,
+    id: String,
+    pearl: CompilablePearl,
+    bitmask_entrypoint: String,
+    status_entrypoint: String,
+    allow_entrypoint: String,
+}
+
+fn load_fanout_compile_gates(
+    pipeline: &FanoutPipelineDefinition,
+    artifact_dir: &Path,
+) -> Result<Vec<FanoutCompileGate>> {
+    let mut used_suffixes = BTreeMap::<String, usize>::new();
+    pipeline
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let id = action
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| format!("action_{index:03}"));
+            let artifact_path = artifact_dir.join(&action.artifact);
+            let bundle = load_artifact_bundle(&artifact_path).map_err(|err| {
+                miette::miette!("failed to load fan-out action artifact {id}: {err}")
+            })?;
+            let pearl = CompilablePearl::from_path(&bundle.ir_path().into_diagnostic()?)
+                .wrap_err_with(|| format!("failed to load fan-out action gate `{id}`"))?;
+            if !matches!(pearl, CompilablePearl::Gate(_)) {
+                return Err(miette::miette!(
+                    "fan-out action `{id}` must reference a gate artifact"
+                ));
+            }
+            let base_suffix = sanitize_identifier(&id);
+            let base_suffix = if base_suffix.is_empty() {
+                format!("action_{index:03}")
+            } else {
+                base_suffix
+            };
+            let count = used_suffixes.entry(base_suffix.clone()).or_insert(0);
+            let suffix = if *count == 0 {
+                base_suffix.clone()
+            } else {
+                format!("{base_suffix}_{count}")
+            };
+            *count += 1;
+            Ok(FanoutCompileGate {
+                action: action.action.clone(),
+                id,
+                pearl,
+                bitmask_entrypoint: format!("logicpearl_eval_bitmask_slots_f64_{suffix}"),
+                status_entrypoint: format!("logicpearl_eval_status_slots_f64_{suffix}"),
+                allow_entrypoint: format!("logicpearl_eval_allow_slots_f64_{suffix}"),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(super) fn generate_wasm_runner_source(gate: &LogicPearlGateIr) -> String {
     generate_wasm_runner_source_for_pearl(&CompilablePearl::Gate(gate.clone()))
         .expect("wasm runner source should generate")
 }
 
+#[cfg(test)]
+pub(super) fn generate_wasm_fanout_runner_source(gates: &[(&str, LogicPearlGateIr)]) -> String {
+    let compile_gates = gates
+        .iter()
+        .enumerate()
+        .map(|(index, (id, gate))| FanoutCompileGate {
+            action: (*id).to_string(),
+            id: (*id).to_string(),
+            pearl: CompilablePearl::Gate(gate.clone()),
+            bitmask_entrypoint: format!("logicpearl_eval_bitmask_slots_f64_action_{index}"),
+            status_entrypoint: format!("logicpearl_eval_status_slots_f64_action_{index}"),
+            allow_entrypoint: format!("logicpearl_eval_allow_slots_f64_action_{index}"),
+        })
+        .collect::<Vec<_>>();
+    generate_wasm_runner_source_for_fanout(&compile_gates)
+        .expect("fan-out wasm runner source should generate")
+}
+
 fn generate_wasm_runner_source_for_pearl(
     pearl: &CompilablePearl,
+) -> logicpearl_core::Result<String> {
+    let wasm_rules = pearl.wasm_rules();
+    let mut used_ops = collect_used_comparison_operators(&wasm_rules);
+    collect_used_derived_operators(pearl.input_schema(), &mut used_ops);
+    let evaluator = generate_wasm_evaluator_source(
+        pearl,
+        "pearl",
+        "logicpearl_eval_bitmask_slots_f64",
+        "logicpearl_eval_status_slots_f64",
+        "logicpearl_eval_allow_slots_f64",
+    )?;
+
+    Ok(format!(
+        "const LOGICPEARL_STATUS_OK: u32 = 0;\nconst LOGICPEARL_STATUS_NULL_PTR: u32 = 1;\nconst LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;\n\n{helpers}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n{evaluator}",
+        helpers = wasm_helper_source(used_ops),
+        evaluator = evaluator,
+    ))
+}
+
+fn generate_wasm_runner_source_for_fanout(
+    gates: &[FanoutCompileGate],
+) -> logicpearl_core::Result<String> {
+    let mut used_ops = UsedWasmOperators::default();
+    let mut evaluators = String::new();
+    for gate in gates {
+        let wasm_rules = gate.pearl.wasm_rules();
+        collect_rule_operators(&wasm_rules, &mut used_ops);
+        collect_used_derived_operators(gate.pearl.input_schema(), &mut used_ops);
+        evaluators.push_str(&generate_wasm_evaluator_source(
+            &gate.pearl,
+            &sanitize_identifier(&gate.id),
+            &gate.bitmask_entrypoint,
+            &gate.status_entrypoint,
+            &gate.allow_entrypoint,
+        )?);
+        evaluators.push('\n');
+    }
+
+    Ok(format!(
+        "const LOGICPEARL_STATUS_OK: u32 = 0;\nconst LOGICPEARL_STATUS_NULL_PTR: u32 = 1;\nconst LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;\n\n{helpers}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n{evaluators}",
+        helpers = wasm_helper_source(used_ops),
+        evaluators = evaluators,
+    ))
+}
+
+fn generate_wasm_evaluator_source(
+    pearl: &CompilablePearl,
+    suffix: &str,
+    bitmask_entrypoint: &str,
+    status_entrypoint: &str,
+    allow_entrypoint: &str,
 ) -> logicpearl_core::Result<String> {
     let wasm_rules = pearl.wasm_rules();
     let input_schema = pearl.input_schema();
@@ -160,8 +413,6 @@ fn generate_wasm_runner_source_for_pearl(
         })
         .collect();
     let string_codes = build_string_codes(input_schema, &wasm_rules);
-    let mut used_ops = collect_used_comparison_operators(&wasm_rules);
-    collect_used_derived_operators(input_schema, &mut used_ops);
     let derived_features = derived_feature_evaluation_order(&input_schema.features)?;
     let derived_assignments = derived_features
         .iter()
@@ -192,6 +443,19 @@ fn generate_wasm_runner_source_for_pearl(
             rule.bit
         ));
     }
+    let suffix = sanitize_identifier(suffix);
+    let feature_count_const = format!("FEATURE_COUNT_{}", suffix.to_ascii_uppercase());
+    let evaluate_fn = format!("evaluate_{suffix}");
+    let validate_fn = format!("validate_slots_{suffix}");
+    Ok(format!(
+        "const {feature_count_const}: usize = {feature_count};\n\nfn {evaluate_fn}(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[inline]\nfn {validate_fn}(ptr: *const f64, len: usize) -> u32 {{\n    if ptr.is_null() {{\n        return LOGICPEARL_STATUS_NULL_PTR;\n    }}\n    if len < {feature_count_const} {{\n        return LOGICPEARL_STATUS_INSUFFICIENT_LEN;\n    }}\n    LOGICPEARL_STATUS_OK\n}}\n\n#[no_mangle]\npub extern \"C\" fn {status_entrypoint}(ptr: *const f64, len: usize) -> u32 {{\n    {validate_fn}(ptr, len)\n}}\n\n#[no_mangle]\npub extern \"C\" fn {bitmask_entrypoint}(ptr: *const f64, len: usize) -> u64 {{\n    if {validate_fn}(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 0;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    {evaluate_fn}(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn {allow_entrypoint}(ptr: *const f64, len: usize) -> u32 {{\n    if {validate_fn}(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 2;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    if {evaluate_fn}(values) == 0 {{ 1 }} else {{ 0 }}\n}}\n",
+        feature_count = input_features.len(),
+        derived_assignments = derived_assignments,
+        rules = rule_source,
+    ))
+}
+
+fn wasm_helper_source(used_ops: UsedWasmOperators) -> String {
     let mut helpers =
         String::from("#[inline]\nfn slot(values: &[f64], index: usize) -> f64 { values[index] }\n");
     if used_ops.eq {
@@ -224,14 +488,7 @@ fn generate_wasm_runner_source_for_pearl(
             "\n#[inline]\nfn ratio_num(left: f64, right: f64) -> f64 {\n    if left.is_nan() || right.is_nan() || right.abs() < f64::EPSILON {\n        0.0\n    } else {\n        let value = left / right;\n        if value.is_finite() { value } else { 0.0 }\n    }\n}\n",
         );
     }
-
-    Ok(format!(
-        "const FEATURE_COUNT: usize = {};\nconst LOGICPEARL_STATUS_OK: u32 = 0;\nconst LOGICPEARL_STATUS_NULL_PTR: u32 = 1;\nconst LOGICPEARL_STATUS_INSUFFICIENT_LEN: u32 = 2;\n\n{helpers}\n\nfn evaluate(values: &[f64]) -> u64 {{\n    let mut bitmask = 0u64;\n{derived_assignments}{rules}    bitmask\n}}\n\n#[inline]\nfn validate_slots(ptr: *const f64, len: usize) -> u32 {{\n    if ptr.is_null() {{\n        return LOGICPEARL_STATUS_NULL_PTR;\n    }}\n    if len < FEATURE_COUNT {{\n        return LOGICPEARL_STATUS_INSUFFICIENT_LEN;\n    }}\n    LOGICPEARL_STATUS_OK\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_alloc(len: usize) -> *mut u8 {{\n    let mut bytes = Vec::<u8>::with_capacity(len);\n    let ptr = bytes.as_mut_ptr();\n    std::mem::forget(bytes);\n    ptr\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_dealloc(ptr: *mut u8, capacity: usize) {{\n    if ptr.is_null() {{\n        return;\n    }}\n    unsafe {{\n        let _ = Vec::from_raw_parts(ptr, 0, capacity);\n    }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_status_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    validate_slots(ptr, len)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_bitmask_slots_f64(ptr: *const f64, len: usize) -> u64 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 0;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    evaluate(values)\n}}\n\n#[no_mangle]\npub extern \"C\" fn logicpearl_eval_allow_slots_f64(ptr: *const f64, len: usize) -> u32 {{\n    if validate_slots(ptr, len) != LOGICPEARL_STATUS_OK {{\n        return 2;\n    }}\n    let values = unsafe {{ std::slice::from_raw_parts(ptr, len) }};\n    if evaluate(values) == 0 {{ 1 }} else {{ 0 }}\n}}\n",
-        input_features.len(),
-        helpers = helpers,
-        derived_assignments = derived_assignments,
-        rules = rule_source,
-    ))
+    helpers
 }
 
 fn wasm_if_condition(expression: &str) -> &str {
@@ -243,10 +500,14 @@ fn wasm_if_condition(expression: &str) -> &str {
 
 fn collect_used_comparison_operators(rules: &[WasmRuleView<'_>]) -> UsedWasmOperators {
     let mut ops = UsedWasmOperators::default();
-    for rule in rules {
-        collect_expression_operators(rule.expression, &mut ops);
-    }
+    collect_rule_operators(rules, &mut ops);
     ops
+}
+
+fn collect_rule_operators(rules: &[WasmRuleView<'_>], ops: &mut UsedWasmOperators) {
+    for rule in rules {
+        collect_expression_operators(rule.expression, ops);
+    }
 }
 
 fn collect_expression_operators(expression: &Expression, ops: &mut UsedWasmOperators) {

@@ -59,6 +59,10 @@ fn golden_runtime_fixtures_validate_against_committed_schemas() {
             "fixtures/runtime/override_pipeline_result_v1.json",
         ),
         (
+            "logicpearl-fanout-result-v1.schema.json",
+            "fixtures/runtime/fanout_result_v1.json",
+        ),
+        (
             "logicpearl-artifact-error-v1.schema.json",
             "fixtures/runtime/artifact_error_v1.json",
         ),

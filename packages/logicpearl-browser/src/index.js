@@ -86,21 +86,42 @@ export function normalizeArtifactReference(reference) {
 export class LogicPearlBrowserArtifact {
   constructor({ manifest, wasmMetadata, instance, artifactBaseUrl, manifestUrl }) {
     const exports = instance?.exports ?? {};
+    const isFanout = wasmMetadata.decision_kind === 'fanout';
     const bitmaskEntrypoint = wasmMetadata.entrypoint ?? DEFAULT_BITMASK_ENTRYPOINT;
     const statusEntrypoint = wasmMetadata.status_entrypoint ?? DEFAULT_STATUS_ENTRYPOINT;
     const declaresStatusEntrypoint =
       typeof wasmMetadata.status_entrypoint === 'string' &&
       wasmMetadata.status_entrypoint.length > 0;
-    if (
-      typeof exports.logicpearl_alloc !== 'function' ||
-      typeof exports[bitmaskEntrypoint] !== 'function' ||
-      !(exports.memory instanceof WebAssembly.Memory)
-    ) {
+    if (typeof exports.logicpearl_alloc !== 'function' || !(exports.memory instanceof WebAssembly.Memory)) {
       throw new Error(
         'Loaded wasm module does not expose the expected LogicPearl browser ABI.'
       );
     }
-    if (declaresStatusEntrypoint && typeof exports[statusEntrypoint] !== 'function') {
+    if (isFanout) {
+      for (const action of wasmMetadata.actions ?? []) {
+        const actionEntrypoint = action.entrypoint ?? DEFAULT_BITMASK_ENTRYPOINT;
+        const actionStatusEntrypoint = action.status_entrypoint ?? DEFAULT_STATUS_ENTRYPOINT;
+        if (typeof exports[actionEntrypoint] !== 'function') {
+          throw new Error(
+            `Loaded fan-out wasm module is missing action entrypoint ${actionEntrypoint}.`
+          );
+        }
+        if (
+          typeof action.status_entrypoint === 'string' &&
+          action.status_entrypoint.length > 0 &&
+          typeof exports[actionStatusEntrypoint] !== 'function'
+        ) {
+          throw new Error(
+            `Loaded fan-out wasm module is missing action status entrypoint ${actionStatusEntrypoint}.`
+          );
+        }
+      }
+    } else if (typeof exports[bitmaskEntrypoint] !== 'function') {
+      throw new Error(
+        'Loaded wasm module does not expose the expected LogicPearl browser ABI.'
+      );
+    }
+    if (!isFanout && declaresStatusEntrypoint && typeof exports[statusEntrypoint] !== 'function') {
       throw new Error(
         'Loaded wasm module declares but does not expose the LogicPearl status ABI.'
       );
@@ -111,6 +132,7 @@ export class LogicPearlBrowserArtifact {
     this.instance = instance;
     this.artifactBaseUrl = artifactBaseUrl;
     this.manifestUrl = manifestUrl;
+    this.isFanout = isFanout;
     this.featureCount = wasmMetadata.feature_count;
     this.bitmaskEntrypoint = bitmaskEntrypoint;
     this.statusEntrypoint = statusEntrypoint;
@@ -124,12 +146,18 @@ export class LogicPearlBrowserArtifact {
       decisionKind,
       gateId: this.metadata.gate_id,
       actionPolicyId: this.metadata.action_policy_id ?? null,
+      pipelineId: this.metadata.pipeline_id ?? null,
       artifactId: this.manifest.artifact_id,
       artifactKind: this.manifest.artifact_kind,
       engineVersion: this.metadata.engine_version ?? this.manifest.engine_version ?? null,
       artifactHash: this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null,
       featureCount: this.metadata.feature_count,
-      ruleCount: (this.metadata.rules ?? []).length,
+      ruleCount: this.isFanout
+        ? (this.metadata.actions ?? []).reduce(
+            (count, action) => count + (action.rules ?? []).length,
+            0
+          )
+        : (this.metadata.rules ?? []).length,
       artifactBaseUrl: this.artifactBaseUrl,
       manifestUrl: this.manifestUrl,
       browserRuntime: this.manifest.files?.wasm ? 'wasm' : null,
@@ -137,10 +165,18 @@ export class LogicPearlBrowserArtifact {
   }
 
   rules() {
+    if (this.isFanout) {
+      return (this.metadata.actions ?? []).flatMap((action) =>
+        (action.rules ?? []).map((rule) => ({ ...rule, action: action.action }))
+      );
+    }
     return [...(this.metadata.rules ?? [])];
   }
 
   evaluate(input) {
+    if (this.isFanout) {
+      return this.evaluateFanout(input);
+    }
     const slots = encodeFeatureSlots(input, this.metadata);
     const exports = this.instance.exports;
     const artifactId =
@@ -234,6 +270,96 @@ export class LogicPearlBrowserArtifact {
     }
   }
 
+  evaluateFanout(input) {
+    const artifactId = this.manifest.artifact_id ?? this.metadata.pipeline_id ?? 'logicpearl_fanout';
+    const engineVersion = this.metadata.engine_version ?? this.manifest.engine_version ?? null;
+    const artifactHash = this.metadata.artifact_hash ?? this.manifest.artifact_hash ?? null;
+    const applicableActions = [];
+    const verdicts = {};
+    const stages = [];
+
+    for (const actionMetadata of this.metadata.actions ?? []) {
+      const result = this.evaluateFanoutGate(input, actionMetadata);
+      const applies = result.firedRules.length > 0 || result.bitmask !== 0n;
+      if (applies) {
+        applicableActions.push(actionMetadata.action);
+      }
+      const verdict = {
+        id: actionMetadata.id ?? actionMetadata.action,
+        action: actionMetadata.action,
+        applies,
+        artifactId: result.artifactId,
+        artifactHash: result.artifactHash,
+        bitmask: result.bitmask,
+        matchedRules: result.firedRules,
+        result,
+      };
+      verdicts[actionMetadata.action] = verdict;
+      stages.push(verdict);
+    }
+
+    return {
+      schemaVersion: 'logicpearl.fanout_result.v1',
+      engineVersion,
+      artifactHash,
+      artifactId,
+      decisionKind: 'fanout',
+      pipelineId: this.metadata.pipeline_id ?? artifactId,
+      ok: true,
+      applicableActions,
+      verdicts,
+      output: { applicableActions, verdicts },
+      stages,
+    };
+  }
+
+  evaluateFanoutGate(input, actionMetadata) {
+    const slots = encodeFeatureSlots(input, actionMetadata);
+    const exports = this.instance.exports;
+    const featureCount = actionMetadata.feature_count;
+    const ptr = exports.logicpearl_alloc(featureCount * 8);
+    try {
+      const view = new Float64Array(exports.memory.buffer, ptr, featureCount);
+      view.set(slots);
+      const statusEntrypoint = actionMetadata.status_entrypoint ?? DEFAULT_STATUS_ENTRYPOINT;
+      const statusFn = exports[statusEntrypoint];
+      if (typeof statusFn === 'function') {
+        const status = Number(statusFn(ptr, featureCount));
+        if (status !== 0) {
+          throw new Error(
+            `LogicPearl fan-out wasm evaluator rejected action ${actionMetadata.action} feature slots with status ${status}.`
+          );
+        }
+      }
+      const raw = exports[actionMetadata.entrypoint](ptr, featureCount);
+      const bitmask = BigInt(raw);
+      const firedRules = decodeFiredRules(bitmask, actionMetadata.rules ?? []);
+      return {
+        schemaVersion: 'logicpearl.gate_result.v1',
+        engineVersion: this.metadata.engine_version ?? this.manifest.engine_version ?? null,
+        artifactHash: actionMetadata.artifact_hash ?? null,
+        decisionKind: 'gate',
+        artifactId: actionMetadata.artifact_id ?? actionMetadata.id ?? actionMetadata.action,
+        policyId: actionMetadata.artifact_id ?? actionMetadata.id ?? actionMetadata.action,
+        gateId: actionMetadata.artifact_id ?? actionMetadata.id ?? actionMetadata.action,
+        allow: firedRules.length === 0,
+        defaulted: false,
+        ambiguity: null,
+        bitmask,
+        firedRuleIds: firedRules.map((rule) => rule.id),
+        firedRules,
+        primaryReason: firedRules[0] ?? null,
+        counterfactualHints: dedupe(
+          firedRules.map((rule) => rule.counterfactual_hint).filter(Boolean)
+        ),
+      };
+    } finally {
+      if (typeof exports.logicpearl_dealloc === 'function') {
+        exports.logicpearl_dealloc(ptr, featureCount * 8);
+      }
+    }
+  }
+
   evaluateBatch(inputs) {
     return inputs.map((input) => this.evaluate(input));
   }
@@ -260,6 +386,30 @@ export class LogicPearlBrowserArtifact {
         matched_rules: result.matchedRules.map(normalizeActionRuleExplanation),
         candidate_actions: result.candidateActions,
         ambiguity: result.ambiguity,
+      };
+    }
+    if (result.decisionKind === 'fanout') {
+      const verdicts = Object.fromEntries(
+        Object.entries(result.verdicts).map(([action, verdict]) => [
+          action,
+          normalizeFanoutVerdict(verdict),
+        ])
+      );
+      return {
+        schema_version: 'logicpearl.fanout_result.v1',
+        engine_version: context.engineVersion,
+        artifact_hash: context.artifactHash,
+        artifact_id: result.artifactId,
+        decision_kind: 'fanout',
+        pipeline_id: result.pipelineId,
+        ok: result.ok,
+        applicable_actions: result.applicableActions,
+        verdicts,
+        output: {
+          applicable_actions: result.applicableActions,
+          verdicts,
+        },
+        stages: result.stages.map(normalizeFanoutVerdict),
       };
     }
     return {
@@ -340,6 +490,36 @@ function normalizeActionRuleExplanation(rule) {
     severity: rule.severity ?? null,
     counterfactual_hint: rule.counterfactual_hint ?? null,
     features: normalizeFeatureExplanations(rule.features),
+  };
+}
+
+function normalizeFanoutVerdict(verdict) {
+  return {
+    id: verdict.id,
+    action: verdict.action,
+    applies: verdict.applies,
+    artifact_id: verdict.artifactId,
+    artifact_hash: verdict.artifactHash,
+    bitmask: bitmaskToJson(verdict.bitmask),
+    matched_rules: verdict.matchedRules.map(normalizeGateRuleExplanation),
+    result: normalizeFanoutGateResult(verdict.result),
+  };
+}
+
+function normalizeFanoutGateResult(result) {
+  return {
+    schema_version: 'logicpearl.gate_result.v1',
+    engine_version: result.engineVersion,
+    artifact_hash: result.artifactHash,
+    artifact_id: result.artifactId,
+    policy_id: result.policyId,
+    gate_id: result.gateId,
+    decision_kind: 'gate',
+    allow: result.allow,
+    bitmask: bitmaskToJson(result.bitmask),
+    defaulted: result.defaulted,
+    ambiguity: result.ambiguity,
+    matched_rules: result.firedRules.map(normalizeGateRuleExplanation),
   };
 }
 

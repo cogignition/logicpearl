@@ -87,6 +87,37 @@ export interface PipelineResultV1 {
   [key: string]: unknown;
 }
 
+export interface FanoutActionVerdictV1 {
+  id: string;
+  action: string;
+  applies: boolean;
+  artifact_id: string;
+  artifact_hash: string;
+  bitmask: RuleMaskJson;
+  matched_rules: GateRuleExplanationV1[];
+  result: GateResultV1;
+  [key: string]: unknown;
+}
+
+export interface FanoutResultV1 {
+  schema_version: 'logicpearl.fanout_result.v1';
+  engine_version: string;
+  artifact_id: string;
+  artifact_hash: string;
+  decision_kind: 'fanout';
+  pipeline_id: string;
+  ok: boolean;
+  applicable_actions: string[];
+  verdicts: Record<string, FanoutActionVerdictV1>;
+  output: {
+    applicable_actions: string[];
+    verdicts: Record<string, FanoutActionVerdictV1>;
+    [key: string]: unknown;
+  };
+  stages: FanoutActionVerdictV1[];
+  [key: string]: unknown;
+}
+
 export interface ArtifactErrorV1 {
   schema_version: 'logicpearl.artifact_error.v1';
   engine_version: string;
@@ -98,7 +129,12 @@ export interface ArtifactErrorV1 {
   [key: string]: unknown;
 }
 
-export type RuntimeResultV1 = GateResultV1 | ActionResultV1 | PipelineResultV1 | ArtifactErrorV1;
+export type RuntimeResultV1 =
+  | GateResultV1
+  | ActionResultV1
+  | PipelineResultV1
+  | FanoutResultV1
+  | ArtifactErrorV1;
 
 export interface ArtifactManifestFilesV1 {
   ir: string;
@@ -182,15 +218,47 @@ export interface BrowserActionEvaluation {
   counterfactualHints: string[];
 }
 
-export type BrowserEvaluation = BrowserGateEvaluation | BrowserActionEvaluation;
+export interface BrowserFanoutVerdict {
+  id: string;
+  action: string;
+  applies: boolean;
+  artifactId: string;
+  artifactHash: string | null;
+  bitmask: bigint;
+  matchedRules: BrowserRuleMetadata[];
+  result: BrowserGateEvaluation;
+}
+
+export interface BrowserFanoutEvaluation {
+  schemaVersion: 'logicpearl.fanout_result.v1';
+  engineVersion: string | null;
+  artifactHash: string | null;
+  artifactId: string;
+  decisionKind: 'fanout';
+  pipelineId: string;
+  ok: boolean;
+  applicableActions: string[];
+  verdicts: Record<string, BrowserFanoutVerdict>;
+  output: {
+    applicableActions: string[];
+    verdicts: Record<string, BrowserFanoutVerdict>;
+    [key: string]: unknown;
+  };
+  stages: BrowserFanoutVerdict[];
+}
+
+export type BrowserEvaluation =
+  | BrowserGateEvaluation
+  | BrowserActionEvaluation
+  | BrowserFanoutEvaluation;
 
 export interface LogicPearlBrowserArtifact {
   inspect(): Record<string, unknown>;
   rules(): BrowserRuleMetadata[];
   evaluate(input: Record<string, unknown>): BrowserEvaluation;
   evaluateBatch(inputs: Array<Record<string, unknown>>): BrowserEvaluation[];
-  evaluateJson(input: Record<string, unknown>): GateResultV1 | ActionResultV1;
-  evaluateJsonBatch(inputs: Array<Record<string, unknown>>): Array<GateResultV1 | ActionResultV1>;
+  evaluateJson(input: Record<string, unknown>): GateResultV1 | ActionResultV1 | FanoutResultV1;
+  evaluateJsonBatch(inputs: Array<Record<string, unknown>>): Array<GateResultV1 | ActionResultV1 | FanoutResultV1>;
 }
 
 export interface LoadArtifactOptions {
