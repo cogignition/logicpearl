@@ -17,6 +17,7 @@ mod compose;
 mod config;
 mod conflicts;
 mod discover;
+mod doctor;
 mod fanout_build;
 mod feature_dictionary;
 mod inspect;
@@ -29,6 +30,7 @@ pub(crate) use build::run_build;
 pub(crate) use compile::run_compile;
 pub(crate) use compose::run_compose;
 pub(crate) use discover::run_discover;
+pub(crate) use doctor::run_doctor;
 use fanout_build::run_fanout_build;
 use feature_dictionary::{
     feature_columns_from_decision_rows, generated_feature_dictionary_for_output,
@@ -216,6 +218,22 @@ pub(super) fn finish_progress(progress: Option<CliProgress>) {
 pub(crate) struct QuickstartArgs {
     /// Optional quickstart path to focus on.
     pub topic: Option<QuickstartTopic>,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl doctor traces.csv\n  logicpearl doctor examples/demos/garden_actions/traces.csv --json\n  logicpearl doctor traces.jsonl --output-dir /tmp/pearl"
+)]
+pub(crate) struct DoctorArgs {
+    /// Trace dataset to inspect in CSV, JSONL/NDJSON, or JSON form.
+    #[arg(value_name = "TRACES")]
+    pub traces: PathBuf,
+    /// Output directory to use in the recommended build command.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Emit machine-readable JSON instead of styled terminal output.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

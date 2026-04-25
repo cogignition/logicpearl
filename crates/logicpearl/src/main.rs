@@ -61,9 +61,9 @@ use artifact_cmd::{
     ArtifactManifestWriteOptions,
 };
 use basic_cmd::{
-    run_build, run_compile, run_compose, run_discover, run_eval, run_inspect, run_quickstart,
-    run_verify, BuildArgs, CompileArgs, ComposeArgs, DiscoverArgs, InspectArgs, QuickstartArgs,
-    RunArgs, VerifyArgs,
+    run_build, run_compile, run_compose, run_discover, run_doctor, run_eval, run_inspect,
+    run_quickstart, run_verify, BuildArgs, CompileArgs, ComposeArgs, DiscoverArgs, DoctorArgs,
+    InspectArgs, QuickstartArgs, RunArgs, VerifyArgs,
 };
 use benchmark_cmd::{
     run_benchmark, run_benchmark_adapt, run_benchmark_detect_profile, run_benchmark_emit_traces,
@@ -103,6 +103,7 @@ Use this CLI to:
 
 Common commands:
 - quickstart
+- doctor
 - traces
 - build
 - inspect
@@ -115,6 +116,7 @@ Common commands:
 const CLI_AFTER_HELP: &str = "\
 Examples:
   logicpearl quickstart
+  logicpearl doctor examples/getting_started/decision_traces.csv
   logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
   logicpearl inspect examples/getting_started/output
   logicpearl diff old_output new_output
@@ -247,6 +249,8 @@ enum Commands {
     Quickstart(QuickstartArgs),
     /// Turn labeled examples into a pearl.
     Build(BuildArgs),
+    /// Inspect traces and recommend the right build command.
+    Doctor(DoctorArgs),
     /// Generate and audit labeled decision traces.
     Traces {
         #[command(subcommand)]
@@ -375,6 +379,7 @@ fn main() -> Result<()> {
             command: TraceCommand::ObservationSchema(args),
         } => run_traces_observation_schema(args),
         Commands::Build(args) => run_build(args),
+        Commands::Doctor(args) => run_doctor(args),
         Commands::Quickstart(args) => run_quickstart(args),
         Commands::Discover(args) => run_discover(args),
         Commands::Compose(args) => run_compose(args),

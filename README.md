@@ -227,6 +227,15 @@ logicpearl build traces.csv \
   --output-dir /tmp/pearl
 ```
 
+Not sure which column is the target? Ask the trace doctor first:
+
+```bash
+logicpearl doctor traces.csv
+```
+
+It reports likely target columns, feature columns, warnings, and a recommended
+`logicpearl build` command for gate, action, or fan-out datasets.
+
 Multi-action example:
 
 ```bash
