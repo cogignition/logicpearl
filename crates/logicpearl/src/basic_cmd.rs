@@ -21,6 +21,7 @@ mod doctor;
 mod fanout_build;
 mod feature_dictionary;
 mod inspect;
+mod post_build_summary;
 mod quickstart;
 mod run;
 mod verify;

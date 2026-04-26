@@ -8,15 +8,13 @@ use logicpearl_build::{
 };
 use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
-    DecisionTraceRow, ExactSelectionBackend, FeatureColumnSelection, ProposalPolicy,
-    ResidualRecoveryState, SelectionPolicy,
+    BuildResult, DecisionTraceRow, FeatureColumnSelection, ProposalPolicy, SelectionPolicy,
 };
-use logicpearl_ir::LogicPearlGateIr;
+use logicpearl_ir::{LogicPearlGateIr, RuleDefinition};
 use logicpearl_plugin::{
     run_plugin_with_policy_and_metadata, PluginManifest, PluginRequest, PluginStage,
 };
 use miette::{IntoDiagnostic, Result, WrapErr};
-use owo_colors::OwoColorize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -29,6 +27,7 @@ use super::conflicts::{
 use super::doctor::{
     infer_recommended_target_for_build, infer_target_for_build, TargetInferenceMode,
 };
+use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
@@ -492,204 +491,116 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
-        println!(
-            "{} {}",
-            "Built".bold().bright_green(),
-            result.gate_id.bold()
-        );
-        if result.cache_hit {
-            println!(
-                "  {} {}",
-                "Cache".bright_black(),
-                "reused prior build output".bold()
-            );
-        }
-        println!("  {} {}", "Rows".bright_black(), result.rows);
-        println!("  {} {}", "Rules".bright_black(), result.rules_discovered);
-        if let Some(backend) = &result.exact_selection.backend {
-            let backend_label = match backend {
-                ExactSelectionBackend::BruteForce => "brute force",
-                ExactSelectionBackend::Smt => "smt",
-                ExactSelectionBackend::Mip => "mip",
-            };
-            let selection_summary = if result.exact_selection.adopted {
-                format!(
-                    "{backend_label} exact selection adopted on {} candidates",
-                    result.exact_selection.shortlisted_candidates
-                )
-            } else {
-                format!(
-                    "{backend_label} exact selection kept greedy plan on {} candidates",
-                    result.exact_selection.shortlisted_candidates
-                )
-            };
-            println!(
-                "  {} {}",
-                "Exact selection".bright_black(),
-                selection_summary
-            );
-            if let Some(detail) = &result.exact_selection.detail {
-                println!("  {} {}", "Selection detail".bright_black(), detail);
-            }
-        }
-        match result.residual_recovery.state {
-            ResidualRecoveryState::Applied => {
-                println!(
-                    "  {} {}",
-                    "Solver recovery".bright_black(),
-                    result
-                        .residual_recovery
-                        .detail
-                        .clone()
-                        .unwrap_or_else(|| "applied".to_string())
-                );
-            }
-            ResidualRecoveryState::NoMissedSlices => {
-                println!(
-                    "  {} no missed deny slices found",
-                    "Solver recovery".bright_black(),
-                );
-            }
-            ResidualRecoveryState::SolverUnavailable => {
-                println!(
-                    "  {} {}",
-                    "Solver recovery".bright_black(),
-                    result
-                        .residual_recovery
-                        .detail
-                        .as_deref()
-                        .unwrap_or("unavailable")
-                );
-            }
-            ResidualRecoveryState::SolverError => {
-                println!(
-                    "  {} {}",
-                    "Solver recovery".bright_black(),
-                    result
-                        .residual_recovery
-                        .detail
-                        .as_deref()
-                        .unwrap_or("skipped after a solver error")
-                );
-            }
-            ResidualRecoveryState::Disabled => {}
-        }
-        if result.refined_rules_applied > 0 {
-            println!(
-                "  {} {}",
-                "Refined rules".bright_black(),
-                result.refined_rules_applied
-            );
-        }
-        if result.pinned_rules_applied > 0 {
-            println!(
-                "  {} {}",
-                "Pinned rules".bright_black(),
-                result.pinned_rules_applied
-            );
-        }
-        match result.proposal_phase.status {
-            logicpearl_discovery::ProposalPhaseStatus::Ran => {
-                println!(
-                    "  {} ran ({}, policy {}, validated {}, accepted {})",
-                    "Proposal phase".bright_black(),
-                    result
-                        .proposal_phase
-                        .trigger
-                        .as_deref()
-                        .unwrap_or("automatic_trigger"),
-                    result.proposal_phase.acceptance_policy,
-                    result.proposal_phase.validated_candidates,
-                    result.proposal_phase.accepted_candidates
-                );
-            }
-            logicpearl_discovery::ProposalPhaseStatus::Skipped => {
-                println!(
-                    "  {} skipped ({})",
-                    "Proposal phase".bright_black(),
-                    result.proposal_phase.reason
-                );
-            }
-        }
-        println!(
-            "  {} {}",
-            "Training parity".bright_black(),
-            format!("{:.1}%", result.training_parity * 100.0).bold()
-        );
-        if !matches!(
-            result.selection_policy.configured,
-            SelectionPolicy::Balanced
-        ) {
-            println!(
-                "  {} {} recall {:.1}% / false positives {:.1}%{}",
-                "Selection policy".bright_black(),
-                result.selection_policy.configured.name(),
-                result.selection_policy.denied_recall * 100.0,
-                result.selection_policy.false_positive_rate * 100.0,
-                if result.selection_policy.constraints_satisfied {
-                    "".to_string()
-                } else {
-                    " (target not met under cap)".to_string()
-                }
-            );
-        }
+        let gate = LogicPearlGateIr::from_path(&pearl_ir_path)
+            .into_diagnostic()
+            .wrap_err("failed to load pearl IR for build summary")?;
+        render_gate_build_summary(&result, &gate, &args);
         print_conflict_summary(conflict_summary.as_ref(), conflicts_requested);
-        println!(
-            "  {} {}",
-            "Artifact bundle".bright_black(),
-            result.output_files.artifact_dir
-        );
-        println!(
-            "  {} {}",
-            "CLI entrypoint".bright_black(),
-            result.output_files.artifact_manifest
-        );
-        println!(
-            "  {} {}",
-            "Pearl IR".bright_black(),
-            result.output_files.pearl_ir
-        );
-        println!(
-            "  {} {}",
-            "Build report".bright_black(),
-            result.output_files.build_report
-        );
-        if let Some(proposal_report) = &result.output_files.proposal_report {
-            println!("  {} {}", "Proposal report".bright_black(), proposal_report);
-        }
-        if let Some(feature_dictionary) =
-            generated_feature_dictionary_for_output(&args, &artifact_dir)
-        {
-            println!(
-                "  {} {}",
-                "Feature dictionary".bright_black(),
-                feature_dictionary.display()
-            );
-        }
-        if let Some(native_binary) = &result.output_files.native_binary {
-            println!("  {} {}", "Deployable".bright_black(), native_binary);
-        }
-        if let Some(wasm_module) = &result.output_files.wasm_module {
-            println!("  {} {}", "Deployable".bright_black(), wasm_module);
-            if let Some(wasm_metadata) = &result.output_files.wasm_metadata {
-                println!("  {} {}", "Wasm metadata".bright_black(), wasm_metadata);
-            }
-        } else if args.compile {
-            println!(
-                "  {} {}",
-                "Wasm module".bright_black(),
-                "skipped (install wasm32-unknown-unknown to emit it)".bright_black()
-            );
-        } else {
-            println!(
-                "  {} {}",
-                "Deployables".bright_black(),
-                "not compiled by default; run `logicpearl compile <artifact>` when needed"
-                    .bright_black()
-            );
-        }
     }
     Ok(())
+}
+
+fn render_gate_build_summary(result: &BuildResult, gate: &LogicPearlGateIr, args: &BuildArgs) {
+    let mut learned = vec![format!(
+        "Gate learned from `{}` over {} features.",
+        result.label_column,
+        result.selected_features.len()
+    )];
+    if result.cache_hit {
+        learned.push("Reused prior build output from cache.".to_string());
+    }
+    let mut metrics = vec![
+        ("Rows".to_string(), result.rows.to_string()),
+        ("Rules".to_string(), result.rules_discovered.to_string()),
+        (
+            "Training parity".to_string(),
+            percent(result.training_parity),
+        ),
+    ];
+    if !matches!(
+        result.selection_policy.configured,
+        SelectionPolicy::Balanced
+    ) {
+        metrics.push((
+            "Selection policy".to_string(),
+            format!(
+                "{} recall {} / false positives {}{}",
+                result.selection_policy.configured.name(),
+                percent(result.selection_policy.denied_recall),
+                percent(result.selection_policy.false_positive_rate),
+                if result.selection_policy.constraints_satisfied {
+                    ""
+                } else {
+                    " (target not met under cap)"
+                }
+            ),
+        ));
+    }
+    if let Some(backend) = &result.exact_selection.backend {
+        metrics.push((
+            "Exact selection".to_string(),
+            format!(
+                "{} on {} candidates{}",
+                match backend {
+                    logicpearl_discovery::ExactSelectionBackend::BruteForce => "brute force",
+                    logicpearl_discovery::ExactSelectionBackend::Smt => "smt",
+                    logicpearl_discovery::ExactSelectionBackend::Mip => "mip",
+                },
+                result.exact_selection.shortlisted_candidates,
+                if result.exact_selection.adopted {
+                    " (adopted)"
+                } else {
+                    ""
+                }
+            ),
+        ));
+    }
+    let top_rules = top_rule_lines(gate.rules.iter().map(rule_summary), 3);
+    let artifact_manifest = PathBuf::from(&result.output_files.artifact_manifest);
+    let mut extra_files = Vec::new();
+    if let Some(proposal_report) = &result.output_files.proposal_report {
+        extra_files.push((
+            "Proposal report".to_string(),
+            PathBuf::from(proposal_report),
+        ));
+    }
+    if let Some(feature_dictionary) =
+        generated_feature_dictionary_for_output(args, Path::new(&result.output_files.artifact_dir))
+    {
+        extra_files.push(("Feature dictionary".to_string(), feature_dictionary.clone()));
+    }
+    if let Some(native_binary) = &result.output_files.native_binary {
+        extra_files.push(("Native runner".to_string(), PathBuf::from(native_binary)));
+    }
+    if let Some(wasm_module) = &result.output_files.wasm_module {
+        extra_files.push(("Wasm module".to_string(), PathBuf::from(wasm_module)));
+    }
+    if let Some(wasm_metadata) = &result.output_files.wasm_metadata {
+        extra_files.push(("Wasm metadata".to_string(), PathBuf::from(wasm_metadata)));
+    }
+    PostBuildSummary {
+        artifact_kind: "gate",
+        artifact_name: result.gate_id.clone(),
+        learned,
+        metrics,
+        top_rules,
+        bundle_path: PathBuf::from(&result.output_files.artifact_dir),
+        entrypoint_path: artifact_manifest,
+        ir_path: Some(PathBuf::from(&result.output_files.pearl_ir)),
+        report_path: Some(PathBuf::from(&result.output_files.build_report)),
+        extra_files,
+        compile_requested: args.compile,
+        wasm_skipped: args.compile && result.output_files.wasm_module.is_none(),
+    }
+    .render();
+}
+
+fn rule_summary(rule: &RuleDefinition) -> String {
+    rule.label
+        .as_deref()
+        .or(rule.message.as_deref())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| rule.id.clone())
 }
 
 fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {

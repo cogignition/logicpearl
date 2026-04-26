@@ -4,7 +4,7 @@ use anstream::println;
 use logicpearl_benchmark::sanitize_identifier;
 use logicpearl_build::{
     learn_fanout_policy_with_progress, prepare_fanout_traces_with_feature_selection,
-    FanoutLearningOptions,
+    FanoutLearningOptions, FanoutLearningResult,
 };
 use logicpearl_core::ArtifactKind;
 use logicpearl_discovery::load_flat_records;
@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
     default_gate_id_from_path, feature_column_selection, finish_progress,
     generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
@@ -360,56 +361,106 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
             serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
-        println!(
-            "{} {}",
-            "Built fan-out pipeline".bold().bright_green(),
-            artifact_name.bold()
+        render_fanout_build_summary(
+            &report,
+            &learned,
+            &output_dir,
+            &pipeline_path,
+            &report_path,
+            generated_feature_dictionary_for_output(&args, &output_dir).map(|path| path.as_path()),
+            native_binary_path.as_deref(),
+            wasm_module_path.as_deref(),
+            wasm_metadata_path.as_deref(),
+            args.compile,
+            fanout_traces.feature_columns.len(),
         );
-        println!("  {} {}", "Rows".bright_black(), report.rows);
-        println!(
-            "  {} {}",
-            "Actions".bright_black(),
-            report
-                .actions
-                .iter()
-                .map(|action| action.action.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!(
-            "  {} {}",
-            "Exact set match".bright_black(),
-            format!("{:.1}%", report.training_exact_set_match * 100.0).bold()
-        );
-        println!(
-            "  {} {}",
-            "Artifact bundle".bright_black(),
-            output_dir.display()
-        );
-        println!(
-            "  {} {}",
-            "CLI entrypoint".bright_black(),
-            output_dir.join("artifact.json").display()
-        );
-        println!(
-            "  {} {}",
-            "Pipeline".bright_black(),
-            pipeline_path.display()
-        );
-        println!(
-            "  {} {}",
-            "Build report".bright_black(),
-            report_path.display()
-        );
-        if let Some(native_binary) = &native_binary_path {
-            println!(
-                "  {} {}",
-                "Deployable".bright_black(),
-                native_binary.display()
-            );
-        }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_fanout_build_summary(
+    report: &FanoutBuildReport,
+    learned: &FanoutLearningResult,
+    output_dir: &Path,
+    pipeline_path: &Path,
+    report_path: &Path,
+    feature_dictionary_path: Option<&Path>,
+    native_binary_path: Option<&Path>,
+    wasm_module_path: Option<&Path>,
+    wasm_metadata_path: Option<&Path>,
+    compile_requested: bool,
+    feature_count: usize,
+) {
+    let actions = report
+        .actions
+        .iter()
+        .map(|action| action.action.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let learned_lines = vec![
+        format!(
+            "Fan-out pipeline learned from `{}` over {feature_count} features.",
+            report.fanout_column
+        ),
+        format!("Built one applicability gate for each action: {actions}."),
+    ];
+    let metrics = vec![
+        ("Rows".to_string(), report.rows.to_string()),
+        (
+            "Exact set match".to_string(),
+            percent(report.training_exact_set_match),
+        ),
+    ];
+    let top_rules = top_rule_lines(
+        learned.gates.iter().map(|gate| {
+            let rule = gate
+                .gate
+                .rules
+                .first()
+                .and_then(|rule| rule.label.as_deref().or(rule.message.as_deref()))
+                .unwrap_or("default gate");
+            format!("{}: {rule}", gate.action)
+        }),
+        3,
+    );
+    let mut extra_files = Vec::new();
+    if let Some(feature_dictionary_path) = feature_dictionary_path {
+        extra_files.push((
+            "Feature dictionary".to_string(),
+            feature_dictionary_path.to_path_buf(),
+        ));
+    }
+    if let Some(native_binary_path) = native_binary_path {
+        extra_files.push((
+            "Native runner".to_string(),
+            native_binary_path.to_path_buf(),
+        ));
+    }
+    if let Some(wasm_module_path) = wasm_module_path {
+        extra_files.push(("Wasm module".to_string(), wasm_module_path.to_path_buf()));
+    }
+    if let Some(wasm_metadata_path) = wasm_metadata_path {
+        extra_files.push((
+            "Wasm metadata".to_string(),
+            wasm_metadata_path.to_path_buf(),
+        ));
+    }
+    PostBuildSummary {
+        artifact_kind: "fan-out pipeline",
+        artifact_name: report.artifact_name.clone(),
+        learned: learned_lines,
+        metrics,
+        top_rules,
+        bundle_path: output_dir.to_path_buf(),
+        entrypoint_path: output_dir.join("artifact.json"),
+        ir_path: Some(pipeline_path.to_path_buf()),
+        report_path: Some(report_path.to_path_buf()),
+        extra_files,
+        compile_requested,
+        wasm_skipped: compile_requested && wasm_module_path.is_none(),
+    }
+    .render();
 }
 
 fn fanout_deployables(

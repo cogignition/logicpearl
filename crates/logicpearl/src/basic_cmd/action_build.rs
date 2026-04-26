@@ -17,7 +17,6 @@ use logicpearl_plugin::{
 };
 use logicpearl_runtime::sha256_prefixed;
 use miette::{IntoDiagnostic, Result, WrapErr};
-use owo_colors::OwoColorize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -28,6 +27,7 @@ use super::conflicts::{
     add_conflict_summary_to_json, print_conflict_summary, requested_conflict_report_path,
     write_action_conflict_report,
 };
+use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     finish_progress, generated_feature_dictionary_for_output, generated_feature_dictionary_path,
@@ -438,95 +438,101 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             serde_json::to_string_pretty(&report).into_diagnostic()?
         );
     } else {
-        println!(
-            "{} {}",
-            "Built action artifact".bold().bright_green(),
-            artifact_name.bold()
-        );
-        println!("  {} {}", "Rows".bright_black(), action_report.rows);
-        println!(
-            "  {} {}",
-            "Actions".bright_black(),
-            action_report.actions.join(", ")
-        );
-        println!(
-            "  {} {}",
-            "Default action".bright_black(),
-            action_report.default_action
-        );
-        if let Some(no_match_action) = &action_report.no_match_action {
-            println!("  {} {}", "No-match action".bright_black(), no_match_action);
-        }
-        println!(
-            "  {} {}",
-            "Action priority".bright_black(),
-            action_report.rule_budget.priority_order.join(", ")
-        );
-        println!(
-            "  {} {} ({})",
-            "Rule budget".bright_black(),
-            action_report.rule_budget.total_budget,
-            action_report.rule_budget.mode
-        );
-        println!(
-            "  {} {}",
-            "Training parity".bright_black(),
-            format!("{:.1}%", action_report.training_parity * 100.0).bold()
+        render_action_build_summary(
+            &action_report,
+            &output_dir,
+            &action_policy_path,
+            &action_report_path,
+            generated_feature_dictionary_for_output(&args, &output_dir).map(|path| path.as_path()),
+            native_binary_file.as_deref(),
+            wasm_module_file.as_deref(),
+            wasm_metadata_file.as_deref(),
+            args.compile,
+            action_traces.feature_columns.len(),
         );
         print_conflict_summary(conflict_summary.as_ref(), conflicts_requested);
-        println!(
-            "  {} {}",
-            "Artifact bundle".bright_black(),
-            output_dir.display()
-        );
-        println!(
-            "  {} {}",
-            "CLI entrypoint".bright_black(),
-            output_dir.join("artifact.json").display()
-        );
-        println!(
-            "  {} {}",
-            "Pearl IR".bright_black(),
-            action_policy_path.display()
-        );
-        if let Some(feature_dictionary) =
-            generated_feature_dictionary_for_output(&args, &output_dir)
-        {
-            println!(
-                "  {} {}",
-                "Feature dictionary".bright_black(),
-                feature_dictionary.display()
-            );
-        }
-        if let Some(native_binary) = &native_binary_file {
-            println!(
-                "  {} {}",
-                "Deployable".bright_black(),
-                output_dir.join(native_binary).display()
-            );
-        }
-        if let Some(wasm_module) = &wasm_module_file {
-            println!(
-                "  {} {}",
-                "Deployable".bright_black(),
-                output_dir.join(wasm_module).display()
-            );
-            if let Some(wasm_metadata) = &wasm_metadata_file {
-                println!(
-                    "  {} {}",
-                    "Wasm metadata".bright_black(),
-                    output_dir.join(wasm_metadata).display()
-                );
-            }
-        } else if args.compile {
-            println!(
-                "  {} {}",
-                "Wasm module".bright_black(),
-                "skipped (install wasm32-unknown-unknown to emit it)".bright_black()
-            );
-        }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_action_build_summary(
+    report: &ActionBuildReport,
+    output_dir: &Path,
+    ir_path: &Path,
+    report_path: &Path,
+    feature_dictionary_path: Option<&Path>,
+    native_binary_file: Option<&str>,
+    wasm_module_file: Option<&str>,
+    wasm_metadata_file: Option<&str>,
+    compile_requested: bool,
+    feature_count: usize,
+) {
+    let mut learned = vec![format!(
+        "Action policy learned from `{}` over {feature_count} features and {} actions.",
+        report.action_column,
+        report.actions.len()
+    )];
+    learned.push(format!("Default action is `{}`.", report.default_action));
+    if let Some(no_match_action) = &report.no_match_action {
+        learned.push(format!("No-match action is `{no_match_action}`."));
+    }
+    let metrics = vec![
+        ("Rows".to_string(), report.rows.to_string()),
+        (
+            "Training parity".to_string(),
+            percent(report.training_parity),
+        ),
+        (
+            "Rule budget".to_string(),
+            format!(
+                "{} ({})",
+                report.rule_budget.total_budget, report.rule_budget.mode
+            ),
+        ),
+        (
+            "Priority".to_string(),
+            report.rule_budget.priority_order.join(", "),
+        ),
+    ];
+    let top_rules = top_rule_lines(
+        report.rules.iter().map(|rule| {
+            let label = rule.label.as_deref().unwrap_or(rule.id.as_str());
+            format!("{}: {label}", rule.action)
+        }),
+        3,
+    );
+    let mut extra_files = Vec::new();
+    if let Some(feature_dictionary_path) = feature_dictionary_path {
+        extra_files.push((
+            "Feature dictionary".to_string(),
+            feature_dictionary_path.to_path_buf(),
+        ));
+    }
+    if let Some(native_binary) = native_binary_file {
+        extra_files.push(("Native runner".to_string(), output_dir.join(native_binary)));
+    }
+    if let Some(wasm_module) = wasm_module_file {
+        extra_files.push(("Wasm module".to_string(), output_dir.join(wasm_module)));
+    }
+    if let Some(wasm_metadata) = wasm_metadata_file {
+        extra_files.push(("Wasm metadata".to_string(), output_dir.join(wasm_metadata)));
+    }
+    PostBuildSummary {
+        artifact_kind: "action artifact",
+        artifact_name: report.artifact_name.clone(),
+        learned,
+        metrics,
+        top_rules,
+        bundle_path: output_dir.to_path_buf(),
+        entrypoint_path: output_dir.join("artifact.json"),
+        ir_path: Some(ir_path.to_path_buf()),
+        report_path: Some(report_path.to_path_buf()),
+        extra_files,
+        compile_requested,
+        wasm_skipped: compile_requested && wasm_module_file.is_none(),
+    }
+    .render();
 }
 
 fn load_action_trace_records(

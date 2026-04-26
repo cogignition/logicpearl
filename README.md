@@ -158,18 +158,30 @@ Expected shape:
 
 ```text
 Built action artifact garden_actions
-  Rows 16
-  Actions water, do_nothing, fertilize, repot
-  Default action do_nothing
-  Training parity 100.0%
 
-Action rules:
-  1. water
-     Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
-  2. fertilize
-     Days since fertilized at or above 32.0
-  3. repot
-     Days since fertilized at or above 15.0 and Days since watered at or above Growth Cm Last 14 Days
+Learned
+  - Action policy learned from `next_action` over 8 features and 4 actions.
+  - Default action is `do_nothing`.
+
+Metrics
+  - Rows: 16
+  - Training parity: 100.0%
+
+Top rules
+  1. water: Soil Moisture at or below 18% and Water used in the last 7 days at or below 0.2
+  2. fertilize: Days since fertilized at or above 32.0
+  3. repot: Days since fertilized at or above 15.0 and Days since watered at or above Growth Cm Last 14 Days
+
+Bundle
+  Entry: /tmp/garden-actions/artifact.json
+  Directory: /tmp/garden-actions
+
+Next commands
+  Run: logicpearl run /tmp/garden-actions/artifact.json input.json --json
+  Inspect: logicpearl inspect /tmp/garden-actions/artifact.json
+  Diff: logicpearl diff old_artifact /tmp/garden-actions/artifact.json --json
+  Compile: logicpearl compile /tmp/garden-actions/artifact.json
+  Verify: logicpearl artifact verify /tmp/garden-actions/artifact.json --json
 
 action: water
 reason:
