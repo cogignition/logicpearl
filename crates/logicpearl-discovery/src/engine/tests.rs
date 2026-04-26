@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 use super::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
-    candidate_rules, compare_candidate_set_score, compare_candidate_set_score_with_policy,
-    conjunction_candidate_rules, recover_rare_rules, rule_from_candidate, score_candidate_set,
-    select_candidate_rules_exact, training_indices, CandidateMatchCache, CandidateRule,
-    CandidateSelectionContext, CandidateSetScore, DISCOVERY_SELECTION_BACKEND_ENV,
+    candidate_rules, compare_candidate_priority, compare_candidate_set_score,
+    compare_candidate_set_score_with_policy, conjunction_candidate_rules, recover_rare_rules,
+    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, training_indices,
+    CandidateMatchCache, CandidateRule, CandidateSelectionContext, CandidateSetScore,
+    DISCOVERY_SELECTION_BACKEND_ENV,
 };
 use crate::{
     discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
@@ -217,6 +218,37 @@ fn recall_biased_candidate_set_score_prefers_target_hitting_plan_within_cap() {
     };
     assert_eq!(
         compare_candidate_set_score_with_policy(&better, &worse, recall_biased, 4, 4),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
+fn candidate_priority_prefers_positive_signal_over_base_rate_coverage() {
+    let informative = CandidateRule::new_with_population(
+        Expression::Comparison(ComparisonExpression {
+            feature: "pest_visible".to_string(),
+            op: ComparisonOperator::Eq,
+            value: ComparisonValue::Literal(Value::String("aphids".to_string())),
+        }),
+        851,
+        0,
+        4200,
+        800,
+    );
+    let broad_prior = CandidateRule::new_with_population(
+        Expression::Comparison(ComparisonExpression {
+            feature: "days_since_fertilized".to_string(),
+            op: ComparisonOperator::Gt,
+            value: ComparisonValue::Literal(Value::Number(Number::from(-1))),
+        }),
+        4183,
+        817,
+        4200,
+        800,
+    );
+
+    assert_eq!(
+        compare_candidate_priority(&informative, &broad_prior),
         std::cmp::Ordering::Less
     );
 }

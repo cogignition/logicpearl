@@ -1173,16 +1173,37 @@ struct CandidateRule {
     expression: Expression,
     denied_coverage: usize,
     false_positives: usize,
+    denied_total: usize,
+    allowed_total: usize,
     cached_signature: String,
 }
 
 impl CandidateRule {
+    #[cfg(test)]
     fn new(expression: Expression, denied_coverage: usize, false_positives: usize) -> Self {
+        Self::new_with_population(
+            expression,
+            denied_coverage,
+            false_positives,
+            denied_coverage,
+            false_positives,
+        )
+    }
+
+    fn new_with_population(
+        expression: Expression,
+        denied_coverage: usize,
+        false_positives: usize,
+        denied_total: usize,
+        allowed_total: usize,
+    ) -> Self {
         let cached_signature = serde_json::to_string(&expression).unwrap_or_default();
         Self {
             expression,
             denied_coverage,
             false_positives,
+            denied_total,
+            allowed_total,
             cached_signature,
         }
     }

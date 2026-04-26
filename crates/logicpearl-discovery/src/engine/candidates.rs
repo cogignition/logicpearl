@@ -548,7 +548,13 @@ fn candidate_from_expression(
         Some(cache) => cache.coverage_for_expression(allowed_indices, &expression),
         None => candidate_coverage(rows, allowed_indices, &expression),
     };
-    CandidateRule::new(expression, denied_coverage, false_positives)
+    CandidateRule::new_with_population(
+        expression,
+        denied_coverage,
+        false_positives,
+        denied_indices.len(),
+        allowed_indices.len(),
+    )
 }
 
 pub(super) fn candidate_as_comparison(candidate: &CandidateRule) -> Option<&ComparisonExpression> {
@@ -693,8 +699,9 @@ impl<'a> CandidateMatchCache<'a> {
 pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
     let left_net = left.denied_coverage as isize - left.false_positives as isize;
     let right_net = right.denied_coverage as isize - right.false_positives as isize;
-    right_net
-        .cmp(&left_net)
+    candidate_signal_score(right)
+        .total_cmp(&candidate_signal_score(left))
+        .then_with(|| right_net.cmp(&left_net))
         .then_with(|| left.false_positives.cmp(&right.false_positives))
         .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
         .then_with(|| {
@@ -706,6 +713,45 @@ pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &Candidate
             candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
         })
         .then_with(|| left.signature().cmp(right.signature()))
+}
+
+fn candidate_signal_score(candidate: &CandidateRule) -> f64 {
+    let denied_total = candidate.denied_total;
+    let allowed_total = candidate.allowed_total;
+    let matched_denied = candidate.denied_coverage;
+    let matched_allowed = candidate.false_positives;
+    let matched_total = matched_denied + matched_allowed;
+    let total = denied_total + allowed_total;
+    if denied_total == 0 || allowed_total == 0 || matched_denied == 0 || matched_total == 0 {
+        return 0.0;
+    }
+    let base_rate = denied_total as f64 / total as f64;
+    let precision = matched_denied as f64 / matched_total as f64;
+    if precision <= base_rate {
+        return 0.0;
+    }
+    let table = [
+        matched_denied,
+        matched_allowed,
+        denied_total.saturating_sub(matched_denied),
+        allowed_total.saturating_sub(matched_allowed),
+    ];
+    let row_totals = [matched_total, total.saturating_sub(matched_total)];
+    let col_totals = [denied_total, allowed_total];
+    let mut statistic = 0.0;
+    for (row_index, row_total) in row_totals.iter().enumerate() {
+        for (col_index, col_total) in col_totals.iter().enumerate() {
+            let observed = table[row_index * 2 + col_index];
+            if observed == 0 {
+                continue;
+            }
+            let expected = (*row_total as f64 * *col_total as f64) / total as f64;
+            if expected > 0.0 {
+                statistic += observed as f64 * ((observed as f64) / expected).ln();
+            }
+        }
+    }
+    2.0 * statistic
 }
 
 pub(super) fn candidate_complexity_penalty(
