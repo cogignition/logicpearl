@@ -132,10 +132,14 @@ pub(super) fn infer_target_for_build(
             .map(|stat| stat.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        super::guidance(
+        super::coaching(
             format!("could not infer a build mode for --target {target_column:?}"),
+            "a binary gate target, scalar action target, or multi-label action list",
+            format!("column {target_column:?}; columns found: {known_columns}"),
             format!(
-                "Use a binary gate target, scalar action target, or multi-label action list. Columns found: {known_columns}"
+                "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
+                traces.display(),
+                traces.display()
             ),
         )
     })

@@ -119,6 +119,27 @@ Put reference material in topic docs:
 
 When documenting examples, keep domain-specific semantics out of core crate docs. The core crates should describe feature contracts, schemas, manifests, and runtime behavior. Integrations own domain meanings.
 
+## Error Message Rules
+
+User-facing failures should coach the next step, not only describe the Rust or
+JSON failure. For every common CLI failure, include:
+
+- `Expected:` the input shape, file, schema, or option the command needed
+- `Found:` the concrete value, path, schema, or parse error it actually saw
+- `Next:` the exact command the user should run next
+
+Prefer current workflow commands in `Next:`. For build target problems, point to
+`logicpearl doctor <traces>` and then `logicpearl build <traces> --target
+<column>`. For artifact loading problems, point to `logicpearl build ...` or
+`logicpearl artifact verify <artifact>`. Keep domain-specific meanings out of
+core errors; use feature dictionaries and source manifests for reviewer-facing
+semantics.
+
+Use the CLI `coaching(...)` helper for common failures where the expected and
+found details are known. The older `guidance(...)` helper is only a fallback for
+small validation errors; prefer upgrading it to `coaching(...)` when touching a
+user-facing failure path.
+
 ## Git Notes
 
 Commits can be SSH-signed. Confirm local signature status with:

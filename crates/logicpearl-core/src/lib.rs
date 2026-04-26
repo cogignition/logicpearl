@@ -19,6 +19,27 @@ use thiserror::Error;
 /// Stable schema identifier for LogicPearl artifact bundle manifests.
 pub const ARTIFACT_MANIFEST_SCHEMA_VERSION: &str = "logicpearl.artifact_manifest.v1";
 
+/// Render an error message as a short coaching card.
+///
+/// LogicPearl errors should leave users with three concrete answers: what the
+/// command expected, what it found instead, and the next command to run. Keep
+/// this string-only so low-level crates can use it without depending on the CLI
+/// diagnostics stack.
+pub fn coaching_error_message(
+    message: impl AsRef<str>,
+    expected: impl AsRef<str>,
+    found: impl AsRef<str>,
+    next: impl AsRef<str>,
+) -> String {
+    format!(
+        "{}\n\nExpected: {}\nFound: {}\nNext: {}",
+        message.as_ref(),
+        expected.as_ref(),
+        found.as_ref(),
+        next.as_ref()
+    )
+}
+
 /// Render a path for public reports without exposing local host-specific roots.
 ///
 /// Relative paths are preserved. Absolute paths under the current working
@@ -332,9 +353,20 @@ pub fn load_artifact_bundle(path: &Path) -> Result<LoadedArtifactBundle> {
         if ir_path.exists() {
             return derive_artifact_bundle_from_file(&ir_path);
         }
-        return Err(LogicPearlError::message(format!(
-            "artifact directory {} is missing artifact.json, pipeline.json, and pearl.ir.json",
-            path.display()
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "artifact directory {} is missing artifact.json, pipeline.json, and pearl.ir.json",
+                path.display()
+            ),
+            "an artifact bundle directory containing artifact.json, pipeline.json, or pearl.ir.json",
+            format!(
+                "directory {} with none of those entrypoint files",
+                path.display()
+            ),
+            format!(
+                "build a bundle with `logicpearl build traces.csv --output-dir {}` or pass an existing artifact path",
+                path.display()
+            ),
         )));
     }
 
@@ -347,6 +379,15 @@ pub fn load_artifact_bundle(path: &Path) -> Result<LoadedArtifactBundle> {
         {
             return load_artifact_manifest_value(path, value);
         }
+    }
+
+    if !path.exists() {
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!("artifact path {} does not exist", path.display()),
+            "an artifact directory, artifact.json, pearl.ir.json, or pipeline.json",
+            format!("no file or directory at {}", path.display()),
+            "run `logicpearl build traces.csv --output-dir output`, then pass `output` to this command",
+        )));
     }
 
     derive_artifact_bundle_from_file(path)
@@ -386,14 +427,24 @@ fn load_artifact_manifest_value(path: &Path, raw_manifest: Value) -> Result<Load
         .get("schema_version")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            LogicPearlError::message(format!(
-                "artifact manifest {} is missing schema_version",
-                path.display()
+            LogicPearlError::message(coaching_error_message(
+                format!("artifact manifest {} is missing schema_version", path.display()),
+                format!("schema_version: {ARTIFACT_MANIFEST_SCHEMA_VERSION:?}"),
+                "an artifact manifest without schema_version",
+                format!(
+                    "run `logicpearl artifact verify {}` to check the bundle, or rebuild it with `logicpearl build ... --output-dir <dir>`",
+                    path.display()
+                ),
             ))
         })?;
     if schema_version != ARTIFACT_MANIFEST_SCHEMA_VERSION {
-        return Err(LogicPearlError::message(format!(
-            "unsupported artifact manifest schema_version {schema_version:?}; expected {ARTIFACT_MANIFEST_SCHEMA_VERSION}"
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "unsupported artifact manifest schema_version {schema_version:?}; expected {ARTIFACT_MANIFEST_SCHEMA_VERSION}"
+            ),
+            format!("schema_version: {ARTIFACT_MANIFEST_SCHEMA_VERSION:?}"),
+            format!("schema_version: {schema_version:?}"),
+            "rebuild the bundle with this `logicpearl build` version, or update the CLI that reads it",
         )));
     }
     let manifest = serde_json::from_value(raw_manifest.clone())?;
@@ -458,13 +509,23 @@ fn derive_artifact_bundle_from_file(path: &Path) -> Result<LoadedArtifactBundle>
 
 fn read_json_file(path: &Path) -> Result<Value> {
     let content = fs::read_to_string(path).map_err(|error| {
-        LogicPearlError::message(format!(
-            "failed to read JSON file {}: {error}",
-            path.display()
+        LogicPearlError::message(coaching_error_message(
+            format!("failed to read JSON file {}: {error}", path.display()),
+            "a readable JSON file",
+            format!("{} could not be read: {error}", path.display()),
+            "check the path, or run `logicpearl build traces.csv --output-dir output` to create a fresh artifact",
         ))
     })?;
     serde_json::from_str(&content).map_err(|error| {
-        LogicPearlError::message(format!("JSON file is invalid: {}: {error}", path.display()))
+        LogicPearlError::message(coaching_error_message(
+            format!("JSON file is invalid: {}: {error}", path.display()),
+            "valid JSON",
+            format!("{} is not valid JSON: {error}", path.display()),
+            format!(
+                "run `jq empty {}` to validate the file, then rerun the LogicPearl command",
+                path.display()
+            ),
+        ))
     })
 }
 

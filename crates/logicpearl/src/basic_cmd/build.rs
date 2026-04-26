@@ -29,7 +29,7 @@ use super::doctor::{
 };
 use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
-    build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
+    build_trace_plugin_options, coaching, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
     generated_feature_dictionary_path, guidance, parse_key_value_entries, progress_callback,
     progress_enabled, run_action_build, run_fanout_build, selection_policy_from_args,
@@ -641,9 +641,22 @@ fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {
         return Ok(());
     };
     if inference.confidence == "low" {
-        return Err(guidance(
+        let traces = args
+            .decision_traces
+            .as_deref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "traces.csv".to_string());
+        return Err(coaching(
             "build could not confidently infer the reviewed target column",
-            "Pass --target <column>, --label-column, --action-column, or --fanout-column explicitly.",
+            "one clear reviewed target column for a gate, action policy, or fan-out action list",
+            format!(
+                "low-confidence candidate {:?} ({})",
+                inference.target_column,
+                inference.reasons.join("; ")
+            ),
+            format!(
+                "run `logicpearl doctor {traces}` to inspect columns, then `logicpearl build {traces} --target <column>`"
+            ),
         ));
     }
     let inferred_flag = if args.target.is_some() {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 use super::{decision_trace_provenance_from_record, DecisionTraceRow, LoadedDecisionTraces};
-use logicpearl_core::{LogicPearlError, Result};
+use logicpearl_core::{coaching_error_message, LogicPearlError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -463,11 +463,20 @@ fn load_decision_traces_from_records(
         } else {
             candidates.join(", ")
         };
-        return Err(LogicPearlError::message(format!(
-            "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
-            path.display(),
-            label_column,
-            candidate_text
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
+                path.display(),
+                label_column,
+                candidate_text
+            ),
+            format!("a label column named {label_column:?}"),
+            format!("columns without that label; candidate binary fields: {candidate_text}"),
+            format!(
+                "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
+                path.display(),
+                path.display()
+            ),
         )));
     }
     let label_domain =
@@ -547,19 +556,40 @@ fn infer_label_column(
         } else {
             candidates.join(", ")
         };
-        return Err(LogicPearlError::message(format!(
-            "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
-            path.display(),
-            label_column,
-            candidate_text
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "decision trace input {} is missing label field {:?}; candidate binary fields: {}",
+                path.display(),
+                label_column,
+                candidate_text
+            ),
+            format!("a label column named {label_column:?}"),
+            format!("columns without that label; candidate binary fields: {candidate_text}"),
+            format!(
+                "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
+                path.display(),
+                path.display()
+            ),
         )));
     }
 
     let candidates = detect_label_candidates(field_names, records);
     if candidates.is_empty() {
-        return Err(LogicPearlError::message(format!(
-            "could not infer a binary label field from {}; pass --label-column explicitly",
-            path.display()
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "could not infer a binary label field from {}; pass --label-column explicitly",
+                path.display()
+            ),
+            "one reviewed binary target column such as allowed, approved, or label",
+            format!(
+                "columns [{}] with no unambiguous binary label field",
+                field_names.join(", ")
+            ),
+            format!(
+                "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
+                path.display(),
+                path.display()
+            ),
         )));
     }
     let strong_candidates: Vec<&str> = candidates
@@ -571,19 +601,38 @@ fn infer_label_column(
         return Ok(strong_candidates[0].to_string());
     }
     if strong_candidates.len() > 1 {
-        return Err(LogicPearlError::message(format!(
-            "multiple likely label fields found in {}: {}; pass --label-column explicitly",
-            path.display(),
-            strong_candidates.join(", ")
+        return Err(LogicPearlError::message(coaching_error_message(
+            format!(
+                "multiple likely label fields found in {}: {}; pass --label-column explicitly",
+                path.display(),
+                strong_candidates.join(", ")
+            ),
+            "one reviewed binary target column",
+            format!(
+                "multiple likely label fields: {}",
+                strong_candidates.join(", ")
+            ),
+            format!(
+                "run `logicpearl build {} --target <column>` with the reviewed target column",
+                path.display()
+            ),
         )));
     }
     if candidates.len() == 1 {
         return Ok(candidates[0].clone());
     }
-    Err(LogicPearlError::message(format!(
-        "multiple possible binary label fields found in {}: {}; pass --label-column explicitly",
-        path.display(),
-        candidates.join(", ")
+    Err(LogicPearlError::message(coaching_error_message(
+        format!(
+            "multiple possible binary label fields found in {}: {}; pass --label-column explicitly",
+            path.display(),
+            candidates.join(", ")
+        ),
+        "one reviewed binary target column",
+        format!("multiple possible binary fields: {}", candidates.join(", ")),
+        format!(
+            "run `logicpearl build {} --target <column>` with the reviewed target column",
+            path.display()
+        ),
     )))
 }
 
