@@ -238,7 +238,7 @@ pub(crate) struct DoctorArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --action-column next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output\n  logicpearl build traces.csv --selection-policy recall-biased --deny-recall-target 0.70 --max-false-positive-rate 0.05 --output-dir /tmp/output\n  logicpearl build traces.csv --json --progress --output-dir /tmp/output"
+    after_help = "Plugin trust:\n  --trace-plugin-manifest and --enricher-plugin-manifest execute local programs declared by plugin manifests.\n  Only relax timeout, absolute-entrypoint, or PATH lookup defaults for manifests you trust.\n\nExamples:\n  logicpearl build examples/getting_started/decision_traces.csv --target allowed --output-dir examples/getting_started/output --json\n  logicpearl build examples/getting_started/decision_traces.csv --target allowed --output-dir examples/getting_started/output --compile\n  logicpearl build --trace-plugin-manifest examples/plugins/python_trace_source/manifest.json --trace-plugin-input examples/getting_started/decision_traces.csv --trace-plugin-option label_column=allowed --output-dir /tmp/output\n  logicpearl build examples/demos/loan_approval/traces.jsonl --output-dir /tmp/output\n  logicpearl build examples/demos/content_moderation/traces_nested.json --output-dir /tmp/output --refine\n  logicpearl build traces.json --feature-dictionary feature_dictionary.json --source-manifest sources.json --output-dir /tmp/output\n  logicpearl build traces.csv --feature-columns age,is_member --output-dir /tmp/output\n  logicpearl build traces.csv --exclude-columns source,note --output-dir /tmp/output\n  logicpearl build traces.csv --show-conflicts --output-dir /tmp/output\n  logicpearl build traces.csv --target next_action --no-match-action insufficient_context --output-dir /tmp/actions\n  logicpearl build traces.csv --target applicable_actions --output-dir /tmp/fanout\n  logicpearl build traces.json --pinned-rules rules.json --output-dir /tmp/output\n  logicpearl build traces.csv --selection-policy recall-biased --deny-recall-target 0.70 --max-false-positive-rate 0.05 --output-dir /tmp/output\n  logicpearl build traces.csv --json --progress --output-dir /tmp/output"
 )]
 pub(crate) struct BuildArgs {
     /// Path to labeled decision traces in CSV, JSONL/NDJSON, or JSON form.
@@ -250,6 +250,12 @@ pub(crate) struct BuildArgs {
     /// Gate ID to embed in the emitted pearl.
     #[arg(long)]
     pub gate_id: Option<String>,
+    /// Reviewed target column. LogicPearl infers whether it is a gate, action policy, or fan-out action list.
+    #[arg(
+        long,
+        conflicts_with_all = ["label_column", "action_column", "fanout_column"]
+    )]
+    pub target: Option<String>,
     /// Decision label column. If omitted, LogicPearl infers it when there is one unambiguous binary candidate.
     #[arg(long)]
     pub label_column: Option<String>,
@@ -260,12 +266,7 @@ pub(crate) struct BuildArgs {
     #[arg(long, conflicts_with = "action_column")]
     pub fanout_column: Option<String>,
     /// Comma-separated actions to build fan-out gates for. Defaults to actions observed in --fanout-column.
-    #[arg(
-        long,
-        value_delimiter = ',',
-        value_name = "ACTIONS",
-        requires = "fanout_column"
-    )]
+    #[arg(long, value_delimiter = ',', value_name = "ACTIONS")]
     pub fanout_actions: Vec<String>,
     /// Comma-separated allow-list of input columns to learn as features.
     #[arg(

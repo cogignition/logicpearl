@@ -26,6 +26,7 @@ use super::conflicts::{
     add_conflict_summary_to_json, print_conflict_summary, requested_conflict_report_path,
     write_gate_conflict_report,
 };
+use super::doctor::{infer_target_for_build, TargetInferenceMode};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
@@ -42,6 +43,7 @@ use crate::{
 
 pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     apply_build_config(&mut args)?;
+    resolve_build_target(&mut args)?;
     if args.fanout_column.is_some() {
         return run_fanout_build(args);
     }
@@ -683,6 +685,63 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                 "not compiled by default; run `logicpearl compile <artifact>` when needed"
                     .bright_black()
             );
+        }
+    }
+    Ok(())
+}
+
+fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {
+    let Some(target_column) = args.target.clone() else {
+        if !args.fanout_actions.is_empty() && args.fanout_column.is_none() {
+            return Err(guidance(
+                "--fanout-actions was provided without a fan-out target",
+                "Use --target <applicable_actions_column>, or pass --fanout-column with --fanout-actions.",
+            ));
+        }
+        return Ok(());
+    };
+    if args.trace_plugin_manifest.is_some() {
+        return Err(guidance(
+            "--target inference currently requires a normalized trace file",
+            "Use --label-column, --action-column, or --fanout-column when building from a trace-source plugin.",
+        ));
+    }
+    let Some(traces) = args.decision_traces.as_deref() else {
+        return Err(guidance(
+            "build --target is missing traces",
+            "Pass a CSV, JSONL/NDJSON, or JSON trace dataset before --target.",
+        ));
+    };
+    let inference = infer_target_for_build(traces, &target_column)?;
+    eprintln!(
+        "Inferred --target {} as {} ({} confidence).",
+        inference.target_column,
+        inference.mode.as_str(),
+        inference.confidence
+    );
+    if !args.json {
+        for reason in &inference.reasons {
+            eprintln!("  - {reason}");
+        }
+    }
+    if args.feature_columns.is_empty() && args.exclude_columns.is_empty() {
+        args.exclude_columns = inference.exclude_columns.clone();
+    }
+    match inference.mode {
+        TargetInferenceMode::Gate => {
+            args.label_column = Some(inference.target_column);
+        }
+        TargetInferenceMode::Action => {
+            args.action_column = Some(inference.target_column);
+            if args.default_action.is_none() {
+                args.default_action = inference.default_action;
+            }
+        }
+        TargetInferenceMode::Fanout => {
+            args.fanout_column = Some(inference.target_column);
+            if args.fanout_actions.is_empty() && inference.actions.len() <= 20 {
+                args.fanout_actions = inference.actions;
+            }
         }
     }
     Ok(())

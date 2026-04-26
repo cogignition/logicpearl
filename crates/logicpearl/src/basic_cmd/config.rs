@@ -17,6 +17,7 @@ struct LogicPearlBuildConfig {
     traces: Option<PathBuf>,
     output_dir: Option<PathBuf>,
     gate_id: Option<String>,
+    target: Option<String>,
     label_column: Option<String>,
     action_column: Option<String>,
     feature_columns: Option<Vec<String>>,
@@ -102,10 +103,13 @@ pub(super) fn apply_build_config(args: &mut BuildArgs) -> Result<()> {
     if args.gate_id.is_none() {
         args.gate_id = build.gate_id;
     }
-    if args.label_column.is_none() {
+    if args.target.is_none() {
+        args.target = build.target;
+    }
+    if args.target.is_none() && args.label_column.is_none() {
         args.label_column = build.label_column;
     }
-    if args.action_column.is_none() {
+    if args.target.is_none() && args.action_column.is_none() {
         args.action_column = build.action_column;
     }
     if args.feature_columns.is_empty() && args.exclude_columns.is_empty() {

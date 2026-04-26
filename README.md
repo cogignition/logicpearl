@@ -223,9 +223,14 @@ Build it:
 
 ```bash
 logicpearl build traces.csv \
-  --label-column allowed \
+  --target allowed \
   --output-dir /tmp/pearl
 ```
+
+`--target` is the reviewed outcome column. LogicPearl inspects that column and
+builds the right artifact shape: a binary gate, a multi-action policy, or a
+fan-out pipeline for multi-label action lists. It prints the inferred mode while
+keeping `--json` stdout machine-readable.
 
 Not sure which column is the target? Ask the trace doctor first:
 
@@ -240,8 +245,7 @@ Multi-action example:
 
 ```bash
 logicpearl build traces.csv \
-  --action-column next_action \
-  --default-action do_nothing \
+  --target next_action \
   --output-dir /tmp/actions
 ```
 
@@ -249,8 +253,7 @@ Fan-out example for traces where multiple actions can apply to the same row:
 
 ```bash
 logicpearl build traces.csv \
-  --fanout-column applicable_actions \
-  --fanout-actions water,treat_pests,move_to_more_sun \
+  --target applicable_actions \
   --output-dir /tmp/fanout \
   --compile
 ```

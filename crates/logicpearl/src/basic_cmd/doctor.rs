@@ -40,6 +40,35 @@ struct DoctorRecommendation {
     reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TargetInferenceMode {
+    Gate,
+    Action,
+    Fanout,
+}
+
+impl TargetInferenceMode {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Gate => "gate",
+            Self::Action => "action",
+            Self::Fanout => "fanout",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct TargetInference {
+    pub(super) mode: TargetInferenceMode,
+    pub(super) target_column: String,
+    pub(super) confidence: String,
+    pub(super) feature_columns: Vec<String>,
+    pub(super) exclude_columns: Vec<String>,
+    pub(super) actions: Vec<String>,
+    pub(super) default_action: Option<String>,
+    pub(super) reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 struct ColumnStats {
     name: String,
@@ -55,7 +84,7 @@ struct ColumnStats {
 
 #[derive(Debug, Clone)]
 struct Candidate {
-    mode: &'static str,
+    mode: TargetInferenceMode,
     column: String,
     score: i32,
     reasons: Vec<String>,
@@ -90,6 +119,33 @@ pub(crate) fn run_doctor(args: DoctorArgs) -> Result<()> {
         print_human_report(&report);
     }
     Ok(())
+}
+
+pub(super) fn infer_target_for_build(
+    traces: &Path,
+    target_column: &str,
+) -> Result<TargetInference> {
+    let loaded = load_flat_records(traces)
+        .into_diagnostic()
+        .wrap_err("failed to load traces for target inference")?;
+    let stats = loaded
+        .field_names
+        .iter()
+        .map(|field| column_stats(field, &loaded.records))
+        .collect::<Vec<_>>();
+    infer_target_from_stats(&stats, target_column).ok_or_else(|| {
+        let known_columns = stats
+            .iter()
+            .map(|stat| stat.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        super::guidance(
+            format!("could not infer a build mode for --target {target_column:?}"),
+            format!(
+                "Use a binary gate target, scalar action target, or multi-label action list. Columns found: {known_columns}"
+            ),
+        )
+    })
 }
 
 fn column_stats(name: &str, records: &[BTreeMap<String, Value>]) -> ColumnStats {
@@ -170,6 +226,36 @@ fn recommend(
         };
     };
 
+    let inference = target_inference_from_candidate(stats, best);
+    let output_dir = output_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| default_output_dir(traces, inference.mode.as_str()));
+    let command = build_command(
+        traces,
+        &output_dir,
+        &inference.target_column,
+        &inference.exclude_columns,
+    );
+    DoctorRecommendation {
+        mode: inference.mode.as_str().to_string(),
+        confidence: inference.confidence,
+        target_column: Some(inference.target_column),
+        feature_columns: inference.feature_columns,
+        exclude_columns: inference.exclude_columns,
+        command: Some(command),
+        reasons: inference.reasons,
+    }
+}
+
+fn infer_target_from_stats(stats: &[ColumnStats], target_column: &str) -> Option<TargetInference> {
+    let stat = stats.iter().find(|stat| stat.name == target_column)?;
+    let best = column_candidates(stat)
+        .into_iter()
+        .max_by_key(|candidate| candidate.score)?;
+    Some(target_inference_from_candidate(stats, best))
+}
+
+fn target_inference_from_candidate(stats: &[ColumnStats], best: Candidate) -> TargetInference {
     let exclude_columns = stats
         .iter()
         .filter(|stat| stat.name != best.column && stat.suspicious_feature)
@@ -189,17 +275,14 @@ fn recommend(
     } else {
         "low"
     };
-    let output_dir = output_dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| default_output_dir(traces, best.mode));
-    let command = build_command(traces, &output_dir, &best, &exclude_columns);
-    DoctorRecommendation {
-        mode: best.mode.to_string(),
+    TargetInference {
+        mode: best.mode,
+        target_column: best.column,
         confidence: confidence.to_string(),
-        target_column: Some(best.column),
         feature_columns,
         exclude_columns,
-        command: Some(command),
+        actions: best.actions,
+        default_action: best.default_action,
         reasons: best.reasons,
     }
 }
@@ -221,7 +304,7 @@ fn column_candidates(stat: &ColumnStats) -> Vec<Candidate> {
             score += 10;
         }
         candidates.push(Candidate {
-            mode: "gate",
+            mode: TargetInferenceMode::Gate,
             column: stat.name.clone(),
             score,
             reasons,
@@ -248,7 +331,7 @@ fn column_candidates(stat: &ColumnStats) -> Vec<Candidate> {
             score += 10;
         }
         candidates.push(Candidate {
-            mode: "fanout",
+            mode: TargetInferenceMode::Fanout,
             column: stat.name.clone(),
             score,
             reasons,
@@ -280,7 +363,7 @@ fn column_candidates(stat: &ColumnStats) -> Vec<Candidate> {
                 reasons.push("a default/no-op action value was detected".to_string());
             }
             candidates.push(Candidate {
-                mode: "action",
+                mode: TargetInferenceMode::Action,
                 column: stat.name.clone(),
                 score,
                 reasons,
@@ -295,7 +378,7 @@ fn column_candidates(stat: &ColumnStats) -> Vec<Candidate> {
 fn build_command(
     traces: &Path,
     output_dir: &Path,
-    candidate: &Candidate,
+    target_column: &str,
     exclude_columns: &[String],
 ) -> String {
     let mut parts = vec![
@@ -303,29 +386,8 @@ fn build_command(
         "build".to_string(),
         shell_arg(&traces.display().to_string()),
     ];
-    match candidate.mode {
-        "gate" => {
-            parts.push("--label-column".to_string());
-            parts.push(shell_arg(&candidate.column));
-        }
-        "action" => {
-            parts.push("--action-column".to_string());
-            parts.push(shell_arg(&candidate.column));
-            if let Some(default_action) = &candidate.default_action {
-                parts.push("--default-action".to_string());
-                parts.push(shell_arg(default_action));
-            }
-        }
-        "fanout" => {
-            parts.push("--fanout-column".to_string());
-            parts.push(shell_arg(&candidate.column));
-            if !candidate.actions.is_empty() && candidate.actions.len() <= 20 {
-                parts.push("--fanout-actions".to_string());
-                parts.push(shell_arg(&candidate.actions.join(",")));
-            }
-        }
-        _ => {}
-    }
+    parts.push("--target".to_string());
+    parts.push(shell_arg(target_column));
     if !exclude_columns.is_empty() {
         parts.push("--exclude-columns".to_string());
         parts.push(shell_arg(&exclude_columns.join(",")));
