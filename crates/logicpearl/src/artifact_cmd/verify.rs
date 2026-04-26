@@ -153,6 +153,15 @@ pub(crate) fn run_artifact_verify(args: ArtifactVerifyArgs) -> Result<()> {
     }
 }
 
+pub(crate) fn verify_artifact_bundle(path: &Path) -> Result<()> {
+    let report = verify_artifact(path)?;
+    if report.ok {
+        Ok(())
+    } else {
+        Err(miette::miette!("artifact verification failed"))
+    }
+}
+
 fn inspect_artifact(path: &Path) -> Result<ArtifactManifestInspection> {
     let context = load_artifact_manifest_context(path)?;
     let resolved_files = resolved_manifest_files(&context.base_dir, &context.manifest.files)?;

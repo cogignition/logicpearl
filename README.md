@@ -382,6 +382,17 @@ print(result["decision_kind"])
 Browser apps can use [`@logicpearl/browser`](./packages/logicpearl-browser/README.md)
 to load compiled Wasm artifact bundles.
 
+To make deployable bundles explicit, package an artifact for a runtime:
+
+```bash
+logicpearl package /tmp/logicpearl-output --browser --output-dir dist/policy-browser
+logicpearl package /tmp/logicpearl-output --native --output-dir dist/policy-native
+```
+
+`package --browser` writes a static directory you can serve. `package --native`
+writes a directory with the runner, manifest, IR, package manifest, and README.
+Both modes validate that the copied bundle is self-contained.
+
 See [docs/artifacts.md](./docs/artifacts.md) for the full bundle contract.
 
 ## Explanations And Feature Dictionaries

@@ -56,15 +56,15 @@ use artifact_cmd::{
     native_artifact_output_path, pearl_artifact_id, persist_build_report,
     refresh_artifact_manifest_deployables, resolve_artifact_input, resolve_manifest_member_path,
     run_artifact_digest, run_artifact_inspect, run_artifact_verify,
-    run_embedded_native_runner_if_present, wasm_artifact_output_path, write_artifact_manifest_v1,
-    write_named_artifact_manifest, ArtifactBundleDescriptor, ArtifactCommand,
-    ArtifactManifestWriteOptions,
+    run_embedded_native_runner_if_present, verify_artifact_bundle, wasm_artifact_output_path,
+    write_artifact_manifest_v1, write_named_artifact_manifest, ArtifactBundleDescriptor,
+    ArtifactCommand, ArtifactManifestWriteOptions,
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_doctor, run_eval, run_inspect,
-    run_quickstart, run_refine, run_review, run_trace, run_verify, BuildArgs, CompileArgs,
-    ComposeArgs, DiscoverArgs, DoctorArgs, InspectArgs, QuickstartArgs, RefineArgs, ReviewArgs,
-    RunArgs, TraceArgs, VerifyArgs,
+    run_package, run_quickstart, run_refine, run_review, run_trace, run_verify, BuildArgs,
+    CompileArgs, ComposeArgs, DiscoverArgs, DoctorArgs, InspectArgs, PackageArgs, QuickstartArgs,
+    RefineArgs, ReviewArgs, RunArgs, TraceArgs, VerifyArgs,
 };
 use benchmark_cmd::{
     run_benchmark, run_benchmark_adapt, run_benchmark_detect_profile, run_benchmark_emit_traces,
@@ -111,6 +111,7 @@ Common commands:
 - review
 - trace
 - refine
+- package
 - diff
 - run
 - compile
@@ -126,6 +127,7 @@ Examples:
   logicpearl review examples/getting_started/output examples/getting_started/new_input.json
   logicpearl trace examples/getting_started/output examples/getting_started/decision_traces.csv --show-near-misses
   logicpearl refine examples/getting_started/output --pin rules.json
+  logicpearl package examples/getting_started/output --browser
   logicpearl diff old_output new_output
   logicpearl run examples/getting_started/output examples/getting_started/new_input.json
   cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output -
@@ -303,6 +305,8 @@ enum Commands {
     Compose(ComposeArgs),
     /// Compile a pearl into an optional native or Wasm deployable.
     Compile(CompileArgs),
+    /// Package a browser or native deploy directory.
+    Package(PackageArgs),
     #[cfg(feature = "conformance")]
     #[command(hide = true)]
     /// Validate artifact freshness and check runtime parity.
@@ -397,6 +401,7 @@ fn main() -> Result<()> {
         Commands::Discover(args) => run_discover(args),
         Commands::Compose(args) => run_compose(args),
         Commands::Compile(args) => run_compile(args),
+        Commands::Package(args) => run_package(args),
         #[cfg(feature = "conformance")]
         Commands::Conformance {
             command: ConformanceCommand::WriteManifest(args),

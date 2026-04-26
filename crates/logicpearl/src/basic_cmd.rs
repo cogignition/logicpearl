@@ -21,6 +21,7 @@ mod doctor;
 mod fanout_build;
 mod feature_dictionary;
 mod inspect;
+mod package;
 mod post_build_summary;
 mod quickstart;
 mod review_loop;
@@ -40,6 +41,7 @@ use feature_dictionary::{
     write_feature_dictionary_from_columns,
 };
 pub(crate) use inspect::run_inspect;
+pub(crate) use package::run_package;
 pub(crate) use quickstart::run_quickstart;
 pub(crate) use review_loop::{run_refine, run_review, run_trace};
 pub(crate) use run::run_eval;
@@ -565,6 +567,34 @@ pub(crate) struct CompileArgs {
     /// Output path. Defaults to <name>.pearl, <name>.pearl.exe, or <name>.pearl.wasm depending on target.
     #[arg(long)]
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl package output --browser\n  logicpearl package output --native\n  logicpearl package output --browser --output-dir dist/policy-browser"
+)]
+pub(crate) struct PackageArgs {
+    /// Artifact directory, artifact manifest, pearl.ir.json, or pipeline JSON file.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Build a browser-served Wasm bundle.
+    #[arg(long, conflicts_with = "native")]
+    pub browser: bool,
+    /// Build a native runner bundle.
+    #[arg(long, conflicts_with = "browser")]
+    pub native: bool,
+    /// Output directory. Defaults to <artifact>/package/browser or <artifact>/package/native.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Optional artifact name for the compiled deployable.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Native target triple. Only valid with --native.
+    #[arg(long, requires = "native")]
+    pub target: Option<String>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

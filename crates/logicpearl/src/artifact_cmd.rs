@@ -30,7 +30,9 @@ pub(crate) use native_compile::{
     compile_native_fanout_runner, compile_native_runner, run_embedded_native_runner_if_present,
 };
 use pearl::CompilablePearl;
-pub(crate) use verify::{run_artifact_digest, run_artifact_inspect, run_artifact_verify};
+pub(crate) use verify::{
+    run_artifact_digest, run_artifact_inspect, run_artifact_verify, verify_artifact_bundle,
+};
 pub(crate) use wasm_compile::{
     compile_wasm_fanout_module, compile_wasm_module, is_rust_target_installed,
 };

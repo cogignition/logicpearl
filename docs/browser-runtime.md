@@ -12,7 +12,20 @@ The package README is the API reference: [packages/logicpearl-browser/README.md]
 
 ## Build A Wasm Bundle
 
-Compile an artifact for browser use:
+Package an artifact for browser use:
+
+```bash
+logicpearl build examples/getting_started/decision_traces.csv \
+  --output-dir /tmp/browser-pearl
+
+logicpearl package /tmp/browser-pearl --browser --output-dir /tmp/browser-package
+```
+
+Serve `/tmp/browser-package` as static files. The package command compiles the
+Wasm module, copies the manifest-referenced files, writes
+`logicpearl.package.json`, and verifies the copied bundle is loadable.
+
+You can still compile in place when you want to manage the directory yourself:
 
 ```bash
 logicpearl build examples/getting_started/decision_traces.csv \
