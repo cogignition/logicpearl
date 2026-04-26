@@ -1,0 +1,7 @@
+{
+  "customer_tier": "standard",
+  "days_since_purchase": 3,
+  "refund_requested": false,
+  "suspicious_activity": true,
+  "missing_order_id": false
+}

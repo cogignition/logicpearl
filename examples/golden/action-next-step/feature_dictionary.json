@@ -1,0 +1,24 @@
+{
+  "feature_dictionary_version": "1.0",
+  "features": {
+    "customer_tier": {
+      "label": "Customer tier"
+    },
+    "days_since_purchase": {
+      "label": "Days since purchase",
+      "unit": "days"
+    },
+    "refund_requested": {
+      "label": "Refund requested",
+      "kind": "flag"
+    },
+    "suspicious_activity": {
+      "label": "Suspicious account activity",
+      "kind": "flag"
+    },
+    "missing_order_id": {
+      "label": "Order ID is missing",
+      "kind": "flag"
+    }
+  }
+}

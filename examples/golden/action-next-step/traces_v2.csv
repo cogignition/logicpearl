@@ -1,0 +1,16 @@
+customer_tier,days_since_purchase,refund_requested,suspicious_activity,missing_order_id,next_action
+standard,5,true,false,false,refund
+premium,30,true,false,false,close
+standard,12,true,false,false,refund
+standard,2,false,true,false,escalate_fraud
+premium,4,true,true,false,escalate_fraud
+standard,40,false,true,true,escalate_fraud
+standard,1,false,false,true,ask_for_info
+premium,9,true,false,true,ask_for_info
+standard,20,false,false,true,ask_for_info
+standard,6,false,false,false,close
+premium,18,false,false,false,close
+standard,45,true,false,false,close
+premium,8,true,false,false,refund
+premium,20,true,false,false,refund
+premium,3,false,false,true,ask_for_info

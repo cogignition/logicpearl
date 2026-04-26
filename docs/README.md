@@ -51,6 +51,8 @@ numeric, feature-reference, and conjunction candidates.
 
 ## Evidence And Examples
 
+- [Golden examples](../examples/golden/README.md)
+  Polished gate, action, and fan-out walkthroughs with build, inspect, run, diff, native, and browser steps.
 - [Benchmarks](../BENCHMARKS.md)
   Reproducible scorecards and benchmark provenance.
 - [Datasets](../DATASETS.md)

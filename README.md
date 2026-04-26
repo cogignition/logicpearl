@@ -413,6 +413,8 @@ See [docs/pipelines.md](./docs/pipelines.md) and
 
 ## Examples
 
+- [Golden examples](./examples/golden/README.md)
+  Three polished walkthroughs for gate, action, and fan-out artifacts.
 - [Garden actions demo](./examples/demos/garden_actions/README.md)
   Learn a multi-action policy that chooses `water`, `fertilize`, `repot`, or
   `do_nothing`.

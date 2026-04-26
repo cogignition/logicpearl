@@ -1,0 +1,20 @@
+{
+  "feature_dictionary_version": "1.0",
+  "features": {
+    "amount_usd": {
+      "label": "Purchase amount",
+      "unit": "USD"
+    },
+    "vendor_risk_score": {
+      "label": "Vendor risk score"
+    },
+    "missing_receipt": {
+      "label": "Receipt is missing",
+      "kind": "flag"
+    },
+    "department_budget_remaining_usd": {
+      "label": "Department budget remaining",
+      "unit": "USD"
+    }
+  }
+}

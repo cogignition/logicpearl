@@ -1,0 +1,17 @@
+amount_usd,vendor_risk_score,missing_receipt,department_budget_remaining_usd,approved
+120,1,false,9000,yes
+480,2,false,7200,yes
+1350,3,false,6000,yes
+2200,4,false,8500,yes
+3100,2,false,12000,yes
+5400,2,false,15000,no
+6200,3,false,18000,no
+7600,2,false,20000,no
+450,8,false,10000,no
+900,7,false,10000,no
+1800,9,false,12000,no
+120,1,true,9000,no
+700,2,true,9000,no
+2600,3,true,10000,no
+4200,4,false,3900,no
+1800,3,false,1200,no

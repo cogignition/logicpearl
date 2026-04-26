@@ -1,0 +1,25 @@
+{
+  "feature_dictionary_version": "1.0",
+  "features": {
+    "cpu_pct": {
+      "label": "CPU utilization",
+      "unit": "%"
+    },
+    "disk_pct": {
+      "label": "Disk utilization",
+      "unit": "%"
+    },
+    "error_rate_pct": {
+      "label": "Error rate",
+      "unit": "%"
+    },
+    "cert_days_remaining": {
+      "label": "Certificate days remaining",
+      "unit": "days"
+    },
+    "pager_ack_minutes": {
+      "label": "Pager acknowledgment time",
+      "unit": "minutes"
+    }
+  }
+}

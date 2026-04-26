@@ -1,0 +1,11 @@
+cpu_pct,disk_pct,error_rate_pct,cert_days_remaining,pager_ack_minutes,applicable_actions
+92,40,0.5,90,2,scale_workers
+88,83,0.2,80,4,"scale_workers,clean_disk"
+55,91,0.1,70,3,clean_disk
+50,45,8.5,60,2,rollback_release
+93,88,9.0,6,18,"scale_workers,clean_disk,rollback_release,renew_certificate,page_oncall"
+45,30,0.1,5,1,renew_certificate
+70,72,0.1,40,17,page_oncall
+91,20,7.2,4,20,"scale_workers,rollback_release,renew_certificate,page_oncall"
+40,86,6.5,90,5,"clean_disk,rollback_release"
+30,20,0.2,60,1,monitor
