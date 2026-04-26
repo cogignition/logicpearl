@@ -12,12 +12,14 @@ use std::sync::Arc;
 use super::canonicalize::{canonicalize_rules, expression_matches, prune_redundant_rules};
 use super::features::{infer_feature_type, sorted_feature_names};
 use super::rule_text::RuleTextContext;
+mod bottom_up;
 mod candidates;
 mod residual_recovery;
 mod rule_hygiene;
 mod rule_limit;
 mod scoring;
 mod selection;
+mod simplification;
 mod validation;
 
 use super::{
@@ -28,14 +30,14 @@ use super::{
 };
 #[cfg(test)]
 pub(super) use candidates::rule_from_candidate;
-use candidates::{
-    best_immediate_candidate_rule_with_cache, candidate_rules_with_cache,
-    compare_candidate_priority, rule_from_candidate_with_context, CandidateMatchCache,
-};
 #[cfg(test)]
 use candidates::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
     candidate_rules, conjunction_candidate_rules,
+};
+use candidates::{
+    candidate_rules_with_cache, compare_candidate_priority, rule_from_candidate_with_context,
+    CandidateMatchCache,
 };
 pub(super) use residual_recovery::{discover_residual_rules, refine_rules_unique_coverage};
 pub(super) use rule_hygiene::{dedupe_rules_by_signature, merge_discovered_and_pinned_rules};
@@ -48,6 +50,9 @@ use scoring::{
 };
 pub(crate) use selection::DISCOVERY_SELECTION_BACKEND_ENV;
 use selection::{current_solver_backend, exact_selection_shortlist, select_candidate_rules_exact};
+#[cfg(test)]
+use simplification::candidate_from_expression_for_selection;
+use simplification::simplify_candidate_plan;
 use validation::discovery_validation_split;
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
@@ -56,6 +61,8 @@ const NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE: usize = 3;
 const NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS: usize = 10; // 0.1%
 const EXACT_SELECTION_FRONTIER_LIMIT: usize = 48;
 const CONJUNCTION_ATOM_FRONTIER_LIMIT: usize = 128;
+const BOTTOM_UP_CONJUNCTION_LEVEL_FRONTIER_LIMIT: usize = 256;
+const BOTTOM_UP_CONJUNCTION_TOTAL_LIMIT: usize = 2048;
 const RARE_RULE_RECOVERY_FRONTIER_LIMIT: usize = 24;
 const RARE_RULE_RECOVERY_MAX_PASSES: usize = 3;
 
@@ -76,19 +83,19 @@ struct CandidateChoice {
 }
 
 #[derive(Debug, Clone)]
-struct CandidateSelectionContext<'a> {
-    rows: &'a [DecisionTraceRow],
-    denied_indices: &'a [usize],
-    allowed_indices: &'a [usize],
-    training_indices: Vec<usize>,
-    validation_indices: &'a [usize],
-    training_denied_count: usize,
-    training_allowed_count: usize,
-    feature_governance: &'a BTreeMap<String, FeatureGovernance>,
-    decision_mode: DiscoveryDecisionMode,
-    selection_policy: SelectionPolicy,
-    residual_options: Option<&'a ResidualPassOptions>,
-    match_cache: Arc<CandidateMatchCache<'a>>,
+pub(in crate::engine) struct CandidateSelectionContext<'a> {
+    pub(in crate::engine) rows: &'a [DecisionTraceRow],
+    pub(in crate::engine) denied_indices: &'a [usize],
+    pub(in crate::engine) allowed_indices: &'a [usize],
+    pub(in crate::engine) training_indices: Vec<usize>,
+    pub(in crate::engine) validation_indices: &'a [usize],
+    pub(in crate::engine) training_denied_count: usize,
+    pub(in crate::engine) training_allowed_count: usize,
+    pub(in crate::engine) feature_governance: &'a BTreeMap<String, FeatureGovernance>,
+    pub(in crate::engine) decision_mode: DiscoveryDecisionMode,
+    pub(in crate::engine) selection_policy: SelectionPolicy,
+    pub(in crate::engine) residual_options: Option<&'a ResidualPassOptions>,
+    pub(in crate::engine) match_cache: Arc<CandidateMatchCache<'a>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -563,6 +570,7 @@ pub(super) fn discover_rules(
     );
     let selected_candidates =
         recover_rare_rules(&selection_context, selected_candidates, progress)?;
+    let selected_candidates = simplify_candidate_plan(&selection_context, selected_candidates);
     report_progress(
         progress,
         "rule_text",
@@ -681,7 +689,9 @@ fn recover_rare_rules(
     Ok(recovered)
 }
 
-fn dedupe_candidate_rules_by_signature(candidates: Vec<CandidateRule>) -> Vec<CandidateRule> {
+pub(super) fn dedupe_candidate_rules_by_signature(
+    candidates: Vec<CandidateRule>,
+) -> Vec<CandidateRule> {
     let mut seen = BTreeSet::new();
     let mut deduped = Vec::new();
     for candidate in candidates {
@@ -906,7 +916,7 @@ fn select_candidate_rule(
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(compare_candidate_priority);
+    sort_candidate_frontier(&mut candidates, selection_context.selection_policy);
     candidates.truncate(LOOKAHEAD_FRONTIER_LIMIT);
     report_progress(
         progress,
@@ -1027,6 +1037,38 @@ fn score_lookahead_candidates(
     scored
 }
 
+fn best_immediate_candidate_rule_with_policy(
+    selection_context: &CandidateSelectionContext<'_>,
+    denied_indices: &[usize],
+) -> Option<CandidateRule> {
+    let mut candidates = candidate_rules_with_cache(
+        selection_context.rows,
+        denied_indices,
+        selection_context.allowed_indices,
+        selection_context.feature_governance,
+        selection_context.decision_mode,
+        selection_context.residual_options,
+        None,
+        Some(&selection_context.match_cache),
+    );
+    sort_candidate_frontier(&mut candidates, selection_context.selection_policy);
+    candidates.into_iter().next()
+}
+
+fn sort_candidate_frontier(candidates: &mut [CandidateRule], selection_policy: SelectionPolicy) {
+    match selection_policy {
+        SelectionPolicy::Balanced => candidates.sort_by(compare_balanced_candidate_frontier),
+        SelectionPolicy::RecallBiased { .. } => candidates.sort_by(compare_candidate_priority),
+    }
+}
+
+fn compare_balanced_candidate_frontier(left: &CandidateRule, right: &CandidateRule) -> Ordering {
+    left.false_positives
+        .cmp(&right.false_positives)
+        .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
+        .then_with(|| compare_candidate_priority(left, right))
+}
+
 fn simulate_candidate_plan(
     seed_rules: &[CandidateRule],
     selection_context: &CandidateSelectionContext<'_>,
@@ -1065,15 +1107,9 @@ fn simulate_candidate_plan(
                     remaining_denied.len()
                 ),
             );
-            let Some(next) = best_immediate_candidate_rule_with_cache(
-                selection_context.rows,
-                &remaining_denied,
-                selection_context.allowed_indices,
-                selection_context.feature_governance,
-                selection_context.decision_mode,
-                selection_context.residual_options,
-                &selection_context.match_cache,
-            ) else {
+            let Some(next) =
+                best_immediate_candidate_rule_with_policy(selection_context, &remaining_denied)
+            else {
                 break;
             };
             if next.denied_coverage == 0 {

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 use super::{
     candidate_allowed_for_mode, candidate_as_comparison, candidate_complexity_penalty,
-    candidate_rules, compare_candidate_priority, compare_candidate_set_score,
-    compare_candidate_set_score_with_policy, conjunction_candidate_rules, recover_rare_rules,
-    rule_from_candidate, score_candidate_set, select_candidate_rules_exact, training_indices,
-    CandidateMatchCache, CandidateRule, CandidateSelectionContext, CandidateSetScore,
-    DISCOVERY_SELECTION_BACKEND_ENV,
+    candidate_from_expression_for_selection, candidate_rules, compare_candidate_priority,
+    compare_candidate_set_score, compare_candidate_set_score_with_policy,
+    conjunction_candidate_rules, recover_rare_rules, rule_from_candidate, score_candidate_set,
+    select_candidate_rules_exact, simplify_candidate_plan, training_indices, CandidateMatchCache,
+    CandidateRule, CandidateSelectionContext, CandidateSetScore, DISCOVERY_SELECTION_BACKEND_ENV,
 };
 use crate::{
     discovery_selection_env_lock, DecisionTraceRow, DiscoveryDecisionMode, ResidualPassOptions,
@@ -251,6 +251,136 @@ fn candidate_priority_prefers_positive_signal_over_base_rate_coverage() {
         compare_candidate_priority(&informative, &broad_prior),
         std::cmp::Ordering::Less
     );
+}
+
+#[test]
+fn bottom_up_conjunction_generation_keeps_broad_signal_rules() {
+    let mut rows = Vec::new();
+    for index in 0..157 {
+        rows.push(garden_light_row(
+            "fern",
+            3.0,
+            if index < 17 { "moderate" } else { "low" },
+            false,
+        ));
+    }
+    for _ in 0..23 {
+        rows.push(garden_light_row("fern", 3.0, "dry", true));
+    }
+    for _ in 0..980 {
+        rows.push(garden_light_row("succulent", 1.0, "moderate", true));
+    }
+    let denied_indices = (0usize..157usize).collect::<Vec<_>>();
+    let allowed_indices = (157usize..rows.len()).collect::<Vec<_>>();
+    let atomic = candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &BTreeMap::new(),
+        DiscoveryDecisionMode::Standard,
+        None,
+        None,
+    );
+
+    let conjunctions = conjunction_candidate_rules(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &atomic,
+        &ResidualPassOptions {
+            max_conditions: 3,
+            min_positive_support: 2,
+            max_negative_hits: 0,
+            max_rules: 8,
+        },
+        None,
+    );
+
+    let broad = conjunctions.iter().find(|candidate| {
+        expression_has_comparison(
+            &candidate.expression,
+            "plant",
+            ComparisonOperator::Eq,
+            Some(Value::String("fern".to_string())),
+        ) && expression_has_comparison(
+            &candidate.expression,
+            "light_level",
+            ComparisonOperator::Gte,
+            Some(Value::Number(Number::from_f64(3.0).unwrap())),
+        ) && !expression_mentions_feature(&candidate.expression, "humidity")
+    });
+
+    let broad = broad.expect("bottom-up search should retain the broad fern/light rule");
+    assert_eq!(broad.denied_coverage, 157);
+    assert_eq!(broad.false_positives, 23);
+}
+
+#[test]
+fn selected_candidate_simplification_drops_redundant_conjuncts() {
+    let rows = vec![
+        garden_light_row("fern", 3.0, "moderate", false),
+        garden_light_row("fern", 3.0, "moderate", false),
+        garden_light_row("fern", 1.0, "moderate", true),
+        garden_light_row("succulent", 3.0, "moderate", true),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize];
+    let feature_governance = BTreeMap::new();
+    let selection_context = CandidateSelectionContext {
+        rows: &rows,
+        denied_indices: &denied_indices,
+        allowed_indices: &allowed_indices,
+        training_indices: training_indices(&rows, &[]),
+        validation_indices: &[],
+        training_denied_count: denied_indices.len(),
+        training_allowed_count: allowed_indices.len(),
+        feature_governance: &feature_governance,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy: SelectionPolicy::Balanced,
+        residual_options: None,
+        match_cache: Arc::new(CandidateMatchCache::new(&rows)),
+    };
+    let overspecified = candidate_from_expression_for_selection(
+        &selection_context,
+        Expression::All {
+            all: vec![
+                Expression::Comparison(ComparisonExpression {
+                    feature: "plant".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("fern".to_string())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "light_level".to_string(),
+                    op: ComparisonOperator::Gte,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(3.0).unwrap())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "humidity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("moderate".to_string())),
+                }),
+            ],
+        },
+    );
+
+    let simplified = simplify_candidate_plan(&selection_context, vec![overspecified]);
+    assert_eq!(simplified.len(), 1);
+    assert!(expression_has_comparison(
+        &simplified[0].expression,
+        "plant",
+        ComparisonOperator::Eq,
+        Some(Value::String("fern".to_string())),
+    ));
+    assert!(expression_has_comparison(
+        &simplified[0].expression,
+        "light_level",
+        ComparisonOperator::Gte,
+        Some(Value::Number(Number::from_f64(3.0).unwrap())),
+    ));
+    assert!(!expression_mentions_feature(
+        &simplified[0].expression,
+        "humidity"
+    ));
 }
 
 #[test]
@@ -790,7 +920,16 @@ fn conjunction_candidate_rules_cover_policy_style_dataset() {
         None,
     );
 
-    let score = score_candidate_set(&rows, &compounds, None);
+    let (selected, _) = select_candidate_rules_exact(
+        &rows,
+        &denied_indices,
+        &allowed_indices,
+        &compounds,
+        SelectionPolicy::Balanced,
+    )
+    .expect("exact selection should run");
+    let selected = selected.expect("exact selection should find a rule set");
+    let score = score_candidate_set(&rows, &selected, None);
     assert_eq!(score.total_errors, 0);
 }
 
@@ -997,6 +1136,63 @@ fn dual_signal_row(signal_a: f64, signal_b: f64, allowed: bool) -> DecisionTrace
         features,
         allowed,
         trace_provenance: None,
+    }
+}
+
+fn garden_light_row(
+    plant: &str,
+    light_level: f64,
+    humidity: &str,
+    allowed: bool,
+) -> DecisionTraceRow {
+    let mut features = HashMap::new();
+    features.insert("plant".to_string(), Value::String(plant.to_string()));
+    features.insert(
+        "light_level".to_string(),
+        Value::Number(Number::from_f64(light_level).unwrap()),
+    );
+    features.insert("humidity".to_string(), Value::String(humidity.to_string()));
+    DecisionTraceRow {
+        features,
+        allowed,
+        trace_provenance: None,
+    }
+}
+
+fn expression_mentions_feature(expression: &Expression, feature: &str) -> bool {
+    match expression {
+        Expression::Comparison(comparison) => comparison.feature == feature,
+        Expression::All { all } => all
+            .iter()
+            .any(|child| expression_mentions_feature(child, feature)),
+        Expression::Any { any } => any
+            .iter()
+            .any(|child| expression_mentions_feature(child, feature)),
+        Expression::Not { expr } => expression_mentions_feature(expr, feature),
+    }
+}
+
+fn expression_has_comparison(
+    expression: &Expression,
+    feature: &str,
+    op: ComparisonOperator,
+    value: Option<Value>,
+) -> bool {
+    match expression {
+        Expression::Comparison(comparison) => {
+            comparison.feature == feature
+                && comparison.op == op
+                && value
+                    .as_ref()
+                    .is_none_or(|expected| comparison.value.literal() == Some(expected))
+        }
+        Expression::All { all } => all
+            .iter()
+            .any(|child| expression_has_comparison(child, feature, op.clone(), value.clone())),
+        Expression::Any { any } => any
+            .iter()
+            .any(|child| expression_has_comparison(child, feature, op.clone(), value.clone())),
+        Expression::Not { expr } => expression_has_comparison(expr, feature, op, value),
     }
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use super::super::canonicalize::{comparison_matches, expression_matches};
+use super::super::canonicalize::expression_matches;
 use super::super::features::{
     is_derived_feature_name, numeric_feature_names, sorted_feature_names,
 };
@@ -9,24 +9,18 @@ use super::super::{
     ResidualPassOptions,
 };
 use super::{
-    CONJUNCTION_ATOM_FRONTIER_LIMIT, NUMERIC_EQ_MAX_DISTINCT_VALUES,
+    bottom_up::conjunction_candidate_rules_with_cache, NUMERIC_EQ_MAX_DISTINCT_VALUES,
     NUMERIC_EQ_MIN_SUPPORT_ABSOLUTE, NUMERIC_EQ_MIN_SUPPORT_BASIS_POINTS,
 };
 use logicpearl_ir::{
     BooleanEvidencePolicy, ComparisonExpression, ComparisonOperator, ComparisonValue, Expression,
     FeatureGovernance, RuleDefinition, RuleKind, RuleVerificationStatus,
 };
-use logicpearl_verify::{
-    synthesize_boolean_conjunctions, BooleanConjunctionCandidate, BooleanConjunctionSearchOptions,
-    BooleanSearchExample,
-};
+use logicpearl_verify::BooleanConjunctionCandidate;
 use serde_json::{Number, Value};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{mpsc, Arc, Mutex};
-use std::time::{Duration, Instant};
-
-const CONJUNCTION_SYNTHESIS_HEARTBEAT: Duration = Duration::from_secs(30);
+use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 pub(super) fn candidate_rules(
@@ -304,153 +298,6 @@ pub(super) fn conjunction_candidate_rules(
     )
 }
 
-fn conjunction_candidate_rules_with_cache(
-    rows: &[DecisionTraceRow],
-    denied_indices: &[usize],
-    allowed_indices: &[usize],
-    atomic_candidates: &[CandidateRule],
-    options: &ResidualPassOptions,
-    progress: Option<&ProgressCallback<'_>>,
-    match_cache: Option<&CandidateMatchCache<'_>>,
-) -> Vec<CandidateRule> {
-    let mut prioritized_atoms = atomic_candidates
-        .iter()
-        .filter(|candidate| candidate_as_comparison(candidate).is_some())
-        .collect::<Vec<_>>();
-    prioritized_atoms.sort_by(|left, right| compare_conjunction_atom_priority(left, right));
-    let atomic_comparisons = prioritized_atoms
-        .into_iter()
-        .take(CONJUNCTION_ATOM_FRONTIER_LIMIT)
-        .filter_map(candidate_as_comparison)
-        .cloned()
-        .collect::<Vec<_>>();
-    if atomic_comparisons.len() < 2 {
-        return Vec::new();
-    }
-    report_progress(
-        progress,
-        "candidate_generation",
-        format!(
-            "candidate_generation: synthesizing boolean conjunctions from {} atoms (max_conditions={}, max_rules={})",
-            atomic_comparisons.len(),
-            options.max_conditions,
-            options.max_rules
-        ),
-    );
-
-    let atom_ids = atomic_comparisons
-        .iter()
-        .enumerate()
-        .map(|(index, _)| format!("atom_{index:03}"))
-        .collect::<Vec<_>>();
-    let examples = denied_indices
-        .iter()
-        .map(|index| BooleanSearchExample {
-            features: conjunction_example_features(
-                &rows[*index].features,
-                &atom_ids,
-                &atomic_comparisons,
-            ),
-            positive: true,
-        })
-        .chain(allowed_indices.iter().map(|index| BooleanSearchExample {
-            features: conjunction_example_features(
-                &rows[*index].features,
-                &atom_ids,
-                &atomic_comparisons,
-            ),
-            positive: false,
-        }))
-        .collect::<Vec<_>>();
-
-    let conjunctions = match synthesize_boolean_conjunctions_with_progress(
-        &examples,
-        &BooleanConjunctionSearchOptions {
-            min_conditions: 2,
-            max_conditions: options.max_conditions,
-            min_positive_support: options.min_positive_support,
-            max_negative_hits: options.max_negative_hits,
-            max_rules: options.max_rules,
-        },
-        progress,
-    ) {
-        Ok(conjunctions) => conjunctions,
-        Err(err) => {
-            #[cfg(not(test))]
-            let _ = &err;
-            #[cfg(test)]
-            eprintln!("conjunction synthesis failed: {err}");
-            return Vec::new();
-        }
-    };
-    report_progress(
-        progress,
-        "candidate_generation",
-        format!(
-            "candidate_generation: synthesized {} boolean conjunctions",
-            conjunctions.len()
-        ),
-    );
-
-    let atom_lookup = atom_ids
-        .iter()
-        .cloned()
-        .zip(atomic_comparisons.iter().cloned())
-        .collect::<BTreeMap<_, _>>();
-    conjunctions
-        .into_iter()
-        .filter_map(|candidate| {
-            let comparisons = candidate
-                .required_true_features
-                .iter()
-                .filter_map(|atom_id| atom_lookup.get(atom_id).cloned())
-                .collect::<Vec<_>>();
-            if comparisons.is_empty() {
-                return None;
-            }
-            Some(candidate_from_expression(
-                rows,
-                denied_indices,
-                allowed_indices,
-                conjunction_expression(comparisons),
-                match_cache,
-            ))
-        })
-        .collect()
-}
-
-fn synthesize_boolean_conjunctions_with_progress(
-    examples: &[BooleanSearchExample],
-    options: &BooleanConjunctionSearchOptions,
-    progress: Option<&ProgressCallback<'_>>,
-) -> logicpearl_core::Result<Vec<BooleanConjunctionCandidate>> {
-    let Some(progress) = progress else {
-        return synthesize_boolean_conjunctions(examples, options);
-    };
-    let started = Instant::now();
-    std::thread::scope(|scope| {
-        let (done_tx, done_rx) = mpsc::channel();
-        scope.spawn(move || {
-            loop {
-                match done_rx.recv_timeout(CONJUNCTION_SYNTHESIS_HEARTBEAT) {
-                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(mpsc::RecvTimeoutError::Timeout) => report_progress(
-                        Some(progress),
-                        "candidate_generation",
-                        format!(
-                            "candidate_generation: synthesizing boolean conjunctions still running (elapsed={}s)",
-                            started.elapsed().as_secs()
-                        ),
-                    ),
-                }
-            }
-        });
-        let result = synthesize_boolean_conjunctions(examples, options);
-        let _ = done_tx.send(());
-        result
-    })
-}
-
 fn report_candidate_subphase_progress(
     progress: Option<&ProgressCallback<'_>>,
     subphase: &str,
@@ -484,56 +331,7 @@ fn crossed_progress_bucket(completed: usize, total: usize) -> bool {
     current_bucket != previous_bucket
 }
 
-fn compare_conjunction_atom_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
-    left.false_positives
-        .cmp(&right.false_positives)
-        .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
-        .then_with(|| {
-            candidate_complexity_penalty(left, DiscoveryDecisionMode::Standard).cmp(
-                &candidate_complexity_penalty(right, DiscoveryDecisionMode::Standard),
-            )
-        })
-        .then_with(|| left.signature().cmp(right.signature()))
-}
-
-fn conjunction_example_features(
-    row_features: &HashMap<String, Value>,
-    atom_ids: &[String],
-    comparisons: &[ComparisonExpression],
-) -> BTreeMap<String, bool> {
-    atom_ids
-        .iter()
-        .cloned()
-        .zip(
-            comparisons
-                .iter()
-                .map(|comparison| comparison_matches(comparison, row_features)),
-        )
-        .collect()
-}
-
-fn comparison_sort_key(c: &ComparisonExpression) -> (String, String, String) {
-    (
-        c.feature.clone(),
-        format!("{:?}", c.op),
-        serde_json::to_string(&c.value).unwrap_or_default(),
-    )
-}
-
-fn conjunction_expression(mut comparisons: Vec<ComparisonExpression>) -> Expression {
-    comparisons.sort_by_key(comparison_sort_key);
-    if comparisons.len() == 1 {
-        return Expression::Comparison(comparisons.pop().expect("single comparison"));
-    }
-    Expression::All {
-        all: comparisons
-            .into_iter()
-            .map(Expression::Comparison)
-            .collect(),
-    }
-}
-
-fn candidate_from_expression(
+pub(super) fn candidate_from_expression(
     rows: &[DecisionTraceRow],
     denied_indices: &[usize],
     allowed_indices: &[usize],
@@ -575,29 +373,6 @@ fn boolean_candidate_allowed(governance: Option<&FeatureGovernance>, value: bool
         Some(BooleanEvidencePolicy::FalseOnly) => !value,
         Some(BooleanEvidencePolicy::Never) => false,
     }
-}
-
-pub(super) fn best_immediate_candidate_rule_with_cache(
-    rows: &[DecisionTraceRow],
-    denied_indices: &[usize],
-    allowed_indices: &[usize],
-    feature_governance: &BTreeMap<String, FeatureGovernance>,
-    decision_mode: DiscoveryDecisionMode,
-    residual_options: Option<&ResidualPassOptions>,
-    match_cache: &CandidateMatchCache<'_>,
-) -> Option<CandidateRule> {
-    candidate_rules_with_cache(
-        rows,
-        denied_indices,
-        allowed_indices,
-        feature_governance,
-        decision_mode,
-        residual_options,
-        None,
-        Some(match_cache),
-    )
-    .into_iter()
-    .next()
 }
 
 #[derive(Debug)]
@@ -715,7 +490,7 @@ pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &Candidate
         .then_with(|| left.signature().cmp(right.signature()))
 }
 
-fn candidate_signal_score(candidate: &CandidateRule) -> f64 {
+pub(super) fn candidate_signal_score(candidate: &CandidateRule) -> f64 {
     let denied_total = candidate.denied_total;
     let allowed_total = candidate.allowed_total;
     let matched_denied = candidate.denied_coverage;

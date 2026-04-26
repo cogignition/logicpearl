@@ -100,7 +100,11 @@ fn golden_examples_build_run_diff_and_compile() {
         gate_input.display().to_string(),
         "--explain".into(),
     ]);
-    assert!(gate_run.contains("bitmask: 1"), "{gate_run}");
+    assert!(gate_run.contains("bitmask:"), "{gate_run}");
+    assert!(
+        gate_run.contains("Purchase amount at or above"),
+        "{gate_run}"
+    );
     run_cli(&[
         "build".into(),
         root.join("examples/golden/gate-approve-deny/traces_v2.csv")

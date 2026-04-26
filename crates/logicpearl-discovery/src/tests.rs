@@ -1035,6 +1035,106 @@ fn build_refine_tightens_uniquely_overbroad_rule() {
 }
 
 #[test]
+fn build_recall_biased_policy_uses_bottom_up_broad_conjunction() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("output");
+    let mut rows = Vec::new();
+    for index in 0..60 {
+        rows.push(row_values(
+            &[
+                ("plant", Value::String("fern".to_string())),
+                ("light_level", Value::Number(Number::from(3))),
+                ("humidity", Value::Number(Number::from(index))),
+            ],
+            false,
+        ));
+    }
+    for index in 0..6 {
+        rows.push(row_values(
+            &[
+                ("plant", Value::String("fern".to_string())),
+                ("light_level", Value::Number(Number::from(3))),
+                ("humidity", Value::Number(Number::from(index))),
+            ],
+            true,
+        ));
+    }
+    for index in 0..100 {
+        rows.push(row_values(
+            &[
+                ("plant", Value::String("fern".to_string())),
+                ("light_level", Value::Number(Number::from(1))),
+                ("humidity", Value::Number(Number::from(index % 60))),
+            ],
+            true,
+        ));
+    }
+    for index in 0..100 {
+        rows.push(row_values(
+            &[
+                ("plant", Value::String("succulent".to_string())),
+                ("light_level", Value::Number(Number::from(3))),
+                ("humidity", Value::Number(Number::from(index % 60))),
+            ],
+            true,
+        ));
+    }
+    for index in 0..300 {
+        rows.push(row_values(
+            &[
+                ("plant", Value::String("succulent".to_string())),
+                ("light_level", Value::Number(Number::from(1))),
+                ("humidity", Value::Number(Number::from(index % 60))),
+            ],
+            true,
+        ));
+    }
+
+    let result = build_pearl_from_rows(
+        &rows,
+        "bottom_up_garden".to_string(),
+        &BuildOptions {
+            output_dir: PathBuf::from(&output_dir),
+            gate_id: "bottom_up_garden".to_string(),
+            label_column: "allowed".to_string(),
+            positive_label: None,
+            negative_label: None,
+            residual_pass: true,
+            refine: false,
+            pinned_rules: None,
+            feature_dictionary: None,
+            feature_governance: None,
+            decision_mode: DiscoveryDecisionMode::Standard,
+            selection_policy: crate::SelectionPolicy::RecallBiased {
+                deny_recall_target: 1.0,
+                max_false_positive_rate: 0.02,
+            },
+            max_rules: Some(3),
+            max_conditions: Some(3),
+            proposal_policy: ProposalPolicy::ReportOnly,
+            feature_selection: FeatureColumnSelection::default(),
+        },
+    )
+    .unwrap();
+
+    assert!(result.rules_discovered <= 3);
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    let rendered = serde_json::to_string(&gate.rules).unwrap();
+    assert!(
+        rendered.contains("\"feature\":\"plant\""),
+        "expected plant predicate in rules: {rendered}"
+    );
+    assert!(
+        rendered.contains("\"feature\":\"light_level\""),
+        "expected light predicate in rules: {rendered}"
+    );
+    assert!(
+        !rendered.contains("\"feature\":\"humidity\""),
+        "bottom-up broad conjunction should not depend on one-off humidity fragments: {rendered}"
+    );
+}
+
+#[test]
 fn build_residual_pass_recovers_policy_style_conjunction_rules() {
     if !solver_available() {
         return;
@@ -1324,13 +1424,16 @@ fn build_residual_pass_recovers_policy_style_conjunction_rules() {
     )
     .unwrap();
 
-    assert_eq!(recovered.training_parity, 1.0);
+    let gate = LogicPearlGateIr::from_path(recovered_output.join("pearl.ir.json")).unwrap();
+    let rendered = serde_json::to_string(&gate.rules).unwrap();
+    assert_eq!(
+        recovered.training_parity, 1.0,
+        "unexpected recovered rules: {rendered}"
+    );
     assert_eq!(
         recovered.residual_recovery.state,
         ResidualRecoveryState::Applied
     );
-    let gate = LogicPearlGateIr::from_path(recovered_output.join("pearl.ir.json")).unwrap();
-    let rendered = serde_json::to_string(&gate.rules).unwrap();
     assert!(rendered.contains("\"all\""));
     assert!(rendered.contains("\"feature\":\"action_read\""));
     assert!(rendered.contains("\"feature\":\"is_admin\""));

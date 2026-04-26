@@ -79,6 +79,27 @@ pub(super) fn exact_selection_shortlist(
             shortlisted.push(candidate.clone());
         }
     }
+    let mut balanced_compounds = all_candidates
+        .iter()
+        .filter(|candidate| candidate_is_compound(candidate))
+        .cloned()
+        .collect::<Vec<_>>();
+    balanced_compounds.sort_by(|left, right| {
+        left.false_positives
+            .cmp(&right.false_positives)
+            .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
+            .then_with(|| candidate_total_penalty(left).cmp(&candidate_total_penalty(right)))
+            .then_with(|| left.signature().cmp(right.signature()))
+    });
+    for candidate in balanced_compounds
+        .into_iter()
+        .take(EXACT_SELECTION_COMPOUND_FRONTIER_LIMIT)
+    {
+        let signature = candidate.signature().to_string();
+        if signatures.insert(signature) {
+            shortlisted.push(candidate);
+        }
+    }
     for candidate in greedy_plan {
         let signature = candidate.signature().to_string();
         if signatures.insert(signature) {
