@@ -223,14 +223,14 @@ Build it:
 
 ```bash
 logicpearl build traces.csv \
-  --target allowed \
   --output-dir /tmp/pearl
 ```
 
-`--target` is the reviewed outcome column. LogicPearl inspects that column and
+When the reviewed outcome column is clear, LogicPearl infers the target and
 builds the right artifact shape: a binary gate, a multi-action policy, or a
 fan-out pipeline for multi-label action lists. It prints the inferred mode while
-keeping `--json` stdout machine-readable.
+keeping `--json` stdout machine-readable. Use `--target <column>` when you want
+to pick the reviewed column explicitly.
 
 Not sure which column is the target? Ask the trace doctor first:
 

@@ -125,14 +125,7 @@ pub(super) fn infer_target_for_build(
     traces: &Path,
     target_column: &str,
 ) -> Result<TargetInference> {
-    let loaded = load_flat_records(traces)
-        .into_diagnostic()
-        .wrap_err("failed to load traces for target inference")?;
-    let stats = loaded
-        .field_names
-        .iter()
-        .map(|field| column_stats(field, &loaded.records))
-        .collect::<Vec<_>>();
+    let stats = stats_for_target_inference(traces)?;
     infer_target_from_stats(&stats, target_column).ok_or_else(|| {
         let known_columns = stats
             .iter()
@@ -146,6 +139,22 @@ pub(super) fn infer_target_for_build(
             ),
         )
     })
+}
+
+pub(super) fn infer_recommended_target_for_build(traces: &Path) -> Result<Option<TargetInference>> {
+    let stats = stats_for_target_inference(traces)?;
+    Ok(best_target_inference_from_stats(&stats))
+}
+
+fn stats_for_target_inference(traces: &Path) -> Result<Vec<ColumnStats>> {
+    let loaded = load_flat_records(traces)
+        .into_diagnostic()
+        .wrap_err("failed to load traces for target inference")?;
+    Ok(loaded
+        .field_names
+        .iter()
+        .map(|field| column_stats(field, &loaded.records))
+        .collect())
 }
 
 fn column_stats(name: &str, records: &[BTreeMap<String, Value>]) -> ColumnStats {
@@ -207,11 +216,7 @@ fn recommend(
     output_dir: Option<&Path>,
     stats: &[ColumnStats],
 ) -> DoctorRecommendation {
-    let candidates = stats.iter().flat_map(column_candidates).collect::<Vec<_>>();
-    let Some(best) = candidates
-        .into_iter()
-        .max_by_key(|candidate| candidate.score)
-    else {
+    let Some(inference) = best_target_inference_from_stats(stats) else {
         return DoctorRecommendation {
             mode: "manual".to_string(),
             confidence: "low".to_string(),
@@ -226,7 +231,6 @@ fn recommend(
         };
     };
 
-    let inference = target_inference_from_candidate(stats, best);
     let output_dir = output_dir
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_output_dir(traces, inference.mode.as_str()));
@@ -251,6 +255,14 @@ fn infer_target_from_stats(stats: &[ColumnStats], target_column: &str) -> Option
     let stat = stats.iter().find(|stat| stat.name == target_column)?;
     let best = column_candidates(stat)
         .into_iter()
+        .max_by_key(|candidate| candidate.score)?;
+    Some(target_inference_from_candidate(stats, best))
+}
+
+fn best_target_inference_from_stats(stats: &[ColumnStats]) -> Option<TargetInference> {
+    let best = stats
+        .iter()
+        .flat_map(column_candidates)
         .max_by_key(|candidate| candidate.score)?;
     Some(target_inference_from_candidate(stats, best))
 }

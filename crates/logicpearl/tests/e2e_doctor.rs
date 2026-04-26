@@ -44,6 +44,32 @@ fn run_build_target(path: &std::path::Path, target: &str, output_dir: &std::path
     serde_json::from_slice(&output.stdout).expect("build output should be JSON")
 }
 
+fn run_build_auto(path: &std::path::Path, output_dir: &std::path::Path) -> (Value, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_logicpearl"))
+        .arg("build")
+        .arg(path)
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        output.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("Inferred target "),
+        "build should print automatic target inference to stderr, got:\n{stderr}"
+    );
+    (
+        serde_json::from_slice(&output.stdout).expect("build output should be JSON"),
+        stderr,
+    )
+}
+
 #[test]
 fn doctor_recommends_gate_action_and_fanout_builds() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
@@ -171,4 +197,40 @@ ok,no,low,move_to_more_sun\n",
     )
     .expect("fanout manifest should be JSON");
     assert_eq!(fanout_manifest["artifact_kind"], "pipeline");
+}
+
+#[test]
+fn bare_build_uses_doctor_target_recommendation() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+
+    let action = temp.path().join("garden_actions.csv");
+    fs::write(
+        &action,
+        "moisture,paleness,next_action\n\
+0.12,1,water\n\
+0.10,1,water\n\
+0.5,5,fertilize\n\
+0.4,1,do_nothing\n\
+0.45,1,do_nothing\n",
+    )
+    .expect("action traces should write");
+    let action_dir = temp.path().join("auto_action_out");
+    let (action_build, action_stderr) = run_build_auto(&action, &action_dir);
+    assert!(action_stderr.contains("Inferred target next_action as action"));
+    assert_eq!(action_build["action_column"], "next_action");
+
+    let fanout = temp.path().join("garden_fanout.csv");
+    fs::write(
+        &fanout,
+        "moisture,pests,sun,applicable_actions\n\
+low,yes,low,\"water,treat_pests,move_to_more_sun\"\n\
+low,no,ok,water\n\
+ok,yes,ok,treat_pests\n\
+ok,no,low,move_to_more_sun\n",
+    )
+    .expect("fanout traces should write");
+    let fanout_dir = temp.path().join("auto_fanout_out");
+    let (fanout_build, fanout_stderr) = run_build_auto(&fanout, &fanout_dir);
+    assert!(fanout_stderr.contains("Inferred target applicable_actions as fanout"));
+    assert_eq!(fanout_build["fanout_column"], "applicable_actions");
 }
