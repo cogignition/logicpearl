@@ -23,6 +23,7 @@ mod feature_dictionary;
 mod inspect;
 mod post_build_summary;
 mod quickstart;
+mod review_loop;
 mod run;
 mod verify;
 
@@ -40,6 +41,7 @@ use feature_dictionary::{
 };
 pub(crate) use inspect::run_inspect;
 pub(crate) use quickstart::run_quickstart;
+pub(crate) use review_loop::{run_refine, run_review, run_trace};
 pub(crate) use run::run_eval;
 pub(crate) use verify::run_verify;
 
@@ -473,6 +475,60 @@ pub(crate) struct RunArgs {
 
 #[derive(Debug, Args)]
 #[command(
+    after_help = "Examples:\n  logicpearl review output input.json\n  logicpearl review output input.json --json"
+)]
+pub(crate) struct ReviewArgs {
+    /// Artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Input JSON file to review against the artifact.
+    #[arg(value_name = "INPUT")]
+    pub input_json: PathBuf,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl trace output traces.csv --show-near-misses\n  logicpearl trace output traces.csv --json --show-near-misses"
+)]
+pub(crate) struct TraceArgs {
+    /// Artifact directory, artifact manifest, or pearl.ir.json file.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// Reviewed trace dataset to replay against the artifact.
+    #[arg(value_name = "TRACES")]
+    pub traces: PathBuf,
+    /// Include closest missed rules and unmet predicates in row output.
+    #[arg(long)]
+    pub show_near_misses: bool,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Examples:\n  logicpearl refine output --pin rules.json\n  logicpearl refine output --pin rules.json --output-dir output.refined"
+)]
+pub(crate) struct RefineArgs {
+    /// Existing artifact bundle to refine from.
+    #[arg(value_name = "ARTIFACT")]
+    pub artifact: PathBuf,
+    /// JSON file of pinned rules to merge into the next build.
+    #[arg(long = "pin", value_name = "RULES")]
+    pub pinned_rules: PathBuf,
+    /// Output directory for the refined artifact. Defaults to <artifact>.refined.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Emit machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
     after_help = "Examples:\n  logicpearl compose --pipeline-id starter_authz --input-map examples/pipelines/input-map.json --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json\n  logicpearl compose --pipeline-id starter_authz --scaffold --output examples/pipelines/generated/starter_authz.pipeline.json fixtures/ir/valid/auth-demo-v1.json"
 )]
 pub(crate) struct ComposeArgs {
@@ -519,6 +575,9 @@ pub(crate) struct InspectArgs {
     /// Pearl artifact directory, artifact manifest, or pearl.ir.json file.
     #[arg(value_name = "ARTIFACT")]
     pub pearl_ir: Option<PathBuf>,
+    /// Write a starter feature dictionary from the artifact input schema.
+    #[arg(long, value_name = "PATH")]
+    pub write_feature_dictionary: Option<PathBuf>,
     /// Emit machine-readable JSON instead of styled terminal output.
     #[arg(long)]
     pub json: bool,

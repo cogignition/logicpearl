@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::BuildArgs;
 use logicpearl_discovery::{DecisionTraceRow, FeatureDictionaryConfig};
+use logicpearl_ir::InputSchema;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use std::collections::BTreeMap;
 use std::fs;
@@ -35,6 +36,23 @@ pub(super) fn write_feature_dictionary_from_columns(
     columns: Vec<String>,
 ) -> Result<()> {
     let dictionary = starter_feature_dictionary_from_columns(columns);
+    write_feature_dictionary(path, &dictionary)
+}
+
+pub(super) fn write_feature_dictionary_from_schema(
+    path: &Path,
+    schema: &InputSchema,
+) -> Result<()> {
+    let columns = schema
+        .features
+        .iter()
+        .map(|feature| feature.id.clone())
+        .collect::<Vec<_>>();
+    let dictionary = starter_feature_dictionary_from_columns(columns);
+    write_feature_dictionary(path, &dictionary)
+}
+
+fn write_feature_dictionary(path: &Path, dictionary: &FeatureDictionaryConfig) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .into_diagnostic()
@@ -42,7 +60,7 @@ pub(super) fn write_feature_dictionary_from_columns(
     }
     fs::write(
         path,
-        serde_json::to_string_pretty(&dictionary).into_diagnostic()? + "\n",
+        serde_json::to_string_pretty(dictionary).into_diagnostic()? + "\n",
     )
     .into_diagnostic()
     .wrap_err("failed to write generated feature dictionary")?;

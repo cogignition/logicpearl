@@ -41,6 +41,15 @@ When `--feature-dictionary` is omitted, `logicpearl build` generates a starter d
 
 Treat the generated dictionary as a starting point. Source-aware integrations should still emit precise labels, states, and anchors from the same source that emitted the traces.
 
+If you inspect an older artifact or a `--raw-feature-ids` build, `logicpearl inspect` warns when learned rules still reference raw feature IDs. You can generate a starter dictionary from the artifact schema:
+
+```bash
+logicpearl inspect /tmp/pearl \
+  --write-feature-dictionary feature_dictionary.starter.json
+```
+
+Review the labels, then rebuild with `--feature-dictionary` so rule labels, messages, `inspect`, `run --explain`, and `diff` all use reviewer-facing text from the artifact.
+
 ## Minimal Dictionary
 
 Most hand-written dictionaries should start with labels only:

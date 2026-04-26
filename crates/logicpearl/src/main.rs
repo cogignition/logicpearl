@@ -62,8 +62,9 @@ use artifact_cmd::{
 };
 use basic_cmd::{
     run_build, run_compile, run_compose, run_discover, run_doctor, run_eval, run_inspect,
-    run_quickstart, run_verify, BuildArgs, CompileArgs, ComposeArgs, DiscoverArgs, DoctorArgs,
-    InspectArgs, QuickstartArgs, RunArgs, VerifyArgs,
+    run_quickstart, run_refine, run_review, run_trace, run_verify, BuildArgs, CompileArgs,
+    ComposeArgs, DiscoverArgs, DoctorArgs, InspectArgs, QuickstartArgs, RefineArgs, ReviewArgs,
+    RunArgs, TraceArgs, VerifyArgs,
 };
 use benchmark_cmd::{
     run_benchmark, run_benchmark_adapt, run_benchmark_detect_profile, run_benchmark_emit_traces,
@@ -107,6 +108,9 @@ Common commands:
 - traces
 - build
 - inspect
+- review
+- trace
+- refine
 - diff
 - run
 - compile
@@ -119,6 +123,9 @@ Examples:
   logicpearl doctor examples/getting_started/decision_traces.csv
   logicpearl build examples/getting_started/decision_traces.csv --output-dir examples/getting_started/output
   logicpearl inspect examples/getting_started/output
+  logicpearl review examples/getting_started/output examples/getting_started/new_input.json
+  logicpearl trace examples/getting_started/output examples/getting_started/decision_traces.csv --show-near-misses
+  logicpearl refine examples/getting_started/output --pin rules.json
   logicpearl diff old_output new_output
   logicpearl run examples/getting_started/output examples/getting_started/new_input.json
   cat examples/getting_started/new_input.json | logicpearl run examples/getting_started/output -
@@ -258,6 +265,12 @@ enum Commands {
     },
     /// Inspect a pearl and see what it does.
     Inspect(InspectArgs),
+    /// Review one input against a pearl with evidence-oriented output.
+    Review(ReviewArgs),
+    /// Replay reviewed traces against a pearl.
+    Trace(TraceArgs),
+    /// Rebuild a pearl from its provenance while pinning reviewer-edited rules.
+    Refine(RefineArgs),
     /// Compare two artifacts semantically instead of by raw bit position.
     Diff(DiffArgs),
     /// Inspect, digest, and verify artifact bundle manifests.
@@ -401,6 +414,9 @@ fn main() -> Result<()> {
             command: ConformanceCommand::SpecVerify(args),
         } => run_conformance_spec_verify(args),
         Commands::Diff(args) => run_diff(args),
+        Commands::Review(args) => run_review(args),
+        Commands::Trace(args) => run_trace(args),
+        Commands::Refine(args) => run_refine(args),
         Commands::Artifact {
             command: ArtifactCommand::Inspect(args),
         } => run_artifact_inspect(args),

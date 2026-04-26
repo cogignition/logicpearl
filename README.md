@@ -328,6 +328,22 @@ The report records the trace row hash, expected result, predicted result,
 matched rules, rule-referenced feature values, and near-miss predicates. It is
 an opt-in diagnostic sidecar, not part of the artifact's deterministic logic.
 
+## Review And Refine
+
+LogicPearl artifacts are meant to be reviewed like policies, not treated as
+opaque model outputs. The interactive loop is:
+
+```bash
+logicpearl review /tmp/pearl input.json
+logicpearl trace /tmp/pearl traces.csv --show-near-misses
+logicpearl refine /tmp/pearl --pin rules.json --output-dir /tmp/pearl.refined
+```
+
+`review` explains the decision for one input. `trace` replays reviewed examples
+and can show the closest rules that almost matched. `refine` reads build
+provenance from the artifact bundle, applies reviewer-pinned rules, and writes a
+new artifact so the old and new policies can be inspected, diffed, and verified.
+
 ## Artifacts
 
 A build writes a local artifact bundle:

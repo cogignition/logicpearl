@@ -48,6 +48,107 @@ fn run_bitmask(cli_bin: &str, artifact: &Path, input: &Path) -> String {
 }
 
 #[test]
+fn inspect_nudges_raw_rules_toward_feature_dictionary_review() {
+    let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
+    let temp = tempdir().expect("temp directory should exist");
+    let traces = temp.path().join("traces.csv");
+    let artifact = temp.path().join("raw");
+    let starter_dictionary = temp.path().join("feature_dictionary.starter.json");
+
+    fs::write(
+        &traces,
+        "risk_score,allowed\n90,denied\n85,denied\n10,allowed\n20,allowed\n",
+    )
+    .expect("traces should be writable");
+
+    let build = Command::new(cli_bin)
+        .arg("build")
+        .arg(&traces)
+        .arg("--output-dir")
+        .arg(&artifact)
+        .arg("--raw-feature-ids")
+        .arg("--json")
+        .output()
+        .expect("logicpearl build should run");
+    assert!(
+        build.status.success(),
+        "logicpearl build failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let inspect_text = Command::new(cli_bin)
+        .arg("inspect")
+        .arg(&artifact)
+        .output()
+        .expect("logicpearl inspect should run");
+    assert!(
+        inspect_text.status.success(),
+        "logicpearl inspect failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&inspect_text.stdout),
+        String::from_utf8_lossy(&inspect_text.stderr)
+    );
+    let inspect_stdout = String::from_utf8_lossy(&inspect_text.stdout);
+    assert!(
+        inspect_stdout.contains("These rules use raw feature ids"),
+        "{inspect_stdout}"
+    );
+    assert!(
+        inspect_stdout.contains("--write-feature-dictionary"),
+        "{inspect_stdout}"
+    );
+
+    let inspect_json = Command::new(cli_bin)
+        .arg("inspect")
+        .arg(&artifact)
+        .arg("--json")
+        .output()
+        .expect("logicpearl inspect --json should run");
+    assert!(
+        inspect_json.status.success(),
+        "logicpearl inspect --json failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&inspect_json.stdout),
+        String::from_utf8_lossy(&inspect_json.stderr)
+    );
+    let inspect_value: Value =
+        serde_json::from_slice(&inspect_json.stdout).expect("inspect output should parse");
+    assert_eq!(
+        inspect_value["review_advice"]["kind"].as_str(),
+        Some("raw_feature_ids")
+    );
+    assert_eq!(
+        inspect_value["review_advice"]["raw_features"][0].as_str(),
+        Some("risk_score")
+    );
+
+    let generate = Command::new(cli_bin)
+        .arg("inspect")
+        .arg(&artifact)
+        .arg("--write-feature-dictionary")
+        .arg(&starter_dictionary)
+        .output()
+        .expect("logicpearl inspect --write-feature-dictionary should run");
+    assert!(
+        generate.status.success(),
+        "logicpearl inspect --write-feature-dictionary failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&generate.stdout),
+        String::from_utf8_lossy(&generate.stderr)
+    );
+    let dictionary: Value = serde_json::from_str(
+        &fs::read_to_string(&starter_dictionary).expect("starter dictionary should be readable"),
+    )
+    .expect("starter dictionary should parse");
+    assert_eq!(
+        dictionary["features"]["risk_score"]["label"].as_str(),
+        Some("Risk")
+    );
+    assert_eq!(
+        dictionary["features"]["risk_score"]["kind"].as_str(),
+        Some("score")
+    );
+}
+
+#[test]
 fn feature_dictionary_makes_artifacts_readable_without_changing_runtime() {
     let cli_bin = env!("CARGO_BIN_EXE_logicpearl");
     let temp = tempdir().expect("temp directory should exist");

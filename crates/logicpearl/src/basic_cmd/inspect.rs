@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use anstream::println;
 use logicpearl_core::{load_artifact_bundle, ArtifactKind, ArtifactRenderer, LoadedArtifactBundle};
-use logicpearl_ir::{LogicPearlActionIr, LogicPearlGateIr};
+use logicpearl_ir::{InputSchema, LogicPearlActionIr, LogicPearlGateIr};
 use logicpearl_render::TextInspector;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::config::{configured_inspect_artifact, ConfiguredInspectArtifact};
+use super::feature_dictionary::write_feature_dictionary_from_schema;
 use super::{
     artifact_bundle_descriptor_from_manifest, guidance, resolve_manifest_member_path, InspectArgs,
 };
@@ -23,7 +24,12 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
     let pearl_ir = bundle.ir_path().into_diagnostic()?;
     match bundle.manifest.artifact_kind {
         ArtifactKind::Action => {
-            return run_action_inspect(&bundle, args.json, args.show_provenance)
+            return run_action_inspect(
+                &bundle,
+                args.json,
+                args.show_provenance,
+                args.write_feature_dictionary.as_deref(),
+            );
         }
         ArtifactKind::Pipeline => {
             return Err(guidance(
@@ -36,6 +42,10 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
     let gate = LogicPearlGateIr::from_path(&pearl_ir)
         .into_diagnostic()
         .wrap_err("could not load pearl IR")?;
+    if let Some(path) = args.write_feature_dictionary.as_ref() {
+        write_feature_dictionary_from_schema(path, &gate.input_schema)?;
+    }
+    let review_advice = inspect_review_advice_for_gate(&gate, &bundle.base_dir);
     let descriptor = artifact_bundle_descriptor_from_manifest(&bundle.manifest)
         .wrap_err("could not load artifact bundle metadata")?;
     if args.json {
@@ -47,6 +57,8 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             "features": gate.input_schema.features.len(),
             "rules": gate.rules.len(),
             "feature_dictionary": inspect_feature_dictionary(&gate),
+            "review_advice": review_advice,
+            "written_feature_dictionary": args.write_feature_dictionary.as_ref(),
             "rule_details": inspect_rule_details(&gate, args.show_provenance),
             "correctness_scope": gate.verification.as_ref().and_then(|verification| verification.correctness_scope.clone()),
             "verification_summary": gate.verification.as_ref().and_then(|verification| verification.verification_summary.clone()),
@@ -88,6 +100,15 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
         }
         println!();
         println!("{}", inspector.render(&gate).into_diagnostic()?);
+        render_review_advice(review_advice.as_ref());
+        if let Some(path) = args.write_feature_dictionary.as_ref() {
+            println!();
+            println!(
+                "{} {}",
+                "Wrote starter feature dictionary:".bright_black(),
+                path.display()
+            );
+        }
         if args.show_provenance {
             render_gate_rule_provenance(&gate);
         }
@@ -116,11 +137,15 @@ fn run_action_inspect(
     bundle: &LoadedArtifactBundle,
     json: bool,
     show_provenance: bool,
+    write_feature_dictionary: Option<&Path>,
 ) -> Result<()> {
     let action_policy_path = bundle.ir_path().into_diagnostic()?;
     let action_policy = LogicPearlActionIr::from_path(&action_policy_path)
         .into_diagnostic()
         .wrap_err("could not load action policy IR")?;
+    if let Some(path) = write_feature_dictionary {
+        write_feature_dictionary_from_schema(path, &action_policy.input_schema)?;
+    }
     let report_path = bundle
         .manifest
         .files
@@ -149,6 +174,7 @@ fn run_action_inspect(
         report,
         json,
         show_provenance,
+        write_feature_dictionary,
     )
 }
 
@@ -159,7 +185,9 @@ fn run_action_policy_inspect(
     report: Option<Value>,
     json: bool,
     show_provenance: bool,
+    written_feature_dictionary: Option<&Path>,
 ) -> Result<()> {
+    let review_advice = inspect_review_advice_for_action(action_policy, &bundle.base_dir);
     if json {
         let summary = serde_json::json!({
             "artifact_dir": bundle.base_dir,
@@ -172,6 +200,9 @@ fn run_action_policy_inspect(
             "no_match_action": action_policy.no_match_action,
             "actions": action_policy.actions,
             "features": action_policy.input_schema.features.len(),
+            "feature_dictionary": inspect_action_feature_dictionary(action_policy),
+            "review_advice": review_advice,
+            "written_feature_dictionary": written_feature_dictionary,
             "action_report": report,
             "pearl_ir": action_policy_path,
             "rules": action_policy.rules.iter().map(|rule| {
@@ -237,6 +268,15 @@ fn run_action_policy_inspect(
             render_rule_evidence(rule.evidence.as_ref(), 5);
         }
     }
+    render_review_advice(review_advice.as_ref());
+    if let Some(path) = written_feature_dictionary {
+        println!();
+        println!(
+            "{} {}",
+            "Wrote starter feature dictionary:".bright_black(),
+            path.display()
+        );
+    }
     if let Some(report) = report {
         if let Some(training_parity) = report.get("training_parity").and_then(Value::as_f64) {
             println!(
@@ -250,8 +290,15 @@ fn run_action_policy_inspect(
 }
 
 fn inspect_feature_dictionary(gate: &LogicPearlGateIr) -> Value {
-    let features = gate
-        .input_schema
+    inspect_schema_feature_dictionary(&gate.input_schema)
+}
+
+fn inspect_action_feature_dictionary(action_policy: &LogicPearlActionIr) -> Value {
+    inspect_schema_feature_dictionary(&action_policy.input_schema)
+}
+
+fn inspect_schema_feature_dictionary(input_schema: &InputSchema) -> Value {
+    let features = input_schema
         .features
         .iter()
         .filter_map(|feature| {
@@ -272,6 +319,99 @@ fn inspect_feature_dictionary(gate: &LogicPearlGateIr) -> Value {
         "features": features,
         "feature_count": features.len(),
     })
+}
+
+fn inspect_review_advice_for_gate(gate: &LogicPearlGateIr, artifact_dir: &Path) -> Option<Value> {
+    let referenced_features = gate
+        .rules
+        .iter()
+        .flat_map(|rule| expression_feature_ids(&rule.deny_when))
+        .collect::<BTreeSet<_>>();
+    inspect_review_advice(&gate.input_schema, referenced_features, artifact_dir)
+}
+
+fn inspect_review_advice_for_action(
+    action_policy: &LogicPearlActionIr,
+    artifact_dir: &Path,
+) -> Option<Value> {
+    let referenced_features = action_policy
+        .rules
+        .iter()
+        .flat_map(|rule| expression_feature_ids(&rule.predicate))
+        .collect::<BTreeSet<_>>();
+    inspect_review_advice(
+        &action_policy.input_schema,
+        referenced_features,
+        artifact_dir,
+    )
+}
+
+fn inspect_review_advice(
+    input_schema: &InputSchema,
+    referenced_features: BTreeSet<String>,
+    artifact_dir: &Path,
+) -> Option<Value> {
+    let raw_features = referenced_features
+        .into_iter()
+        .filter(|feature_id| feature_uses_raw_id(input_schema, feature_id))
+        .collect::<Vec<_>>();
+    if raw_features.is_empty() {
+        return None;
+    }
+    let starter_dictionary = artifact_dir.join("feature_dictionary.starter.json");
+    Some(serde_json::json!({
+        "kind": "raw_feature_ids",
+        "message": "These rules use raw feature ids. Generate a starter feature dictionary?",
+        "raw_feature_count": raw_features.len(),
+        "raw_features": raw_features,
+        "write_command": format!(
+            "logicpearl inspect {} --write-feature-dictionary {}",
+            shell_arg(artifact_dir),
+            shell_arg(&starter_dictionary)
+        ),
+        "next_step": "Review the labels, then rebuild with --feature-dictionary so rule labels, messages, inspect, run, and diff use reviewer-facing text.",
+    }))
+}
+
+fn feature_uses_raw_id(input_schema: &InputSchema, feature_id: &str) -> bool {
+    input_schema
+        .features
+        .iter()
+        .find(|feature| feature.id == feature_id)
+        .is_some_and(|feature| {
+            feature
+                .semantics
+                .as_ref()
+                .and_then(|semantics| semantics.label.as_deref())
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+        })
+}
+
+fn render_review_advice(advice: Option<&Value>) {
+    let Some(advice) = advice else {
+        return;
+    };
+    println!();
+    println!("{}", "Review note".bold().bright_blue());
+    if let Some(message) = advice.get("message").and_then(Value::as_str) {
+        println!("  {message}");
+    }
+    if let Some(raw_features) = advice.get("raw_features").and_then(Value::as_array) {
+        let preview = raw_features
+            .iter()
+            .filter_map(Value::as_str)
+            .take(5)
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !preview.is_empty() {
+            let suffix = if raw_features.len() > 5 { ", ..." } else { "" };
+            println!("  {} {}{}", "Raw features".bright_black(), preview, suffix);
+        }
+    }
+    if let Some(command) = advice.get("write_command").and_then(Value::as_str) {
+        println!("  {} {}", "Generate".bright_black(), command);
+    }
 }
 
 fn inspect_rule_details(gate: &LogicPearlGateIr, show_provenance: bool) -> Vec<Value> {
@@ -394,4 +534,15 @@ fn collect_expression_feature_ids(
         }
         logicpearl_ir::Expression::Not { expr } => collect_expression_feature_ids(expr, features),
     }
+}
+
+fn shell_arg(path: &Path) -> String {
+    let value = path.display().to_string();
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
+    {
+        return value;
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
