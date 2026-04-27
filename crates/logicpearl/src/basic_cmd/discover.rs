@@ -7,8 +7,9 @@ use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
 
 use super::{
-    feature_column_selection, finish_progress, guidance, progress_callback, progress_enabled,
-    selection_policy_from_args, start_progress, to_discovery_decision_mode, DiscoverArgs,
+    feature_column_selection, finish_progress, progress_callback, progress_enabled,
+    selection_policy_from_args, start_progress, to_discovery_decision_mode, CommandCoaching,
+    DiscoverArgs,
 };
 
 pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
@@ -19,7 +20,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
     targets.sort();
     targets.dedup();
     if targets.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "discover needs at least one explicit target column",
             "Use --target <column> for one binary target or --targets <a,b,c> for multiple targets.",
         ));
@@ -30,7 +31,7 @@ pub(crate) fn run_discover(args: DiscoverArgs) -> Result<()> {
         args.deny_recall_target,
         args.max_false_positive_rate,
     )
-    .map_err(|message| guidance(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
+    .map_err(|message| CommandCoaching::simple(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.dataset_csv

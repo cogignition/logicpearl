@@ -20,9 +20,10 @@ use std::path::{Path, PathBuf};
 use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
     default_gate_id_from_path, feature_column_selection, finish_progress,
-    generated_feature_dictionary_for_output, generated_feature_dictionary_path, guidance,
-    progress_callback, progress_enabled, set_progress_message, should_generate_feature_dictionary,
-    start_progress, to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
+    generated_feature_dictionary_for_output, generated_feature_dictionary_path, progress_callback,
+    progress_enabled, selection_policy_from_args, set_progress_message,
+    should_generate_feature_dictionary, start_progress, to_discovery_decision_mode,
+    write_feature_dictionary_from_columns, BuildArgs, CommandCoaching,
 };
 use crate::{
     artifact_cmd::{ArtifactDeployable, ArtifactSidecar},
@@ -38,6 +39,7 @@ struct FanoutBuildReport {
     fanout_column: String,
     rows: usize,
     actions: Vec<FanoutActionReport>,
+    selection_policy: logicpearl_discovery::SelectionPolicy,
     training_exact_set_match: f64,
     pipeline: String,
 }
@@ -59,24 +61,35 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
         || !args.trace_plugin_options.is_empty()
         || args.enricher_plugin_manifest.is_some()
     {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "fan-out builds currently require normalized trace files",
             "Run the trace-source plugin separately, then build fan-out from the emitted CSV/JSON/JSONL records.",
         ));
     }
     let fanout_column = args.fanout_column.clone().ok_or_else(|| {
-        guidance(
+        CommandCoaching::simple(
             "fan-out build is missing --fanout-column",
             "Pass --fanout-column <column> with a scalar or list of applicable actions.",
         )
     })?;
     let traces = args.decision_traces.clone().ok_or_else(|| {
-        guidance(
+        CommandCoaching::simple(
             "fan-out build is missing traces",
             "Pass a trace dataset path containing the --fanout-column values.",
         )
     })?;
     let feature_selection = feature_column_selection(&args.feature_columns, &args.exclude_columns)?;
+    let selection_policy = selection_policy_from_args(
+        args.selection_policy,
+        args.deny_recall_target,
+        args.max_false_positive_rate,
+    )
+    .map_err(|message| {
+        CommandCoaching::simple(
+            message,
+            "Use balanced or provide both recall-biased targets.",
+        )
+    })?;
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         traces
             .parent()
@@ -151,6 +164,7 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
             feature_dictionary: args.feature_dictionary.clone(),
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
+            selection_policy,
         },
         progress.as_deref(),
     )
@@ -175,6 +189,7 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
             "action": gate.action,
             "max_rules": args.max_rules,
             "max_conditions": args.max_conditions,
+            "selection_policy": selection_policy,
             "refine": args.refine,
         }));
         let mut extensions = BTreeMap::new();
@@ -242,6 +257,7 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
         fanout_column: fanout_column.clone(),
         rows: loaded.records.len(),
         actions: action_reports,
+        selection_policy,
         training_exact_set_match: learned.training_exact_set_match,
         pipeline: pipeline_path.display().to_string(),
     };
@@ -322,6 +338,7 @@ pub(super) fn run_fanout_build(mut args: BuildArgs) -> Result<()> {
                 "actions": &learned.actions,
                 "max_rules": args.max_rules,
                 "max_conditions": args.max_conditions,
+                "selection_policy": selection_policy,
                 "refine": args.refine,
             }))),
             bundle: ArtifactBundleDescriptor {

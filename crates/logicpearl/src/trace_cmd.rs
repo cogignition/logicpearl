@@ -428,7 +428,7 @@ pub(crate) fn run_traces_audit(args: TraceAuditArgs) -> Result<()> {
                 serde_json::to_string_pretty(&report).into_diagnostic()?
             );
         }
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             format!(
                 "nuisance feature drift exceeded {:.3}: {}",
                 args.drift_threshold,
@@ -883,7 +883,7 @@ fn generate_trace_rows(spec: &TraceGenerationSpec, seed: u64) -> Result<Vec<Deci
         || allowed_count < spec.minimum_allowed_rows
         || denied_count < spec.minimum_denied_rows
     {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             format!(
                 "trace generation could not satisfy the requested class balance after {} attempts",
                 max_attempts
@@ -921,7 +921,7 @@ fn generate_trace_rows(spec: &TraceGenerationSpec, seed: u64) -> Result<Vec<Deci
     if rows.iter().filter(|row| row.allowed).count() < spec.minimum_allowed_rows
         || rows.iter().filter(|row| !row.allowed).count() < spec.minimum_denied_rows
     {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "trace generation could not assemble a final dataset with the requested class minima",
             "Adjust the field distributions or increase row_count so both allow and deny examples appear often enough.",
         ));
@@ -1571,7 +1571,7 @@ fn resolve_trace_output_format(
         Some("csv") => Ok(TraceOutputFormat::Csv),
         Some("jsonl") | Some("ndjson") => Ok(TraceOutputFormat::Jsonl),
         Some("json") => Ok(TraceOutputFormat::Json),
-        _ => Err(guidance(
+        _ => Err(CommandCoaching::simple(
             format!(
                 "could not infer trace output format from {}",
                 output.display()

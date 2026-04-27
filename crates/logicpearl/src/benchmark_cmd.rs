@@ -398,7 +398,7 @@ const BENCHMARK_BATCH_SIZE: usize = 256;
 
 pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result<()> {
     if args.inputs.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "merge-cases needs at least one input file",
             "Pass one or more benchmark-case JSONL files followed by --output <merged.jsonl>.",
         ));
@@ -465,7 +465,7 @@ pub(crate) fn run_benchmark_merge_cases(args: BenchmarkMergeCasesArgs) -> Result
 
 pub(crate) fn run_benchmark_split_cases(args: BenchmarkSplitCasesArgs) -> Result<()> {
     if !(0.0..=1.0).contains(&args.train_fraction) {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             format!("invalid --train-fraction: {}", args.train_fraction),
             "Use a fraction between 0.0 and 1.0, for example --train-fraction 0.8.",
         ));
@@ -475,7 +475,7 @@ pub(crate) fn run_benchmark_split_cases(args: BenchmarkSplitCasesArgs) -> Result
         .into_diagnostic()
         .wrap_err("failed to load benchmark cases for split")?;
     if cases.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "benchmark split needs at least one case",
             "Pass a non-empty benchmark-case JSONL file.",
         ));
@@ -1027,7 +1027,7 @@ pub(crate) fn run_benchmark(args: BenchmarkRunArgs) -> Result<()> {
     }
 
     if cases.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "benchmark dataset is empty",
             "Add one JSON object per line with id, input, expected_route, and optional category.",
         ));
@@ -1248,7 +1248,7 @@ fn run_benchmark_chunk(
                 .get("route_status")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    guidance(
+                    CommandCoaching::simple(
                         "benchmark pipeline output is missing `route_status`",
                         "Make sure the pipeline output exports a string route_status field, for example allow or deny_tool_use.",
                     )

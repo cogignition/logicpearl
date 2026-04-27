@@ -47,6 +47,53 @@ pub(super) fn compare_candidate_set_score(
         })
 }
 
+/// Comparator used by post-selection generalization passes.
+///
+/// Discovery selection optimizes training fit first. Generalization has a
+/// different job: remove selected conjuncts that look like training-only
+/// overfit. In balanced mode, validation error should be allowed to override
+/// training error, but simplicity should not override worse training fit when
+/// held-out behavior is tied.
+pub(super) fn compare_candidate_set_score_for_generalization(
+    left: &CandidateSetScore,
+    right: &CandidateSetScore,
+) -> Ordering {
+    left.validation_total_errors
+        .cmp(&right.validation_total_errors)
+        .then_with(|| {
+            left.validation_false_positives
+                .cmp(&right.validation_false_positives)
+        })
+        .then_with(|| left.total_errors.cmp(&right.total_errors))
+        .then_with(|| left.false_positives.cmp(&right.false_positives))
+        .then_with(|| left.rule_count.cmp(&right.rule_count))
+        .then_with(|| left.complexity_penalty.cmp(&right.complexity_penalty))
+        .then_with(|| {
+            left.validation_false_negatives
+                .cmp(&right.validation_false_negatives)
+        })
+        .then_with(|| left.false_negatives.cmp(&right.false_negatives))
+}
+
+pub(super) fn compare_candidate_set_score_with_policy_for_generalization(
+    left: &CandidateSetScore,
+    right: &CandidateSetScore,
+    selection_policy: SelectionPolicy,
+    denied_count: usize,
+    allowed_count: usize,
+) -> Ordering {
+    match selection_policy {
+        SelectionPolicy::Balanced => compare_candidate_set_score_for_generalization(left, right),
+        SelectionPolicy::RecallBiased { .. } => compare_candidate_set_score_with_policy(
+            left,
+            right,
+            selection_policy,
+            denied_count,
+            allowed_count,
+        ),
+    }
+}
+
 pub(super) fn compare_candidate_set_score_with_policy(
     left: &CandidateSetScore,
     right: &CandidateSetScore,

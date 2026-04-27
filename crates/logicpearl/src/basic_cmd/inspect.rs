@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use super::config::{configured_inspect_artifact, ConfiguredInspectArtifact};
 use super::feature_dictionary::write_feature_dictionary_from_schema;
 use super::{
-    artifact_bundle_descriptor_from_manifest, guidance, resolve_manifest_member_path, InspectArgs,
+    artifact_bundle_descriptor_from_manifest, resolve_manifest_member_path, CommandCoaching,
+    InspectArgs,
 };
 
 pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
@@ -32,7 +33,7 @@ pub(crate) fn run_inspect(args: InspectArgs) -> Result<()> {
             );
         }
         ArtifactKind::Pipeline => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "inspect received a pipeline artifact",
                 "Use `logicpearl pipeline inspect` for pipeline artifacts.",
             ));
@@ -122,14 +123,24 @@ fn resolve_inspect_artifact(explicit: Option<&PathBuf>) -> Result<PathBuf> {
     }
     match configured_inspect_artifact()? {
         ConfiguredInspectArtifact::Found(artifact) => Ok(artifact),
-        ConfiguredInspectArtifact::MissingConfig => Err(guidance(
+        ConfiguredInspectArtifact::MissingConfig => Err(CommandCoaching::new(
             "inspect is missing an artifact",
-            "Pass an artifact path, or set run.artifact or build.output_dir in logicpearl.yaml.",
-        )),
-        ConfiguredInspectArtifact::MissingArtifact => Err(guidance(
+        )
+        .expected("an artifact path, or run.artifact/build.output_dir in logicpearl.yaml")
+        .found("no artifact argument and no configured inspect artifact")
+        .next("pass an artifact path, or set run.artifact or build.output_dir in logicpearl.yaml")
+        .docs("logicpearl inspect --help")
+        .example("logicpearl build traces.csv --output-dir output")
+        .into_report()),
+        ConfiguredInspectArtifact::MissingArtifact => Err(CommandCoaching::new(
             "inspect could not find an artifact in logicpearl.yaml",
-            "Set run.artifact or build.output_dir.",
-        )),
+        )
+        .expected("run.artifact or build.output_dir to point at an existing artifact")
+        .found("logicpearl.yaml did not resolve to a readable artifact")
+        .next("set run.artifact or build.output_dir")
+        .docs("logicpearl inspect --help")
+        .example("logicpearl inspect output")
+        .into_report()),
     }
 }
 

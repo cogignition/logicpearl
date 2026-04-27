@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{guidance, RefineArgs, ReviewArgs, TraceArgs};
+use super::{CommandCoaching, RefineArgs, ReviewArgs, TraceArgs};
 use crate::{read_json_input_argument, resolve_manifest_member_path};
 
 const MAX_NEAR_MISS_RULES: usize = 3;
@@ -60,7 +60,7 @@ pub(crate) fn run_review(args: ReviewArgs) -> Result<()> {
                 .collect::<Result<Vec<_>>>()?;
             emit_review_output("action", reviews, args.json)
         }
-        ArtifactKind::Pipeline => Err(guidance(
+        ArtifactKind::Pipeline => Err(CommandCoaching::simple(
             "review received a pipeline artifact",
             "Use `logicpearl pipeline trace` for pipeline artifacts.",
         )),
@@ -179,7 +179,7 @@ pub(crate) fn run_trace(args: TraceArgs) -> Result<()> {
                 args.json,
             )
         }
-        ArtifactKind::Pipeline => Err(guidance(
+        ArtifactKind::Pipeline => Err(CommandCoaching::simple(
             "trace received a pipeline artifact",
             "Use `logicpearl pipeline trace` for pipeline artifacts.",
         )),
@@ -198,7 +198,7 @@ pub(crate) fn run_refine(args: RefineArgs) -> Result<()> {
         .map(|file| resolve_manifest_member_path(&bundle.base_dir, file))
         .transpose()?
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "refine needs an artifact build report",
                 "Rebuild the source artifact with a current LogicPearl build so provenance is available.",
             )
@@ -215,13 +215,13 @@ pub(crate) fn run_refine(args: RefineArgs) -> Result<()> {
         .and_then(|inputs| inputs.first())
         .and_then(|input| input["path"].as_str())
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "refine could not find the original trace path",
                 "Pass the original trace file to `logicpearl build ... --pinned-rules` directly.",
             )
         })?;
     if traces.starts_with('<') {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "refine cannot replay a redacted trace path",
             "Run `logicpearl build <traces> --pinned-rules <rules>` directly, or rebuild the source artifact from a relative trace path.",
         ));
@@ -285,7 +285,7 @@ pub(crate) fn run_refine(args: RefineArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to run refinement build")?;
     if !status.success() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "refinement build failed",
             "Review the build output above, fix the pinned rules or trace source, then rerun `logicpearl refine`.",
         ));
@@ -713,7 +713,7 @@ fn append_refine_target_args(
     match bundle.manifest.artifact_kind {
         ArtifactKind::Gate => {
             let label_column = report["label_column"].as_str().ok_or_else(|| {
-                guidance(
+                CommandCoaching::simple(
                     "refine could not find the gate target column",
                     "Run `logicpearl build <traces> --target <column> --pinned-rules <rules>` directly.",
                 )
@@ -734,7 +734,7 @@ fn append_refine_target_args(
             }
         }
         ArtifactKind::Pipeline => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "refine received a pipeline artifact",
                 "Refine the gate or action artifacts inside the pipeline, then update the pipeline bundle.",
             ));

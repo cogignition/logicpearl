@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-use super::{default_gate_id_from_path, DoctorArgs};
+use super::{default_gate_id_from_path, CommandCoaching, DoctorArgs};
 use anstream::println;
 use logicpearl_discovery::load_flat_records;
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -132,16 +132,19 @@ pub(super) fn infer_target_for_build(
             .map(|stat| stat.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        super::coaching(
-            format!("could not infer a build mode for --target {target_column:?}"),
-            "a binary gate target, scalar action target, or multi-label action list",
-            format!("column {target_column:?}; columns found: {known_columns}"),
-            format!(
-                "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
-                traces.display(),
-                traces.display()
-            ),
-        )
+        CommandCoaching::new(format!(
+            "could not infer a build mode for --target {target_column:?}"
+        ))
+        .expected("a binary gate target, scalar action target, or multi-label action list")
+        .found(format!(
+            "column {target_column:?}; columns found: {known_columns}"
+        ))
+        .next(format!(
+            "run `logicpearl doctor {}` to inspect columns, then `logicpearl build {} --target <column>`",
+            traces.display(),
+            traces.display()
+        ))
+        .into_report()
     })
 }
 

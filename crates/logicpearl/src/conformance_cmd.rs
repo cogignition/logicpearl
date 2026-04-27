@@ -281,13 +281,13 @@ fn parse_key_value_entries(
     let mut parsed = BTreeMap::new();
     for entry in entries {
         let Some((key, value)) = entry.split_once('=') else {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("invalid --{flag_name} entry: {entry:?}"),
                 format!("Use repeated --{flag_name} key=value entries."),
             ));
         };
         if key.trim().is_empty() || value.trim().is_empty() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("invalid --{flag_name} entry: {entry:?}"),
                 format!("Use repeated --{flag_name} key=value entries."),
             ));

@@ -285,7 +285,7 @@ pub(crate) fn to_native_profile(profile: ObserverProfileArg) -> Result<NativeObs
     match profile {
         ObserverProfileArg::SignalFlagsV1 => Ok(NativeObserverProfile::SignalFlagsV1),
         ObserverProfileArg::GuardrailsV1 => Ok(NativeObserverProfile::GuardrailsV1),
-        ObserverProfileArg::Auto => Err(guidance(
+        ObserverProfileArg::Auto => Err(CommandCoaching::simple(
             "`auto` is not available for configuration-backed observers",
             "Use a concrete profile like --observer-profile signal-flags-v1, pass --observer-artifact, or use --plugin-manifest.",
         )),
@@ -343,7 +343,7 @@ pub(crate) fn resolve_observer_for_cases(
         + usize::from(observer_artifact.is_some())
         + usize::from(plugin_manifest.is_some());
     if explicit_count > 1 {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "choose only one observer source",
             "Use one of --observer-profile, --observer-artifact, or --plugin-manifest.",
         ));
@@ -354,7 +354,7 @@ pub(crate) fn resolve_observer_for_cases(
             .into_diagnostic()
             .wrap_err("failed to load observer plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!(
                     "plugin manifest stage mismatch: expected observer, got {:?}",
                     manifest.stage
@@ -379,7 +379,7 @@ pub(crate) fn resolve_observer_for_cases(
         return match profile {
             ObserverProfileArg::Auto => {
                 let _ = dataset_jsonl;
-                Err(guidance(
+                Err(CommandCoaching::simple(
                     "observer profile auto-detection is not available for configuration-backed observers",
                     "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
                 ))
@@ -388,7 +388,7 @@ pub(crate) fn resolve_observer_for_cases(
         };
     }
 
-    Err(guidance(
+    Err(CommandCoaching::simple(
         "no observer source was provided",
         "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest. Guardrail examples use benchmarks/guardrails/observers/guardrails_v1.seed.json.",
     ))
@@ -405,7 +405,7 @@ pub(crate) fn resolve_observer_from_input(
         + usize::from(observer_artifact.is_some())
         + usize::from(plugin_manifest.is_some());
     if explicit_count > 1 {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "choose only one observer source",
             "Use one of --observer-profile, --observer-artifact, or --plugin-manifest.",
         ));
@@ -416,7 +416,7 @@ pub(crate) fn resolve_observer_from_input(
             .into_diagnostic()
             .wrap_err("failed to load observer plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!(
                     "plugin manifest stage mismatch: expected observer, got {:?}",
                     manifest.stage
@@ -441,7 +441,7 @@ pub(crate) fn resolve_observer_from_input(
         return match profile {
             ObserverProfileArg::Auto => {
                 let _ = raw_input;
-                Err(guidance(
+                Err(CommandCoaching::simple(
                     "observer profile auto-detection is not available for configuration-backed observers",
                     "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
                 ))
@@ -450,7 +450,7 @@ pub(crate) fn resolve_observer_from_input(
         };
     }
 
-    Err(guidance(
+    Err(CommandCoaching::simple(
         "no observer source was provided",
         "Pass --observer-artifact, --observer-profile <profile>, or --plugin-manifest explicitly.",
     ))
@@ -519,7 +519,7 @@ pub(crate) fn observe_benchmark_cases(
     }
 
     if rows == 0 {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running benchmark observe.",
         ));
@@ -613,7 +613,7 @@ fn process_case_chunk(
                         .and_then(Value::as_object)
                         .cloned()
                         .ok_or_else(|| {
-                            guidance(
+                            CommandCoaching::simple(
                                 "observer plugin batch response is missing `features`",
                                 "An observer plugin used for benchmark observation must return a top-level features object.",
                             )
@@ -701,7 +701,7 @@ pub(crate) fn observe_features(
                 .and_then(Value::as_object)
                 .cloned()
                 .ok_or_else(|| {
-                    guidance(
+                    CommandCoaching::simple(
                         "observer plugin response is missing `features`",
                         "An observer plugin used for benchmark observation must return a top-level features object.",
                     )
@@ -771,7 +771,7 @@ fn choose_synthesis_train_and_dev(
             .into_diagnostic()
             .wrap_err("failed to load held-out dev benchmark cases for observer synthesize")?;
         if dev_cases.is_empty() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "held-out dev benchmark dataset is empty",
                 "Add one benchmark case JSON object per line before using automatic candidate selection.",
             ));
@@ -795,7 +795,7 @@ pub(crate) fn run_observer_validate(args: ObserverValidateArgs) -> Result<()> {
             .into_diagnostic()
             .wrap_err("failed to load plugin manifest")?;
         if manifest.stage != PluginStage::Observer {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!(
                     "plugin manifest stage mismatch: expected observer, got {:?}",
                     manifest.stage
@@ -962,7 +962,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         .into_diagnostic()
         .wrap_err("failed to load synthesis benchmark cases")?;
     if case_rows.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running observer synthesize.",
         ));
@@ -982,7 +982,7 @@ pub(crate) fn run_observer_synthesize(args: ObserverSynthesizeArgs) -> Result<()
         choose_synthesis_train_and_dev(case_rows.clone(), args.dev_benchmark_cases.as_ref())?
     {
         if train_cases.is_empty() || dev_cases.is_empty() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "automatic candidate selection needs non-empty train and dev splits",
                 "Pass --dev-benchmark-cases explicitly or provide a larger benchmark-case JSONL file.",
             ));
@@ -1196,7 +1196,7 @@ pub(crate) fn run_observer_repair(args: ObserverRepairArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to load synthesis benchmark cases")?;
     if cases.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "benchmark dataset is empty",
             "Add one benchmark case JSON object per line before running observer repair.",
         ));
@@ -1283,14 +1283,14 @@ pub(crate) fn resolve_synthesis_artifact(
     }
     let profile = match profile {
         Some(ObserverProfileArg::Auto) => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "`auto` is not valid for observer synthesize",
                 "Pass --artifact or use a concrete profile like --profile guardrails-v1.",
             ))
         }
         Some(profile) => to_native_profile(profile)?,
         None => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "observer synthesize needs an explicit observer seed",
                 "Pass --artifact for an existing observer artifact or --profile guardrails-v1 to scaffold an empty schema.",
             ))

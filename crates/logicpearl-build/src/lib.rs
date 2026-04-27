@@ -15,7 +15,7 @@ use logicpearl_discovery::{
     DecisionTraceProvenance, DecisionTraceRow, DiscoveryDecisionMode, FeatureColumnSelection,
     FileProvenance, LoadedFlatRecords, ObservationFeatureType, ObservationRunProvenance,
     ObservationSchema, ObservedFeature, PluginBuildProvenance, ProgressCallback, ProposalPolicy,
-    SourceManifest, SourceManifestProvenance, TraceInputProvenance,
+    SelectionPolicy, SourceManifest, SourceManifestProvenance, TraceInputProvenance,
 };
 use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, LogicPearlActionIr,
@@ -75,6 +75,7 @@ pub struct ActionLearningOptions {
     pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
+    pub selection_policy: SelectionPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +101,7 @@ pub struct FanoutLearningOptions {
     pub feature_dictionary: Option<PathBuf>,
     pub feature_governance: Option<PathBuf>,
     pub decision_mode: DiscoveryDecisionMode,
+    pub selection_policy: SelectionPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -398,7 +400,7 @@ pub fn learn_fanout_policy_with_progress(
                 feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
-                selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
+                selection_policy: options.selection_policy,
                 max_rules: options.max_rules_per_action,
                 max_conditions: options.max_conditions,
                 proposal_policy: ProposalPolicy::ReportOnly,
@@ -517,7 +519,7 @@ pub fn learn_action_policy_with_progress(
                 feature_dictionary: options.feature_dictionary.clone(),
                 feature_governance: options.feature_governance.clone(),
                 decision_mode: options.decision_mode,
-                selection_policy: logicpearl_discovery::SelectionPolicy::Balanced,
+                selection_policy: options.selection_policy,
                 max_rules: Some(action_rule_budget),
                 max_conditions: options.max_conditions,
                 proposal_policy: ProposalPolicy::ReportOnly,

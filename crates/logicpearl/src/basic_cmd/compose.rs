@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{guidance, ComposeArgs};
+use super::{CommandCoaching, ComposeArgs};
 use crate::{
     build_options_hash, write_artifact_manifest_v1, ArtifactBundleDescriptor,
     ArtifactManifestWriteOptions,
@@ -16,7 +16,7 @@ use crate::{
 
 pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
     if args.artifacts.is_empty() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "compose needs at least one pearl artifact path",
             "Pass one or more pearl.ir.json files after the --output flag.",
         ));
@@ -31,7 +31,7 @@ pub(crate) fn run_compose(args: ComposeArgs) -> Result<()> {
             .wrap_err("failed to create compose output directory")?;
     }
     if args.input_map.is_none() && !args.scaffold {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "compose needs an explicit input map",
             "Pass --input-map <json-or-yaml> for a runnable pipeline, or --scaffold to emit a draft with $.TODO_* placeholders.",
         ));

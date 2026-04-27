@@ -512,6 +512,68 @@ fn selected_candidate_generalization_collapses_shared_prefix_group() {
 }
 
 #[test]
+fn selected_candidate_generalization_uses_validation_signal() {
+    let rows = vec![
+        garden_light_row("aphids", 5.0, "bound", false),
+        garden_light_row("aphids", 5.0, "bound", false),
+        garden_light_row("aphids", 1.0, "free", true),
+        garden_light_row("none", 1.0, "bound", true),
+        garden_light_row("aphids", 5.0, "free", false),
+        garden_light_row("aphids", 5.0, "free", false),
+        garden_light_row("none", 1.0, "free", true),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize];
+    let validation_indices = vec![4usize, 5usize, 6usize];
+    let feature_governance = BTreeMap::new();
+    let selection_context = CandidateSelectionContext {
+        rows: &rows,
+        denied_indices: &denied_indices,
+        allowed_indices: &allowed_indices,
+        training_indices: training_indices(&rows, &validation_indices),
+        validation_indices: &validation_indices,
+        training_denied_count: denied_indices.len(),
+        training_allowed_count: allowed_indices.len(),
+        feature_governance: &feature_governance,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy: SelectionPolicy::Balanced,
+        residual_options: None,
+        match_cache: Arc::new(CandidateMatchCache::new(&rows)),
+    };
+    let overfit = candidate_from_expression_for_selection(
+        &selection_context,
+        Expression::All {
+            all: vec![
+                Expression::Comparison(ComparisonExpression {
+                    feature: "plant".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("aphids".to_string())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "humidity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("bound".to_string())),
+                }),
+            ],
+        },
+    );
+
+    let generalized = generalize_candidate_plan(&selection_context, vec![overfit]);
+
+    assert_eq!(generalized.len(), 1);
+    assert!(expression_has_comparison(
+        &generalized[0].expression,
+        "plant",
+        ComparisonOperator::Eq,
+        Some(Value::String("aphids".to_string())),
+    ));
+    assert!(!expression_mentions_feature(
+        &generalized[0].expression,
+        "humidity"
+    ));
+}
+
+#[test]
 fn recall_biased_exact_selection_uses_cap_limited_max_recall_when_target_is_infeasible() {
     let rows = vec![
         dual_signal_row(1.0, 0.0, false),

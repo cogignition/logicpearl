@@ -10,7 +10,7 @@ use logicpearl_build::{
 };
 use logicpearl_core::{provenance_safe_path_string, ArtifactKind};
 use logicpearl_discovery::{
-    load_flat_records, BuildProvenance, LoadedFlatRecords, PluginBuildProvenance,
+    load_flat_records, BuildProvenance, LoadedFlatRecords, PluginBuildProvenance, SelectionPolicy,
 };
 use logicpearl_plugin::{
     run_plugin_with_policy_and_metadata, PluginManifest, PluginRequest, PluginResponse, PluginStage,
@@ -31,9 +31,9 @@ use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     finish_progress, generated_feature_dictionary_for_output, generated_feature_dictionary_path,
-    guidance, parse_key_value_entries, progress_callback, progress_enabled,
-    selection_policy_from_args, set_progress_message, should_generate_feature_dictionary,
-    start_progress, to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
+    parse_key_value_entries, progress_callback, progress_enabled, selection_policy_from_args,
+    set_progress_message, should_generate_feature_dictionary, start_progress,
+    to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs, CommandCoaching,
 };
 use crate::{
     build_deployable_bundle_descriptor, build_options_hash, compile_native_runner,
@@ -52,6 +52,7 @@ struct ActionBuildReport {
     rows: usize,
     actions: Vec<String>,
     rule_budget: ActionRuleBudgetReport,
+    selection_policy: SelectionPolicy,
     rules: Vec<ActionRuleBuildReport>,
     training_parity: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,28 +80,19 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         args.max_false_positive_rate,
     )
     .map_err(|message| {
-        guidance(
+        CommandCoaching::simple(
             message,
-            "Action builds only support the default balanced selection policy.",
+            "Use balanced or provide both recall-biased targets.",
         )
     })?;
-    if !matches!(
-        selection_policy,
-        logicpearl_discovery::SelectionPolicy::Balanced
-    ) {
-        return Err(guidance(
-            "action-column builds do not support recall-biased selection yet",
-            "Remove the recall-biased selection flags for multi-action builds.",
-        ));
-    }
     if args.enricher_plugin_manifest.is_some() {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "action-column builds do not support enricher plugins yet",
             "Use a trace-source plugin or normalized trace file that already includes the action column.",
         ));
     }
     let action_column = args.action_column.clone().ok_or_else(|| {
-        guidance(
+        CommandCoaching::simple(
             "action build is missing --action-column",
             "Pass --action-column <column> or set build.action_column in logicpearl.yaml.",
         )
@@ -210,6 +202,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
             feature_dictionary: args.feature_dictionary.clone(),
             feature_governance: args.feature_governance.clone(),
             decision_mode: to_discovery_decision_mode(args.discovery_mode),
+            selection_policy,
         },
         progress.as_deref(),
     )
@@ -239,6 +232,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         "action_max_rules": args.action_max_rules,
         "max_conditions": args.max_conditions,
         "action_selection": args.action_selection,
+        "selection_policy": selection_policy,
         "rule_budget": &rule_budget,
         "refine": args.refine,
         "pinned_rules": args
@@ -272,6 +266,7 @@ pub(super) fn run_action_build(mut args: BuildArgs) -> Result<()> {
         rows: loaded.records.len(),
         actions: action_policy.actions.clone(),
         rule_budget: rule_budget.clone(),
+        selection_policy,
         rules: action_rule_report(&action_policy),
         training_parity,
         provenance: Some(
@@ -542,7 +537,7 @@ fn load_action_trace_records(
     if args.trace_plugin_manifest.is_none()
         && (!args.trace_plugin_options.is_empty() || args.trace_plugin_input.is_some())
     {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "trace plugin input/options were provided without a trace plugin manifest",
             "Pass --trace-plugin-manifest before using --trace-plugin-input or --trace-plugin-option.",
         ));
@@ -554,7 +549,7 @@ fn load_action_trace_records(
                 .into_diagnostic()
                 .wrap_err("failed to load trace plugin manifest")?;
             if manifest.stage != PluginStage::TraceSource {
-                return Err(guidance(
+                return Err(CommandCoaching::simple(
                     format!(
                         "plugin manifest stage mismatch: expected trace_source, got {:?}",
                         manifest.stage
@@ -567,7 +562,7 @@ fn load_action_trace_records(
                 .entry("action_column".to_string())
                 .or_insert_with(|| action_column.to_string());
             let source = args.trace_plugin_input.clone().ok_or_else(|| {
-                guidance(
+                CommandCoaching::simple(
                     "--trace-plugin-manifest was provided without --trace-plugin-input",
                     "Pass the raw source string or path with --trace-plugin-input when using a trace_source plugin.",
                 )
@@ -628,11 +623,11 @@ fn load_action_trace_records(
                 trace_plugin: None,
             })
         }
-        (Some(_), Some(_)) => Err(guidance(
+        (Some(_), Some(_)) => Err(CommandCoaching::simple(
             "action build received both a trace file and a trace plugin",
             "Use either the positional trace dataset input or --trace-plugin-manifest, not both.",
         )),
-        (None, None) => Err(guidance(
+        (None, None) => Err(CommandCoaching::simple(
             "action build is missing traces",
             "Pass a trace dataset path or use --trace-plugin-manifest with --trace-plugin-input.",
         )),
@@ -674,13 +669,13 @@ fn action_records_from_plugin_response(
         .or_else(|| response.extra.get("decision_traces"))
         .cloned()
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "trace plugin response is missing action records",
                 "For action builds, return a top-level `records` array of flat trace rows, or `decision_traces` rows with features plus the action column.",
             )
         })?;
     let rows = records_value.as_array().ok_or_else(|| {
-        guidance(
+        CommandCoaching::simple(
             "trace plugin action records must be an array",
             "Return `records: [...]` or `decision_traces: [...]` from the trace_source plugin.",
         )
@@ -703,7 +698,7 @@ fn flatten_plugin_action_record(
     action_column: &str,
 ) -> Result<BTreeMap<String, Value>> {
     let object = row.as_object().ok_or_else(|| {
-        guidance(
+        CommandCoaching::simple(
             format!("trace plugin action row {row_number} is not an object"),
             "Each action trace row must be a flat object, or an object with `features` plus the action column.",
         )
@@ -711,7 +706,7 @@ fn flatten_plugin_action_record(
     let mut out = BTreeMap::new();
     if let Some(features) = object.get("features") {
         let features = features.as_object().ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 format!("trace plugin action row {row_number} has non-object features"),
                 "`features` must be an object of scalar feature values.",
             )
@@ -723,7 +718,7 @@ fn flatten_plugin_action_record(
             .get(action_column)
             .or_else(|| object.get("action"))
             .ok_or_else(|| {
-                guidance(
+                CommandCoaching::simple(
                     format!("trace plugin action row {row_number} is missing {action_column:?}"),
                     "Put the action label at the top level beside `features`, or return flat records.",
                 )
@@ -745,7 +740,7 @@ fn insert_plugin_scalar(
     row_number: usize,
 ) -> Result<()> {
     match value {
-        Value::Null | Value::Array(_) | Value::Object(_) => Err(guidance(
+        Value::Null | Value::Array(_) | Value::Object(_) => Err(CommandCoaching::simple(
             format!("trace plugin action row {row_number} has a non-scalar value for {key:?}"),
             "Action trace plugins must emit normalized scalar fields before discovery.",
         )),
@@ -764,7 +759,7 @@ fn action_record_field_names(records: &[BTreeMap<String, Value>]) -> Result<Vec<
     for (index, record) in records.iter().enumerate().skip(1) {
         let names = record.keys().cloned().collect::<Vec<_>>();
         if names != field_names {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("trace plugin action row {} has a different schema", index + 1),
                 "Action trace plugins must emit rectangular records with the same fields in every row.",
             ));

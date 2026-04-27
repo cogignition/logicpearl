@@ -225,7 +225,7 @@ fn required_plugin_request(
 ) -> Result<PluginRequest> {
     optional_plugin_request(manifest, input_path, input_string, payload_path, options)?.ok_or_else(
         || {
-            guidance(
+            CommandCoaching::simple(
                 "plugin run is missing an input source",
                 "Use --input input.json, --input-string STRING, or --raw-payload payload.json.",
             )
@@ -247,7 +247,7 @@ fn optional_plugin_request(
         return Ok(None);
     }
     if provided > 1 {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "choose only one plugin input source",
             "Use one of --input, --input-string, or --raw-payload.",
         ));
@@ -381,13 +381,13 @@ fn parse_key_value_entries(
     let mut parsed = BTreeMap::new();
     for entry in entries {
         let Some((key, value)) = entry.split_once('=') else {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("invalid --{flag_name} entry: {entry:?}"),
                 format!("Use repeated --{flag_name} key=value entries."),
             ));
         };
         if key.trim().is_empty() || value.trim().is_empty() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("invalid --{flag_name} entry: {entry:?}"),
                 format!("Use repeated --{flag_name} key=value entries."),
             ));

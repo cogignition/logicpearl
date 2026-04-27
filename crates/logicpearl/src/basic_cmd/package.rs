@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{guidance, PackageArgs};
+use super::{CommandCoaching, PackageArgs};
 use crate::{
     compile_native_fanout_runner, compile_native_runner, compile_wasm_fanout_module,
     compile_wasm_module, is_rust_target_installed, pearl_artifact_id,
@@ -26,7 +26,7 @@ pub(crate) fn run_package(args: PackageArgs) -> Result<()> {
     match mode {
         PackageMode::Browser => {
             if !is_rust_target_installed("wasm32-unknown-unknown") {
-                return Err(guidance(
+                return Err(CommandCoaching::simple(
                     "browser packaging needs the wasm32-unknown-unknown Rust target",
                     "Install it with `rustup target add wasm32-unknown-unknown`, then rerun `logicpearl package --browser`.",
                 ));
@@ -203,7 +203,7 @@ impl PackageMode {
         match (args.browser, args.native) {
             (true, false) => Ok(Self::Browser),
             (false, true) => Ok(Self::Native),
-            _ => Err(guidance(
+            _ => Err(CommandCoaching::simple(
                 "package needs a deploy target",
                 "Pass exactly one of --browser or --native.",
             )),
@@ -253,7 +253,7 @@ fn copy_manifest_files(
         .get("files")
         .and_then(Value::as_object)
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "artifact manifest is missing files",
                 "Rebuild the artifact first.",
             )
@@ -340,7 +340,7 @@ fn validate_package(mode: PackageMode, output_dir: &Path, manifest: &Value) -> R
         .get("files")
         .and_then(Value::as_object)
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "artifact manifest is missing files",
                 "Rebuild the artifact first.",
             )
@@ -351,14 +351,14 @@ fn validate_package(mode: PackageMode, output_dir: &Path, manifest: &Value) -> R
     };
     for key in required {
         let relative = files.get(*key).and_then(Value::as_str).ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 format!("package is missing files.{key}"),
                 "Compile the requested deployable or rerun `logicpearl package`.",
             )
         })?;
         let path = output_dir.join(relative);
         if !path.exists() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!("package is missing {}", path.display()),
                 "The package directory is incomplete; rerun `logicpearl package`.",
             ));
@@ -372,7 +372,7 @@ fn primary_deployable(mode: PackageMode, manifest: &Value) -> Result<String> {
         .get("files")
         .and_then(Value::as_object)
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "artifact manifest is missing files",
                 "Rebuild the artifact first.",
             )
@@ -386,7 +386,7 @@ fn primary_deployable(mode: PackageMode, manifest: &Value) -> Result<String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 format!("package is missing files.{key}"),
                 "Compile the requested deployable or rerun `logicpearl package`.",
             )

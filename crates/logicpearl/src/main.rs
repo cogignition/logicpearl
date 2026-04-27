@@ -41,6 +41,7 @@ use std::path::PathBuf;
 mod artifact_cmd;
 mod basic_cmd;
 mod benchmark_cmd;
+mod coaching;
 #[cfg(feature = "conformance")]
 mod conformance_cmd;
 mod diff_cmd;
@@ -72,6 +73,7 @@ use benchmark_cmd::{
     run_benchmark_observe, run_benchmark_score_artifacts, run_benchmark_split_cases,
     BenchmarkCommand,
 };
+pub(crate) use coaching::CommandCoaching;
 #[cfg(feature = "conformance")]
 use conformance_cmd::{
     run_conformance_runtime_parity, run_conformance_spec_verify,
@@ -137,36 +139,6 @@ Examples:
 For command-specific help, run:
   logicpearl <command> --help";
 
-fn guidance(message: impl AsRef<str>, hint: impl AsRef<str>) -> miette::Report {
-    miette::miette!(
-        help = format!(
-            "Expected: valid inputs for this LogicPearl command\nFound: {}\nNext: {}",
-            message.as_ref(),
-            hint.as_ref()
-        ),
-        "{}",
-        message.as_ref()
-    )
-}
-
-fn coaching(
-    message: impl AsRef<str>,
-    expected: impl AsRef<str>,
-    found: impl AsRef<str>,
-    next: impl AsRef<str>,
-) -> miette::Report {
-    miette::miette!(
-        help = format!(
-            "Expected: {}\nFound: {}\nNext: {}",
-            expected.as_ref(),
-            found.as_ref(),
-            next.as_ref()
-        ),
-        "{}",
-        message.as_ref()
-    )
-}
-
 fn plugin_execution_policy(args: &PluginExecutionArgs) -> PluginExecutionPolicy {
     PluginExecutionPolicy::default()
         .with_allow_no_timeout(args.allow_no_timeout)
@@ -194,12 +166,11 @@ fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Resu
             std::io::stdin()
                 .read_to_string(&mut buffer)
                 .map_err(|error| {
-                    coaching(
-                        format!("failed to read {context} JSON from stdin"),
-                        "valid JSON from stdin",
-                        format!("stdin read failed: {error}"),
-                        "pipe a JSON object with `cat input.json | logicpearl run <artifact> -`",
-                    )
+                    CommandCoaching::new(format!("failed to read {context} JSON from stdin"))
+                        .expected("valid JSON from stdin")
+                        .found(format!("stdin read failed: {error}"))
+                        .next("pipe a JSON object with `cat input.json | logicpearl run <artifact> -`")
+                        .into_report()
                 })?;
             buffer
         }
@@ -208,25 +179,23 @@ fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Resu
             std::io::stdin()
                 .read_to_string(&mut buffer)
                 .map_err(|error| {
-                    coaching(
-                        format!("failed to read {context} JSON from stdin"),
-                        "valid JSON from stdin",
-                        format!("stdin read failed: {error}"),
-                        "pipe a JSON object with `cat input.json | logicpearl run <artifact> -`",
-                    )
+                    CommandCoaching::new(format!("failed to read {context} JSON from stdin"))
+                        .expected("valid JSON from stdin")
+                        .found(format!("stdin read failed: {error}"))
+                        .next("pipe a JSON object with `cat input.json | logicpearl run <artifact> -`")
+                        .into_report()
                 })?;
             buffer
         }
         Some(path) => fs::read_to_string(path).map_err(|error| {
-            coaching(
-                format!("failed to read {context} JSON"),
-                format!("a readable {context} JSON file"),
-                format!("{} could not be read: {error}", path.display()),
-                format!(
+            CommandCoaching::new(format!("failed to read {context} JSON"))
+                .expected(format!("a readable {context} JSON file"))
+                .found(format!("{} could not be read: {error}", path.display()))
+                .next(format!(
                     "run `logicpearl run <artifact> {}` or pass `-` and pipe JSON on stdin",
                     path.display()
-                ),
-            )
+                ))
+                .into_report()
         })?,
     };
 
@@ -235,18 +204,17 @@ fn read_json_input_argument(input_json: Option<&PathBuf>, context: &str) -> Resu
             .filter(|path| path.as_os_str() != "-")
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "stdin".to_string());
-        coaching(
-            format!("{context} JSON is not valid JSON"),
-            "a valid JSON object, or an array where the command supports batches",
-            format!("{source} failed JSON parsing: {error}"),
-            match input_json.filter(|path| path.as_os_str() != "-") {
+        CommandCoaching::new(format!("{context} JSON is not valid JSON"))
+            .expected("a valid JSON object, or an array where the command supports batches")
+            .found(format!("{source} failed JSON parsing: {error}"))
+            .next(match input_json.filter(|path| path.as_os_str() != "-") {
                 Some(path) => format!(
                     "run `jq empty {}` to validate the file, then rerun the LogicPearl command",
                     path.display()
                 ),
                 None => "validate the piped JSON with `jq empty input.json` before rerunning the command".to_string(),
-            },
-        )
+            })
+            .into_report()
     })
 }
 

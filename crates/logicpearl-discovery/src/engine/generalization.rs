@@ -3,7 +3,8 @@ use super::candidates::{
     candidate_allowed_for_mode, compare_candidate_priority, CandidateMatchCache,
 };
 use super::scoring::{
-    compare_candidate_set_score_with_policy, score_candidate_set_cached, CandidateSetScore,
+    compare_candidate_set_score_with_policy_for_generalization, score_candidate_set_cached,
+    CandidateSetScore,
 };
 use super::{dedupe_candidate_rules_by_signature, CandidateSelectionContext};
 use crate::CandidateRule;
@@ -78,7 +79,7 @@ fn best_generalizing_plan_replacement(
                 selection_context.validation_indices,
                 &selection_context.match_cache,
             );
-            if compare_candidate_set_score_with_policy(
+            if compare_candidate_set_score_with_policy_for_generalization(
                 &trial_score,
                 &current_score,
                 selection_context.selection_policy,
@@ -89,7 +90,7 @@ fn best_generalizing_plan_replacement(
                 continue;
             }
             let better = best.as_ref().is_none_or(|(_, best_candidate, best_score)| {
-                compare_candidate_set_score_with_policy(
+                compare_candidate_set_score_with_policy_for_generalization(
                     &trial_score,
                     best_score,
                     selection_context.selection_policy,
@@ -243,7 +244,7 @@ fn best_subsumed_candidate_removal(
             selection_context.validation_indices,
             &selection_context.match_cache,
         );
-        if compare_candidate_set_score_with_policy(
+        if compare_candidate_set_score_with_policy_for_generalization(
             &trial_score,
             &current_score,
             selection_context.selection_policy,
@@ -254,7 +255,7 @@ fn best_subsumed_candidate_removal(
             continue;
         }
         let better = best.as_ref().is_none_or(|(_, best_score)| {
-            compare_candidate_set_score_with_policy(
+            compare_candidate_set_score_with_policy_for_generalization(
                 &trial_score,
                 best_score,
                 selection_context.selection_policy,

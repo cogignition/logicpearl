@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use super::config::{configured_run_defaults, resolve_config_path};
-use super::{guidance, RunArgs};
+use super::{CommandCoaching, RunArgs};
 use crate::read_json_input_argument;
 
 pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
@@ -25,7 +25,7 @@ pub(crate) fn run_eval(args: RunArgs) -> Result<()> {
         return run_action_eval(&pearl_ir, input_json.as_ref(), args.explain, args.json);
     }
     if bundle.manifest.artifact_kind == ArtifactKind::Pipeline {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "run received a pipeline artifact",
             "Use `logicpearl pipeline run` for pipeline artifacts.",
         ));
@@ -106,13 +106,13 @@ fn resolve_run_arguments(args: &RunArgs) -> Result<(PathBuf, Option<PathBuf>)> {
         }
         (None, None) => {
             let Some((config_path, run)) = configured else {
-                return Err(guidance(
+                return Err(CommandCoaching::simple(
                     "run is missing an artifact",
                     "Pass an artifact path, or set run.artifact in logicpearl.yaml.",
                 ));
             };
             let artifact = run.artifact.ok_or_else(|| {
-                guidance(
+                CommandCoaching::simple(
                     "run.artifact is missing in logicpearl.yaml",
                     "Set run.artifact to an artifact directory such as /tmp/garden-actions.",
                 )

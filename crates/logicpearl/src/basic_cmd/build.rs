@@ -29,12 +29,12 @@ use super::doctor::{
 };
 use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
 use super::{
-    build_trace_plugin_options, coaching, default_gate_id_from_path, feature_column_selection,
+    build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
-    generated_feature_dictionary_path, guidance, parse_key_value_entries, progress_callback,
+    generated_feature_dictionary_path, parse_key_value_entries, progress_callback,
     progress_enabled, run_action_build, run_fanout_build, selection_policy_from_args,
     set_progress_message, should_generate_feature_dictionary, start_progress,
-    to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs,
+    to_discovery_decision_mode, write_feature_dictionary_from_columns, BuildArgs, CommandCoaching,
 };
 use crate::{
     build_options_hash, compile_native_runner, compile_wasm_module, is_rust_target_installed,
@@ -54,7 +54,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
     if args.trace_plugin_manifest.is_none()
         && (!args.trace_plugin_options.is_empty() || args.trace_plugin_input.is_some())
     {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             "trace plugin input/options were provided without a trace plugin manifest",
             "Pass --trace-plugin-manifest before using --trace-plugin-input or --trace-plugin-option.",
         ));
@@ -66,7 +66,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
         args.deny_recall_target,
         args.max_false_positive_rate,
     )
-    .map_err(|message| guidance(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
+    .map_err(|message| CommandCoaching::simple(message, "Use balanced selection for error minimization, or set all recall-biased parameters together."))?;
 
     let output_dir = args.output_dir.clone().unwrap_or_else(|| {
         args.decision_traces
@@ -112,7 +112,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                 .entry("label_column".to_string())
                 .or_insert_with(|| plugin_label_column.clone());
             let source = args.trace_plugin_input.clone().ok_or_else(|| {
-                guidance(
+                CommandCoaching::simple(
                     "--trace-plugin-manifest was provided without --trace-plugin-input",
                     "Pass the raw source string or path with --trace-plugin-input when using a trace_source plugin.",
                 )
@@ -147,7 +147,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
                 .get("decision_traces")
                 .cloned()
                 .ok_or_else(|| {
-                    guidance(
+                    CommandCoaching::simple(
                         "trace plugin response is missing `decision_traces`",
                         "A trace_source plugin must return a top-level decision_traces array.",
                     )
@@ -178,13 +178,13 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             (loaded.rows, loaded.label_column)
         }
         (Some(_), Some(_)) => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "build received both a CSV path and a trace plugin",
                 "Use either the positional decision trace dataset input or --trace-plugin-manifest, not both.",
             ));
         }
         (None, None) => {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "build is missing an input source",
                 "Provide a decision trace dataset path (.csv, .jsonl, or .json) or use --trace-plugin-manifest with --trace-plugin-input.",
             ));
@@ -275,7 +275,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .into_diagnostic()
             .wrap_err("failed to load enricher plugin manifest")?;
         if manifest.stage != PluginStage::Enricher {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 format!(
                     "plugin manifest stage mismatch: expected enricher, got {:?}",
                     manifest.stage
@@ -312,7 +312,7 @@ pub(crate) fn run_build(mut args: BuildArgs) -> Result<()> {
             .get("records")
             .cloned()
             .ok_or_else(|| {
-            guidance(
+            CommandCoaching::simple(
                 "enricher plugin response is missing `records`",
                 "An enricher plugin must return a top-level records array compatible with decision traces.",
             )
@@ -606,13 +606,13 @@ fn rule_summary(rule: &RuleDefinition) -> String {
 fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {
     let inference = if let Some(target_column) = args.target.clone() {
         if args.trace_plugin_manifest.is_some() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "--target inference currently requires a normalized trace file",
                 "Use --label-column, --action-column, or --fanout-column when building from a trace-source plugin.",
             ));
         }
         let Some(traces) = args.decision_traces.as_deref() else {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "build --target is missing traces",
                 "Pass a CSV, JSONL/NDJSON, or JSON trace dataset before --target.",
             ));
@@ -620,7 +620,7 @@ fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {
         Some(infer_target_for_build(traces, &target_column)?)
     } else {
         if !args.fanout_actions.is_empty() && args.fanout_column.is_none() {
-            return Err(guidance(
+            return Err(CommandCoaching::simple(
                 "--fanout-actions was provided without a fan-out target",
                 "Use --target <applicable_actions_column>, or pass --fanout-column with --fanout-actions.",
             ));
@@ -646,18 +646,21 @@ fn resolve_build_target(args: &mut BuildArgs) -> Result<()> {
             .as_deref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "traces.csv".to_string());
-        return Err(coaching(
+        return Err(CommandCoaching::new(
             "build could not confidently infer the reviewed target column",
-            "one clear reviewed target column for a gate, action policy, or fan-out action list",
-            format!(
-                "low-confidence candidate {:?} ({})",
-                inference.target_column,
-                inference.reasons.join("; ")
-            ),
-            format!(
-                "run `logicpearl doctor {traces}` to inspect columns, then `logicpearl build {traces} --target <column>`"
-            ),
-        ));
+        )
+        .expected("one clear reviewed target column for a gate, action policy, or fan-out action list")
+        .found(format!(
+            "low-confidence candidate {:?} ({})",
+            inference.target_column,
+            inference.reasons.join("; ")
+        ))
+        .next(format!(
+            "run `logicpearl doctor {traces}` to inspect columns, then `logicpearl build {traces} --target <column>`"
+        ))
+        .docs("logicpearl build --help")
+        .example(format!("logicpearl doctor {traces}"))
+        .into_report());
     }
     let inferred_flag = if args.target.is_some() {
         "--target"
@@ -723,7 +726,7 @@ fn apply_feature_selection_to_decision_rows(
     for (index, row) in rows.iter_mut().enumerate() {
         for column in &selected_set {
             if !row.features.contains_key(column) {
-                return Err(guidance(
+                return Err(CommandCoaching::simple(
                     format!(
                         "row {} is missing selected feature column {column:?}",
                         index + 1

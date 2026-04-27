@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 use serde_json::Value;
 use std::fs;
 
-use super::{guidance, VerifyArgs};
+use super::{CommandCoaching, VerifyArgs};
 use crate::{plugin_execution_policy, resolve_artifact_input};
 
 pub(crate) fn run_verify(args: VerifyArgs) -> Result<()> {
@@ -15,7 +15,7 @@ pub(crate) fn run_verify(args: VerifyArgs) -> Result<()> {
         .into_diagnostic()
         .wrap_err("failed to load verify plugin manifest")?;
     if manifest.stage != PluginStage::Verify {
-        return Err(guidance(
+        return Err(CommandCoaching::simple(
             format!(
                 "plugin manifest stage mismatch: expected verify, got {:?}",
                 manifest.stage
