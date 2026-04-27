@@ -1135,6 +1135,163 @@ fn build_recall_biased_policy_uses_bottom_up_broad_conjunction() {
 }
 
 #[test]
+fn regression_fixture_broad_signal_beats_narrow_fragments() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("broad_signal");
+    let result = build_pearl_from_csv(
+        &regression_fixture("broad_signal_beats_narrow_fragments.csv"),
+        &regression_build_options(
+            output_dir.clone(),
+            "regression_broad_signal",
+            crate::SelectionPolicy::Balanced,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(result.training_parity, 1.0);
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    assert!(
+        gate_has_rule_with_features(&gate, &["plant", "light_level"]),
+        "expected a broad plant/light rule, got {}",
+        render_rules(&gate)
+    );
+    assert!(
+        !gate_mentions_feature(&gate, "humidity"),
+        "broad signal fixture should not learn humidity fragments: {}",
+        render_rules(&gate)
+    );
+}
+
+#[test]
+fn regression_fixture_imbalanced_prior_rejects_baseline_only_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("imbalanced_prior");
+    let result = build_pearl_from_csv(
+        &regression_fixture("imbalanced_prior_rejects_baseline_only_rules.csv"),
+        &regression_build_options(
+            output_dir.clone(),
+            "regression_imbalanced_prior",
+            crate::SelectionPolicy::Balanced,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(result.rules_discovered, 1);
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    assert!(
+        gate_mentions_feature(&gate, "pest_visible"),
+        "expected pest signal rule, got {}",
+        render_rules(&gate)
+    );
+    assert!(
+        !gate_mentions_feature(&gate, "prior_flag"),
+        "baseline-only prior rule should be rejected: {}",
+        render_rules(&gate)
+    );
+}
+
+#[test]
+fn regression_fixture_recall_biased_accepts_controlled_false_positives() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("recall_biased");
+    let result = build_pearl_from_csv(
+        &regression_fixture("recall_biased_accepts_controlled_false_positives.csv"),
+        &regression_build_options(
+            output_dir.clone(),
+            "regression_recall_biased",
+            crate::SelectionPolicy::RecallBiased {
+                deny_recall_target: 1.0,
+                max_false_positive_rate: 0.10,
+            },
+        ),
+    )
+    .unwrap();
+
+    assert!(
+        result.training_parity > 0.90 && result.training_parity < 1.0,
+        "controlled false positives should preserve high but imperfect parity, got {}",
+        result.training_parity
+    );
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    assert!(
+        gate_has_rule_with_features(&gate, &["plant", "light_level"]),
+        "expected a recall-biased plant/light rule, got {}",
+        render_rules(&gate)
+    );
+    assert!(
+        gate.rules
+            .iter()
+            .any(|rule| rule_allowed_support(rule) == 2),
+        "expected the selected broad rule to carry two controlled false positives: {}",
+        render_rules(&gate)
+    );
+}
+
+#[test]
+fn regression_fixture_balanced_preserves_zero_fp_exact_policies() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("balanced_zero_fp");
+    let result = build_pearl_from_csv(
+        &regression_fixture("balanced_preserves_zero_fp_exact_policies.csv"),
+        &regression_build_options(
+            output_dir.clone(),
+            "regression_balanced_zero_fp",
+            crate::SelectionPolicy::Balanced,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(result.training_parity, 1.0);
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    assert!(
+        gate_mentions_feature(&gate, "signal_a") || gate_mentions_feature(&gate, "signal_b"),
+        "expected signal rules, got {}",
+        render_rules(&gate)
+    );
+    assert!(
+        gate.rules
+            .iter()
+            .all(|rule| rule_allowed_support(rule) == 0),
+        "balanced fixture should preserve zero-false-positive rules: {}",
+        render_rules(&gate)
+    );
+}
+
+#[test]
+fn regression_fixture_shared_prefix_shards_collapse_to_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().join("shared_prefix");
+    let result = build_pearl_from_csv(
+        &regression_fixture("shared_prefix_shards_collapse_to_prefix.csv"),
+        &regression_build_options(
+            output_dir.clone(),
+            "regression_shared_prefix",
+            crate::SelectionPolicy::Balanced,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(result.training_parity, 1.0);
+    let gate = LogicPearlGateIr::from_path(output_dir.join("pearl.ir.json")).unwrap();
+    assert_eq!(
+        gate.rules.len(),
+        1,
+        "shared prefix shards should collapse to one rule: {}",
+        render_rules(&gate)
+    );
+    assert!(
+        gate_mentions_feature(&gate, "pest_visible"),
+        "expected pest prefix rule, got {}",
+        render_rules(&gate)
+    );
+    assert!(
+        !gate_mentions_feature(&gate, "root_bound") && !gate_mentions_feature(&gate, "leaf_curl"),
+        "prefix rule should not keep shard predicates: {}",
+        render_rules(&gate)
+    );
+}
+
+#[test]
 fn build_residual_pass_recovers_policy_style_conjunction_rules() {
     if !solver_available() {
         return;
@@ -1902,6 +2059,76 @@ fn row(features: &[(&str, i64)], allowed: bool) -> DecisionTraceRow {
         allowed,
         trace_provenance: None,
     }
+}
+
+fn regression_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join("regression")
+        .join(name)
+}
+
+fn regression_build_options(
+    output_dir: PathBuf,
+    gate_id: &str,
+    selection_policy: crate::SelectionPolicy,
+) -> BuildOptions {
+    BuildOptions {
+        output_dir,
+        gate_id: gate_id.to_string(),
+        label_column: "allowed".to_string(),
+        positive_label: None,
+        negative_label: None,
+        residual_pass: true,
+        refine: false,
+        pinned_rules: None,
+        feature_dictionary: None,
+        feature_governance: None,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy,
+        max_rules: Some(4),
+        max_conditions: Some(3),
+        proposal_policy: ProposalPolicy::ReportOnly,
+        feature_selection: FeatureColumnSelection::default(),
+    }
+}
+
+fn gate_has_rule_with_features(gate: &LogicPearlGateIr, features: &[&str]) -> bool {
+    gate.rules.iter().any(|rule| {
+        features
+            .iter()
+            .all(|feature| expression_mentions_feature(&rule.deny_when, feature))
+    })
+}
+
+fn gate_mentions_feature(gate: &LogicPearlGateIr, feature: &str) -> bool {
+    gate.rules
+        .iter()
+        .any(|rule| expression_mentions_feature(&rule.deny_when, feature))
+}
+
+fn expression_mentions_feature(expression: &Expression, feature: &str) -> bool {
+    match expression {
+        Expression::Comparison(comparison) => comparison.feature == feature,
+        Expression::All { all } => all
+            .iter()
+            .any(|child| expression_mentions_feature(child, feature)),
+        Expression::Any { any } => any
+            .iter()
+            .any(|child| expression_mentions_feature(child, feature)),
+        Expression::Not { expr } => expression_mentions_feature(expr, feature),
+    }
+}
+
+fn rule_allowed_support(rule: &RuleDefinition) -> usize {
+    rule.evidence
+        .as_ref()
+        .map(|evidence| evidence.support.allowed_trace_count)
+        .unwrap_or_default()
+}
+
+fn render_rules(gate: &LogicPearlGateIr) -> String {
+    serde_json::to_string(&gate.rules).unwrap()
 }
 
 fn row_values(features: &[(&str, Value)], allowed: bool) -> DecisionTraceRow {

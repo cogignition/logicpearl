@@ -1,0 +1,13 @@
+pest_visible,root_bound,leaf_curl,allowed
+aphids,bound,false,denied
+aphids,bound,false,denied
+aphids,free,true,denied
+aphids,free,true,denied
+aphids,bound,true,denied
+aphids,bound,true,denied
+none,bound,false,allowed
+none,bound,true,allowed
+none,free,false,allowed
+none,free,true,allowed
+none,bound,false,allowed
+none,bound,true,allowed

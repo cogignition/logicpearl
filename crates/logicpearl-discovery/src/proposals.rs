@@ -552,7 +552,7 @@ fn proposal_diagnosis(trigger: &str, candidates: &[ProposalCandidateReport]) -> 
 
 fn recommended_next_phase(trigger: &str, candidates: &[ProposalCandidateReport]) -> &'static str {
     if trigger == "rule_complexity_budget" {
-        return "path_map_or_simplification_review";
+        return "path_map_or_generalization_review";
     }
     if candidates.iter().any(|candidate| {
         candidate.source_stage == "derived_feature_search"
@@ -1066,7 +1066,7 @@ fn complexity_review_candidate(
         proposal_type: "complexity_review".to_string(),
         source_stage: "rule_complexity".to_string(),
         status: ProposalCandidateStatus::NeedsReview,
-        recommendation: Some("review_path_map_or_simplification".to_string()),
+        recommendation: Some("review_path_map_or_generalization".to_string()),
         feature_expression: None,
         reason: "rule count exceeded the automatic complexity review budget".to_string(),
         suggested_region,

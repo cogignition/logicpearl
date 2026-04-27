@@ -122,7 +122,7 @@ fn golden_examples_build_run_diff_and_compile() {
         gate_dir.display().to_string(),
         gate_v2_dir.display().to_string(),
     ]);
-    assert!(gate_diff.contains("semantic_change"), "{gate_diff}");
+    assert!(gate_diff.contains("evidence_changed"), "{gate_diff}");
 
     let action_dir = temp.path().join("action");
     let action_v2_dir = temp.path().join("action-v2");

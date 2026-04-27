@@ -14,12 +14,12 @@ use super::features::{infer_feature_type, sorted_feature_names};
 use super::rule_text::RuleTextContext;
 mod bottom_up;
 mod candidates;
+mod generalization;
 mod residual_recovery;
 mod rule_hygiene;
 mod rule_limit;
 mod scoring;
 mod selection;
-mod simplification;
 mod validation;
 
 use super::{
@@ -39,7 +39,10 @@ use candidates::{
     candidate_rules_with_cache, compare_candidate_priority, rule_from_candidate_with_context,
     CandidateMatchCache,
 };
-pub(super) use residual_recovery::{discover_residual_rules, refine_rules_unique_coverage};
+#[cfg(test)]
+use generalization::candidate_from_expression_for_selection;
+use generalization::generalize_candidate_plan;
+pub(super) use residual_recovery::{discover_residual_rules, tighten_rules_unique_coverage};
 pub(super) use rule_hygiene::{dedupe_rules_by_signature, merge_discovered_and_pinned_rules};
 use rule_limit::limit_rules_by_training_coverage;
 #[cfg(test)]
@@ -50,9 +53,6 @@ use scoring::{
 };
 pub(crate) use selection::DISCOVERY_SELECTION_BACKEND_ENV;
 use selection::{current_solver_backend, exact_selection_shortlist, select_candidate_rules_exact};
-#[cfg(test)]
-use simplification::candidate_from_expression_for_selection;
-use simplification::simplify_candidate_plan;
 use validation::discovery_validation_split;
 
 const LOOKAHEAD_FRONTIER_LIMIT: usize = 12;
@@ -110,7 +110,7 @@ pub(super) fn build_gate(
     selection_policy: SelectionPolicy,
     max_rules: Option<usize>,
     residual_options: Option<&ResidualPassOptions>,
-    refinement_options: Option<&UniqueCoverageRefinementOptions>,
+    tightening_options: Option<&UniqueCoverageRefinementOptions>,
     pinned_rules: Option<&PinnedRuleSet>,
     progress: Option<&ProgressCallback<'_>>,
 ) -> Result<(
@@ -211,16 +211,16 @@ pub(super) fn build_gate(
             }
         }
     }
-    let mut refined_rules_applied = 0usize;
-    if let Some(options) = refinement_options {
+    let mut tightened_rules_applied = 0usize;
+    if let Some(options) = tightening_options {
         report_progress(
             progress,
-            "refinement",
-            format!("refinement: tightening {} discovered rules", rules.len()),
+            "tightening",
+            format!("tightening: narrowing {} over-broad rules", rules.len()),
         );
-        let (refined_rules, applied) = refine_rules_unique_coverage(rows, &rules, options)?;
-        rules = refined_rules;
-        refined_rules_applied = applied;
+        let (tightened_rules, applied) = tighten_rules_unique_coverage(rows, &rules, options)?;
+        rules = tightened_rules;
+        tightened_rules_applied = applied;
     }
     let mut pinned_rules_applied = 0usize;
     if let Some(pinned_rules) = pinned_rules {
@@ -267,7 +267,7 @@ pub(super) fn build_gate(
         exact_selection,
         residual_rules_discovered,
         residual_recovery,
-        refined_rules_applied,
+        tightened_rules_applied,
         pinned_rules_applied,
     ))
 }
@@ -570,7 +570,7 @@ pub(super) fn discover_rules(
     );
     let selected_candidates =
         recover_rare_rules(&selection_context, selected_candidates, progress)?;
-    let selected_candidates = simplify_candidate_plan(&selection_context, selected_candidates);
+    let selected_candidates = generalize_candidate_plan(&selection_context, selected_candidates);
     report_progress(
         progress,
         "rule_text",
@@ -814,14 +814,23 @@ fn discover_rules_greedy(
             );
             break;
         }
-        let choice = select_candidate_rule(
+        let Some(choice) = select_candidate_rule(
             &remaining_denied,
             &discovered,
             selection_context,
             progress,
             pass,
-        )
-        .ok_or_else(|| LogicPearlError::message("no recoverable deny rule found"))?;
+        ) else {
+            if discovered.is_empty() {
+                return Err(LogicPearlError::message("no recoverable deny rule found"));
+            }
+            report_progress(
+                progress,
+                "greedy_selection",
+                format!("greedy_selection: pass {pass}; no additional recoverable rule found"),
+            );
+            break;
+        };
         if choice.candidate.denied_coverage == 0 {
             report_progress(
                 progress,

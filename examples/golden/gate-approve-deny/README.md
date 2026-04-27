@@ -93,13 +93,13 @@ logicpearl diff /tmp/lp-golden/gate/artifact.json \
 Output excerpt:
 
 ```text
-Rules changed=1 reordered=0 +0 -0
-Change classes source_schema=false learned_rule=true rule_explanation=false rule_evidence=true
+Rules changed=0 reordered=0 +0 -0
+Change classes source_schema=false learned_rule=false rule_explanation=false rule_evidence=true
 
-━━ Changed Rules ━━
-  ~ semantic_change rule_001
-    - Department budget remaining at or below 3900.0
-    + Department budget remaining at or below 1200.0
+━━ Evidence Changed Rules ━━
+  ~ evidence_changed rule_001
+    - Purchase amount at or above 4200.0
+    + Purchase amount at or above 4200.0
 ```
 
 ## Native And Browser Compile

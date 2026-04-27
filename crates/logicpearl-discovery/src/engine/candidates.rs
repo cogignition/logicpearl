@@ -22,6 +22,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
+const COMPARABLE_SIGNAL_BUCKET_BASE: f64 = 1.05;
+
 #[cfg(test)]
 pub(super) fn candidate_rules(
     rows: &[DecisionTraceRow],
@@ -65,6 +67,7 @@ pub(super) fn candidate_rules_with_cache(
         match_cache,
     );
     candidates.retain(|candidate| candidate.denied_coverage > 0);
+    candidates.retain(candidate_has_positive_signal);
     candidates.sort_by(compare_candidate_priority);
     candidates.dedup_by(|left, right| left.signature() == right.signature());
     report_progress(
@@ -87,9 +90,14 @@ pub(super) fn candidate_rules_with_cache(
         ));
     }
 
+    candidates.retain(candidate_has_positive_signal);
     candidates.sort_by(compare_candidate_priority);
     candidates.dedup_by(|left, right| left.signature() == right.signature());
     candidates
+}
+
+fn candidate_has_positive_signal(candidate: &CandidateRule) -> bool {
+    candidate_signal_score(candidate) > 0.0
 }
 
 fn atomic_candidate_rules(
@@ -474,8 +482,21 @@ impl<'a> CandidateMatchCache<'a> {
 pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &CandidateRule) -> Ordering {
     let left_net = left.denied_coverage as isize - left.false_positives as isize;
     let right_net = right.denied_coverage as isize - right.false_positives as isize;
-    candidate_signal_score(right)
-        .total_cmp(&candidate_signal_score(left))
+    let left_signal = candidate_signal_score(left);
+    let right_signal = candidate_signal_score(right);
+    let left_signal_bucket = comparable_signal_bucket(left_signal);
+    let right_signal_bucket = comparable_signal_bucket(right_signal);
+    right_signal_bucket
+        .cmp(&left_signal_bucket)
+        .then_with(|| {
+            if left_signal_bucket == right_signal_bucket {
+                candidate_complexity_penalty(left, DiscoveryDecisionMode::Standard).cmp(
+                    &candidate_complexity_penalty(right, DiscoveryDecisionMode::Standard),
+                )
+            } else {
+                Ordering::Equal
+            }
+        })
         .then_with(|| right_net.cmp(&left_net))
         .then_with(|| left.false_positives.cmp(&right.false_positives))
         .then_with(|| right.denied_coverage.cmp(&left.denied_coverage))
@@ -488,6 +509,13 @@ pub(super) fn compare_candidate_priority(left: &CandidateRule, right: &Candidate
             candidate_memorization_penalty(left).cmp(&candidate_memorization_penalty(right))
         })
         .then_with(|| left.signature().cmp(right.signature()))
+}
+
+fn comparable_signal_bucket(signal: f64) -> i64 {
+    if signal <= f64::EPSILON {
+        return i64::MIN;
+    }
+    (signal.ln() / COMPARABLE_SIGNAL_BUCKET_BASE.ln()).floor() as i64
 }
 
 pub(super) fn candidate_signal_score(candidate: &CandidateRule) -> f64 {

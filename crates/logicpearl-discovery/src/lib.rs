@@ -2525,7 +2525,7 @@ fn learn_gate_from_rows_internal(
         }
         residual_options
     });
-    let refinement_options = options
+    let tightening_options = options
         .refine
         .then_some(DEFAULT_UNIQUE_COVERAGE_REFINEMENT_OPTIONS.clone());
     let pinned_rules = options
@@ -2556,7 +2556,7 @@ fn learn_gate_from_rows_internal(
         selection_policy,
         options.max_rules,
         residual_options.as_ref(),
-        refinement_options.as_ref(),
+        tightening_options.as_ref(),
         pinned_rules.as_ref(),
         progress,
     )?;

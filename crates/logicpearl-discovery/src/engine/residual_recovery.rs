@@ -95,7 +95,7 @@ fn source_runtime_features(
         .collect()
 }
 
-pub(crate) fn refine_rules_unique_coverage(
+pub(crate) fn tighten_rules_unique_coverage(
     rows: &[DecisionTraceRow],
     rules: &[RuleDefinition],
     options: &UniqueCoverageRefinementOptions,
@@ -105,8 +105,8 @@ pub(crate) fn refine_rules_unique_coverage(
         return Ok((rules.to_vec(), 0));
     }
 
-    let mut refined = Vec::with_capacity(rules.len());
-    let mut refined_rules_applied = 0usize;
+    let mut tightened = Vec::with_capacity(rules.len());
+    let mut tightened_rules_applied = 0usize;
 
     for (rule_index, rule) in rules.iter().enumerate() {
         let mut unique_positive_rows = Vec::new();
@@ -132,7 +132,7 @@ pub(crate) fn refine_rules_unique_coverage(
         if unique_negative_rows.len() < options.min_unique_false_positives
             || unique_positive_rows.is_empty()
         {
-            refined.push(rule.clone());
+            tightened.push(rule.clone());
             continue;
         }
 
@@ -194,12 +194,12 @@ pub(crate) fn refine_rules_unique_coverage(
         }
 
         if let Some((addition, _positive_hits, _negative_hits)) = best_addition {
-            refined.push(rule_with_added_condition(rule, addition));
-            refined_rules_applied += 1;
+            tightened.push(rule_with_added_condition(rule, addition));
+            tightened_rules_applied += 1;
         } else {
-            refined.push(rule.clone());
+            tightened.push(rule.clone());
         }
     }
 
-    Ok((refined, refined_rules_applied))
+    Ok((tightened, tightened_rules_applied))
 }
