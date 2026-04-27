@@ -1022,7 +1022,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "logicpearl"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anstream",
  "clap",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-benchmark"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-build"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "hex",
  "logicpearl-core",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-conformance"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "csv",
  "serde",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-discovery"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "csv",
  "good_lp",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-engine"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -1143,7 +1143,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-ir"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-observer-synthesis"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "good_lp",
  "logicpearl-benchmark",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-pipeline"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-plugin"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "hex",
  "libc",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-render"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-runtime"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "criterion",
  "logicpearl-core",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-solver"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "serde",
@@ -1231,7 +1231,7 @@ dependencies = [
 
 [[package]]
 name = "logicpearl-verify"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "logicpearl-core",
  "logicpearl-ir",
@@ -2499,7 +2499,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "hex",

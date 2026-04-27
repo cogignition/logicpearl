@@ -89,7 +89,7 @@ The tap formula is generated from the same GitHub Release bundle checksums used 
 Use a versioned release URL instead of `latest`:
 
 ```bash
-VERSION="0.1.5"
+VERSION="0.1.6"
 TARGET="aarch64-apple-darwin"
 BASE="https://github.com/LogicPearlHQ/logicpearl/releases/download/v${VERSION}"
 ARCHIVE="logicpearl-${TARGET}.tar.gz"
@@ -111,7 +111,7 @@ logicpearl quickstart
 Install a specific version with the convenience installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.5
+curl -fsSL https://raw.githubusercontent.com/LogicPearlHQ/logicpearl/main/install.sh | sh -s -- --version 0.1.6
 ```
 
 Use custom install locations:

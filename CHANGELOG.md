@@ -4,9 +4,34 @@ All notable user-facing changes should be added here.
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.6 - 2026-04-27
+
 ### Added
 - Versioned `logicpearl.observation_schema.v1` contracts for upstream observed-feature availability, plus `logicpearl traces observation-schema` to validate and summarize them before review/build.
 - `logicpearl build` and `logicpearl discover` now accept `--progress`, emitting phase and candidate-generation subphase progress to stderr while keeping `--json` stdout parseable.
+- `logicpearl doctor` and bare `logicpearl build traces.csv` now infer whether a reviewed target is a binary gate, scalar action policy, or fan-out action list, then print what was inferred.
+- Fan-out policy builds for multi-label action lists, producing typed pipeline bundles that evaluate all applicable actions.
+- First-artifact build summaries that show what was learned, parity/recall metrics, top rules, bundle paths, and exact next commands for run, inspect, diff, compile, and verify.
+- Golden gate, action, and fan-out examples with traces, feature dictionaries, build/run/diff flows, and native/browser compile coverage.
+- First-class review loop commands: `logicpearl review`, `logicpearl trace --show-near-misses`, and `logicpearl refine --pin`.
+- `logicpearl package --browser` and `logicpearl package --native` for self-contained deployable bundles.
+- Named discovery regression fixtures that cover broad-signal generalization, imbalanced priors, recall-biased controlled false positives, and balanced zero-false-positive policies.
+- Shared `CommandCoaching` helpers for CLI failures with consistent expected/found/next/related guidance.
+
+### Changed
+- Discovery now scores candidates by predictive signal instead of raw net coverage, so broad baseline-only correlations no longer outrank narrower rules with real lift.
+- Discovery now builds conjunctions bottom-up, favors simpler rules when signal is comparable, and runs post-selection generalization/deduplication to collapse over-specific fragments and shared-prefix shards.
+- Post-selection generalization now uses held-out validation signal before training fit in balanced mode, allowing simpler rules that generalize better to replace overfit conjuncts.
+- Recall-biased selection now flows through gate, action, and fan-out builds instead of being dropped at the build-wrapper boundary.
+- `logicpearl inspect` now nudges users toward starter feature dictionaries when rules still read like raw feature ids.
+- Large CLI command modules were split into smaller argument, loading, rendering, validation, and command-execution modules for easier maintenance.
+
+### Fixed
+- `logicpearl build examples/demos/garden_actions/traces.csv` now infers the action target instead of failing with a missing binary label hint.
+- Action and fan-out build paths now honor `--selection-policy recall-biased`, `--deny-recall-target`, and `--max-false-positive-rate`.
+- CLI errors now consistently include what was expected, what was found, and the next command to run.
 
 ## 0.1.5 - 2026-04-14
 

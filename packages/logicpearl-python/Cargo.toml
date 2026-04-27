@@ -1,6 +1,6 @@
 [package]
 name = "logicpearl-python"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "MIT"
 description = "Python bindings for logicpearl-engine."
@@ -19,8 +19,8 @@ crate-type = ["cdylib"]
 path = "rust-src/lib.rs"
 
 [dependencies]
-logicpearl-core = { version = "0.1.5", path = "../../crates/logicpearl-core" }
-logicpearl-engine = { version = "0.1.5", path = "../../crates/logicpearl-engine" }
+logicpearl-core = { version = "0.1.6", path = "../../crates/logicpearl-core" }
+logicpearl-engine = { version = "0.1.6", path = "../../crates/logicpearl-engine" }
 pyo3 = { version = "0.24", features = ["abi3-py39", "auto-initialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
