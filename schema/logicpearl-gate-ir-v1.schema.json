@@ -192,6 +192,92 @@
         },
         "support": {
           "$ref": "#/$defs/rule_support_evidence"
+        },
+        "simplifications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rule_simplification_evidence"
+          }
+        }
+      }
+    },
+    "rule_simplification_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reason",
+        "before_rule_count",
+        "after_rule_count",
+        "removed_rule_count",
+        "training_total_errors_before",
+        "training_total_errors_after",
+        "validation_total_errors_before",
+        "validation_total_errors_after",
+        "denied_trace_count_before",
+        "denied_trace_count_after",
+        "allowed_trace_count_before",
+        "allowed_trace_count_after"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dropped_predicates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "before_rule_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "after_rule_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "removed_rule_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "training_total_errors_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "training_total_errors_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validation_total_errors_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "validation_total_errors_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denied_trace_count_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denied_trace_count_after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_trace_count_before": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_trace_count_after": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

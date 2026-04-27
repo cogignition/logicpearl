@@ -198,6 +198,8 @@ pub struct RuleDefinition {
 pub struct RuleEvidence {
     pub schema_version: String,
     pub support: RuleSupportEvidence,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub simplifications: Vec<RuleSimplificationEvidence>,
 }
 
 /// Stable support counts and bounded supporting trace examples for a rule.
@@ -221,6 +223,26 @@ pub struct RuleTraceEvidence {
     pub citation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote_hash: Option<String>,
+}
+
+/// Non-semantic evidence explaining why discovery simplified a selected rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleSimplificationEvidence {
+    pub kind: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_predicates: Vec<String>,
+    pub before_rule_count: usize,
+    pub after_rule_count: usize,
+    pub removed_rule_count: usize,
+    pub training_total_errors_before: usize,
+    pub training_total_errors_after: usize,
+    pub validation_total_errors_before: usize,
+    pub validation_total_errors_after: usize,
+    pub denied_trace_count_before: usize,
+    pub denied_trace_count_after: usize,
+    pub allowed_trace_count_before: usize,
+    pub allowed_trace_count_after: usize,
 }
 
 /// A single rule within an action policy artifact.
@@ -1779,6 +1801,7 @@ mod tests {
                     ),
                 }],
             },
+            simplifications: Vec::new(),
         });
 
         gate.validate()
@@ -1801,6 +1824,7 @@ mod tests {
                     quote_hash: None,
                 }],
             },
+            simplifications: Vec::new(),
         });
 
         let err = gate

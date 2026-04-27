@@ -44,6 +44,9 @@ Rule evidence records stable, bounded metadata:
 - capped `support.example_traces[]` entries with deterministic
   `trace_row_hash` values plus optional `source_id`, `source_anchor`,
   `citation`, and `quote_hash`
+- optional `simplifications[]` entries explaining why discovery dropped
+  conjuncts or removed subsumed fragments, including the reason, dropped
+  predicate text, before/after rule counts, score changes, and support changes
 
 LogicPearl hashes trace quotes instead of embedding raw quote text in the IR.
 That keeps portable artifacts from carrying source-document excerpts or

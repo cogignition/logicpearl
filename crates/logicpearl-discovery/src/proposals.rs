@@ -1047,6 +1047,7 @@ fn adopted_rule_evidence(
             allowed_trace_count: candidate.evidence.introduced_mismatches,
             example_traces,
         },
+        simplifications: Vec::new(),
     }
 }
 

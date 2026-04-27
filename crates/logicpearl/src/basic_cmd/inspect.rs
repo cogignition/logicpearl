@@ -499,6 +499,35 @@ fn render_rule_evidence(evidence: Option<&logicpearl_ir::RuleEvidence>, indent: 
             quote_hash
         );
     }
+    for simplification in &evidence.simplifications {
+        println!(
+            "{prefix}{} {} reason={}",
+            "Simplification".bright_black(),
+            simplification.kind,
+            simplification.reason
+        );
+        println!(
+            "{prefix}  {} rules {} -> {}, training_errors {} -> {}, validation_errors {} -> {}",
+            "Score".bright_black(),
+            simplification.before_rule_count,
+            simplification.after_rule_count,
+            simplification.training_total_errors_before,
+            simplification.training_total_errors_after,
+            simplification.validation_total_errors_before,
+            simplification.validation_total_errors_after
+        );
+        println!(
+            "{prefix}  {} denied_support {} -> {}, allowed_support {} -> {}",
+            "Support".bright_black(),
+            simplification.denied_trace_count_before,
+            simplification.denied_trace_count_after,
+            simplification.allowed_trace_count_before,
+            simplification.allowed_trace_count_after
+        );
+        for predicate in &simplification.dropped_predicates {
+            println!("{prefix}  {} {}", "Dropped".bright_black(), predicate);
+        }
+    }
 }
 
 fn inspect_rule_feature(gate: &LogicPearlGateIr, feature_id: &str) -> Option<Value> {

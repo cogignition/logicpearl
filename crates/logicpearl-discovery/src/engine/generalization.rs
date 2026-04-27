@@ -8,8 +8,9 @@ use super::scoring::{
 };
 use super::{dedupe_candidate_rules_by_signature, CandidateSelectionContext};
 use crate::CandidateRule;
-use logicpearl_ir::Expression;
+use logicpearl_ir::{Expression, RuleSimplificationEvidence};
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 /// Post-selection generalization keeps the selected policy plan simple.
 ///
@@ -45,7 +46,7 @@ fn best_generalizing_plan_replacement(
 
     for candidate in candidates {
         for expression in one_atom_generalizations(&candidate.expression) {
-            let replacement =
+            let mut replacement =
                 candidate_from_expression_for_selection(selection_context, expression);
             if replacement.denied_coverage == 0
                 || !candidate_allowed_for_mode(&replacement, selection_context.decision_mode)
@@ -64,6 +65,8 @@ fn best_generalizing_plan_replacement(
             {
                 continue;
             }
+            replacement.simplifications =
+                simplifications_for_covered_candidates(candidates, &covered_indices);
             let mut trial = candidates
                 .iter()
                 .enumerate()
@@ -89,6 +92,24 @@ fn best_generalizing_plan_replacement(
             {
                 continue;
             }
+            replacement.simplifications.push(generalization_evidence(
+                selection_context,
+                candidates,
+                &covered_indices,
+                &replacement,
+                &current_score,
+                &trial_score,
+                trial.len(),
+            ));
+            let mut trial_with_evidence = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    (!covered_indices.contains(&index)).then_some(candidate.clone())
+                })
+                .collect::<Vec<_>>();
+            trial_with_evidence.push(replacement.clone());
+            trial_with_evidence = dedupe_candidate_rules_by_signature(trial_with_evidence);
             let better = best.as_ref().is_none_or(|(_, best_candidate, best_score)| {
                 compare_candidate_set_score_with_policy_for_generalization(
                     &trial_score,
@@ -102,7 +123,7 @@ fn best_generalizing_plan_replacement(
                             == Ordering::Less)
             });
             if better {
-                best = Some((trial, replacement, trial_score));
+                best = Some((trial_with_evidence, replacement, trial_score));
             }
         }
     }
@@ -204,10 +225,21 @@ fn remove_subsumed_candidates(
     mut candidates: Vec<CandidateRule>,
 ) -> Vec<CandidateRule> {
     loop {
-        let Some(remove_index) = best_subsumed_candidate_removal(selection_context, &candidates)
+        let Some((remove_index, broader_index, trial_score, current_score)) =
+            best_subsumed_candidate_removal(selection_context, &candidates)
         else {
             break;
         };
+        let broader = candidates[broader_index].clone();
+        let removed = candidates[remove_index].clone();
+        let evidence = subsumed_rule_evidence(
+            &candidates,
+            &removed,
+            &broader,
+            &current_score,
+            &trial_score,
+        );
+        candidates[broader_index].simplifications.push(evidence);
         candidates.remove(remove_index);
     }
     candidates
@@ -216,7 +248,7 @@ fn remove_subsumed_candidates(
 fn best_subsumed_candidate_removal(
     selection_context: &CandidateSelectionContext<'_>,
     candidates: &[CandidateRule],
-) -> Option<usize> {
+) -> Option<(usize, usize, CandidateSetScore, CandidateSetScore)> {
     if candidates.len() <= 1 {
         return None;
     }
@@ -226,13 +258,14 @@ fn best_subsumed_candidate_removal(
         selection_context.validation_indices,
         &selection_context.match_cache,
     );
-    let mut best: Option<(usize, CandidateSetScore)> = None;
+    let mut best: Option<(usize, usize, CandidateSetScore)> = None;
 
     for remove_index in 0..candidates.len() {
-        if !candidate_is_strictly_subsumed_on_training(selection_context, candidates, remove_index)
-        {
+        let Some(broader_index) =
+            best_subsuming_candidate_index(selection_context, candidates, remove_index)
+        else {
             continue;
-        }
+        };
         let trial = candidates
             .iter()
             .enumerate()
@@ -254,7 +287,7 @@ fn best_subsumed_candidate_removal(
         {
             continue;
         }
-        let better = best.as_ref().is_none_or(|(_, best_score)| {
+        let better = best.as_ref().is_none_or(|(_, _, best_score)| {
             compare_candidate_set_score_with_policy_for_generalization(
                 &trial_score,
                 best_score,
@@ -264,30 +297,35 @@ fn best_subsumed_candidate_removal(
             ) == Ordering::Less
         });
         if better {
-            best = Some((remove_index, trial_score));
+            best = Some((remove_index, broader_index, trial_score));
         }
     }
 
-    best.map(|(remove_index, _)| remove_index)
+    best.map(|(remove_index, broader_index, trial_score)| {
+        (remove_index, broader_index, trial_score, current_score)
+    })
 }
 
-fn candidate_is_strictly_subsumed_on_training(
+fn best_subsuming_candidate_index(
     selection_context: &CandidateSelectionContext<'_>,
     candidates: &[CandidateRule],
     narrower_index: usize,
-) -> bool {
+) -> Option<usize> {
     candidates
         .iter()
         .enumerate()
-        .any(|(broader_index, broader)| {
-            broader_index != narrower_index
+        .filter_map(|(broader_index, broader)| {
+            (broader_index != narrower_index
                 && candidate_strictly_subsumes_on_indices(
                     selection_context,
                     broader,
                     &candidates[narrower_index],
                     &selection_context.training_indices,
-                )
+                ))
+            .then_some((broader_index, broader))
         })
+        .min_by(|(_, left), (_, right)| compare_candidate_priority(left, right))
+        .map(|(index, _)| index)
 }
 
 fn candidate_strictly_subsumes_on_indices(
@@ -328,4 +366,145 @@ fn candidate_subsumes_on_indices(
                 .match_cache
                 .matches_candidate(*index, broader)
     })
+}
+
+fn simplifications_for_covered_candidates(
+    candidates: &[CandidateRule],
+    covered_indices: &[usize],
+) -> Vec<RuleSimplificationEvidence> {
+    covered_indices
+        .iter()
+        .flat_map(|index| candidates[*index].simplifications.clone())
+        .collect()
+}
+
+fn generalization_evidence(
+    selection_context: &CandidateSelectionContext<'_>,
+    candidates: &[CandidateRule],
+    covered_indices: &[usize],
+    replacement: &CandidateRule,
+    current_score: &CandidateSetScore,
+    trial_score: &CandidateSetScore,
+    after_rule_count: usize,
+) -> RuleSimplificationEvidence {
+    let (denied_before, allowed_before) =
+        group_support(selection_context, candidates, covered_indices);
+    RuleSimplificationEvidence {
+        kind: if covered_indices.len() > 1 {
+            "shared_prefix_generalization".to_string()
+        } else {
+            "dropped_conjunct".to_string()
+        },
+        reason: simplification_reason(current_score, trial_score),
+        dropped_predicates: dropped_predicate_labels(candidates, covered_indices, replacement),
+        before_rule_count: candidates.len(),
+        after_rule_count,
+        removed_rule_count: covered_indices.len().saturating_sub(1),
+        training_total_errors_before: current_score.total_errors,
+        training_total_errors_after: trial_score.total_errors,
+        validation_total_errors_before: current_score.validation_total_errors,
+        validation_total_errors_after: trial_score.validation_total_errors,
+        denied_trace_count_before: denied_before,
+        denied_trace_count_after: replacement.denied_coverage,
+        allowed_trace_count_before: allowed_before,
+        allowed_trace_count_after: replacement.false_positives,
+    }
+}
+
+fn subsumed_rule_evidence(
+    candidates: &[CandidateRule],
+    removed: &CandidateRule,
+    broader: &CandidateRule,
+    current_score: &CandidateSetScore,
+    trial_score: &CandidateSetScore,
+) -> RuleSimplificationEvidence {
+    RuleSimplificationEvidence {
+        kind: "subsumed_rule_removed".to_string(),
+        reason: simplification_reason(current_score, trial_score),
+        dropped_predicates: vec![expression_label(&removed.expression)],
+        before_rule_count: candidates.len(),
+        after_rule_count: candidates.len().saturating_sub(1),
+        removed_rule_count: 1,
+        training_total_errors_before: current_score.total_errors,
+        training_total_errors_after: trial_score.total_errors,
+        validation_total_errors_before: current_score.validation_total_errors,
+        validation_total_errors_after: trial_score.validation_total_errors,
+        denied_trace_count_before: removed.denied_coverage,
+        denied_trace_count_after: broader.denied_coverage,
+        allowed_trace_count_before: removed.false_positives,
+        allowed_trace_count_after: broader.false_positives,
+    }
+}
+
+fn simplification_reason(
+    current_score: &CandidateSetScore,
+    trial_score: &CandidateSetScore,
+) -> String {
+    if trial_score.validation_total_errors < current_score.validation_total_errors {
+        "validation errors decreased".to_string()
+    } else if trial_score.validation_total_errors == current_score.validation_total_errors
+        && trial_score.total_errors <= current_score.total_errors
+    {
+        "validation errors unchanged and training errors did not increase".to_string()
+    } else if trial_score.validation_total_errors == current_score.validation_total_errors {
+        "validation errors unchanged; simpler rule accepted by generalization policy".to_string()
+    } else {
+        "accepted by generalization policy".to_string()
+    }
+}
+
+fn group_support(
+    selection_context: &CandidateSelectionContext<'_>,
+    candidates: &[CandidateRule],
+    covered_indices: &[usize],
+) -> (usize, usize) {
+    let denied = selection_context
+        .denied_indices
+        .iter()
+        .filter(|row_index| {
+            covered_indices.iter().any(|candidate_index| {
+                selection_context
+                    .match_cache
+                    .matches_candidate(**row_index, &candidates[*candidate_index])
+            })
+        })
+        .count();
+    let allowed = selection_context
+        .allowed_indices
+        .iter()
+        .filter(|row_index| {
+            covered_indices.iter().any(|candidate_index| {
+                selection_context
+                    .match_cache
+                    .matches_candidate(**row_index, &candidates[*candidate_index])
+            })
+        })
+        .count();
+    (denied, allowed)
+}
+
+fn dropped_predicate_labels(
+    candidates: &[CandidateRule],
+    covered_indices: &[usize],
+    replacement: &CandidateRule,
+) -> Vec<String> {
+    let replacement_atoms = expression_atom_labels(&replacement.expression);
+    covered_indices
+        .iter()
+        .flat_map(|index| expression_atom_labels(&candidates[*index].expression))
+        .filter(|atom| !replacement_atoms.contains(atom))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn expression_atom_labels(expression: &Expression) -> BTreeSet<String> {
+    match expression {
+        Expression::All { all } => all.iter().map(expression_label).collect(),
+        _ => [expression_label(expression)].into_iter().collect(),
+    }
+}
+
+fn expression_label(expression: &Expression) -> String {
+    serde_json::to_string(expression).unwrap_or_else(|_| format!("{expression:?}"))
 }

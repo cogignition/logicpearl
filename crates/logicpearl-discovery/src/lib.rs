@@ -10,7 +10,7 @@
 use logicpearl_core::{artifact_hash, provenance_safe_path_string, LogicPearlError, Result};
 use logicpearl_ir::{
     Expression, FeatureGovernance, FeatureSemantics, LogicPearlGateIr, RuleDefinition,
-    RuleTraceEvidence, RuleVerificationStatus,
+    RuleSimplificationEvidence, RuleTraceEvidence, RuleVerificationStatus,
 };
 use logicpearl_solver::{
     resolve_backend, SolverSettings, SOLVER_BACKEND_ENV, SOLVER_DIR_ENV, SOLVER_TIMEOUT_MS_ENV,
@@ -1176,6 +1176,7 @@ struct CandidateRule {
     denied_total: usize,
     allowed_total: usize,
     cached_signature: String,
+    simplifications: Vec<RuleSimplificationEvidence>,
 }
 
 impl CandidateRule {
@@ -1205,6 +1206,7 @@ impl CandidateRule {
             denied_total,
             allowed_total,
             cached_signature,
+            simplifications: Vec::new(),
         }
     }
 

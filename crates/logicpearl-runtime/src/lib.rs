@@ -905,6 +905,7 @@ mod tests {
                             allowed_trace_count: 0,
                             example_traces: vec![],
                         },
+                        simplifications: Vec::new(),
                     }),
                 },
                 ActionRuleDefinition {
@@ -929,6 +930,7 @@ mod tests {
                             allowed_trace_count: 0,
                             example_traces: vec![],
                         },
+                        simplifications: Vec::new(),
                     }),
                 },
             ],

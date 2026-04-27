@@ -166,6 +166,7 @@ fn rule_evidence(trace_hash: &str) -> RuleEvidence {
                 quote_hash: Some(trace_hash.to_string()),
             }],
         },
+        simplifications: Vec::new(),
     }
 }
 

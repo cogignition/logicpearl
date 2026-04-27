@@ -14,7 +14,8 @@ use super::{
 };
 use logicpearl_ir::{
     BooleanEvidencePolicy, ComparisonExpression, ComparisonOperator, ComparisonValue, Expression,
-    FeatureGovernance, RuleDefinition, RuleKind, RuleVerificationStatus,
+    FeatureGovernance, RuleDefinition, RuleEvidence, RuleKind, RuleSupportEvidence,
+    RuleVerificationStatus,
 };
 use logicpearl_verify::BooleanConjunctionCandidate;
 use serde_json::{Number, Value};
@@ -732,7 +733,15 @@ pub(super) fn rule_from_candidate_with_context(
         severity: None,
         counterfactual_hint: generated.counterfactual_hint,
         verification_status: Some(RuleVerificationStatus::PipelineUnverified),
-        evidence: None,
+        evidence: (!candidate.simplifications.is_empty()).then(|| RuleEvidence {
+            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            support: RuleSupportEvidence {
+                denied_trace_count: candidate.denied_coverage,
+                allowed_trace_count: candidate.false_positives,
+                example_traces: Vec::new(),
+            },
+            simplifications: candidate.simplifications.clone(),
+        }),
     }
 }
 

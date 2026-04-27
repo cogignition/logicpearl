@@ -344,7 +344,14 @@ fn attach_rule_evidence(
     rules
         .into_iter()
         .map(|mut rule| {
-            rule.evidence = Some(rule_evidence(rows, source_rows, &rule.deny_when));
+            let simplifications = rule
+                .evidence
+                .as_ref()
+                .map(|evidence| evidence.simplifications.clone())
+                .unwrap_or_default();
+            let mut evidence = rule_evidence(rows, source_rows, &rule.deny_when);
+            evidence.simplifications = simplifications;
+            rule.evidence = Some(evidence);
             rule
         })
         .collect()
@@ -395,6 +402,7 @@ fn rule_evidence(
                 .take(MAX_EXAMPLE_HASHES)
                 .collect(),
         },
+        simplifications: Vec::new(),
     }
 }
 

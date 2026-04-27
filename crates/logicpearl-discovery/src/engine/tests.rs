@@ -382,6 +382,25 @@ fn selected_candidate_generalization_drops_redundant_conjuncts() {
         &generalized[0].expression,
         "humidity"
     ));
+    assert_eq!(generalized[0].simplifications.len(), 1);
+    let simplification = &generalized[0].simplifications[0];
+    assert_eq!(simplification.kind, "dropped_conjunct");
+    assert_eq!(
+        simplification.reason,
+        "validation errors unchanged and training errors did not increase"
+    );
+    assert_eq!(simplification.before_rule_count, 1);
+    assert_eq!(simplification.after_rule_count, 1);
+    assert_eq!(simplification.removed_rule_count, 0);
+    assert_eq!(simplification.denied_trace_count_before, 2);
+    assert_eq!(simplification.denied_trace_count_after, 2);
+    assert!(
+        simplification
+            .dropped_predicates
+            .iter()
+            .any(|predicate| predicate.contains("humidity")),
+        "simplification should explain the dropped humidity predicate: {simplification:?}"
+    );
 }
 
 #[test]
@@ -434,6 +453,14 @@ fn selected_candidate_generalization_drops_subsumed_atomic_rule() {
         ComparisonOperator::Gte,
         Some(Value::Number(Number::from_f64(3.0).unwrap())),
     ));
+    assert!(
+        generalized[0]
+            .simplifications
+            .iter()
+            .any(|simplification| simplification.kind == "subsumed_rule_removed"),
+        "broader surviving rule should explain the removed subsumed shard: {:?}",
+        generalized[0].simplifications
+    );
 }
 
 #[test]
@@ -509,6 +536,25 @@ fn selected_candidate_generalization_collapses_shared_prefix_group() {
         &generalized[0].expression,
         "humidity"
     ));
+    assert_eq!(generalized[0].simplifications.len(), 1);
+    let simplification = &generalized[0].simplifications[0];
+    assert_eq!(simplification.kind, "shared_prefix_generalization");
+    assert_eq!(simplification.before_rule_count, 2);
+    assert_eq!(simplification.after_rule_count, 1);
+    assert_eq!(simplification.removed_rule_count, 1);
+    assert_eq!(simplification.denied_trace_count_before, 2);
+    assert_eq!(simplification.denied_trace_count_after, 2);
+    assert!(
+        simplification
+            .dropped_predicates
+            .iter()
+            .any(|predicate| predicate.contains("bound"))
+            && simplification
+                .dropped_predicates
+                .iter()
+                .any(|predicate| predicate.contains("curl")),
+        "shared-prefix simplification should explain both dropped shard predicates: {simplification:?}"
+    );
 }
 
 #[test]
@@ -571,6 +617,10 @@ fn selected_candidate_generalization_uses_validation_signal() {
         &generalized[0].expression,
         "humidity"
     ));
+    assert_eq!(
+        generalized[0].simplifications[0].reason,
+        "validation errors decreased"
+    );
 }
 
 #[test]
