@@ -22,11 +22,8 @@ pub(super) fn generalize_candidate_plan(
     selection_context: &CandidateSelectionContext<'_>,
     mut candidates: Vec<CandidateRule>,
 ) -> Vec<CandidateRule> {
-    loop {
-        let Some(replacement) = best_generalizing_plan_replacement(selection_context, &candidates)
-        else {
-            break;
-        };
+    while let Some(replacement) = best_generalizing_plan_replacement(selection_context, &candidates)
+    {
         candidates = replacement;
     }
     remove_subsumed_candidates(selection_context, candidates)
@@ -224,12 +221,9 @@ fn remove_subsumed_candidates(
     selection_context: &CandidateSelectionContext<'_>,
     mut candidates: Vec<CandidateRule>,
 ) -> Vec<CandidateRule> {
-    loop {
-        let Some((remove_index, broader_index, trial_score, current_score)) =
-            best_subsumed_candidate_removal(selection_context, &candidates)
-        else {
-            break;
-        };
+    while let Some((remove_index, broader_index, trial_score, current_score)) =
+        best_subsumed_candidate_removal(selection_context, &candidates)
+    {
         let broader = candidates[broader_index].clone();
         let removed = candidates[remove_index].clone();
         let evidence = subsumed_rule_evidence(
