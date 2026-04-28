@@ -766,7 +766,7 @@ fn resolve_binary_on_path(program: &str) -> Result<PathBuf> {
     ))
 }
 
-fn run_install_smoke_test(repo_root: &Path) -> Result<()> {
+fn run_install_smoke_test(repo_root: &Path, cargo_target_dir: Option<&Path>) -> Result<()> {
     println!("{}", "Running LogicPearl installer smoke test".bold());
     let target_triple = match detect_bundle_target_triple() {
         Ok(target_triple) => target_triple,
@@ -778,10 +778,15 @@ fn run_install_smoke_test(repo_root: &Path) -> Result<()> {
             return Ok(());
         }
     };
-    run_repo_command(
+    let cargo_target_dir = cargo_target_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo_root.join("target"));
+    let cargo_target_dir_arg = cargo_target_dir.display().to_string();
+    run_repo_command_with_env(
         repo_root,
         "cargo",
         &["build", "--manifest-path", "Cargo.toml", "-p", "logicpearl"],
+        &[("CARGO_TARGET_DIR", cargo_target_dir_arg.as_str())],
     )?;
 
     let smoke_root = repo_root
@@ -796,7 +801,7 @@ fn run_install_smoke_test(repo_root: &Path) -> Result<()> {
     let checksum_path = dist_dir.join(checksum_name(&target_triple));
 
     run_package_release_bundle(PackageReleaseBundleArgs {
-        logicpearl_binary: repo_root.join("target").join("debug").join("logicpearl"),
+        logicpearl_binary: cargo_target_dir.join("debug").join("logicpearl"),
         z3_binary: resolve_binary_on_path("z3")?,
         cvc5_binary: None,
         target_triple: target_triple.clone(),

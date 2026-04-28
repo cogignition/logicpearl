@@ -2,14 +2,12 @@
 use clap::{Args, Subcommand};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use owo_colors::OwoColorize;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use super::{
-    command_available, repo_root, run_command, run_install_smoke_test, run_repo_command,
-    run_repo_command_with_env,
-};
+use super::{command_available, repo_root, run_command, run_install_smoke_test, run_repo_command};
 
 #[derive(Debug, Args)]
 #[command(arg_required_else_help = true)]
@@ -176,7 +174,7 @@ fn run_verify_ci_internal(repo_root: &Path) -> Result<()> {
     run_workspace_tests(repo_root)?;
     run_browser_runtime_tests(repo_root)?;
     run_python_runtime_checks(repo_root)?;
-    run_install_smoke_test(repo_root)?;
+    run_install_smoke_test(repo_root, Some(&verify_cargo_target_dir(repo_root)))?;
     run_repo_command(
         repo_root,
         "python3",
@@ -198,9 +196,8 @@ fn run_verify_pre_commit(repo_root: &Path) -> Result<()> {
 }
 
 fn run_workspace_clippy(repo_root: &Path) -> Result<()> {
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "clippy",
             "--workspace",
@@ -213,9 +210,8 @@ fn run_workspace_clippy(repo_root: &Path) -> Result<()> {
 }
 
 fn run_workspace_tests(repo_root: &Path) -> Result<()> {
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -226,10 +222,40 @@ fn run_workspace_tests(repo_root: &Path) -> Result<()> {
     )
 }
 
+fn verify_cargo_target_dir(repo_root: &Path) -> PathBuf {
+    env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.join("target").join("verify"))
+}
+
+fn run_verify_cargo_command(repo_root: &Path, args: &[&str]) -> Result<()> {
+    run_verify_cargo_command_with_env(repo_root, args, &[])
+}
+
+fn run_verify_cargo_command_with_env(
+    repo_root: &Path,
+    args: &[&str],
+    extra_envs: &[(&str, &str)],
+) -> Result<()> {
+    let target_dir = verify_cargo_target_dir(repo_root).display().to_string();
+    let mut command = ProcessCommand::new("cargo");
+    command.current_dir(repo_root);
+    if let Some((subcommand, rest)) = args.split_first() {
+        command
+            .arg(subcommand)
+            .arg("--target-dir")
+            .arg(target_dir)
+            .args(rest);
+    } else {
+        command.arg("--target-dir").arg(target_dir);
+    }
+    command.envs(extra_envs.iter().copied());
+    run_command(&mut command)
+}
+
 fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -240,9 +266,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_artifact_entrypoints",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -253,9 +278,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_golden_examples",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -266,9 +290,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_package",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -279,9 +302,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_error_coaching",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -292,9 +314,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_build_provenance",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -305,9 +326,8 @@ fn run_pre_commit_contract_tests(repo_root: &Path) -> Result<()> {
             "e2e_plugins",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &["test", "--manifest-path", "domains/healthcare/Cargo.toml"],
     )
 }
@@ -324,9 +344,8 @@ fn run_browser_runtime_tests(repo_root: &Path) -> Result<()> {
 }
 
 fn run_python_runtime_checks(repo_root: &Path) -> Result<()> {
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "clippy",
             "--manifest-path",
@@ -337,9 +356,8 @@ fn run_python_runtime_checks(repo_root: &Path) -> Result<()> {
             "warnings",
         ],
     )?;
-    run_repo_command(
+    run_verify_cargo_command(
         repo_root,
-        "cargo",
         &[
             "test",
             "--manifest-path",
@@ -380,7 +398,7 @@ fn run_solver_backend_parity(repo_root: &Path, include_default_backend: bool) ->
     ];
 
     if include_default_backend {
-        run_repo_command(repo_root, "cargo", &solver_targets)?;
+        run_verify_cargo_command(repo_root, &solver_targets)?;
     }
 
     if !command_available("cvc5") {
@@ -391,9 +409,8 @@ fn run_solver_backend_parity(repo_root: &Path, include_default_backend: bool) ->
         return Ok(());
     }
 
-    run_repo_command_with_env(
+    run_verify_cargo_command_with_env(
         repo_root,
-        "cargo",
         &solver_targets,
         &[("LOGICPEARL_SOLVER_BACKEND", "cvc5")],
     )?;
