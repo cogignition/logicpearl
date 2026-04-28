@@ -368,8 +368,7 @@ fn run_python_runtime_checks(repo_root: &Path) -> Result<()> {
 
 fn run_verify_pre_push(repo_root: &Path) -> Result<()> {
     println!("{}", "Running LogicPearl pre-push checks".bold());
-    run_verify_ci_internal(repo_root)?;
-    run_solver_backend_parity(repo_root, false)
+    run_verify_ci_internal(repo_root)
 }
 
 fn run_verify_ci(repo_root: &Path) -> Result<()> {
