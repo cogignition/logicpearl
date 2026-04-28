@@ -136,6 +136,9 @@ Current responsibilities:
   score is no worse
 - remove selected rules that are strictly subsumed by broader selected rules
   on training rows when removal does not worsen the whole-plan score
+- replace multiple selected shard rules with one broader rule when that rule
+  covers their training matches and the whole-plan score accepts the added
+  coverage
 
 This layer is the right place for Occam-style loosening over selected rules. It
 should operate on candidate match sets and policy scores, not on domain meaning
@@ -219,6 +222,8 @@ fixture shapes include:
 - generalization drops selected rules subsumed by broader selected rules
 - generalization replaces shard groups with a shared prefix rule when the
   whole-plan score is no worse
+- generalization compresses multiple selected shards into a broader rule when
+  the full selected plan still scores acceptably
 - tightening narrows over-broad rules only when unique false positives improve
 
 Run at least:

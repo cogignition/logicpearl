@@ -558,6 +558,125 @@ fn selected_candidate_generalization_collapses_shared_prefix_group() {
 }
 
 #[test]
+fn selected_candidate_generalization_compresses_rule_sets() {
+    let rows = vec![
+        garden_light_row("aphids", 1.0, "bound", false),
+        garden_light_row("aphids", 2.0, "curl", false),
+        garden_light_row("aphids", 1.0, "clear", true),
+        garden_light_row("aphids", 2.0, "clear", true),
+        garden_light_row("aphids", 3.0, "bound", true),
+        garden_light_row("aphids", 3.0, "curl", true),
+        garden_light_row("none", 1.0, "bound", true),
+        garden_light_row("none", 2.0, "curl", true),
+        garden_light_row("aphids", 3.0, "clear", false),
+    ];
+    let denied_indices = vec![0usize, 1usize];
+    let allowed_indices = vec![2usize, 3usize, 4usize, 5usize, 6usize, 7usize];
+    let validation_indices = vec![8usize];
+    let feature_governance = BTreeMap::new();
+    let selection_context = CandidateSelectionContext {
+        rows: &rows,
+        denied_indices: &denied_indices,
+        allowed_indices: &allowed_indices,
+        training_indices: training_indices(&rows, &validation_indices),
+        validation_indices: &validation_indices,
+        training_denied_count: denied_indices.len(),
+        training_allowed_count: allowed_indices.len(),
+        feature_governance: &feature_governance,
+        decision_mode: DiscoveryDecisionMode::Standard,
+        selection_policy: SelectionPolicy::Balanced,
+        residual_options: None,
+        match_cache: Arc::new(CandidateMatchCache::new(&rows)),
+    };
+    let root_bound_shard = candidate_from_expression_for_selection(
+        &selection_context,
+        Expression::All {
+            all: vec![
+                Expression::Comparison(ComparisonExpression {
+                    feature: "plant".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("aphids".to_string())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "light_level".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(1.0).unwrap())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "humidity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("bound".to_string())),
+                }),
+            ],
+        },
+    );
+    let leaf_curl_shard = candidate_from_expression_for_selection(
+        &selection_context,
+        Expression::All {
+            all: vec![
+                Expression::Comparison(ComparisonExpression {
+                    feature: "plant".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("aphids".to_string())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "light_level".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::Number(Number::from_f64(2.0).unwrap())),
+                }),
+                Expression::Comparison(ComparisonExpression {
+                    feature: "humidity".to_string(),
+                    op: ComparisonOperator::Eq,
+                    value: ComparisonValue::Literal(Value::String("curl".to_string())),
+                }),
+            ],
+        },
+    );
+
+    let generalized =
+        generalize_candidate_plan(&selection_context, vec![root_bound_shard, leaf_curl_shard]);
+
+    assert_eq!(generalized.len(), 1);
+    assert!(expression_has_comparison(
+        &generalized[0].expression,
+        "plant",
+        ComparisonOperator::Eq,
+        Some(Value::String("aphids".to_string())),
+    ));
+    assert!(!expression_mentions_feature(
+        &generalized[0].expression,
+        "light_level"
+    ));
+    assert!(!expression_mentions_feature(
+        &generalized[0].expression,
+        "humidity"
+    ));
+    let simplification = generalized[0]
+        .simplifications
+        .iter()
+        .find(|simplification| simplification.kind == "rule_set_generalization")
+        .expect("rule-set compression should explain the shard replacement");
+    assert_eq!(simplification.before_rule_count, 2);
+    assert_eq!(simplification.after_rule_count, 1);
+    assert_eq!(simplification.removed_rule_count, 1);
+    assert_eq!(simplification.denied_trace_count_before, 2);
+    assert_eq!(simplification.denied_trace_count_after, 2);
+    assert_eq!(simplification.allowed_trace_count_before, 0);
+    assert_eq!(simplification.allowed_trace_count_after, 4);
+    assert!(
+        simplification
+            .dropped_predicates
+            .iter()
+            .any(|predicate| predicate.contains("light_level"))
+            && simplification
+                .dropped_predicates
+                .iter()
+                .any(|predicate| predicate.contains("humidity")),
+        "rule-set compression should explain predicates dropped across the shard group: {simplification:?}"
+    );
+}
+
+#[test]
 fn selected_candidate_generalization_uses_validation_signal() {
     let rows = vec![
         garden_light_row("aphids", 5.0, "bound", false),

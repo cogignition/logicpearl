@@ -10,20 +10,38 @@ use super::{dedupe_candidate_rules_by_signature, CandidateSelectionContext};
 use crate::CandidateRule;
 use logicpearl_ir::{Expression, RuleSimplificationEvidence};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+const MAX_SET_COMPRESSION_ATOMS: usize = 10;
+
+struct GeneralizationEvidenceInput<'a> {
+    kind: &'a str,
+    selection_context: &'a CandidateSelectionContext<'a>,
+    candidates: &'a [CandidateRule],
+    covered_indices: &'a [usize],
+    replacement: &'a CandidateRule,
+    current_score: &'a CandidateSetScore,
+    trial_score: &'a CandidateSetScore,
+    after_rule_count: usize,
+}
 
 /// Post-selection generalization keeps the selected policy plan simple.
 ///
 /// Candidate generation and selection are free to consider highly specific
 /// conjunctions. Once a plan is chosen, this pass removes individual conjuncts
 /// and selected rules that are subsumed by broader selected rules when the
-/// whole-plan score is no worse under the active selection policy.
+/// whole-plan score is no worse under the active selection policy. It also
+/// compresses shard sets when one broader rule explains their union with an
+/// acceptable full-plan score.
 pub(super) fn generalize_candidate_plan(
     selection_context: &CandidateSelectionContext<'_>,
     mut candidates: Vec<CandidateRule>,
 ) -> Vec<CandidateRule> {
     while let Some(replacement) = best_generalizing_plan_replacement(selection_context, &candidates)
     {
+        candidates = replacement;
+    }
+    while let Some(replacement) = best_set_compression_replacement(selection_context, &candidates) {
         candidates = replacement;
     }
     remove_subsumed_candidates(selection_context, candidates)
@@ -176,6 +194,141 @@ fn one_atom_generalizations(expression: &Expression) -> Vec<Expression> {
             }
         })
         .collect()
+}
+
+fn proper_conjunction_generalizations(expression: &Expression) -> Vec<Expression> {
+    let Expression::All { all } = expression else {
+        return Vec::new();
+    };
+    if !(2..=MAX_SET_COMPRESSION_ATOMS).contains(&all.len()) {
+        return Vec::new();
+    }
+
+    let mut generalizations = BTreeMap::new();
+    let max_mask = 1usize << all.len();
+    for mask in 1..max_mask - 1 {
+        let kept = all
+            .iter()
+            .enumerate()
+            .filter_map(|(index, child)| ((mask & (1usize << index)) != 0).then_some(child.clone()))
+            .collect::<Vec<_>>();
+        let expression = if kept.len() == 1 {
+            kept.into_iter().next().expect("single kept expression")
+        } else {
+            Expression::All { all: kept }
+        };
+        generalizations
+            .entry(expression_label(&expression))
+            .or_insert(expression);
+    }
+
+    generalizations.into_values().collect()
+}
+
+fn best_set_compression_replacement(
+    selection_context: &CandidateSelectionContext<'_>,
+    candidates: &[CandidateRule],
+) -> Option<Vec<CandidateRule>> {
+    if candidates.len() <= 1 {
+        return None;
+    }
+
+    let current_score = score_candidate_set_cached(
+        candidates,
+        &selection_context.training_indices,
+        selection_context.validation_indices,
+        &selection_context.match_cache,
+    );
+    let mut best: Option<(Vec<CandidateRule>, CandidateRule, CandidateSetScore)> = None;
+    let mut seen_replacements = BTreeSet::new();
+
+    for candidate in candidates {
+        for expression in proper_conjunction_generalizations(&candidate.expression) {
+            if !seen_replacements.insert(expression_label(&expression)) {
+                continue;
+            }
+            let mut replacement =
+                candidate_from_expression_for_selection(selection_context, expression);
+            if replacement.denied_coverage == 0
+                || !candidate_allowed_for_mode(&replacement, selection_context.decision_mode)
+            {
+                continue;
+            }
+
+            let covered_indices =
+                indices_subsumed_by_replacement(selection_context, candidates, &replacement);
+            if covered_indices.len() < 2 {
+                continue;
+            }
+
+            let mut trial = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    (!covered_indices.contains(&index)).then_some(candidate.clone())
+                })
+                .collect::<Vec<_>>();
+            replacement.simplifications =
+                simplifications_for_covered_candidates(candidates, &covered_indices);
+            trial.push(replacement.clone());
+            trial = dedupe_candidate_rules_by_signature(trial);
+            let trial_score = score_candidate_set_cached(
+                &trial,
+                &selection_context.training_indices,
+                selection_context.validation_indices,
+                &selection_context.match_cache,
+            );
+            if compare_candidate_set_score_with_policy_for_generalization(
+                &trial_score,
+                &current_score,
+                selection_context.selection_policy,
+                selection_context.training_denied_count,
+                selection_context.training_allowed_count,
+            ) == Ordering::Greater
+            {
+                continue;
+            }
+
+            replacement
+                .simplifications
+                .push(rule_set_generalization_evidence(
+                    selection_context,
+                    candidates,
+                    &covered_indices,
+                    &replacement,
+                    &current_score,
+                    &trial_score,
+                    trial.len(),
+                ));
+            let mut trial_with_evidence = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, candidate)| {
+                    (!covered_indices.contains(&index)).then_some(candidate.clone())
+                })
+                .collect::<Vec<_>>();
+            trial_with_evidence.push(replacement.clone());
+            trial_with_evidence = dedupe_candidate_rules_by_signature(trial_with_evidence);
+
+            let better = best.as_ref().is_none_or(|(_, best_candidate, best_score)| {
+                compare_candidate_set_score_with_policy_for_generalization(
+                    &trial_score,
+                    best_score,
+                    selection_context.selection_policy,
+                    selection_context.training_denied_count,
+                    selection_context.training_allowed_count,
+                ) == Ordering::Less
+                    || (trial_score == *best_score
+                        && compare_candidate_priority(&replacement, best_candidate)
+                            == Ordering::Less)
+            });
+            if better {
+                best = Some((trial_with_evidence, replacement, trial_score));
+            }
+        }
+    }
+
+    best.map(|(trial, _, _)| trial)
 }
 
 fn indices_subsumed_by_replacement(
@@ -381,27 +534,71 @@ fn generalization_evidence(
     trial_score: &CandidateSetScore,
     after_rule_count: usize,
 ) -> RuleSimplificationEvidence {
-    let (denied_before, allowed_before) =
-        group_support(selection_context, candidates, covered_indices);
-    RuleSimplificationEvidence {
-        kind: if covered_indices.len() > 1 {
-            "shared_prefix_generalization".to_string()
-        } else {
-            "dropped_conjunct".to_string()
-        },
-        reason: simplification_reason(current_score, trial_score),
-        dropped_predicates: dropped_predicate_labels(candidates, covered_indices, replacement),
-        before_rule_count: candidates.len(),
+    let kind = if covered_indices.len() > 1 {
+        "shared_prefix_generalization"
+    } else {
+        "dropped_conjunct"
+    };
+    generalization_evidence_with_kind(GeneralizationEvidenceInput {
+        kind,
+        selection_context,
+        candidates,
+        covered_indices,
+        replacement,
+        current_score,
+        trial_score,
         after_rule_count,
-        removed_rule_count: covered_indices.len().saturating_sub(1),
-        training_total_errors_before: current_score.total_errors,
-        training_total_errors_after: trial_score.total_errors,
-        validation_total_errors_before: current_score.validation_total_errors,
-        validation_total_errors_after: trial_score.validation_total_errors,
+    })
+}
+
+fn rule_set_generalization_evidence(
+    selection_context: &CandidateSelectionContext<'_>,
+    candidates: &[CandidateRule],
+    covered_indices: &[usize],
+    replacement: &CandidateRule,
+    current_score: &CandidateSetScore,
+    trial_score: &CandidateSetScore,
+    after_rule_count: usize,
+) -> RuleSimplificationEvidence {
+    generalization_evidence_with_kind(GeneralizationEvidenceInput {
+        kind: "rule_set_generalization",
+        selection_context,
+        candidates,
+        covered_indices,
+        replacement,
+        current_score,
+        trial_score,
+        after_rule_count,
+    })
+}
+
+fn generalization_evidence_with_kind(
+    input: GeneralizationEvidenceInput<'_>,
+) -> RuleSimplificationEvidence {
+    let (denied_before, allowed_before) = group_support(
+        input.selection_context,
+        input.candidates,
+        input.covered_indices,
+    );
+    RuleSimplificationEvidence {
+        kind: input.kind.to_string(),
+        reason: simplification_reason(input.current_score, input.trial_score),
+        dropped_predicates: dropped_predicate_labels(
+            input.candidates,
+            input.covered_indices,
+            input.replacement,
+        ),
+        before_rule_count: input.candidates.len(),
+        after_rule_count: input.after_rule_count,
+        removed_rule_count: input.covered_indices.len().saturating_sub(1),
+        training_total_errors_before: input.current_score.total_errors,
+        training_total_errors_after: input.trial_score.total_errors,
+        validation_total_errors_before: input.current_score.validation_total_errors,
+        validation_total_errors_after: input.trial_score.validation_total_errors,
         denied_trace_count_before: denied_before,
-        denied_trace_count_after: replacement.denied_coverage,
+        denied_trace_count_after: input.replacement.denied_coverage,
         allowed_trace_count_before: allowed_before,
-        allowed_trace_count_after: replacement.false_positives,
+        allowed_trace_count_after: input.replacement.false_positives,
     }
 }
 
