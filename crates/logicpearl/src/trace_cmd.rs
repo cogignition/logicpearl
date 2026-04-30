@@ -1030,7 +1030,7 @@ fn balanced_discrete_values(
 ) -> Result<Vec<Value>> {
     let counts = proportional_counts(&normalized_weights(values.len(), weights)?, count);
     let mut out = Vec::with_capacity(count);
-    for (value, repeats) in values.iter().zip(counts.into_iter()) {
+    for (value, repeats) in values.iter().zip(counts) {
         for _ in 0..repeats {
             out.push(value.clone());
         }

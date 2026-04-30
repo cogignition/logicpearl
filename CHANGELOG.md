@@ -4,7 +4,26 @@ All notable user-facing changes should be added here.
 
 ## Unreleased
 
-No changes yet.
+### Added
+- Gate build reports and human summaries now recommend a bounded `recall-biased`
+  rerun when balanced discovery under-serves a rare rule-fire class and false
+  positives may be reviewable.
+- Learned rule evidence now includes required rule reliability metadata:
+  training precision, recall contribution, false-positive rate, lift, matched
+  trace count, and denominator counts for reviewers and downstream UIs.
+- The repository now pins its normal Rust/Clippy toolchain to 1.95.0 so local
+  pre-commit checks catch the same lint behavior as CI, while the MSRV job still
+  checks Rust 1.88 explicitly.
+
+### Changed
+- Post-selection generalization can now compress multiple selected shard rules
+  into one broader rule when the whole selected plan still scores acceptably.
+- **Breaking:** `rules[].evidence.schema_version` is now
+  `logicpearl.rule_evidence.v2`, and `rules[].evidence.reliability` is required.
+  Regenerate artifacts built with `logicpearl.rule_evidence.v1`.
+
+### Fixed
+- Removed a Rust 1.95 Clippy `useless_conversion` warning in trace generation.
 
 ## 0.1.6 - 2026-04-27
 

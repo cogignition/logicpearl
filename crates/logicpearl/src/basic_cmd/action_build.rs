@@ -518,6 +518,7 @@ fn render_action_build_summary(
         artifact_name: report.artifact_name.clone(),
         learned,
         metrics,
+        recommendations: Vec::new(),
         top_rules,
         bundle_path: output_dir.to_path_buf(),
         entrypoint_path: output_dir.join("artifact.json"),

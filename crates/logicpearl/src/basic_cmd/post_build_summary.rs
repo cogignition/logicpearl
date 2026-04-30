@@ -9,6 +9,7 @@ pub(super) struct PostBuildSummary {
     pub(super) artifact_name: String,
     pub(super) learned: Vec<String>,
     pub(super) metrics: Vec<(String, String)>,
+    pub(super) recommendations: Vec<String>,
     pub(super) top_rules: Vec<String>,
     pub(super) bundle_path: PathBuf,
     pub(super) entrypoint_path: PathBuf,
@@ -29,6 +30,7 @@ impl PostBuildSummary {
         );
         print_section("Learned", &self.learned);
         print_pairs("Metrics", &self.metrics);
+        print_section("Recommendations", &self.recommendations);
         print_numbered_section("Top rules", &self.top_rules);
         self.print_bundle();
         self.print_next_commands();
@@ -85,6 +87,9 @@ where
 }
 
 fn print_section(title: &str, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
     println!("\n{}", title.bold());
     for line in lines {
         println!("  - {line}");
@@ -105,7 +110,7 @@ fn print_numbered_section(title: &str, lines: &[String]) {
     }
 }
 
-fn shell_arg(path: &Path) -> String {
+pub(super) fn shell_arg(path: &Path) -> String {
     let value = path.display().to_string();
     if value
         .chars()

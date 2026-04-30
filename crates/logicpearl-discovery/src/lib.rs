@@ -353,6 +353,8 @@ pub struct BuildResult {
     pub training_parity: f64,
     #[serde(default)]
     pub selection_policy: SelectionPolicyReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_recommendation: Option<SelectionPolicyRecommendation>,
     #[serde(default)]
     pub exact_selection: ExactSelectionReport,
     #[serde(default)]
@@ -598,6 +600,20 @@ impl Default for SelectionPolicyReport {
             constraints_satisfied: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+pub struct SelectionPolicyRecommendation {
+    pub kind: String,
+    pub reason: String,
+    pub current_policy: SelectionPolicy,
+    pub suggested_policy: SelectionPolicy,
+    pub support_rate: f64,
+    pub current_recall: f64,
+    pub current_false_positive_rate: f64,
+    pub suggested_recall_target: f64,
+    pub suggested_max_false_positive_rate: f64,
+    pub minimum_material_recall_gap: f64,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq, Default)]
@@ -2197,6 +2213,7 @@ fn build_pearl_from_rows_internal(
     let training_parity = final_evaluation.correct as f64 / rows.len() as f64;
     let selection_policy =
         selection_policy_report(rows, &final_evaluation.mismatches, options.selection_policy);
+    let selection_recommendation = selection_policy_recommendation(&selection_policy);
     build_phases.push(build_phase_report(
         "proposal_phase",
         match proposal_phase.status {
@@ -2294,6 +2311,7 @@ fn build_pearl_from_rows_internal(
             .collect(),
         training_parity,
         selection_policy,
+        selection_recommendation,
         exact_selection,
         residual_recovery,
         cache_hit: false,
@@ -2473,6 +2491,74 @@ fn selection_policy_report(
             allowed_examples,
         ),
     }
+}
+
+fn selection_policy_recommendation(
+    report: &SelectionPolicyReport,
+) -> Option<SelectionPolicyRecommendation> {
+    const RARE_SUPPORT_RATE: f64 = 0.15;
+    const LOW_RECALL_THRESHOLD: f64 = 0.80;
+    const MIN_DENIED_EXAMPLES: usize = 3;
+    const MIN_FALSE_NEGATIVES: usize = 2;
+    const MIN_MATERIAL_RECALL_GAP: f64 = 0.10;
+    const MIN_SUGGESTED_FP_RATE: f64 = 0.05;
+    const MAX_SUGGESTED_FP_RATE: f64 = 0.15;
+
+    if report.configured != SelectionPolicy::Balanced
+        || report.denied_examples < MIN_DENIED_EXAMPLES
+        || report.allowed_examples == 0
+        || report.false_negatives < MIN_FALSE_NEGATIVES
+    {
+        return None;
+    }
+
+    let total = report.denied_examples + report.allowed_examples;
+    if total == 0 {
+        return None;
+    }
+    let support_rate = report.denied_examples as f64 / total as f64;
+    if support_rate > RARE_SUPPORT_RATE || report.denied_recall >= LOW_RECALL_THRESHOLD {
+        return None;
+    }
+
+    let suggested_recall_target = if report.denied_recall < 0.65 {
+        0.80
+    } else {
+        (report.denied_recall + 0.15).min(0.90)
+    };
+    if suggested_recall_target - report.denied_recall < MIN_MATERIAL_RECALL_GAP {
+        return None;
+    }
+
+    let one_false_positive_rate = 1.0 / report.allowed_examples as f64;
+    let suggested_max_false_positive_rate = (support_rate * 2.0)
+        .max(MIN_SUGGESTED_FP_RATE)
+        .max(one_false_positive_rate)
+        .min(MAX_SUGGESTED_FP_RATE);
+    if suggested_max_false_positive_rate < one_false_positive_rate {
+        return None;
+    }
+
+    Some(SelectionPolicyRecommendation {
+        kind: "try_recall_biased".to_string(),
+        reason: format!(
+            "rule-fire class is rare ({:.1}% support) and balanced selection recalled {:.1}% with {} missed positive examples; if false positives are reviewable, rerun with a bounded recall-biased policy",
+            support_rate * 100.0,
+            report.denied_recall * 100.0,
+            report.false_negatives
+        ),
+        current_policy: report.configured,
+        suggested_policy: SelectionPolicy::RecallBiased {
+            deny_recall_target: suggested_recall_target,
+            max_false_positive_rate: suggested_max_false_positive_rate,
+        },
+        support_rate,
+        current_recall: report.denied_recall,
+        current_false_positive_rate: report.false_positive_rate,
+        suggested_recall_target,
+        suggested_max_false_positive_rate,
+        minimum_material_recall_gap: MIN_MATERIAL_RECALL_GAP,
+    })
 }
 
 fn learn_gate_from_rows_internal(

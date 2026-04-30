@@ -400,9 +400,14 @@ fn build_config_can_exclude_human_review_columns() {
     let evidence = &inspect["rule_details"][0]["evidence"];
     assert_eq!(
         evidence["schema_version"].as_str(),
-        Some("logicpearl.rule_evidence.v1")
+        Some("logicpearl.rule_evidence.v2")
     );
     assert_eq!(evidence["support"]["denied_trace_count"].as_u64(), Some(2));
+    assert_eq!(
+        evidence["reliability"]["matched_trace_count"].as_u64(),
+        Some(2)
+    );
+    assert_eq!(evidence["reliability"]["precision"].as_f64(), Some(1.0));
     let example_trace = &evidence["support"]["example_traces"][0];
     assert!(example_trace["trace_row_hash"]
         .as_str()

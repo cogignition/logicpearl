@@ -9,6 +9,7 @@ use logicpearl_build::{
 use logicpearl_discovery::{
     build_result_for_report, load_decision_traces_auto_with_feature_selection, BuildOptions,
     BuildResult, DecisionTraceRow, FeatureColumnSelection, ProposalPolicy, SelectionPolicy,
+    SelectionPolicyRecommendation,
 };
 use logicpearl_ir::{LogicPearlGateIr, RuleDefinition};
 use logicpearl_plugin::{
@@ -27,7 +28,7 @@ use super::conflicts::{
 use super::doctor::{
     infer_recommended_target_for_build, infer_target_for_build, TargetInferenceMode,
 };
-use super::post_build_summary::{percent, top_rule_lines, PostBuildSummary};
+use super::post_build_summary::{percent, shell_arg, top_rule_lines, PostBuildSummary};
 use super::{
     build_trace_plugin_options, default_gate_id_from_path, feature_column_selection,
     feature_columns_from_decision_rows, finish_progress, generated_feature_dictionary_for_output,
@@ -555,6 +556,18 @@ fn render_gate_build_summary(result: &BuildResult, gate: &LogicPearlGateIr, args
             ),
         ));
     }
+    let recommendations = result
+        .selection_recommendation
+        .as_ref()
+        .map(|recommendation| {
+            format!(
+                "{}. Try: {}",
+                recommendation.reason,
+                recall_biased_build_command(args, recommendation)
+            )
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
     let top_rules = top_rule_lines(gate.rules.iter().map(rule_summary), 3);
     let artifact_manifest = PathBuf::from(&result.output_files.artifact_manifest);
     let mut extra_files = Vec::new();
@@ -583,6 +596,7 @@ fn render_gate_build_summary(result: &BuildResult, gate: &LogicPearlGateIr, args
         artifact_name: result.gate_id.clone(),
         learned,
         metrics,
+        recommendations,
         top_rules,
         bundle_path: PathBuf::from(&result.output_files.artifact_dir),
         entrypoint_path: artifact_manifest,
@@ -593,6 +607,41 @@ fn render_gate_build_summary(result: &BuildResult, gate: &LogicPearlGateIr, args
         wasm_skipped: args.compile && result.output_files.wasm_module.is_none(),
     }
     .render();
+}
+
+fn recall_biased_build_command(
+    args: &BuildArgs,
+    recommendation: &SelectionPolicyRecommendation,
+) -> String {
+    let traces = args
+        .decision_traces
+        .as_deref()
+        .map(shell_arg)
+        .unwrap_or_else(|| "<traces>".to_string());
+    let mut parts = vec!["logicpearl".to_string(), "build".to_string(), traces];
+    if let Some(target) = args
+        .target
+        .as_ref()
+        .or(args.label_column.as_ref())
+        .or(args.action_column.as_ref())
+        .or(args.fanout_column.as_ref())
+    {
+        parts.push("--target".to_string());
+        parts.push(target.clone());
+    }
+    if let Some(output_dir) = &args.output_dir {
+        parts.push("--output-dir".to_string());
+        parts.push(shell_arg(output_dir));
+    }
+    parts.extend([
+        "--selection-policy".to_string(),
+        "recall-biased".to_string(),
+        "--deny-recall-target".to_string(),
+        format!("{:.2}", recommendation.suggested_recall_target),
+        "--max-false-positive-rate".to_string(),
+        format!("{:.2}", recommendation.suggested_max_false_positive_rate),
+    ]);
+    parts.join(" ")
 }
 
 fn rule_summary(rule: &RuleDefinition) -> String {

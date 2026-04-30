@@ -3,8 +3,8 @@ use logicpearl_core::{artifact_hash, Result};
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, DerivedFeatureDefinition,
     DerivedFeatureOperator, Expression, FeatureDefinition, FeatureType, LogicPearlGateIr,
-    RuleDefinition, RuleEvidence, RuleKind, RuleSupportEvidence, RuleTraceEvidence,
-    RuleVerificationStatus,
+    RuleDefinition, RuleEvidence, RuleKind, RuleReliabilityEvidence, RuleSupportEvidence,
+    RuleTraceEvidence, RuleVerificationStatus,
 };
 use logicpearl_runtime::evaluate_gate;
 use serde::Serialize;
@@ -1041,12 +1041,18 @@ fn adopted_rule_evidence(
         })
         .collect();
     RuleEvidence {
-        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+        schema_version: "logicpearl.rule_evidence.v2".to_string(),
         support: RuleSupportEvidence {
             denied_trace_count: candidate.evidence.covered_rows,
             allowed_trace_count: candidate.evidence.introduced_mismatches,
             example_traces,
         },
+        reliability: RuleReliabilityEvidence::from_counts(
+            candidate.evidence.covered_rows,
+            candidate.evidence.introduced_mismatches,
+            rows.iter().filter(|row| !row.allowed).count(),
+            rows.iter().filter(|row| row.allowed).count(),
+        ),
         simplifications: Vec::new(),
     }
 }

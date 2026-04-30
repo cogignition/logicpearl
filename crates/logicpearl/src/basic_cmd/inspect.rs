@@ -473,6 +473,14 @@ fn render_rule_evidence(evidence: Option<&logicpearl_ir::RuleEvidence>, indent: 
         evidence.support.denied_trace_count,
         evidence.support.allowed_trace_count
     );
+    println!(
+        "{prefix}{} precision={} recall={} fp_rate={} lift={:.2}",
+        "Reliability".bright_black(),
+        percent(evidence.reliability.precision),
+        percent(evidence.reliability.recall_contribution),
+        percent(evidence.reliability.false_positive_rate),
+        evidence.reliability.lift
+    );
     for example in &evidence.support.example_traces {
         let source = match (&example.source_id, &example.source_anchor) {
             (Some(source_id), Some(anchor)) => format!("{source_id}#{anchor}"),
@@ -528,6 +536,10 @@ fn render_rule_evidence(evidence: Option<&logicpearl_ir::RuleEvidence>, indent: 
             println!("{prefix}  {} {}", "Dropped".bright_black(), predicate);
         }
     }
+}
+
+fn percent(value: f64) -> String {
+    format!("{:.1}%", value * 100.0)
 }
 
 fn inspect_rule_feature(gate: &LogicPearlGateIr, feature_id: &str) -> Option<Value> {

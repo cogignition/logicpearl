@@ -899,12 +899,15 @@ mod tests {
                     counterfactual_hint: None,
                     verification_status: None,
                     evidence: Some(logicpearl_ir::RuleEvidence {
-                        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+                        schema_version: "logicpearl.rule_evidence.v2".to_string(),
                         support: logicpearl_ir::RuleSupportEvidence {
                             denied_trace_count: 3,
                             allowed_trace_count: 0,
                             example_traces: vec![],
                         },
+                        reliability: logicpearl_ir::RuleReliabilityEvidence::from_counts(
+                            3, 0, 43, 10,
+                        ),
                         simplifications: Vec::new(),
                     }),
                 },
@@ -924,12 +927,15 @@ mod tests {
                     counterfactual_hint: None,
                     verification_status: None,
                     evidence: Some(logicpearl_ir::RuleEvidence {
-                        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+                        schema_version: "logicpearl.rule_evidence.v2".to_string(),
                         support: logicpearl_ir::RuleSupportEvidence {
                             denied_trace_count: 40,
                             allowed_trace_count: 0,
                             example_traces: vec![],
                         },
+                        reliability: logicpearl_ir::RuleReliabilityEvidence::from_counts(
+                            40, 0, 43, 10,
+                        ),
                         simplifications: Vec::new(),
                     }),
                 },

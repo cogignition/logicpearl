@@ -32,7 +32,7 @@ The schema lives at [schema/logicpearl-build-provenance-v1.schema.json](../schem
 
 ## Rule Evidence
 
-Learned rules can carry non-semantic `logicpearl.rule_evidence.v1` metadata in
+Learned rules carry non-semantic `logicpearl.rule_evidence.v2` metadata in
 `rules[].evidence`. Runtime evaluation ignores this field. It exists so review
 tools can connect a portable artifact back to the reviewed traces that supported
 each rule.
@@ -44,6 +44,9 @@ Rule evidence records stable, bounded metadata:
 - capped `support.example_traces[]` entries with deterministic
   `trace_row_hash` values plus optional `source_id`, `source_anchor`,
   `citation`, and `quote_hash`
+- `reliability` metrics computed from the training set: matched trace count,
+  total denied/allowed denominators, precision, recall contribution,
+  false-positive rate, and lift
 - optional `simplifications[]` entries explaining why discovery dropped
   conjuncts or removed subsumed fragments, including the reason, dropped
   predicate text, before/after rule counts, score changes, and support changes

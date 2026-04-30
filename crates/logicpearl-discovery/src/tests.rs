@@ -8,7 +8,7 @@ use super::{
     CandidateRule, DecisionTraceRow, DiscoverOptions, DiscoveryDecisionMode,
     FeatureColumnSelection, ObservationFeatureType, ObservationOperator, PinnedRuleSet,
     ProposalCandidateStatus, ProposalPhaseStatus, ProposalPolicy, ProposalStageStatus,
-    ResidualPassOptions, ResidualRecoveryState,
+    ResidualPassOptions, ResidualRecoveryState, SelectionPolicy, SelectionPolicyReport,
 };
 use logicpearl_ir::{
     ComparisonExpression, ComparisonOperator, ComparisonValue, Expression, LogicPearlGateIr,
@@ -82,6 +82,55 @@ fn observation_schema_loader_rejects_policy_impossible_operator() {
 
     let err = load_observation_schema(&schema_path).unwrap_err();
     assert!(err.to_string().contains("does not support operator"));
+}
+
+#[test]
+fn selection_policy_recommendation_suggests_recall_biased_for_rare_low_recall_target() {
+    let report = SelectionPolicyReport {
+        configured: SelectionPolicy::Balanced,
+        denied_examples: 8,
+        allowed_examples: 92,
+        false_negatives: 5,
+        false_positives: 1,
+        denied_recall: 0.375,
+        false_positive_rate: 1.0 / 92.0,
+        constraints_satisfied: true,
+    };
+
+    let recommendation = super::selection_policy_recommendation(&report)
+        .expect("rare low-recall gate should get a recommendation");
+
+    assert_eq!(recommendation.kind, "try_recall_biased");
+    assert_eq!(recommendation.current_policy, SelectionPolicy::Balanced);
+    assert_eq!(recommendation.support_rate, 0.08);
+    assert_eq!(recommendation.suggested_recall_target, 0.80);
+    assert!(matches!(
+        recommendation.suggested_policy,
+        SelectionPolicy::RecallBiased { .. }
+    ));
+    assert!(
+        recommendation
+            .reason
+            .contains("if false positives are reviewable"),
+        "recommendation should explain the product precondition: {}",
+        recommendation.reason
+    );
+}
+
+#[test]
+fn selection_policy_recommendation_stays_quiet_for_balanced_high_recall_target() {
+    let report = SelectionPolicyReport {
+        configured: SelectionPolicy::Balanced,
+        denied_examples: 8,
+        allowed_examples: 92,
+        false_negatives: 1,
+        false_positives: 1,
+        denied_recall: 0.875,
+        false_positive_rate: 1.0 / 92.0,
+        constraints_satisfied: true,
+    };
+
+    assert!(super::selection_policy_recommendation(&report).is_none());
 }
 
 #[test]
@@ -663,9 +712,12 @@ fn build_pearl_records_rule_evidence_from_trace_metadata() {
         .evidence
         .as_ref()
         .expect("learned rule should carry evidence");
-    assert_eq!(evidence.schema_version, "logicpearl.rule_evidence.v1");
+    assert_eq!(evidence.schema_version, "logicpearl.rule_evidence.v2");
     assert_eq!(evidence.support.denied_trace_count, 2);
     assert_eq!(evidence.support.allowed_trace_count, 0);
+    assert_eq!(evidence.reliability.matched_trace_count, 2);
+    assert_eq!(evidence.reliability.precision, 1.0);
+    assert_eq!(evidence.reliability.false_positive_rate, 0.0);
     assert!(!evidence.support.example_traces.is_empty());
     let example = &evidence.support.example_traces[0];
     assert!(example.trace_row_hash.starts_with("sha256:"));

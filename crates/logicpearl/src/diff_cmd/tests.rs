@@ -5,7 +5,8 @@ use logicpearl_ir::{
     ActionEvaluationConfig, ActionRuleDefinition, ActionSelectionStrategy, CombineStrategy,
     ComparisonExpression, ComparisonOperator, ComparisonValue, EvaluationConfig, Expression,
     FeatureDefinition, FeatureType, GateType, InputSchema, LogicPearlActionIr, LogicPearlGateIr,
-    RuleDefinition, RuleEvidence, RuleKind, RuleSupportEvidence, RuleTraceEvidence,
+    RuleDefinition, RuleEvidence, RuleKind, RuleReliabilityEvidence, RuleSupportEvidence,
+    RuleTraceEvidence,
 };
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -154,7 +155,7 @@ fn resolved_inputs() -> (
 
 fn rule_evidence(trace_hash: &str) -> RuleEvidence {
     RuleEvidence {
-        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+        schema_version: "logicpearl.rule_evidence.v2".to_string(),
         support: RuleSupportEvidence {
             denied_trace_count: 1,
             allowed_trace_count: 0,
@@ -166,6 +167,7 @@ fn rule_evidence(trace_hash: &str) -> RuleEvidence {
                 quote_hash: Some(trace_hash.to_string()),
             }],
         },
+        reliability: RuleReliabilityEvidence::from_counts(1, 0, 2, 3),
         simplifications: Vec::new(),
     }
 }

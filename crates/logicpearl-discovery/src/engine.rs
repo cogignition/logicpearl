@@ -2,8 +2,9 @@
 use logicpearl_core::{LogicPearlError, Result};
 use logicpearl_ir::{
     CombineStrategy, EvaluationConfig, Expression, FeatureDefinition, FeatureGovernance, GateType,
-    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleEvidence, RuleSupportEvidence,
-    RuleTraceEvidence, RuleVerificationStatus, VerificationConfig,
+    InputSchema, LogicPearlGateIr, Provenance, RuleDefinition, RuleEvidence,
+    RuleReliabilityEvidence, RuleSupportEvidence, RuleTraceEvidence, RuleVerificationStatus,
+    VerificationConfig,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -393,7 +394,7 @@ fn rule_evidence(
     }
 
     RuleEvidence {
-        schema_version: "logicpearl.rule_evidence.v1".to_string(),
+        schema_version: "logicpearl.rule_evidence.v2".to_string(),
         support: RuleSupportEvidence {
             denied_trace_count,
             allowed_trace_count,
@@ -402,6 +403,12 @@ fn rule_evidence(
                 .take(MAX_EXAMPLE_HASHES)
                 .collect(),
         },
+        reliability: RuleReliabilityEvidence::from_counts(
+            denied_trace_count,
+            allowed_trace_count,
+            rows.iter().filter(|row| !row.allowed).count(),
+            rows.iter().filter(|row| row.allowed).count(),
+        ),
         simplifications: Vec::new(),
     }
 }

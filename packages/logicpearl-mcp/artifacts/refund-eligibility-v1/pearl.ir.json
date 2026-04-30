@@ -129,12 +129,12 @@
           {
             "feature": "days_since_purchase",
             "op": "<=",
-            "value": 360.0
+            "value": 360
           },
           {
             "feature": "previous_refunds_90d",
             "op": ">",
-            "value": 3.0
+            "value": 3
           },
           {
             "feature": "reason_category",
@@ -149,7 +149,7 @@
       "counterfactual_hint": "Break at least one condition: Keep Days since purchase above 360.0; Keep Previous refunds in last 90 days at or below 3.0; Change Refund reason category away from defective",
       "verification_status": "pipeline_unverified",
       "evidence": {
-        "schema_version": "logicpearl.rule_evidence.v1",
+        "schema_version": "logicpearl.rule_evidence.v2",
         "support": {
           "denied_trace_count": 320,
           "allowed_trace_count": 0,
@@ -179,6 +179,15 @@
               "trace_row_hash": "sha256:0618ce8290519f4e9276b18d70e9f6878a7e7c3b55ea7a84fd1ec4a90591c19e"
             }
           ]
+        },
+        "reliability": {
+          "matched_trace_count": 320,
+          "total_denied_examples": 320,
+          "total_allowed_examples": 0,
+          "precision": 1,
+          "recall_contribution": 1,
+          "false_positive_rate": 0,
+          "lift": 1
         }
       }
     },
@@ -192,7 +201,7 @@
           {
             "feature": "days_since_purchase",
             "op": ">",
-            "value": 29.0
+            "value": 29
           },
           {
             "feature": "reason_category",
@@ -207,7 +216,7 @@
       "counterfactual_hint": "Break at least one condition: Keep Days since purchase at or below 29.0; Change Refund reason category away from changed_mind",
       "verification_status": "pipeline_unverified",
       "evidence": {
-        "schema_version": "logicpearl.rule_evidence.v1",
+        "schema_version": "logicpearl.rule_evidence.v2",
         "support": {
           "denied_trace_count": 768,
           "allowed_trace_count": 0,
@@ -237,6 +246,15 @@
               "trace_row_hash": "sha256:02710409df1f795b57b678fa3ecc6747711b6bb331df0c9095a05164afb56125"
             }
           ]
+        },
+        "reliability": {
+          "matched_trace_count": 768,
+          "total_denied_examples": 768,
+          "total_allowed_examples": 0,
+          "precision": 1,
+          "recall_contribution": 1,
+          "false_positive_rate": 0,
+          "lift": 1
         }
       }
     },
@@ -250,7 +268,7 @@
           {
             "feature": "days_since_purchase",
             "op": ">=",
-            "value": 366.0
+            "value": 366
           },
           {
             "feature": "reason_category",
@@ -265,7 +283,7 @@
       "counterfactual_hint": "Break at least one condition: Keep Days since purchase below 366.0; Change Refund reason category away from defective",
       "verification_status": "pipeline_unverified",
       "evidence": {
-        "schema_version": "logicpearl.rule_evidence.v1",
+        "schema_version": "logicpearl.rule_evidence.v2",
         "support": {
           "denied_trace_count": 192,
           "allowed_trace_count": 0,
@@ -295,6 +313,15 @@
               "trace_row_hash": "sha256:14007205f9f76b9be2993e9b3898d513c403ead5f9010db2f74da61ee25f4c56"
             }
           ]
+        },
+        "reliability": {
+          "matched_trace_count": 192,
+          "total_denied_examples": 192,
+          "total_allowed_examples": 0,
+          "precision": 1,
+          "recall_contribution": 1,
+          "false_positive_rate": 0,
+          "lift": 1
         }
       }
     },
@@ -308,12 +335,12 @@
           {
             "feature": "item_is_digital",
             "op": ">=",
-            "value": 1.0
+            "value": 1
           },
           {
             "feature": "item_used",
             "op": ">=",
-            "value": 1.0
+            "value": 1
           },
           {
             "feature": "reason_category",
@@ -328,7 +355,7 @@
       "counterfactual_hint": "Break at least one condition: Keep Item is digital below 1.0; Keep Item has been used / consumed below 1.0; Change Refund reason category away from changed_mind",
       "verification_status": "pipeline_unverified",
       "evidence": {
-        "schema_version": "logicpearl.rule_evidence.v1",
+        "schema_version": "logicpearl.rule_evidence.v2",
         "support": {
           "denied_trace_count": 288,
           "allowed_trace_count": 0,
@@ -358,6 +385,15 @@
               "trace_row_hash": "sha256:06dd14c09420784f2478ad47e46c40895eec8768c8c01fe50364860a9e203054"
             }
           ]
+        },
+        "reliability": {
+          "matched_trace_count": 288,
+          "total_denied_examples": 288,
+          "total_allowed_examples": 0,
+          "precision": 1,
+          "recall_contribution": 1,
+          "false_positive_rate": 0,
+          "lift": 1
         }
       }
     },
@@ -377,7 +413,7 @@
       "counterfactual_hint": "Change Refund reason category away from billing_error",
       "verification_status": "pipeline_unverified",
       "evidence": {
-        "schema_version": "logicpearl.rule_evidence.v1",
+        "schema_version": "logicpearl.rule_evidence.v2",
         "support": {
           "denied_trace_count": 1152,
           "allowed_trace_count": 0,
@@ -407,6 +443,15 @@
               "trace_row_hash": "sha256:01f56f81be6e02594fc043eeae2137fc1ee3fa1cb3a85939b43b74edc094af86"
             }
           ]
+        },
+        "reliability": {
+          "matched_trace_count": 1152,
+          "total_denied_examples": 1152,
+          "total_allowed_examples": 0,
+          "precision": 1,
+          "recall_contribution": 1,
+          "false_positive_rate": 0,
+          "lift": 1
         }
       }
     }

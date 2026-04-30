@@ -184,14 +184,17 @@
     "rule_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "support"],
+      "required": ["schema_version", "support", "reliability"],
       "properties": {
         "schema_version": {
           "type": "string",
-          "const": "logicpearl.rule_evidence.v1"
+          "const": "logicpearl.rule_evidence.v2"
         },
         "support": {
           "$ref": "#/$defs/rule_support_evidence"
+        },
+        "reliability": {
+          "$ref": "#/$defs/rule_reliability_evidence"
         },
         "simplifications": {
           "type": "array",
@@ -299,6 +302,52 @@
           "items": {
             "$ref": "#/$defs/rule_trace_evidence"
           }
+        }
+      }
+    },
+    "rule_reliability_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matched_trace_count",
+        "total_denied_examples",
+        "total_allowed_examples",
+        "precision",
+        "recall_contribution",
+        "false_positive_rate",
+        "lift"
+      ],
+      "properties": {
+        "matched_trace_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_denied_examples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_allowed_examples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "precision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "recall_contribution": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "false_positive_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "lift": {
+          "type": "number",
+          "minimum": 0
         }
       }
     },

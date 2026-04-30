@@ -194,12 +194,66 @@ pub struct RuleDefinition {
 }
 
 /// Non-semantic evidence explaining which reviewed traces support a learned rule.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleEvidence {
     pub schema_version: String,
     pub support: RuleSupportEvidence,
+    pub reliability: RuleReliabilityEvidence,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub simplifications: Vec<RuleSimplificationEvidence>,
+}
+
+/// Training-set reliability metrics for a binary rule.
+///
+/// These values are reviewer-facing evidence, not runtime semantics. Runtime
+/// evaluation still depends only on whether `deny_when` matches.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RuleReliabilityEvidence {
+    pub matched_trace_count: usize,
+    pub total_denied_examples: usize,
+    pub total_allowed_examples: usize,
+    pub precision: f64,
+    pub recall_contribution: f64,
+    pub false_positive_rate: f64,
+    pub lift: f64,
+}
+
+impl RuleReliabilityEvidence {
+    pub fn from_counts(
+        denied_trace_count: usize,
+        allowed_trace_count: usize,
+        total_denied_examples: usize,
+        total_allowed_examples: usize,
+    ) -> Self {
+        let matched_trace_count = denied_trace_count + allowed_trace_count;
+        let total_examples = total_denied_examples + total_allowed_examples;
+        let precision = ratio(denied_trace_count, matched_trace_count);
+        let recall_contribution = ratio(denied_trace_count, total_denied_examples);
+        let false_positive_rate = ratio(allowed_trace_count, total_allowed_examples);
+        let base_rate = ratio(total_denied_examples, total_examples);
+        let lift = if base_rate > 0.0 && matched_trace_count > 0 {
+            precision / base_rate
+        } else {
+            0.0
+        };
+        Self {
+            matched_trace_count,
+            total_denied_examples,
+            total_allowed_examples,
+            precision,
+            recall_contribution,
+            false_positive_rate,
+            lift,
+        }
+    }
+}
+
+fn ratio(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
 }
 
 /// Stable support counts and bounded supporting trace examples for a rule.
@@ -728,11 +782,41 @@ fn validate_rule_evidence(evidence: Option<&RuleEvidence>) -> Result<()> {
     let Some(evidence) = evidence else {
         return Ok(());
     };
-    if evidence.schema_version != "logicpearl.rule_evidence.v1" {
+    if evidence.schema_version != "logicpearl.rule_evidence.v2" {
         return Err(LogicPearlError::message(format!(
             "unsupported rule evidence schema_version: {}",
             evidence.schema_version
         )));
+    }
+    let support_total = evidence.support.denied_trace_count + evidence.support.allowed_trace_count;
+    if evidence.reliability.matched_trace_count != support_total {
+        return Err(LogicPearlError::message(
+            "rule evidence reliability matched_trace_count must equal support total",
+        ));
+    }
+    if evidence.support.denied_trace_count > evidence.reliability.total_denied_examples {
+        return Err(LogicPearlError::message(
+            "rule evidence denied support exceeds reliability denominator",
+        ));
+    }
+    if evidence.support.allowed_trace_count > evidence.reliability.total_allowed_examples {
+        return Err(LogicPearlError::message(
+            "rule evidence allowed support exceeds reliability denominator",
+        ));
+    }
+    validate_probability(evidence.reliability.precision, "rule evidence precision")?;
+    validate_probability(
+        evidence.reliability.recall_contribution,
+        "rule evidence recall_contribution",
+    )?;
+    validate_probability(
+        evidence.reliability.false_positive_rate,
+        "rule evidence false_positive_rate",
+    )?;
+    if !evidence.reliability.lift.is_finite() || evidence.reliability.lift < 0.0 {
+        return Err(LogicPearlError::message(
+            "rule evidence lift must be finite and non-negative",
+        ));
     }
     for example in &evidence.support.example_traces {
         validate_sha256_prefixed(&example.trace_row_hash, "rule evidence trace row hash")?;
@@ -745,6 +829,15 @@ fn validate_rule_evidence(evidence: Option<&RuleEvidence>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_probability(value: f64, label: &str) -> Result<()> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        return Ok(());
+    }
+    Err(LogicPearlError::message(format!(
+        "{label} must be a finite value between 0.0 and 1.0"
+    )))
 }
 
 fn validate_sha256_prefixed(value: &str, label: &str) -> Result<()> {
@@ -1784,7 +1877,7 @@ mod tests {
     fn validates_rule_evidence() {
         let mut gate = minimal_valid_gate();
         gate.rules[0].evidence = Some(RuleEvidence {
-            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            schema_version: "logicpearl.rule_evidence.v2".to_string(),
             support: RuleSupportEvidence {
                 denied_trace_count: 1,
                 allowed_trace_count: 0,
@@ -1801,6 +1894,7 @@ mod tests {
                     ),
                 }],
             },
+            reliability: RuleReliabilityEvidence::from_counts(1, 0, 2, 3),
             simplifications: Vec::new(),
         });
 
@@ -1812,7 +1906,7 @@ mod tests {
     fn rejects_rule_evidence_with_invalid_trace_hash() {
         let mut gate = minimal_valid_gate();
         gate.rules[0].evidence = Some(RuleEvidence {
-            schema_version: "logicpearl.rule_evidence.v1".to_string(),
+            schema_version: "logicpearl.rule_evidence.v2".to_string(),
             support: RuleSupportEvidence {
                 denied_trace_count: 1,
                 allowed_trace_count: 0,
@@ -1824,6 +1918,7 @@ mod tests {
                     quote_hash: None,
                 }],
             },
+            reliability: RuleReliabilityEvidence::from_counts(1, 0, 2, 3),
             simplifications: Vec::new(),
         });
 
